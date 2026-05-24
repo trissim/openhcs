@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -157,6 +158,328 @@ class IntensityColocalizationMetrics:
             "intensity_threshold_used": self.intensity_threshold_used,
             "correlation_method": self.correlation_method,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class AreaFilterRequest:
+    """Parallel per-object measurements filtered by cell area bounds."""
+
+    positions: list[tuple[float, float]]
+    areas: list[float]
+    intensities: list[float]
+    confidences: list[float]
+    min_area: float
+    max_area: float
+
+    @classmethod
+    def from_measurements(
+        cls,
+        positions: list[tuple[float, float]],
+        areas: list[float],
+        intensities: list[float],
+        confidences: list[float],
+        *,
+        min_area: float,
+        max_area: float,
+    ) -> "AreaFilterRequest":
+        return cls(
+            positions=positions,
+            areas=areas,
+            intensities=intensities,
+            confidences=confidences,
+            min_area=min_area,
+            max_area=max_area,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AreaFilterResult:
+    """Area-filtered measurement vectors for detected cell candidates."""
+
+    positions: list[tuple[float, float]]
+    areas: list[float]
+    intensities: list[float]
+    confidences: list[float]
+
+    def as_measurement_args(
+        self,
+    ) -> tuple[list[tuple[float, float]], list[float], list[float], list[float]]:
+        return self.positions, self.areas, self.intensities, self.confidences
+
+
+class AreaFilter:
+    """Authoritative area gate shared by cell-counting detector backends."""
+
+    def apply(self, request: AreaFilterRequest) -> AreaFilterResult:
+        filtered_positions: list[tuple[float, float]] = []
+        filtered_areas: list[float] = []
+        filtered_intensities: list[float] = []
+        filtered_confidences: list[float] = []
+
+        for position, area, intensity, confidence in zip(
+            request.positions,
+            request.areas,
+            request.intensities,
+            request.confidences,
+        ):
+            if request.min_area <= area <= request.max_area:
+                filtered_positions.append(position)
+                filtered_areas.append(area)
+                filtered_intensities.append(intensity)
+                filtered_confidences.append(confidence)
+
+        return AreaFilterResult(
+            positions=filtered_positions,
+            areas=filtered_areas,
+            intensities=filtered_intensities,
+            confidences=filtered_confidences,
+        )
+
+
+class ColocalizationAnalysis:
+    """Shared cell-counting colocalization semantics for CPU and GPU callers."""
+
+    DISTANCE_BASED_METHOD = "distance_based"
+    OVERLAP_AREA_METHOD = "overlap_area"
+    INTENSITY_CORRELATION_METHOD = "intensity_correlation"
+    MANDERS_COEFFICIENTS_METHOD = "manders_coefficients"
+    OVERLAP_DISTANCE_THRESHOLD = 2.0
+    INTENSITY_PAIRING_DISTANCE_THRESHOLD = 5.0
+
+    def distance_based(
+        self,
+        chan_1_result: CellCountResult,
+        chan_2_result: CellCountResult,
+        max_distance: float,
+    ) -> MultiChannelResult:
+        if not chan_1_result.cell_positions or not chan_2_result.cell_positions:
+            return self.empty_result(
+                chan_1_result,
+                chan_2_result,
+                self.DISTANCE_BASED_METHOD,
+            )
+
+        colocalized_pairs = self.nearest_pairs(
+            chan_1_result.cell_positions,
+            chan_2_result.cell_positions,
+            max_distance,
+        )
+        colocalized_count = len(colocalized_pairs)
+        total_cells = chan_1_result.cell_count + chan_2_result.cell_count
+        colocalization_percentage = (
+            2 * colocalized_count / total_cells * 100 if total_cells > 0 else 0
+        )
+        pair_distances = [
+            self.distance(
+                chan_1_result.cell_positions[first_index],
+                chan_2_result.cell_positions[second_index],
+            )
+            for first_index, second_index in colocalized_pairs
+        ]
+        metrics = DistanceColocalizationMetrics(
+            average_colocalization_distance=(
+                sum(pair_distances) / len(pair_distances) if pair_distances else 0.0
+            ),
+            max_colocalization_distance=max(pair_distances) if pair_distances else 0.0,
+            distance_threshold_used=max_distance,
+        )
+
+        return MultiChannelResult(
+            slice_index=chan_1_result.slice_index,
+            chan_1_results=chan_1_result,
+            chan_2_results=chan_2_result,
+            colocalization_method=self.DISTANCE_BASED_METHOD,
+            colocalized_count=colocalized_count,
+            colocalization_percentage=colocalization_percentage,
+            chan_1_only_count=chan_1_result.cell_count - colocalized_count,
+            chan_2_only_count=chan_2_result.cell_count - colocalized_count,
+            colocalization_metrics=metrics.as_dict(),
+            overlap_positions=[
+                self.average_position(
+                    chan_1_result.cell_positions[first_index],
+                    chan_2_result.cell_positions[second_index],
+                )
+                for first_index, second_index in colocalized_pairs
+            ],
+        )
+
+    def overlap_based(
+        self,
+        chan_1_result: CellCountResult,
+        chan_2_result: CellCountResult,
+        min_overlap_area: float,
+    ) -> MultiChannelResult:
+        result = self.distance_based(
+            chan_1_result,
+            chan_2_result,
+            self.OVERLAP_DISTANCE_THRESHOLD,
+        )
+        result.colocalization_method = self.OVERLAP_AREA_METHOD
+        result.colocalization_metrics["min_overlap_threshold"] = min_overlap_area
+        result.colocalization_metrics["note"] = (
+            "Approximated using distance-based method"
+        )
+        return result
+
+    def intensity_based(
+        self,
+        chan_1_result: CellCountResult,
+        chan_2_result: CellCountResult,
+        intensity_threshold: float,
+    ) -> MultiChannelResult:
+        if not chan_1_result.cell_positions or not chan_2_result.cell_positions:
+            return self.empty_result(
+                chan_1_result,
+                chan_2_result,
+                self.INTENSITY_CORRELATION_METHOD,
+            )
+
+        colocalized_pairs: list[tuple[int, int]] = []
+        overlap_positions: list[tuple[float, float]] = []
+        for first_index, first_position in enumerate(chan_1_result.cell_positions):
+            for second_index, second_position in enumerate(chan_2_result.cell_positions):
+                if (
+                    self.distance(first_position, second_position)
+                    > self.INTENSITY_PAIRING_DISTANCE_THRESHOLD
+                ):
+                    continue
+                if (
+                    chan_1_result.cell_intensities[first_index] >= intensity_threshold
+                    and chan_2_result.cell_intensities[second_index]
+                    >= intensity_threshold
+                ):
+                    colocalized_pairs.append((first_index, second_index))
+                    overlap_positions.append(
+                        self.average_position(first_position, second_position)
+                    )
+                    break
+
+        colocalized_count = len(colocalized_pairs)
+        total_cells = chan_1_result.cell_count + chan_2_result.cell_count
+        metrics = IntensityColocalizationMetrics(
+            intensity_threshold_used=intensity_threshold,
+        )
+        return MultiChannelResult(
+            slice_index=chan_1_result.slice_index,
+            chan_1_results=chan_1_result,
+            chan_2_results=chan_2_result,
+            colocalization_method=self.INTENSITY_CORRELATION_METHOD,
+            colocalized_count=colocalized_count,
+            colocalization_percentage=(
+                2 * colocalized_count / total_cells * 100 if total_cells > 0 else 0
+            ),
+            chan_1_only_count=chan_1_result.cell_count - colocalized_count,
+            chan_2_only_count=chan_2_result.cell_count - colocalized_count,
+            colocalization_metrics=metrics.as_dict(),
+            overlap_positions=overlap_positions,
+        )
+
+    def manders(
+        self,
+        chan_1_result: CellCountResult,
+        chan_2_result: CellCountResult,
+        intensity_threshold: float,
+    ) -> MultiChannelResult:
+        if not chan_1_result.cell_positions or not chan_2_result.cell_positions:
+            return self.empty_result(
+                chan_1_result,
+                chan_2_result,
+                self.MANDERS_COEFFICIENTS_METHOD,
+            )
+
+        result = self.intensity_based(
+            chan_1_result,
+            chan_2_result,
+            intensity_threshold,
+        )
+        total_intensity_1 = sum(chan_1_result.cell_intensities)
+        total_intensity_2 = sum(chan_2_result.cell_intensities)
+        coloc_intensity_1 = (
+            chan_1_result.cell_intensities[0]
+            if chan_1_result.cell_intensities and chan_2_result.cell_positions
+            else 0.0
+        )
+        result.colocalization_method = self.MANDERS_COEFFICIENTS_METHOD
+        result.colocalization_metrics.update(
+            {
+                "manders_m1": (
+                    coloc_intensity_1 / total_intensity_1
+                    if total_intensity_1 > 0
+                    else 0
+                ),
+                "manders_m2": (
+                    coloc_intensity_1 / total_intensity_2
+                    if total_intensity_2 > 0
+                    else 0
+                ),
+                "note": "Simplified cell-based Manders calculation",
+            }
+        )
+        return result
+
+    def empty_result(
+        self,
+        chan_1_result: CellCountResult,
+        chan_2_result: CellCountResult,
+        method: str,
+    ) -> MultiChannelResult:
+        return MultiChannelResult(
+            slice_index=chan_1_result.slice_index,
+            chan_1_results=chan_1_result,
+            chan_2_results=chan_2_result,
+            colocalization_method=method,
+            colocalized_count=0,
+            colocalization_percentage=0.0,
+            chan_1_only_count=chan_1_result.cell_count,
+            chan_2_only_count=chan_2_result.cell_count,
+            colocalization_metrics={},
+            overlap_positions=[],
+        )
+
+    def nearest_pairs(
+        self,
+        positions_1: list[tuple[float, float]],
+        positions_2: list[tuple[float, float]],
+        max_distance: float,
+    ) -> list[tuple[int, int]]:
+        pairs: list[tuple[int, int]] = []
+        used_second_indices: set[int] = set()
+        for first_index, first_position in enumerate(positions_1):
+            candidate_distances = [
+                self.distance(first_position, second_position)
+                for second_position in positions_2
+            ]
+            second_index = min(
+                range(len(candidate_distances)),
+                key=candidate_distances.__getitem__,
+            )
+            if (
+                candidate_distances[second_index] <= max_distance
+                and second_index not in used_second_indices
+            ):
+                pairs.append((first_index, second_index))
+                used_second_indices.add(second_index)
+        return pairs
+
+    @staticmethod
+    def distance(
+        first_position: tuple[float, float],
+        second_position: tuple[float, float],
+    ) -> float:
+        return math.sqrt(
+            (first_position[0] - second_position[0]) ** 2
+            + (first_position[1] - second_position[1]) ** 2
+        )
+
+    @staticmethod
+    def average_position(
+        first_position: tuple[float, float],
+        second_position: tuple[float, float],
+    ) -> tuple[float, float]:
+        return (
+            (first_position[0] + second_position[0]) / 2,
+            (first_position[1] + second_position[1]) / 2,
+        )
 
 
 @dataclass(frozen=True)

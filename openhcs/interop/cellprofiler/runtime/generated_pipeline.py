@@ -842,8 +842,8 @@ class CellProfilerGeneratedStepContractMatcher:
     ) -> None:
         if not candidates:
             raise ValueError(
-                "Generated CellProfiler step callable has no remaining runtime "
-                f"artifact contract: callable {metadata.module_name!r}."
+                "Generated CellProfiler step callable does not match any remaining "
+                f"runtime artifact contract: callable {metadata.module_name!r}."
             )
         alignments = tuple(
             SourceBindingRuntimeContractGuard(
@@ -853,7 +853,8 @@ class CellProfilerGeneratedStepContractMatcher:
             for candidate in candidates
         )
         raise ValueError(
-            "Generated CellProfiler step callable has no source-binding-compatible "
+            "Generated CellProfiler step source bindings drifted from its "
+            "source-binding-compatible "
             f"runtime artifact contract: callable {metadata.module_name!r}; "
             f"candidate modules {[candidate.module_num for candidate in candidates]!r}; "
             f"alignment failures {alignments!r}."

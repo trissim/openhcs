@@ -42,6 +42,33 @@ class RuntimeArtifactLocation:
             raise ValueError("RuntimeArtifactLocation.backend cannot be empty.")
 
 
+class RuntimeArtifactQueryTarget:
+    """Nominal runtime-artifact address matched after semantic key fields."""
+
+    def matches(self, record: "StoredRuntimeValue") -> bool:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactLocationTarget(RuntimeArtifactQueryTarget):
+    """Runtime-artifact query target for one persisted VFS location."""
+
+    location: RuntimeArtifactLocation
+
+    def matches(self, record: "StoredRuntimeValue") -> bool:
+        return record.location == self.location
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactGroupTarget(RuntimeArtifactQueryTarget):
+    """Runtime-artifact query target for one exact execution group."""
+
+    group_key: str | None
+
+    def matches(self, record: "StoredRuntimeValue") -> bool:
+        return record.key.scope.group_key == self.group_key
+
+
 def replace_runtime_artifact_payload(
     filemanager: Any,
     data: Any,
@@ -61,51 +88,17 @@ class RuntimeArtifactQuery:
     name: str
     kind: ArtifactKind
     axis_id: str
-    location: RuntimeArtifactLocation | None = None
-    group_key: str | None = None
-    match_group: bool = False
-
-    @classmethod
-    def by_location(
-        cls,
-        *,
-        name: str,
-        kind: ArtifactKind,
-        axis_id: str,
-        location: RuntimeArtifactLocation,
-    ) -> "RuntimeArtifactQuery":
-        return cls(
-            name=name,
-            kind=kind,
-            axis_id=axis_id,
-            location=location,
-        )
-
-    @classmethod
-    def by_group(
-        cls,
-        *,
-        name: str,
-        kind: ArtifactKind,
-        axis_id: str,
-        group_key: str | None,
-    ) -> "RuntimeArtifactQuery":
-        return cls(
-            name=name,
-            kind=kind,
-            axis_id=axis_id,
-            group_key=group_key,
-            match_group=True,
-        )
+    target: RuntimeArtifactQueryTarget
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("RuntimeArtifactQuery.name cannot be empty.")
         if not self.axis_id:
             raise ValueError("RuntimeArtifactQuery.axis_id cannot be empty.")
-        if self.location is None and not self.match_group:
-            raise ValueError(
-                "RuntimeArtifactQuery must specify a location or an exact group."
+        if not isinstance(self.target, RuntimeArtifactQueryTarget):
+            raise TypeError(
+                "RuntimeArtifactQuery.target must be RuntimeArtifactQueryTarget, "
+                f"got {type(self.target).__name__}."
             )
 
     def matches(self, record: "StoredRuntimeValue") -> bool:
@@ -116,9 +109,7 @@ class RuntimeArtifactQuery:
             return False
         if key.scope.axis_id != self.axis_id:
             return False
-        if self.location is not None and record.location != self.location:
-            return False
-        if self.match_group and key.scope.group_key != self.group_key:
+        if not self.target.matches(record):
             return False
         return True
 
@@ -222,11 +213,7 @@ class RuntimeValueStore:
         purpose: str,
     ) -> StoredRuntimeValue:
         """Resolve exactly one runtime artifact record for a planned operation."""
-        records = tuple(
-            record
-            for record in self._records_by_location.values()
-            if query.matches(record)
-        )
+        records = self.find_matching(query)
         if not records:
             raise RuntimeError(
                 f"Missing RuntimeValueStore record for {purpose} "
@@ -239,6 +226,17 @@ class RuntimeValueStore:
                 f"{records!r}."
             )
         return records[0]
+
+    def find_matching(
+        self,
+        query: RuntimeArtifactQuery,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        """Return stored records matched by a typed runtime artifact query."""
+        return tuple(
+            record
+            for record in self._records_by_location.values()
+            if query.matches(record)
+        )
 
     def get(self, key: ArtifactKey) -> StoredRuntimeValue:
         """Return one stored value by exact typed artifact key."""
@@ -299,6 +297,7 @@ class RuntimeValueStore:
         """Return stored records in insertion order."""
         return tuple(self._records_by_location.values())
 
+    @property
     def observed_values(self) -> tuple[StoredRuntimeValue, ...]:
         """Return every runtime artifact write in insertion order."""
         return tuple(self._observation_records)

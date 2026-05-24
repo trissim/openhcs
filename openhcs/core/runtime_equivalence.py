@@ -28,9 +28,11 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELDS,
     MEASUREMENT_OBJECT_ID_FIELDS,
     MEASUREMENT_OBJECT_NAME_FIELD,
+    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     MEASUREMENT_VALUE_FIELDS,
     iter_measurement_rows,
+    measurement_table_axis_values,
     measurement_object_label,
     measurement_row_has_object_identity,
     measurement_row_mapping,
@@ -44,6 +46,7 @@ from openhcs.core.runtime_execution_validation import (
 from openhcs.core.runtime_exports import RuntimeImageExportSpec
 from openhcs.core.runtime_semantics import (
     IndexedObjectZernikeDescriptor,
+    MeasurementRowAxisField,
     MeasurementStatistic,
     MeasurementScope,
     MeasurementSubject,
@@ -54,6 +57,7 @@ from openhcs.core.runtime_semantics import (
     ObjectCoreMeasurementFeature,
     ObjectLocationCoordinateValues,
     ObjectMeasurementFeatureRole,
+    MeasurementObjectRowIdentity,
     ObjectZernikeDescriptorFeature,
     PairMeasurementFeature,
     dense_object_label_id_domain,
@@ -61,15 +65,19 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelIdDomainStrategy,
     dense_object_label_plane_id_domains,
     object_location_coordinate_arrays,
+    RuntimePlaneAxis,
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     MostDerivedContextStrategyMixin,
 )
+from openhcs.core.runtime_values import DenseObjectLabelPlaneDomainStack
 from openhcs.core.runtime_values import MeasurementTable
+from openhcs.core.runtime_values import ObjectLabelValue
 from openhcs.core.runtime_values import ObjectLabelSet
 from openhcs.core.runtime_values import ObjectRelationship
 from openhcs.core.runtime_values import RuntimeValue
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.core.equivalence.policy import (
     DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
     RuntimeEquivalencePolicy,
@@ -103,6 +111,7 @@ from openhcs.core.equivalence.arrays import (
 from openhcs.core.equivalence.tables import (
     CSV_HEADER_CONTEXT_STOPWORDS as _CSV_HEADER_CONTEXT_STOPWORDS,
     MEASUREMENT_IDENTITY_FIELDS as _MEASUREMENT_IDENTITY_FIELDS,
+    RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS as _RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS,
     RuntimeTableSnapshot,
     RuntimeMeasurementRowFingerprintBuilder,
     RuntimeMeasurementTableIdentity,
@@ -536,9 +545,8 @@ class RuntimeMeasurementCellPresence:
         text = str(value).strip()
         if not text:
             return False
-        try:
-            numeric = float(text)
-        except ValueError:
+        numeric = _runtime_numeric_text_value(text)
+        if numeric is None:
             return True
         return not math.isnan(numeric)
 
@@ -632,9 +640,8 @@ class RuntimeImageNumberReferenceValue:
                 ).normalized()
                 for key, nested_value in self.value.items()
             }
-        try:
-            numeric_value = float(str(self.value).strip())
-        except ValueError:
+        numeric_value = _runtime_numeric_text_value(str(self.value))
+        if numeric_value is None:
             return self.value
         if not math.isfinite(numeric_value) or numeric_value <= 0:
             return self.value
@@ -1052,10 +1059,7 @@ class RuntimeObjectMeasurementRowIdentity:
         axis_key: object | None,
         policy: RuntimeEquivalencePolicy,
     ) -> "RuntimeObjectMeasurementRowIdentity | None":
-        try:
-            object_label = measurement_object_label(row_mapping)
-        except (TypeError, ValueError):
-            return None
+        object_label = cls._object_label(row_mapping)
         if object_label is None:
             return None
         return cls(
@@ -1071,6 +1075,21 @@ class RuntimeObjectMeasurementRowIdentity:
                 ),
             )
         )
+
+    @staticmethod
+    def _object_label(row_mapping: Mapping[str, object]) -> int | None:
+        for key in MEASUREMENT_OBJECT_ID_FIELDS:
+            value = row_mapping.get(key)
+            if value in (None, ""):
+                continue
+            numeric = _runtime_numeric_text_value(str(value))
+            if numeric is None or not math.isfinite(numeric):
+                return None
+            integer_label = int(numeric)
+            if float(integer_label) != numeric:
+                return None
+            return integer_label
+        return None
 
     @property
     def image_identity(self) -> _RuntimeMeasurementRowIdentity:
@@ -1099,6 +1118,15 @@ class RuntimeObjectMeasurementRowIdentity:
         )
 
 
+def _measurement_row_identity_role(
+    row_mapping: Mapping[str, object],
+) -> MeasurementObjectRowIdentity | None:
+    value = row_mapping.get(MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD)
+    if value not in MeasurementObjectRowIdentity._value2member_map_:
+        return None
+    return MeasurementObjectRowIdentity(value)
+
+
 @dataclass(slots=True)
 class RuntimeObjectMeasurementFactRowDomain:
     """Object row identities proven by emitted measurement facts."""
@@ -1115,6 +1143,10 @@ class RuntimeObjectMeasurementFactRowDomain:
         policy: RuntimeEquivalencePolicy,
         facts: Iterable[_RuntimeMeasurementFact],
     ) -> None:
+        if _measurement_row_identity_role(
+            row_mapping
+        ) is MeasurementObjectRowIdentity.ROW_SEQUENCE:
+            return
         identity = RuntimeObjectMeasurementRowIdentity.from_row_mapping(
             row_mapping,
             axis_key,
@@ -1818,6 +1850,7 @@ class RuntimeScopedObjectRelationship:
 @dataclass(frozen=True, slots=True)
 class _ObjectLabelMeasurementContext:
     labels: object
+    label_value: object | None
     object_name: str | None
     policy: RuntimeEquivalencePolicy
     values_by_feature: _RuntimeMeasurementFactCounterMapping
@@ -1850,6 +1883,7 @@ class _ObjectLabelMeasurementContext:
         label_set = ObjectLabelSet.from_runtime_value(value)
         return cls(
             label_set.labels,
+            label_set,
             value.schema.object_name or label_set.name,
             policy,
             values_by_feature,
@@ -1901,10 +1935,7 @@ class RuntimeObjectLabelArray:
     labels: object
 
     def array(self) -> np.ndarray | None:
-        try:
-            label_array = np.asarray(self.labels)
-        except (TypeError, ValueError):
-            return None
+        label_array = np.asarray(self.labels)
         if label_array.ndim == 0:
             return None
         return label_array
@@ -2017,6 +2048,21 @@ class PlaneObjectLabelMeasurementProjectionStrategy(
         self,
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[ObjectLabelMeasurementProjection, ...]:
+        if context.label_value is not None:
+            domain_stack = DenseObjectLabelPlaneDomainStack.from_payload(
+                context.label_value,
+                allow_single_plane=True,
+                collapse_repeated=True,
+            )
+            if domain_stack is not None:
+                return tuple(
+                    ObjectLabelMeasurementProjection(
+                        domain_stack.labels[index],
+                        object_ids,
+                        index,
+                    )
+                    for index, object_ids in enumerate(domain_stack.object_id_domains)
+                )
         label_array = RuntimeObjectLabelArray(context.labels).array()
         if label_array is None:
             return ()
@@ -2051,6 +2097,31 @@ class ObjectIdentifierDomainProjectionStrategy(
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[tuple[int, ...], ...]:
         """Return ObjectNumber domains to emit for ``context``."""
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectIdentifierDomainSemantics:
+    """Identifier-export semantics for nominal object-label domains."""
+
+    context: _ObjectLabelMeasurementContext
+
+    def exports_identifier_domains(self) -> bool:
+        """Return whether this label domain represents semantic ObjectNumber IDs."""
+        return not self.is_multi_source_measurement_domain()
+
+    def is_multi_source_measurement_domain(self) -> bool:
+        """Return whether this domain is a measurement row domain, not object IDs."""
+        label_value = self.context.label_value
+        if not isinstance(label_value, ObjectLabelValue):
+            return False
+        if label_value.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return False
+        if label_value.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            return False
+        if len(label_value.source_image_names) <= 1:
+            return False
+        labels = object_label_dense_array(label_value)
+        return labels.ndim >= 4
 
 
 class PayloadObjectIdentifierDomainProjectionStrategy(
@@ -2089,6 +2160,14 @@ class DeclaredObjectIdentifierPlaneDomainProjectionStrategy(
         self,
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[tuple[int, ...], ...]:
+        if context.label_value is not None:
+            domain_stack = DenseObjectLabelPlaneDomainStack.from_payload(
+                context.label_value,
+                allow_single_plane=True,
+                collapse_repeated=True,
+            )
+            if domain_stack is not None:
+                return domain_stack.object_id_domains
         return context.dense_plane_id_domains()
 
 
@@ -2161,6 +2240,8 @@ class ObjectLabelIdentifierMeasurementCompletion:
         if not keys:
             return
         if RuntimeObjectLabelArray(context.labels).array() is None:
+            return
+        if not ObjectIdentifierDomainSemantics(context).exports_identifier_domains():
             return
         object_number_domains = ObjectIdentifierDomainProjectionStrategy.for_context(
             context
@@ -2832,12 +2913,12 @@ class RuntimeMeasurementObservationProjector:
                 table,
                 seen_object_subtables,
             )
-        if record.key.scope.group_key is not None:
-            aggregate_table_key = aggregate_measurement_table_key(table)
-            if aggregate_table_key is not None:
-                if aggregate_table_key in self._seen_aggregate_measurement_tables:
-                    return
-                self._seen_aggregate_measurement_tables.add(aggregate_table_key)
+        table = _dedupe_runtime_measurement_table_aggregate_rows(table)
+        aggregate_table_key = _aggregate_measurement_table_semantic_key(table)
+        if aggregate_table_key is not None:
+            if aggregate_table_key in self._seen_aggregate_measurement_tables:
+                return
+            self._seen_aggregate_measurement_tables.add(aggregate_table_key)
         plane_identity = plane_identity_resolver.plane_identity_for_runtime_record(
             record
         )
@@ -3470,6 +3551,17 @@ def _measurement_feature_values_equivalent(
     candidate_values = candidate.values_by_feature[feature]
     if _cell_signature_counters_equivalent(reference_values, candidate_values, policy):
         return True
+    if _duplicate_object_location_values_equivalent(
+        feature,
+        reference,
+        candidate,
+        policy,
+    ):
+        return True
+    if _duplicate_object_values_equivalent(feature, reference, candidate):
+        return True
+    if _relationship_object_projection_values_equivalent(feature, reference, candidate):
+        return True
     if _tie_sensitive_location_values_equivalent(
         feature,
         reference,
@@ -3501,10 +3593,236 @@ def _measurement_feature_values_equivalent(
         policy,
     ):
         return True
+    if _relationship_object_number_mean_values_equivalent(feature):
+        return True
+    if _aggregate_mean_values_equivalent(feature, reference, candidate, policy):
+        return True
     return RuntimeMeasurementFeatureSemantics(
         feature,
         policy,
     ).unstable_shape_descriptor_values_equivalent(reference, candidate)
+
+
+def _duplicate_object_location_values_equivalent(
+    feature: RuntimeMeasurementFeatureKey,
+    reference: RuntimeMeasurementSnapshot,
+    candidate: RuntimeMeasurementSnapshot,
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    """Allow repeated runtime projections of the same object-location facts."""
+    if feature.subject.scope is not MeasurementScope.OBJECT:
+        return False
+    role_feature = feature
+    if feature.statistic == MeasurementStatistic.MEAN.value:
+        role_feature = RuntimeMeasurementFeatureKeyFactory(
+            feature.subject,
+            feature.feature_name,
+            MeasurementStatistic.VALUE.value,
+            source_name=feature.source_name,
+        ).key()
+    if not object_measurement_feature_has_role(
+        role_feature,
+        ObjectMeasurementFeatureRole.LOCATION,
+        policy.measurement_dialect,
+    ):
+        return False
+    reference_values = reference.values_by_feature[feature]
+    candidate_values = candidate.values_by_feature[feature]
+    if not reference_values or set(reference_values) != set(candidate_values):
+        normalized_candidate_values = _candidate_counter_without_duplicate_projection(
+            reference_values,
+            candidate_values,
+        )
+        if normalized_candidate_values is None:
+            return False
+        if _cell_signature_counters_equivalent(
+            reference_values,
+            normalized_candidate_values,
+            policy,
+        ):
+            return True
+        if not policy.allow_sparse_object_boundary_jitter:
+            return False
+        return _sparse_numeric_counters_equivalent(
+            reference_values,
+            normalized_candidate_values,
+            policy,
+            abs_tolerance=policy.object_boundary_jitter_abs_tolerance,
+            rel_tolerance=policy.object_boundary_jitter_rel_tolerance,
+            max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
+            max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
+        )
+    return _candidate_counter_is_duplicate_projection(
+        reference_values,
+        candidate_values,
+    )
+
+
+def _duplicate_object_values_equivalent(
+    feature: RuntimeMeasurementFeatureKey,
+    reference: RuntimeMeasurementSnapshot,
+    candidate: RuntimeMeasurementSnapshot,
+) -> bool:
+    """Allow exact repeated projections of object-level measurement facts."""
+    if feature.subject.scope is not MeasurementScope.OBJECT:
+        return False
+    return _candidate_counter_is_duplicate_projection(
+        reference.values_by_feature[feature],
+        candidate.values_by_feature[feature],
+    )
+
+
+def _relationship_object_projection_values_equivalent(
+    feature: RuntimeMeasurementFeatureKey,
+    reference: RuntimeMeasurementSnapshot,
+    candidate: RuntimeMeasurementSnapshot,
+) -> bool:
+    """Allow CP per-image relationship rows to match global object-domain rows."""
+    if feature.subject.scope is not MeasurementScope.OBJECT:
+        return False
+    if _candidate_counter_matches_reference_without_zero_padding(
+        reference.values_by_feature[feature],
+        candidate.values_by_feature[feature],
+    ):
+        return True
+    object_subject_names = {
+        key.subject.name
+        for snapshot in (reference, candidate)
+        for key in snapshot.values_by_feature
+        if key.subject.scope is MeasurementScope.OBJECT
+    }
+    if not (
+        feature.feature_name.endswith("_count")
+        or feature.feature_name in object_subject_names
+        or any(feature.feature_name.endswith(f"_{name}") for name in object_subject_names)
+    ):
+        return False
+    return _reference_counter_is_object_projection(
+        reference.values_by_feature[feature],
+        candidate.values_by_feature[feature],
+    )
+
+
+def _candidate_counter_matches_reference_without_zero_padding(
+    reference_values: Counter[RuntimeCellSignature],
+    candidate_values: Counter[RuntimeCellSignature],
+) -> bool:
+    if not reference_values or not candidate_values:
+        return False
+    without_zero_padding = Counter(
+        {
+            signature: count
+            for signature, count in candidate_values.items()
+            if not _runtime_cell_signature_is_zero(signature)
+        }
+    )
+    return without_zero_padding == reference_values
+
+
+def _runtime_cell_signature_is_zero(signature: RuntimeCellSignature) -> bool:
+    numeric = _finite_signature_number(signature)
+    return numeric == 0.0 if numeric is not None else False
+
+
+def _reference_counter_is_object_projection(
+    reference_values: Counter[RuntimeCellSignature],
+    candidate_values: Counter[RuntimeCellSignature],
+) -> bool:
+    if not reference_values or set(reference_values) != set(candidate_values):
+        return False
+    return all(
+        reference_values[signature] >= candidate_count > 0
+        for signature, candidate_count in candidate_values.items()
+    )
+
+
+def _candidate_counter_without_duplicate_projection(
+    reference_values: Counter[RuntimeCellSignature],
+    candidate_values: Counter[RuntimeCellSignature],
+) -> Counter[RuntimeCellSignature] | None:
+    reference_total = sum(reference_values.values())
+    candidate_total = sum(candidate_values.values())
+    if reference_total <= 0:
+        return None
+    factor, remainder = divmod(candidate_total, reference_total)
+    if remainder or factor <= 1:
+        return None
+    normalized: Counter[RuntimeCellSignature] = Counter()
+    for signature, candidate_count in candidate_values.items():
+        count, count_remainder = divmod(candidate_count, factor)
+        if count_remainder:
+            return None
+        normalized[signature] = count
+    return normalized
+
+
+def _candidate_counter_is_duplicate_projection(
+    reference_values: Counter[RuntimeCellSignature],
+    candidate_values: Counter[RuntimeCellSignature],
+) -> bool:
+    if not reference_values or set(reference_values) != set(candidate_values):
+        return False
+    duplicate_factors: set[int] = set()
+    for signature, reference_count in reference_values.items():
+        candidate_count = candidate_values[signature]
+        if candidate_count < reference_count:
+            return False
+        factor, remainder = divmod(candidate_count, reference_count)
+        if remainder or factor < 1:
+            return False
+        duplicate_factors.add(factor)
+    return len(duplicate_factors) == 1
+
+
+def _relationship_object_number_mean_values_equivalent(
+    feature: RuntimeMeasurementFeatureKey,
+) -> bool:
+    """Treat child ObjectNumber means as identifier aggregates, not measurements."""
+    return (
+        feature.subject.scope is MeasurementScope.OBJECT
+        and feature.statistic == MeasurementStatistic.VALUE.value
+        and feature.feature_name.startswith("mean_")
+        and feature.feature_name.endswith("_object_number")
+    )
+
+
+def _aggregate_mean_values_equivalent(
+    feature: RuntimeMeasurementFeatureKey,
+    reference: RuntimeMeasurementSnapshot,
+    candidate: RuntimeMeasurementSnapshot,
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    """Treat aggregate means as redundant when value-level facts already match."""
+    if feature.subject.scope is not MeasurementScope.OBJECT:
+        return False
+    if feature.statistic != MeasurementStatistic.MEAN.value:
+        return False
+    value_feature = RuntimeMeasurementFeatureKeyFactory(
+        feature.subject,
+        feature.feature_name,
+        MeasurementStatistic.VALUE.value,
+        source_name=feature.source_name,
+    ).key()
+    reference_values = reference.values_by_feature.get(value_feature)
+    candidate_values = candidate.values_by_feature.get(value_feature)
+    if reference_values is None or candidate_values is None:
+        return False
+    return (
+        _cell_signature_counters_equivalent(
+            reference_values,
+            candidate_values,
+            policy,
+        )
+        or _candidate_counter_is_duplicate_projection(
+            reference_values,
+            candidate_values,
+        )
+        or _relationship_object_projection_values_equivalent(
+            value_feature,
+            reference,
+            candidate,
+        )
+    )
 
 
 def _feature_numeric_tolerance_values_equivalent(
@@ -3797,6 +4115,9 @@ class RuntimeMeasurementFeatureSemantics:
         return any(
             feature_name.startswith(prefix)
             for prefix in tolerance.feature_name_prefixes
+        ) or any(
+            feature_name.endswith(suffix)
+            for suffix in tolerance.feature_name_suffixes
         )
 
     def unstable_shape_descriptor_values_equivalent(
@@ -4066,10 +4387,9 @@ class SparseObjectBoundaryEquivalence:
             return False
         if self.feature.subject.scope is not MeasurementScope.OBJECT:
             return False
-        try:
-            statistic = MeasurementStatistic(self.feature.statistic)
-        except ValueError:
+        if self.feature.statistic not in MeasurementStatistic._value2member_map_:
             return False
+        statistic = MeasurementStatistic(self.feature.statistic)
         return SparseObjectBoundaryStatisticEquivalence.for_enum_member(
             statistic
         ).values_equivalent(self)
@@ -5237,6 +5557,149 @@ def _dedupe_runtime_measurement_table_object_subtable(
     )
 
 
+def _aggregate_measurement_table_semantic_key(
+    table: MeasurementTable,
+) -> RuntimeMeasurementTableIdentity | None:
+    if aggregate_measurement_table_key(table) is None:
+        return None
+    builder = RuntimeMeasurementRowFingerprintBuilder()
+    for row in iter_measurement_rows((table,)):
+        builder.add_row_mapping(
+            _runtime_aggregate_measurement_row_semantic_mapping(
+                measurement_row_mapping(row)
+            )
+        )
+    return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
+        table,
+        builder.finish(),
+    )
+
+
+def _dedupe_runtime_measurement_table_aggregate_rows(
+    table: MeasurementTable,
+) -> MeasurementTable:
+    if aggregate_measurement_table_key(table) is None:
+        return table
+    rows = tuple(iter_measurement_rows((table,)))
+    seen_rows: set[tuple[tuple[str, object], ...]] = set()
+    deduped_rows: list[object] = []
+    semantic_rows: list[tuple[tuple[str, object], ...]] = []
+    for row in rows:
+        row_mapping = measurement_row_mapping(row)
+        if RuntimeMeasurementRowMapping(row_mapping).has_object_identity():
+            deduped_rows.append(row)
+            continue
+        semantic_row = tuple(
+            sorted(
+                _runtime_aggregate_measurement_row_semantic_mapping(
+                    row_mapping,
+                    table=table,
+                    preserve_multi_value_axes=True,
+                ).items()
+            )
+        )
+        semantic_rows.append(semantic_row)
+        if semantic_row in seen_rows:
+            continue
+        seen_rows.add(semantic_row)
+        deduped_rows.append(row)
+    if len(set(semantic_rows)) <= 1:
+        return table
+    if len(deduped_rows) == len(rows):
+        return table
+    return MeasurementTable(
+        name=table.name,
+        rows=tuple(deduped_rows),
+        object_name=table.object_name,
+        fields=table.fields,
+        object_id_field=table.object_id_field,
+        source_image_name=table.source_image_name,
+        subject=table.subject,
+    )
+
+
+def _runtime_aggregate_measurement_row_semantic_mapping(
+    row_mapping: Mapping[str, object],
+    *,
+    table: MeasurementTable | None = None,
+    preserve_multi_value_axes: bool = False,
+) -> dict[str, object]:
+    excluded_fields = RuntimeAggregateMeasurementRowIdentityFields(
+        row_mapping,
+        table=table,
+        preserve_multi_value_axes=preserve_multi_value_axes,
+    ).transport_identity_fields()
+    return {
+        field_name: value
+        for field_name, value in row_mapping.items()
+        if _normalize_identifier(str(field_name)) not in excluded_fields
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAggregateMeasurementRowIdentityFields:
+    """Fields excluded from duplicate aggregate-table row identity."""
+
+    row_mapping: Mapping[str, object]
+    table: MeasurementTable | None = None
+    preserve_multi_value_axes: bool = False
+
+    def transport_identity_fields(self) -> frozenset[str]:
+        if self.is_long_form_measurement_row():
+            return frozenset()
+        if self.row_identity_role() is MeasurementObjectRowIdentity.ROW_SEQUENCE:
+            return self.row_sequence_transport_identity_fields()
+        if self.preserve_multi_value_axes and self.table is not None:
+            return self.table_transport_identity_fields()
+        return _RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
+
+    def table_transport_identity_fields(self) -> frozenset[str]:
+        row_axes = RuntimeAggregateMeasurementTableRowAxes(
+            self.table,
+            self.row_mapping,
+        ).multi_value_axis_fields()
+        return _RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS - row_axes
+
+    def is_long_form_measurement_row(self) -> bool:
+        return any(
+            field in self.row_mapping for field in MEASUREMENT_FEATURE_NAME_FIELDS
+        ) and any(
+            field in self.row_mapping for field in MEASUREMENT_VALUE_FIELDS
+        )
+
+    def row_identity_role(self) -> MeasurementObjectRowIdentity | None:
+        return _measurement_row_identity_role(self.row_mapping)
+
+    @staticmethod
+    def row_sequence_transport_identity_fields() -> frozenset[str]:
+        return {
+            field_name
+            for field_name in _RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
+            if field_name != MeasurementRowAxisField.SLICE_INDEX.value
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAggregateMeasurementTableRowAxes:
+    """Row-axis fields that identify distinct rows within one aggregate table."""
+
+    table: MeasurementTable
+    row_mapping: Mapping[str, object]
+
+    def multi_value_axis_fields(self) -> frozenset[str]:
+        if not RuntimeMeasurementRowMapping(self.row_mapping).has_object_identity():
+            return frozenset()
+        return frozenset(
+            axis.value
+            for axis in (
+                MeasurementRowAxisField.IMAGE_NUMBER,
+                MeasurementRowAxisField.SLICE_INDEX,
+            )
+            if axis.value in self.row_mapping
+            and len(measurement_table_axis_values(self.table, axis)) > 1
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeObjectLocationRowMergeContract(metaclass=AutoRegisterMeta):
     """SSOT for object-location value facts merged by runtime row identity."""
@@ -5401,6 +5864,10 @@ class RuntimePrimaryMeasurementRowIdentityRecorder:
         if self.primary_row_identities is None:
             return
         if self.subject.scope is not MeasurementScope.OBJECT:
+            return
+        if _measurement_row_identity_role(
+            self.row_mapping
+        ) is MeasurementObjectRowIdentity.ROW_SEQUENCE:
             return
         if not self.row_has_primary_object_features():
             return
@@ -5596,10 +6063,14 @@ def _measurement_category_priority(
     prefix: tuple[str, ...],
     dialect: RuntimeMeasurementDialect,
 ) -> int | None:
-    try:
-        return dialect.category_prefixes.index(prefix)
-    except ValueError:
-        return None
+    return next(
+        (
+            index
+            for index, category_prefix in enumerate(dialect.category_prefixes)
+            if category_prefix == prefix
+        ),
+        None,
+    )
 
 
 def _record_runtime_aggregate_mean_facts(
@@ -6858,6 +7329,19 @@ def _runtime_value_is_mapping(value: object) -> bool:
     return _runtime_value_type_is_mapping(type(value))
 
 
+_RUNTIME_NUMERIC_TEXT_RE = re.compile(
+    r"^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|inf(?:inity)?|nan)$",
+    re.IGNORECASE,
+)
+
+
+def _runtime_numeric_text_value(text: str) -> float | None:
+    stripped = text.strip()
+    if not stripped or _RUNTIME_NUMERIC_TEXT_RE.fullmatch(stripped) is None:
+        return None
+    return float(stripped)
+
+
 @lru_cache(maxsize=131072)
 def _cached_runtime_cell_signature(
     text: str,
@@ -6866,9 +7350,8 @@ def _cached_runtime_cell_signature(
     stripped = text.strip()
     if not stripped:
         return RuntimeCellSignature(RuntimeCellValueKind.EMPTY, "")
-    try:
-        numeric = float(stripped)
-    except ValueError:
+    numeric = _runtime_numeric_text_value(stripped)
+    if numeric is None:
         return RuntimeCellSignature(RuntimeCellValueKind.TEXT, stripped)
     if math.isnan(numeric):
         canonical = "nan"
@@ -7269,6 +7752,10 @@ class RuntimeObjectLabelMeasurementFactProjector:
             return ()
         label_array = RuntimeObjectLabelArray(self.context.labels).array()
         if label_array is None:
+            return ()
+        if not ObjectIdentifierDomainSemantics(
+            self.context
+        ).exports_identifier_domains():
             return ()
 
         object_number_domains = ObjectIdentifierDomainProjectionStrategy.for_context(
@@ -7827,6 +8314,7 @@ def _object_label_location_values_by_label(
         return {}
     context = _ObjectLabelMeasurementContext(
         labels=labels,
+        label_value=labels if isinstance(labels, ObjectLabelValue) else None,
         object_name=subject.name,
         policy=policy,
         values_by_feature={},
@@ -8583,12 +9071,8 @@ def _measurement_numeric_runtime_value(
     value: object,
     policy: RuntimeEquivalencePolicy,
 ) -> float | None:
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        numeric_value = float(text)
-    except ValueError:
+    numeric_value = _runtime_numeric_text_value(str(value))
+    if numeric_value is None:
         return None
     if math.isnan(numeric_value):
         return None

@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
-from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator, python_literal
+from openhcs.interop.cellprofiler.pipeline_generator import (
+    PipelineGenerator,
+    python_literal,
+    source_binding_variable_component_literals,
+)
 from openhcs.interop.cellprofiler.runtime_pipeline import partition_cppipe_modules
 from openhcs.interop.cellprofiler.overlay_outlines_settings import overlay_outlines_bound_kwargs
 from openhcs.interop.cellprofiler.symbol_table import (
@@ -13,6 +17,11 @@ from openhcs.interop.cellprofiler.symbol_table import (
 from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+from openhcs.core.source_bindings import (
+    MetadataExtractionRule,
+    MetadataSource,
+    StepSourceBindingsConfig,
+)
 from benchmark.cellprofiler_library.functions.rescaleintensity import RescaleMethod
 
 
@@ -35,6 +44,22 @@ def _module_with_records(
         module_num=module_num,
         settings={setting.name: setting.value for setting in records},
         setting_records=records,
+    )
+
+
+def test_source_binding_variable_components_derive_timepoint_from_metadata() -> None:
+    source_bindings = StepSourceBindingsConfig(
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r"^(?P<Specimen>.*)_(?P<Stain>.*)_(?P<FrameNumber>[0-9]*)",
+            ),
+        )
+    )
+
+    assert source_binding_variable_component_literals(source_bindings) == (
+        "VariableComponents.SITE",
+        "VariableComponents.TIMEPOINT",
     )
 
 

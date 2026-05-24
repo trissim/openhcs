@@ -11,14 +11,12 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.image_shapes import (
-    is_color_image_slice,
-    is_color_image_stack,
-    is_color_volume_slice,
-    is_color_volume_stack,
-    is_grayscale_image_slice,
-    is_grayscale_image_stack,
-    is_grayscale_volume_slice,
-    is_grayscale_volume_stack,
+    ChannelFirstVolumeShapeRole,
+    ColorImageShapeRole,
+    ColorVolumeShapeRole,
+    GrayscaleImageShapeRole,
+    GrayscaleVolumeShapeRole,
+    ImageShapeRole,
 )
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
@@ -90,28 +88,20 @@ class MemoryConversionSource(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class ImageStackLayoutDeclaration:
-    """Typed declaration for generated metadata-only stack-layout classes."""
+class NumpySliceConversion:
+    """Nominal authority for converting one image-like slice to numpy."""
 
-    class_name: str
-    docstring: str
-    layout_key: str
-    slice_predicate: Callable[[Any], bool]
-    stack_predicate: Callable[[Any], bool]
-    stable_slice_shape_error: str | None = None
+    slice_data: Any
+    gpu_id: int
 
-    def materialize(self) -> type["ImageStackLayout"]:
-        return type(
-            self.class_name,
-            (ImageStackLayout,),
-            {
-                "__doc__": self.docstring,
-                "layout_key": self.layout_key,
-                "slice_predicate": staticmethod(self.slice_predicate),
-                "stack_predicate": staticmethod(self.stack_predicate),
-                "stable_slice_shape_error": self.stable_slice_shape_error,
-            },
-        )
+    def array(self) -> np.ndarray:
+        from openhcs.core.runtime_values import runtime_array_operand
+
+        return MemoryConversionSource.DETECTED.conversion(
+            runtime_array_operand(self.slice_data),
+            target_type=MEMORY_TYPE_NUMPY,
+            gpu_id=self.gpu_id,
+        ).materialize()
 
 
 class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
@@ -120,9 +110,16 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "layout_key"
     __skip_if_no_key__ = True
     layout_key: ClassVar[str | None] = None
-    slice_predicate: ClassVar[Callable[[Any], bool]]
-    stack_predicate: ClassVar[Callable[[Any], bool]]
+    shape_role: ClassVar[type[ImageShapeRole]]
     stable_slice_shape_error: ClassVar[str | None] = None
+
+    @classmethod
+    def slice_predicate(cls, value: Any) -> bool:
+        return cls.shape_role.matches_slice(value)
+
+    @classmethod
+    def stack_predicate(cls, value: Any) -> bool:
+        return cls.shape_role.matches_stack(value)
 
     @classmethod
     def for_slices(cls, slices: Sequence[Any]) -> "ImageStackLayout":
@@ -134,7 +131,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
             failure_message=(
                 "OpenHCS image stacks require all loaded slices to be either 2D "
                 "grayscale images, ZYX grayscale volumes, HWC color images, "
-                "or ZYXC color volumes; "
+                "ZYXC color volumes, or CZYX channel-first volumes; "
                 "got shapes "
                 f"{[getattr(slice_data, 'shape', None) for slice_data in slices]!r}."
             ),
@@ -146,7 +143,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
             matches=lambda layout_type: layout_type.stack_predicate(array),
             failure_message=(
                 "OpenHCS image stack must be shaped (N, H, W), (N, Z, H, W), "
-                "(N, H, W, C), or (N, Z, H, W, C), "
+                "(N, H, W, C), (N, Z, H, W, C), or (N, C, Z, H, W), "
                 f"got {getattr(array, 'shape', 'unknown')}."
             ),
         ).select()
@@ -200,6 +197,23 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         )
 
     @classmethod
+    def unstack_with_layout_source(
+        cls,
+        array: Any,
+        *,
+        memory_type: str,
+        gpu_id: int,
+        layout_source: Any | None = None,
+    ) -> tuple[Any, ...]:
+        """Unstack an array using an optional separate value for layout selection."""
+        layout_value = array if layout_source is None else layout_source
+        return cls.for_stack(layout_value).unstack(
+            array=array,
+            memory_type=memory_type,
+            gpu_id=gpu_id,
+        )
+
+    @classmethod
     def stack_function_result_for_input_stack(
         cls,
         result: Any,
@@ -235,11 +249,24 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     def _is_unambiguous_single_stack(cls, candidate: Any) -> bool:
         """Return True when one candidate is a stack and not also a valid slice."""
         return any(
-            layout_type.stack_predicate(candidate)
+            layout_type.accepts_single_candidate_stack(candidate)
             for layout_type in cls.__registry__.values()
-        ) and not any(
+        )
+
+    @classmethod
+    def accepts_single_candidate_stack(cls, candidate: Any) -> bool:
+        """Return True when this layout can own a lone candidate as a stack."""
+        return cls.stack_predicate(candidate) and not any(
             layout_type.slice_predicate(candidate)
-            for layout_type in cls.__registry__.values()
+            for layout_type in ImageStackLayout.__registry__.values()
+        )
+
+    @classmethod
+    def is_unambiguous_stack(cls, candidate: Any) -> bool:
+        """Return whether a value carries an explicit OpenHCS outer stack axis."""
+        return any(
+            layout_type.accepts_single_candidate_stack(candidate)
+            for layout_type in ImageStackLayout.__registry__.values()
         )
 
     def stack(
@@ -271,7 +298,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     ) -> Any:
         """Stack slices that must all share the same native numpy shape."""
         numpy_slices = [
-            _as_numpy_slice(slice_data, gpu_id)
+            NumpySliceConversion(slice_data, gpu_id).array()
             for slice_data in slices
         ]
         slice_shapes = {tuple(slice_data.shape) for slice_data in numpy_slices}
@@ -300,20 +327,30 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         gpu_id: int,
     ) -> list[Any]:
         """Split an OpenHCS main-flow payload into per-file image slices."""
-        array = MemoryConversionSource.DETECTED.conversion(
-            array,
+        from openhcs.core.runtime_values import (
+            RuntimeArrayPayload,
+            image_payload_slice_context,
+            runtime_array_operand,
+        )
+
+        array_data = MemoryConversionSource.DETECTED.conversion(
+            runtime_array_operand(array),
             target_type=memory_type,
             gpu_id=gpu_id,
         ).materialize()
-        return [array[index] for index in range(array.shape[0])]
+        if isinstance(array, RuntimeArrayPayload):
+            return [
+                image_payload_slice_context(array, array_data[index], index)
+                for index in range(array_data.shape[0])
+            ]
+        return [array_data[index] for index in range(array_data.shape[0])]
 
 
 class GrayscaleImageStackLayout(ImageStackLayout):
     """OpenHCS grayscale stacks shaped (N, H, W)."""
 
     layout_key = "grayscale"
-    slice_predicate = staticmethod(is_grayscale_image_slice)
-    stack_predicate = staticmethod(is_grayscale_image_stack)
+    shape_role = GrayscaleImageShapeRole
 
     def unstack(
         self,
@@ -330,39 +367,39 @@ class GrayscaleImageStackLayout(ImageStackLayout):
         )
 
 
-ColorImageStackLayout = ImageStackLayoutDeclaration(
-    class_name="ColorImageStackLayout",
-    docstring="OpenHCS color stacks shaped (N, H, W, C).",
-    layout_key="color",
-    slice_predicate=is_color_image_slice,
-    stack_predicate=is_color_image_stack,
-    stable_slice_shape_error="OpenHCS color image stacks require stable HWC shape",
-).materialize()
+class ColorImageStackLayout(ImageStackLayout):
+    """OpenHCS color stacks shaped (N, H, W, C)."""
+
+    layout_key = "color"
+    shape_role = ColorImageShapeRole
+    stable_slice_shape_error = "OpenHCS color image stacks require stable HWC shape"
 
 
-GrayscaleVolumeStackLayout = ImageStackLayoutDeclaration(
-    class_name="GrayscaleVolumeStackLayout",
-    docstring="OpenHCS grayscale volume stacks shaped (N, Z, H, W).",
-    layout_key="grayscale_volume",
-    slice_predicate=is_grayscale_volume_slice,
-    stack_predicate=is_grayscale_volume_stack,
-    stable_slice_shape_error="OpenHCS grayscale volume stacks require stable ZYX shape",
-).materialize()
+class GrayscaleVolumeStackLayout(ImageStackLayout):
+    """OpenHCS grayscale volume stacks shaped (N, Z, H, W)."""
+
+    layout_key = "grayscale_volume"
+    shape_role = GrayscaleVolumeShapeRole
+    stable_slice_shape_error = "OpenHCS grayscale volume stacks require stable ZYX shape"
+
+    @classmethod
+    def accepts_single_candidate_stack(cls, candidate: Any) -> bool:
+        return cls.stack_predicate(candidate)
 
 
-ColorVolumeStackLayout = ImageStackLayoutDeclaration(
-    class_name="ColorVolumeStackLayout",
-    docstring="OpenHCS color volume stacks shaped (N, Z, H, W, C).",
-    layout_key="color_volume",
-    slice_predicate=is_color_volume_slice,
-    stack_predicate=is_color_volume_stack,
-    stable_slice_shape_error="OpenHCS color volume stacks require stable ZYXC shape",
-).materialize()
+class ColorVolumeStackLayout(ImageStackLayout):
+    """OpenHCS color volume stacks shaped (N, Z, H, W, C)."""
+
+    layout_key = "color_volume"
+    shape_role = ColorVolumeShapeRole
+    stable_slice_shape_error = "OpenHCS color volume stacks require stable ZYXC shape"
 
 
-def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
-    return MemoryConversionSource.DETECTED.conversion(
-        slice_data,
-        target_type=MEMORY_TYPE_NUMPY,
-        gpu_id=gpu_id,
-    ).materialize()
+class ChannelFirstVolumeStackLayout(ImageStackLayout):
+    """OpenHCS channel-first volume stacks shaped (N, C, Z, H, W)."""
+
+    layout_key = "channel_first_volume"
+    shape_role = ChannelFirstVolumeShapeRole
+    stable_slice_shape_error = (
+        "OpenHCS channel-first volume stacks require stable CZYX shape"
+    )

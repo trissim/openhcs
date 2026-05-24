@@ -20,7 +20,7 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     GeneratedPipelineSemanticContractsModule,
     materialize_generated_pipeline_import_module,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.constants import Backend
 from openhcs.core.callable_contract import CallableContract
@@ -83,6 +83,8 @@ FILTER_OBJECTS = "FilterObjects"
 FILTERED_NUCLEI = "FilteredNuclei"
 FILTERED_CELLS = "FilteredCells"
 UNTANGLE_WORMS = "UntangleWorms"
+GENERATED_RUNTIME_SMOKE_PIPELINE_NAME = "cellprofiler_generated_runtime_smoke"
+GENERATED_RUNTIME_SMOKE_CPIPE = Path(f"{GENERATED_RUNTIME_SMOKE_PIPELINE_NAME}.cppipe")
 
 
 def _object_labels(record):
@@ -140,6 +142,19 @@ def _module(module_num: int, name: str, settings: dict[str, str]) -> ModuleBlock
     return ModuleBlock(name=name, module_num=module_num, settings=settings)
 
 
+def _module_with_records(
+    module_num: int,
+    name: str,
+    records: list[tuple[str, str]],
+) -> ModuleBlock:
+    return ModuleBlock(
+        name=name,
+        module_num=module_num,
+        settings=dict(records),
+        setting_records=[ModuleSetting(key, value) for key, value in records],
+    )
+
+
 def _module_from_cppipe(
     module_num: int,
     name: str,
@@ -161,8 +176,8 @@ def _generated_pipeline(
     materialize_terminal_images: bool = True,
 ) -> GeneratedPipeline:
     return PipelineGenerator().generate_from_registry(
-        pipeline_name="cellprofiler_generated_runtime_smoke",
-        source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
+        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
+        source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=modules,
         prune_dead_unmaterialized_artifact_steps=(
             prune_dead_unmaterialized_artifact_steps
@@ -390,6 +405,68 @@ def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
     assert measurement_step.processing_config.group_by is GroupBy.NONE
 
 
+def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
+    generated = _generated_pipeline(_filter_objects_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    filter_step = namespace["pipeline_steps"][2]
+
+    assert filter_step.name == FILTER_OBJECTS
+    assert filter_step.processing_config.variable_components == []
+    assert filter_step.processing_config.group_by is GroupBy.SITE
+
+
+def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
+    generated = _generated_pipeline(_relationship_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    relate_step = namespace["pipeline_steps"][2]
+
+    assert relate_step.name == RELATE_OBJECTS
+    assert relate_step.processing_config.variable_components == []
+    assert relate_step.processing_config.group_by is GroupBy.SITE
+
+
+def test_generator_scopes_grid_guided_object_outputs_per_image_set():
+    generated = _generated_pipeline(_grid_guided_object_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    identify_grid_step = namespace["pipeline_steps"][2]
+
+    assert identify_grid_step.name == "IdentifyObjectsInGrid"
+    assert identify_grid_step.processing_config.variable_components == []
+    assert identify_grid_step.processing_config.group_by is GroupBy.SITE
+
+
+def test_generator_scopes_multi_object_measurements_per_image_set():
+    generated = _generated_pipeline(_multi_object_area_occupied_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    area_occupied_step = namespace["pipeline_steps"][2]
+
+    assert area_occupied_step.name == "MeasureImageAreaOccupied"
+    assert area_occupied_step.processing_config.variable_components == []
+    assert area_occupied_step.processing_config.group_by is GroupBy.SITE
+
+
+def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
+    generated = _generated_pipeline(_multi_object_area_math_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    calculate_math_step = namespace["pipeline_steps"][3]
+
+    assert calculate_math_step.name == "CalculateMath"
+    assert calculate_math_step.processing_config.variable_components == []
+    assert calculate_math_step.processing_config.group_by is GroupBy.SITE
+
+
+def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measurements():
+    generated = _generated_pipeline(_filtered_object_measurement_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    measurement_step = namespace["pipeline_steps"][3]
+
+    assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
+    assert measurement_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert measurement_step.processing_config.group_by is GroupBy.NONE
+
+
 def test_generator_binds_canonical_morphology_alias_structuring_element():
     generated = _generated_pipeline(
         [
@@ -468,7 +545,7 @@ def test_generator_binds_untangle_worms_training_xml(tmp_path: Path):
     )
 
     generated = PipelineGenerator().generate_from_registry(
-        pipeline_name="cellprofiler_generated_runtime_smoke",
+        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
         source_cppipe=tmp_path / "worm.cppipe",
         modules=[
             _module_from_cppipe(
@@ -672,6 +749,116 @@ def _relationship_pipeline_modules() -> list[ModuleBlock]:
                 "Select the parent objects": CELLS,
                 "Select the child objects": NUCLEI,
             },
+        ),
+    ]
+
+
+def _grid_guided_object_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            "DefineGrid",
+            {
+                "Name the grid": "Grid",
+                "Number of rows": "8",
+                "Number of columns": "12",
+                "Select the method to define the grid": "Automatic",
+                "Select the previously identified objects": NUCLEI,
+                "Retain an image of the grid?": "No",
+                "Select the image on which to display the grid": SOURCE_IMAGE,
+            },
+        ),
+        _module(
+            3,
+            "IdentifyObjectsInGrid",
+            {
+                "Select the defined grid": "Grid",
+                "Name the objects to be identified": "GridObjects",
+                "Select object shapes and locations": "Natural Shape and Location",
+                "Specify the circle diameter automatically?": "Automatic",
+                "Circle diameter": "20",
+                "Select the guiding objects": NUCLEI,
+            },
+        ),
+    ]
+
+
+def _multi_object_area_occupied_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": CELLS,
+            },
+        ),
+        _module_with_records(
+            3,
+            "MeasureImageAreaOccupied",
+            [
+                (
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Objects",
+                ),
+                ("Select objects to measure", NUCLEI),
+                ("Retain a binary image of the object regions?", "No"),
+                ("Name the output binary image", "IgnoredNuclei"),
+                ("Select a binary image to measure", "None"),
+                (
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Objects",
+                ),
+                ("Select objects to measure", CELLS),
+                ("Retain a binary image of the object regions?", "No"),
+                ("Name the output binary image", "IgnoredCells"),
+                ("Select a binary image to measure", "None"),
+            ],
+        ),
+    ]
+
+
+def _multi_object_area_math_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        *_multi_object_area_occupied_pipeline_modules(),
+        _module(
+            4,
+            "CalculateMath",
+            {
+                "Name the output measurement": "NucleiCellAreaRatio",
+                "Operation": "Divide",
+                "Select the numerator measurement": "AreaOccupied_AreaOccupied_Nuclei",
+                "Select the denominator measurement": "AreaOccupied_AreaOccupied_Cells",
+                "Select the numerator objects": "None",
+                "Select the denominator objects": "None",
+            },
+        ),
+    ]
+
+
+def _filtered_object_measurement_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        *_filter_objects_pipeline_modules(),
+        _module(
+            4,
+            MEASURE_OBJECT_SIZE_SHAPE,
+            {"Select object sets to measure": FILTERED_NUCLEI},
         ),
     ]
 
@@ -940,8 +1127,8 @@ def test_generator_retains_observable_object_label_outputs_when_pruning():
 
 def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages():
     generated = PipelineGenerator().generate_from_registry(
-        pipeline_name="cellprofiler_generated_runtime_smoke",
-        source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
+        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
+        source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=_image_artifact_pipeline_modules(),
         skipped_modules=[
             _module(
@@ -972,8 +1159,8 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
 
 def test_generator_can_ignore_saveimages_artifacts_for_value_only_runs():
     generated = PipelineGenerator().generate_from_registry(
-        pipeline_name="cellprofiler_generated_runtime_smoke",
-        source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
+        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
+        source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=_image_artifact_pipeline_modules(),
         skipped_modules=[
             _module(

@@ -24,8 +24,8 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     image_payload_with_context,
 )
+from openhcs.core.measurement_image_alignment import ReplicatedChannelMonochromeProjection
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler.image_geometry import cellprofiler_grayscale_plane
 
 
 class OperationMethod(Enum):
@@ -52,6 +52,9 @@ class NeuriteMethod(Enum):
     TUBENESS = "Tubeness"
 
 
+STRATEGY_REGISTRY_KEY = "method_label"
+
+
 @numpy(contract=ProcessingContract.PURE_2D)
 def enhance_or_suppress_features(
     image: np.ndarray,
@@ -72,9 +75,9 @@ def enhance_or_suppress_features(
     enhance_method = coerce_cellprofiler_enum(EnhanceMethod, enhance_method)
     speckle_accuracy = coerce_cellprofiler_enum(SpeckleAccuracy, speckle_accuracy)
     neurite_method = coerce_cellprofiler_enum(NeuriteMethod, neurite_method)
-    image_data = cellprofiler_grayscale_plane(
+    image_data = ReplicatedChannelMonochromeProjection().plane(
         image_payload_data(image),
-        "enhancement image",
+        name="enhancement image",
     )
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
@@ -183,10 +186,10 @@ class FeatureOperationStrategy(
 ):
     """Top-level CP enhance/suppress operation semantics."""
 
-    __registry_key__ = "method_label"
+    __registry_key__ = STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "method"
-    __enum_label_attr__ = "method_label"
+    __enum_label_attr__ = STRATEGY_REGISTRY_KEY
     method: ClassVar[OperationMethod | None] = None
     method_label: ClassVar[str | None] = None
 
@@ -227,10 +230,10 @@ class FeatureEnhanceMethodStrategy(
 ):
     """CP feature enhancement method semantics."""
 
-    __registry_key__ = "method_label"
+    __registry_key__ = STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "method"
-    __enum_label_attr__ = "method_label"
+    __enum_label_attr__ = STRATEGY_REGISTRY_KEY
     method: ClassVar[EnhanceMethod | None] = None
     method_label: ClassVar[str | None] = None
 

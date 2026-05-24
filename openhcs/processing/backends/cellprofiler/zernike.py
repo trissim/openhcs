@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 import hashlib
 import logging
 import math
@@ -12,6 +13,7 @@ import os
 from pathlib import Path
 import pickle
 import time
+from types import MappingProxyType
 from typing import TypeAlias
 
 import numpy as np
@@ -20,9 +22,12 @@ from numba import njit
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.runtime_semantics import (
-    ObjectIntensityZernikeMeasurementRows,
-    ObjectMeasurementValueRow,
+    MeasurementObjectRowIdentity,
+    ObjectZernikeDescriptorFeature,
+    indexed_object_intensity_zernike_feature_name,
 )
+from openhcs.core.runtime_artifact_queries import MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD
+from openhcs.core.runtime_values import ColumnarRows
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -33,6 +38,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
+)
+from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
+    ObjectMeasurementColumnarRows,
 )
 
 _INTENSITY_DEBUG_TRACE_DIR_ENV = "OPENHCS_ZERNIKE_INTENSITY_DEBUG_TRACE_DIR"
@@ -157,15 +165,25 @@ class IntensityZernikeMeasurementRowsRequest:
     labels: np.ndarray
     max_order: int
     include_phase: bool
+    object_ids: Sequence[int] | None = None
+    slice_index: int | None = None
+    row_identity: MeasurementObjectRowIdentity | None = None
     backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 
-    def rows(self) -> list[ObjectMeasurementValueRow]:
+    def rows(self) -> ColumnarRows:
         labels_array = np.asarray(self.labels, dtype=np.int32)
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        if object_count <= 0:
-            return []
+        object_ids = (
+            np.asarray(tuple(int(object_id) for object_id in self.object_ids), dtype=np.int32)
+            if self.object_ids is not None
+            else np.arange(
+                1,
+                (int(labels_array.max()) if labels_array.size else 0) + 1,
+                dtype=np.int32,
+            )
+        )
+        if object_ids.size <= 0:
+            return ObjectIntensityZernikeMeasurementColumnarRows.empty()
 
-        object_ids = np.arange(1, object_count + 1, dtype=np.int32)
         zernike_indexes, magnitudes, phases = intensity_zernike_moments(
             self.image,
             labels_array,
@@ -173,13 +191,119 @@ class IntensityZernikeMeasurementRowsRequest:
             max_order=int(self.max_order),
             backend_provider=self.backend_provider,
         )
-        return ObjectIntensityZernikeMeasurementRows(
+        return ObjectIntensityZernikeMeasurementColumnarRows(
             object_ids=object_ids,
             zernike_indexes=zernike_indexes,
             magnitudes=magnitudes,
             phases=phases,
             include_phase=self.include_phase,
-        ).rows()
+            slice_index=self.slice_index,
+            row_identity=self.row_identity,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerZernikePhaseExportValues:
+    """CellProfiler export values for undefined intensity-Zernike phases."""
+
+    phases: object
+
+    def as_array(self) -> np.ndarray:
+        return np.nan_to_num(
+            np.asarray(self.phases, dtype=np.float64),
+            nan=0.0,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityZernikeMeasurementColumnarRows(ObjectMeasurementColumnarRows):
+    """Columnar intensity-Zernike measurement rows."""
+
+    object_ids: Sequence[int]
+    zernike_indexes: Sequence[tuple[int, int]]
+    magnitudes: object
+    phases: object
+    include_phase: bool
+    slice_index: int | None = None
+    row_identity: MeasurementObjectRowIdentity | None = None
+    _columns: Mapping[str, Sequence[object]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    @classmethod
+    def empty(cls) -> "ObjectIntensityZernikeMeasurementColumnarRows":
+        return cls(
+            object_ids=(),
+            zernike_indexes=(),
+            magnitudes=np.zeros((0, 0), dtype=np.float64),
+            phases=np.zeros((0, 0), dtype=np.float64),
+            include_phase=False,
+        )
+
+    def __post_init__(self) -> None:
+        object_ids = np.asarray(self.object_ids, dtype=np.int32)
+        zernike_indexes = tuple((int(n), int(m)) for n, m in self.zernike_indexes)
+        if object_ids.size == 0 or len(zernike_indexes) == 0:
+            object.__setattr__(self, "_columns", MappingProxyType({}))
+            return
+
+        magnitude_values = np.asarray(self.magnitudes, dtype=np.float64)
+        phase_values = CellProfilerZernikePhaseExportValues(self.phases).as_array()
+        descriptor_count = 2 if self.include_phase else 1
+        row_count = int(object_ids.size) * len(zernike_indexes) * descriptor_count
+        object_labels = np.empty(row_count, dtype=np.int32)
+        feature_names = np.empty(row_count, dtype=object)
+        result_values = np.empty(row_count, dtype=np.float64)
+
+        row_index = 0
+        for index, (degree, repetition) in enumerate(zernike_indexes):
+            magnitude_feature = indexed_object_intensity_zernike_feature_name(
+                ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
+                degree=degree,
+                repetition=repetition,
+            )
+            next_row_index = row_index + int(object_ids.size)
+            object_labels[row_index:next_row_index] = object_ids
+            feature_names[row_index:next_row_index] = magnitude_feature
+            result_values[row_index:next_row_index] = magnitude_values[:, index]
+            row_index = next_row_index
+            if self.include_phase:
+                phase_feature = indexed_object_intensity_zernike_feature_name(
+                    ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+                    degree=degree,
+                    repetition=repetition,
+                )
+                next_row_index = row_index + int(object_ids.size)
+                object_labels[row_index:next_row_index] = object_ids
+                feature_names[row_index:next_row_index] = phase_feature
+                result_values[row_index:next_row_index] = phase_values[:, index]
+                row_index = next_row_index
+
+        columns: dict[str, Sequence[object]] = {
+            "object_label": object_labels,
+            "feature_name": feature_names,
+            "result_value": result_values,
+        }
+        if self.slice_index is not None:
+            columns["slice_index"] = np.full(
+                row_count,
+                int(self.slice_index),
+                dtype=np.int32,
+            )
+        if self.row_identity is not None:
+            columns[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = np.full(
+                row_count,
+                self.row_identity.value,
+                dtype=object,
+            )
+        object.__setattr__(self, "_columns", MappingProxyType(columns))
+
+    @property
+    def columns(self) -> Mapping[str, Sequence[object]]:
+        return self._columns
+
 
 
 _ZERNIKE_LABEL_GEOMETRY_CACHE: OrderedDict[
@@ -290,15 +414,27 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         y_coords, x_coords = np.nonzero(labels_array > 0)
         if y_coords.size:
             label_values = labels_array[y_coords, x_coords]
+            label_to_row = np.zeros(int(labels_array.max(initial=0)) + 1, dtype=np.int32)
+            valid_object_ids = object_ids[
+                (object_ids > 0) & (object_ids < label_to_row.size)
+            ]
+            label_to_row[valid_object_ids] = np.arange(
+                1,
+                valid_object_ids.size + 1,
+                dtype=np.int32,
+            )
+            label_rows = label_to_row[label_values]
             valid = (
-                (label_values > 0)
-                & (label_values <= object_ids.size)
-                & np.isfinite(radii[label_values - 1])
-                & (radii[label_values - 1] > 0)
+                (label_rows > 0)
+                & np.isfinite(radii[label_rows - 1])
+                & (radii[label_rows - 1] > 0)
             )
             y_coords = y_coords[valid]
             x_coords = x_coords[valid]
             label_values = label_values[valid]
+            label_rows = label_rows[valid]
+        else:
+            label_rows = np.zeros(0, dtype=np.int32)
 
         if not y_coords.size:
             return (
@@ -307,7 +443,7 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
                 np.full((object_ids.size, len(zernike_numbers)), np.nan),
             )
 
-        label_indexes = label_values - 1
+        label_indexes = label_rows - 1
         yx = (
             np.column_stack((y_coords, x_coords)).astype(np.float64)
             - centers[label_indexes]
@@ -341,7 +477,6 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
                     np.sqrt(real_sum * real_sum + imag_sum * imag_sum) / areas
                 )
             phases[:, zernike_index] = np.arctan2(real_sum, imag_sum)
-
         ZernikeIntensityDebugTrace.from_intensity_measurement(
             backend_provider=self.backend_provider,
             image=image_array,
@@ -603,7 +738,6 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         y_coords = geometry.y_coords.astype(np.int64, copy=False)
         x_coords = geometry.x_coords.astype(np.int64, copy=False)
         label_values = geometry.label_values
-        raw_label_values = geometry.raw_label_values
         valid = (
             (label_values > 0)
             & (label_values <= measured_label_ids.size)
@@ -613,10 +747,6 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         y_coords = np.ascontiguousarray(y_coords[valid], dtype=np.int64)
         x_coords = np.ascontiguousarray(x_coords[valid], dtype=np.int64)
         label_values = np.ascontiguousarray(label_values[valid], dtype=np.int32)
-        raw_label_values = np.ascontiguousarray(
-            raw_label_values[valid],
-            dtype=np.int32,
-        )
         if y_coords.size == 0:
             return (
                 zernike_numbers,
@@ -640,7 +770,6 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         magnitudes, phases = _score_intensity_zernike_moments_direct_numba(
             np.ascontiguousarray(image_array, dtype=np.float64),
             label_values,
-            raw_label_values,
             y_coords,
             x_coords,
             score_context,
@@ -662,7 +791,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             centers=centers,
             radii=radii,
             areas=np.bincount(
-                raw_label_values,
+                label_values,
                 minlength=measured_label_ids.size + 1,
             )[1:].astype(np.float64),
             y_coords=y_coords,
@@ -896,7 +1025,6 @@ def _score_zernike_moments_direct_numba(
 def _score_intensity_zernike_moments_direct_numba(
     image: np.ndarray,
     label_values: np.ndarray,
-    raw_label_values: np.ndarray,
     y_coords: np.ndarray,
     x_coords: np.ndarray,
     score_context: tuple,
@@ -922,16 +1050,12 @@ def _score_intensity_zernike_moments_direct_numba(
         object_index = label_values[pixel_index] - 1
         if object_index < 0 or object_index >= object_count:
             continue
-        raw_label_value = raw_label_values[pixel_index]
-        raw_object_index = raw_label_value - 1
-        if raw_object_index < 0 or raw_object_index >= object_count:
-            continue
         radius = radii[object_index]
         if not np.isfinite(radius) or radius <= 0.0:
             continue
         y = y_coords[pixel_index]
         x = x_coords[pixel_index]
-        areas[raw_object_index] += 1.0
+        areas[object_index] += 1.0
         normalized_y = (y - centers[object_index, 0]) / radius
         normalized_x = (x - centers[object_index, 1]) / radius
         if _prepare_zernike_pixel_basis_numba(
@@ -943,7 +1067,7 @@ def _score_intensity_zernike_moments_direct_numba(
             sin_by_m,
         ):
             _accumulate_zernike_projection_numba(
-                raw_object_index,
+                object_index,
                 image[y, x],
                 zernike_numbers,
                 coefficients,

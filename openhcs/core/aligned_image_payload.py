@@ -22,10 +22,9 @@ from openhcs.core.image_shapes import (
     is_grayscale_volume_stack,
     is_image_stack,
 )
-from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.image_stack_layout import ImageStackLayout, NumpySliceConversion
 from openhcs.core.memory import MEMORY_TYPE_NUMPY, convert_memory, detect_memory_type
 from openhcs.core.registry_strategies import (
-    GeneratedLeafClassSpec,
     NominalTypeKeyedStrategyMixin,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
@@ -42,6 +41,8 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
+    ObjectLabelValue,
+    RuntimeSliceStackRequest,
     compose_image_payload_metadata,
     image_payload_metadata,
     image_payload_data,
@@ -137,9 +138,9 @@ class NumPyImagePayloadSourceSpatialDomainAdapter(ImagePayloadSourceSpatialDomai
 class ObjectLabelPayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
     """Source-domain adapter for object-label payload values."""
 
-    value_type = (ObjectLabelPayload, ObjectLabelSet)
+    value_type = ObjectLabelValue
     value_type_label = "object_label_payload"
-    value: ObjectLabelPayload | ObjectLabelSet
+    value: ObjectLabelValue
     source_shape_override_yx: tuple[int, int] | None = None
 
     @classmethod
@@ -149,7 +150,7 @@ class ObjectLabelPayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
         *,
         source_shape_override_yx: tuple[int, int] | None = None,
     ) -> "ObjectLabelPayloadSourceSpatialDomainAdapter | None":
-        if not isinstance(value, (ObjectLabelPayload, ObjectLabelSet)):
+        if not isinstance(value, ObjectLabelValue):
             return None
         return cls(value, source_shape_override_yx=source_shape_override_yx)
 
@@ -442,25 +443,20 @@ class SourceSpatialAlignedKwargResolutionStrategy(
         return reference_domain.extract_source_array(resolved)
 
 
-for _source_spatial_aligned_kwarg_strategy in (
-    GeneratedLeafClassSpec(
-        "ImageMetadataPayloadAlignedKwargResolutionStrategy",
-        SourceSpatialAlignedKwargResolutionStrategy,
-        attributes={
-            "__doc__": "Resolve image payloads through their source-spatial metadata.",
-            "value_type": ImageMetadataPayload,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "MaskedImagePayloadAlignedKwargResolutionStrategy",
-        SourceSpatialAlignedKwargResolutionStrategy,
-        attributes={
-            "__doc__": "Resolve masked image payloads through their source-spatial metadata.",
-            "value_type": MaskedImagePayload,
-        },
-    ),
+class ImageMetadataPayloadAlignedKwargResolutionStrategy(
+    SourceSpatialAlignedKwargResolutionStrategy
 ):
-    _source_spatial_aligned_kwarg_strategy.declare_in(globals())
+    """Resolve image payloads through their source-spatial metadata."""
+
+    value_type = ImageMetadataPayload
+
+
+class MaskedImagePayloadAlignedKwargResolutionStrategy(
+    SourceSpatialAlignedKwargResolutionStrategy
+):
+    """Resolve masked image payloads through their source-spatial metadata."""
+
+    value_type = MaskedImagePayload
 
 
 class ObjectLabelAlignedKwargResolutionStrategy(
@@ -493,32 +489,44 @@ class ObjectLabelAlignedKwargResolutionStrategy(
             slice_count=resolver.slice_count,
         ):
             labels = np.asarray(ObjectLabelDenseDataStrategy.for_payload(value).data(value))
-            return ObjectLabelMeasurementPayloadStrategy.for_source(value).with_labels(
+            if isinstance(value, ObjectLabelPayload):
+                return ObjectLabelPayload.from_domain_metadata(
+                    value,
+                    labels=labels[resolver.slice_index],
+                    unedited_labels=(
+                        None
+                        if value.unedited_labels is None
+                        else np.asarray(value.unedited_labels)[resolver.slice_index]
+                    ),
+                    small_removed_labels=(
+                        None
+                        if value.small_removed_labels is None
+                        else np.asarray(value.small_removed_labels)[resolver.slice_index]
+                    ),
+                    plane_axis=value.plane_axis,
+                )
+            return ObjectLabelMeasurementPayloadStrategy.for_source(
+                value
+            ).with_projected_plane(
                 value,
                 labels[resolver.slice_index],
+                resolver.slice_index,
             )
         return super().resolve(value, resolver)
 
 
-for _object_label_aligned_kwarg_strategy in (
-    GeneratedLeafClassSpec(
-        "ObjectLabelPayloadAlignedKwargResolutionStrategy",
-        ObjectLabelAlignedKwargResolutionStrategy,
-        attributes={
-            "__doc__": "Resolve object-label payloads through declared label-domain semantics.",
-            "value_type": ObjectLabelPayload,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "ObjectLabelSetAlignedKwargResolutionStrategy",
-        ObjectLabelAlignedKwargResolutionStrategy,
-        attributes={
-            "__doc__": "Resolve object-label sets through declared label-domain semantics.",
-            "value_type": ObjectLabelSet,
-        },
-    ),
+class ObjectLabelPayloadAlignedKwargResolutionStrategy(
+    ObjectLabelAlignedKwargResolutionStrategy
 ):
-    _object_label_aligned_kwarg_strategy.declare_in(globals())
+    """Resolve object-label payloads through declared label-domain semantics."""
+
+    value_type = ObjectLabelPayload
+
+
+class ObjectLabelSetAlignedKwargResolutionStrategy(ObjectLabelAlignedKwargResolutionStrategy):
+    """Resolve object-label sets through declared label-domain semantics."""
+
+    value_type = ObjectLabelSet
 
 
 class PayloadSliceAlignedKwargResolutionStrategy(
@@ -733,11 +741,7 @@ class ImageBundleSourceDomainAligner:
             ),
         ).materialize()
         mask = self.mask_in_source_domain(payload, metadata)
-        return image_payload_with_context(
-            data=data,
-            mask=mask,
-            metadata=source_metadata,
-        )
+        return source_metadata.payload_with(data, mask)
 
     def mask_in_source_domain(
         self,
@@ -798,10 +802,9 @@ class ImagePayloadBundleContext:
         composed = self.compose_unmasked(
             tuple(image_payload_data(payload) for payload in self.image_payloads)
         )
-        return image_payload_with_context(
+        return compose_image_payload_metadata(self.image_payloads).payload_with(
             composed,
-            mask=self.compose_mask(composed),
-            metadata=compose_image_payload_metadata(self.image_payloads),
+            self.compose_mask(composed),
         )
 
     def compose_mask(self, composed: Any) -> Any | None:
@@ -850,11 +853,10 @@ class ImagePayloadBundleContext:
         """Compose image payload arrays without mask/metadata wrapping."""
         memory_type = detect_memory_type(image_payloads[0])
         if _is_homogeneous_image_bundle(image_payloads):
-            return ImageStackLayout.for_slices(image_payloads).stack(
+            return RuntimeSliceStackRequest(
                 slices=image_payloads,
                 memory_type=memory_type,
-                gpu_id=0,
-            )
+            ).stack()
         return ImageBundleLayout.for_slices(image_payloads).stack(
             slices=image_payloads,
             memory_type=memory_type,
@@ -978,7 +980,7 @@ class MixedColorImageBundleLayout(ImageBundleLayout):
         gpu_id: int,
     ) -> Any:
         numpy_slices = tuple(
-            _as_numpy_slice(slice_data, gpu_id)
+            NumpySliceConversion(slice_data, gpu_id).array()
             for slice_data in slices
         )
         spatial_shapes = {tuple(slice_data.shape[:2]) for slice_data in numpy_slices}
@@ -1036,7 +1038,7 @@ def compose_aligned_image_payload(
     invalid_counts = tuple(
         count
         for count in slice_counts
-        if count not in {1, max_slice_count}
+        if not _slice_count_aligns_with_maximum(count, max_slice_count)
     )
     if invalid_counts:
         raise ValueError(
@@ -1086,7 +1088,7 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
             )
         ):
             mask = ImageArrayShapeSemantics(mask).collapse_pairwise_slice_grid()
-        payload = image_payload_with_context(data=data, mask=mask, metadata=metadata)
+        payload = metadata.payload_with(data, mask)
     if hasattr(data, "ndim") and data.ndim == 2:
         return (payload,)
     if is_color_image_slice(data):
@@ -1099,7 +1101,7 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
         return tuple(
             slice_projector.payload_for_slice(data_slice, index)
             for index, data_slice in enumerate(
-                ImageStackLayout.for_stack(data).unstack(
+                ImageStackLayout.unstack_with_layout_source(
                     array=data,
                     memory_type=memory_type,
                     gpu_id=0,
@@ -1138,7 +1140,12 @@ def aligned_payload_slice(
     """Return the payload slice for one aligned execution index."""
     if len(slices) == 1:
         return slices[0]
-    return slices[slice_index]
+    return slices[slice_index % len(slices)]
+
+
+def _slice_count_aligns_with_maximum(count: int, max_slice_count: int) -> bool:
+    """Return whether ``count`` can align to a shared runtime-slice axis."""
+    return count > 0 and max_slice_count % count == 0
 
 
 def aligned_image_stack_kwargs(
@@ -1167,7 +1174,7 @@ def _normalize_bundle_image_payload(payload: Any) -> Any:
     data = ImageArrayShapeSemantics(data).collapse_singleton_grayscale_plane_stack()
     if mask is not None:
         mask = ImageArrayShapeSemantics(mask).collapse_singleton_grayscale_plane_stack()
-    return image_payload_with_context(data=data, mask=mask, metadata=metadata)
+    return metadata.payload_with(data, mask)
 
 
 def payload_slice_count(payload: Any) -> int:
@@ -1186,19 +1193,6 @@ def _is_homogeneous_image_bundle(slices: Sequence[Any]) -> bool:
         all(is_grayscale_image_slice(slice_data) for slice_data in slices)
         or all(is_grayscale_volume_slice(slice_data) for slice_data in slices)
         or all(is_color_image_slice(slice_data) for slice_data in slices)
-    )
-
-
-def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
-    slice_data = image_payload_data(slice_data)
-    source_type = detect_memory_type(slice_data)
-    if source_type == MEMORY_TYPE_NUMPY:
-        return slice_data
-    return convert_memory(
-        data=slice_data,
-        source_type=source_type,
-        target_type=MEMORY_TYPE_NUMPY,
-        gpu_id=gpu_id,
     )
 
 

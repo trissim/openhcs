@@ -20,25 +20,31 @@ from openhcs.core.pipeline.function_contracts import (
     RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import RegisteredLeafClassSpec
 from openhcs.core.runtime_semantics import (
     DenseObjectLabelPairAligner,
     ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
+    ObjectLabelRepresentation,
     ParentChildRelationshipPayload,
+    RuntimePlaneAxis,
+    SourceSpatialDomainProjection,
     dense_object_label_plane_id_domains,
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
+    ObjectLabelValue,
+    SourceImageObjectLabelBuildRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     object_label_dense_array,
-    object_label_payload_from_source_image,
     object_label_payload_with_dense_labels,
+    object_label_value_with_dense_labels,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.image_geometry import (
@@ -616,15 +622,6 @@ class SecondaryObjectLabels:
     def object_count(self) -> int:
         return int(np.max(self.segmented)) if self.segmented.size else 0
 
-    def payload_for_image(self, image: object) -> ObjectLabelPayload:
-        return object_label_payload_from_source_image(
-            image,
-            self.segmented,
-            unedited_labels=self.unedited_segmented,
-            small_removed_labels=self.small_removed_segmented,
-            declared_object_count=self.object_count,
-        )
-
 
 class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
     """Threshold strategy for one closed CellProfiler threshold method."""
@@ -705,12 +702,12 @@ for threshold_calculator_declaration in THRESHOLD_CALCULATOR_DECLARATIONS:
 
 def _normalize_secondary_inputs(
     image: np.ndarray,
-    primary_labels: np.ndarray | ObjectLabelPayload,
+    primary_labels: ObjectLabelValue,
 ) -> SecondaryImageInputs:
     image = collapse_singleton_plane_stack(np.asarray(image))
-    if isinstance(primary_labels, ObjectLabelPayload):
+    if isinstance(primary_labels, (ObjectLabelPayload, ObjectLabelSet)):
         final_labels = collapse_singleton_plane_stack(
-            np.asarray(primary_labels.labels, dtype=np.int32)
+            object_label_dense_array(primary_labels, dtype=np.int32)
         )
         unedited_labels = np.asarray(
             primary_labels.labels_for_variant("unedited"),
@@ -1000,7 +997,7 @@ def _secondary_object_stats(
 @numpy
 def identify_secondary_objects(
     image: np.ndarray,
-    primary_labels: np.ndarray,
+    primary_labels: ObjectLabelValue,
     method: SecondaryMethod = SecondaryMethod.PROPAGATION,
     threshold_scope: CellProfilerThresholdScope = CellProfilerThresholdScope.GLOBAL,
     threshold_method: CellProfilerThresholdMethod = CellProfilerThresholdMethod.OTSU,
@@ -1177,7 +1174,18 @@ def identify_secondary_objects(
         method=method.value,
     )
 
-    return img.astype(np.float32), stats, relationships, object_labels.payload_for_image(image)
+    return (
+        img.astype(np.float32),
+        stats,
+        relationships,
+        SourceImageObjectLabelBuildRequest(
+            image=image,
+            labels=object_labels.segmented,
+            unedited_labels=object_labels.unedited_segmented,
+            small_removed_labels=object_labels.small_removed_segmented,
+            declared_object_count=object_labels.object_count,
+        ).payload(),
+    )
 
 
 @processing_prepare(identify_secondary_objects)
@@ -1225,11 +1233,14 @@ class TertiaryObjectLabelOutput:
 
     source: object
     labels: np.ndarray
+    source_plane_index: int | None = None
 
     def value(self) -> object:
         if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
             return self.labels
-        return object_label_payload_with_dense_labels(
+        if self.source_plane_index is not None:
+            return self.projected_dense_value()
+        return object_label_value_with_dense_labels(
             self.source,
             self.labels,
             domain_declaration=ExplicitObjectLabelDomainDeclaration(
@@ -1242,6 +1253,64 @@ class TertiaryObjectLabelOutput:
                 )
             ),
         )
+
+    def projected_dense_value(self) -> object:
+        """Return one derived local plane without inheriting sparse storage."""
+        domain = ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PAYLOAD,
+            declared_object_ids=self.projected_declared_ids(),
+        )
+        if isinstance(self.source, ObjectLabelPayload):
+            return ObjectLabelPayload(
+                labels=self.labels,
+                declared_object_count=domain.declared_object_count,
+                declared_object_ids=domain.declared_object_ids,
+                declared_object_id_domains=domain.declared_object_id_domains,
+                domain_scope=domain.scope,
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                spatial_origin_yx=self.source.spatial_origin_yx,
+                source_spatial_shape_yx=self.source.source_spatial_shape_yx,
+                source_path=self.source.source_path,
+                source_component_metadata=self.source.source_component_metadata,
+                channel_source_paths=self.source.channel_source_paths,
+                channel_source_component_metadata=self.source.channel_source_component_metadata,
+                source_image_names=self.projected_source_image_names(),
+            )
+        return ObjectLabelSet(
+            name=self.source.name,
+            labels=self.labels,
+            representation=ObjectLabelRepresentation.DENSE_LABELS,
+            declared_object_count=domain.declared_object_count,
+            declared_object_ids=domain.declared_object_ids,
+            declared_object_id_domains=domain.declared_object_id_domains,
+            domain_scope=domain.scope,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            spatial_origin_yx=self.source.spatial_origin_yx,
+            source_spatial_shape_yx=self.source.source_spatial_shape_yx,
+            source_path=self.source.source_path,
+            source_component_metadata=self.source.source_component_metadata,
+            channel_source_paths=self.source.channel_source_paths,
+            channel_source_component_metadata=self.source.channel_source_component_metadata,
+            source_image_names=self.projected_source_image_names(),
+            dimensions=self.source.dimensions,
+            source_image_name=self.source.source_image_name,
+        )
+
+    def projected_declared_ids(self) -> tuple[int, ...]:
+        """Return the material object-ID domain for this derived label plane."""
+        domains = dense_object_label_plane_id_domains(
+            self.labels,
+            domain_scope=ObjectLabelDomainScope.PAYLOAD,
+        )
+        return domains[0] if domains else ()
+
+    def projected_source_image_names(self) -> tuple[str, ...]:
+        """Return source-image provenance for the projected execution plane."""
+        if self.source_plane_index is None:
+            return self.source.source_image_names
+        if len(self.source.source_image_names) <= self.source_plane_index:
+            return self.source.source_image_names
+        return (self.source.source_image_names[self.source_plane_index],)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1271,17 +1340,19 @@ class TertiaryObjectInputs:
     secondary_source: object
     primary_array: np.ndarray
     secondary_array: np.ndarray
+    secondary_projection: SourceSpatialDomainProjection | None = None
 
     @classmethod
     def from_labels(
         cls,
-        primary_labels: np.ndarray | ObjectLabelPayload,
-        secondary_labels: np.ndarray | ObjectLabelPayload,
+        primary_labels: ObjectLabelValue,
+        secondary_labels: ObjectLabelValue,
     ) -> "TertiaryObjectInputs":
-        primary_array, secondary_array = DenseObjectLabelPairAligner(
+        alignment = DenseObjectLabelPairAligner(
             primary_labels,
             secondary_labels,
-        ).aligned()
+        ).alignment()
+        primary_array, secondary_array = alignment.first, alignment.second
         primary_array = np.asarray(primary_array, dtype=np.int32)
         secondary_array = np.asarray(secondary_array, dtype=np.int32)
         if primary_array.ndim == 3:
@@ -1298,7 +1369,14 @@ class TertiaryObjectInputs:
             secondary_source=secondary_labels,
             primary_array=primary_array,
             secondary_array=secondary_array,
+            secondary_projection=alignment.second_projection,
         )
+
+    def restore_secondary_labels(self, labels: np.ndarray) -> np.ndarray:
+        """Return derived labels in the secondary object's native XY domain."""
+        if self.secondary_projection is None:
+            return labels
+        return self.secondary_projection.restore(labels)
 
 
 class TertiaryObjectSegmentation:
@@ -1391,6 +1469,7 @@ def _identify_tertiary_objects_batch(
             TertiaryObjectLabelOutput(
                 kwargs["secondary_labels"],
                 output_tertiary_stack[slice_index],
+                source_plane_index=slice_index,
             ).value(),
         )
         for slice_index in range(slice_count)
@@ -1421,9 +1500,6 @@ def _tertiary_stack_numba(
     secondary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
     tertiary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
     tertiary_areas = np.zeros((slice_count, max_secondary + 1), dtype=np.int64)
-    first_y = np.full((slice_count, max_secondary + 1), -1, dtype=np.int64)
-    first_x = np.full((slice_count, max_secondary + 1), -1, dtype=np.int64)
-
     for z in range(slice_count):
         for y in range(height):
             for x in range(width):
@@ -1433,9 +1509,6 @@ def _tertiary_stack_numba(
                     primary_present[z, primary_label] = 1
                 if secondary_label > 0:
                     secondary_present[z, secondary_label] = 1
-                    if first_y[z, secondary_label] < 0:
-                        first_y[z, secondary_label] = y
-                        first_x[z, secondary_label] = x
 
                 keep_pixel = primary_label <= 0
                 if shrink_primary and primary_label > 0:
@@ -1452,17 +1525,6 @@ def _tertiary_stack_numba(
                     tertiary_stack[z, y, x] = secondary_label
                     tertiary_present[z, secondary_label] = 1
                     tertiary_areas[z, secondary_label] += 1
-
-    for z in range(slice_count):
-        for label in range(1, max_secondary + 1):
-            if secondary_present[z, label] == 0 or tertiary_present[z, label] != 0:
-                continue
-            y = first_y[z, label]
-            x = first_x[z, label]
-            if y >= 0:
-                tertiary_stack[z, y, x] = label
-                tertiary_present[z, label] = 1
-                tertiary_areas[z, label] += 1
 
     object_counts = np.zeros(slice_count, dtype=np.int64)
     mean_areas = np.zeros(slice_count, dtype=np.float64)
@@ -1487,8 +1549,8 @@ def _tertiary_stack_numba(
 @numpy
 def identify_tertiary_objects(
     image: np.ndarray,
-    primary_labels: np.ndarray | ObjectLabelPayload,
-    secondary_labels: np.ndarray | ObjectLabelPayload,
+    primary_labels: ObjectLabelValue,
+    secondary_labels: ObjectLabelValue,
     shrink_primary: bool = True,
     outline_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[
@@ -1507,8 +1569,9 @@ def identify_tertiary_objects(
         outline_backend_provider=outline_backend_provider,
     )
 
+    output_labels = inputs.restore_secondary_labels(tertiary_labels)
     tertiary_labels_out = (
-        np.expand_dims(tertiary_labels, axis=0) if image.ndim == 3 else tertiary_labels
+        np.expand_dims(output_labels, axis=0) if image.ndim == 3 else output_labels
     )
 
     return (
@@ -1520,7 +1583,10 @@ def identify_tertiary_objects(
             child_region_labels=inputs.secondary_array,
         ),
         segmentation.stats(inputs, tertiary_labels),
-        TertiaryObjectLabelOutput(inputs.secondary_source, tertiary_labels_out).value(),
+        TertiaryObjectLabelOutput(
+            inputs.secondary_source,
+            tertiary_labels_out,
+        ).value(),
     )
 
 
@@ -1548,37 +1614,37 @@ def _prepare_identify_tertiary_objects() -> None:
 pure_2d_batch_executor(_identify_tertiary_objects_batch)(identify_tertiary_objects)
 
 
-__all__ = [
-    "CentrosomeSecondaryPropagationBackendStrategy",
-    "DistanceMaskedSegmentationStrategy",
-    "DistanceOnlySegmentationStrategy",
-    "GradientWatershedSegmentationStrategy",
-    "ImageWatershedSegmentationStrategy",
-    "LabelPropagationResult",
-    "NumbaSecondaryDistanceTransformBackendStrategy",
-    "NumbaSecondaryPropagationBackendStrategy",
-    "NumpySecondaryDistanceTransformBackendStrategy",
-    "PropagationSegmentationStrategy",
-    "SecondaryDistanceTransformBackendStrategy",
-    "SecondaryImageInputs",
-    "SecondaryMethod",
-    "SecondaryObjectLabels",
-    "SecondaryObjectStats",
-    "SecondaryPropagationBackendStrategy",
-    "SecondarySegmentationRequest",
-    "SecondarySegmentationStrategy",
-    "SecondaryThresholdRequest",
-    "SecondaryThresholdResult",
-    "ThresholdCalculator",
-    "ThresholdCalculatorDeclaration",
-    "ThresholdMethod",
-    "TertiaryObjectInputs",
-    "TertiaryObjectLabelOutput",
-    "TertiaryObjectMeasurement",
-    "TertiaryObjectSegmentation",
-    "TertiaryObjectStats",
-    "THRESHOLD_CALCULATOR_DECLARATIONS",
-    "identify_secondary_objects",
-    "identify_tertiary_objects",
-    "secondary_propagation_backend",
-]
+__all__ = public_names_from_objects(
+    CentrosomeSecondaryPropagationBackendStrategy,
+    DistanceMaskedSegmentationStrategy,
+    DistanceOnlySegmentationStrategy,
+    GradientWatershedSegmentationStrategy,
+    ImageWatershedSegmentationStrategy,
+    LabelPropagationResult,
+    NumbaSecondaryDistanceTransformBackendStrategy,
+    NumbaSecondaryPropagationBackendStrategy,
+    NumpySecondaryDistanceTransformBackendStrategy,
+    PropagationSegmentationStrategy,
+    SecondaryDistanceTransformBackendStrategy,
+    SecondaryImageInputs,
+    SecondaryMethod,
+    SecondaryObjectLabels,
+    SecondaryObjectStats,
+    SecondaryPropagationBackendStrategy,
+    SecondarySegmentationRequest,
+    SecondarySegmentationStrategy,
+    SecondaryThresholdRequest,
+    SecondaryThresholdResult,
+    ThresholdCalculator,
+    ThresholdCalculatorDeclaration,
+    ThresholdMethod,
+    TertiaryObjectInputs,
+    TertiaryObjectLabelOutput,
+    TertiaryObjectMeasurement,
+    TertiaryObjectSegmentation,
+    TertiaryObjectStats,
+    identify_secondary_objects,
+    identify_tertiary_objects,
+    secondary_propagation_backend,
+    extra_names=("THRESHOLD_CALCULATOR_DECLARATIONS",),
+)

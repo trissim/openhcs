@@ -47,6 +47,12 @@ class ArtifactKind(str, Enum):
         obj.participates_in_axis_plane_identity = bool(
             (options or {}).get("participates_in_axis_plane_identity")
         )
+        obj.participates_in_object_domain_scope = bool(
+            (options or {}).get("participates_in_object_domain_scope")
+        )
+        obj.participates_in_pairwise_object_domain_input = bool(
+            (options or {}).get("participates_in_pairwise_object_domain_input")
+        )
         obj.payload_description = (options or {}).get(
             "payload_description",
             f"{payload_shape} {value} payload",
@@ -67,6 +73,8 @@ class ArtifactKind(str, Enum):
         ArtifactPayloadShape.ARRAY,
         {
             "participates_in_main_flow_output": True,
+            "participates_in_object_domain_scope": True,
+            "participates_in_pairwise_object_domain_input": True,
             "payload_description": "object_labels payload",
             "uses_label_representation_payload_shape": True,
         },
@@ -79,13 +87,20 @@ class ArtifactKind(str, Enum):
     RELATIONSHIPS = (
         "relationships",
         ArtifactPayloadShape.TABLE,
-        {"participates_in_axis_plane_identity": True},
+        {
+            "participates_in_axis_plane_identity": True,
+            "participates_in_object_domain_scope": True,
+            "participates_in_pairwise_object_domain_input": True,
+        },
     )
     TABLE = ("table", ArtifactPayloadShape.TABLE)
     SPATIAL_GRID = (
         "spatial_grid",
         ArtifactPayloadShape.MAPPING,
-        {"payload_description": "spatial grid mapping"},
+        {
+            "payload_description": "spatial grid mapping",
+            "participates_in_pairwise_object_domain_input": True,
+        },
     )
     METADATA = (
         "metadata",
@@ -217,6 +232,7 @@ class ArtifactKey:
     name: str
     kind: ArtifactKind
     scope: ArtifactScope
+    semantic_id: str | None = None
 
 
 @dataclass(frozen=True)

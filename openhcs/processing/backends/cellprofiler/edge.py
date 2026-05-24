@@ -211,33 +211,16 @@ class NumbaSobelStrategy(EdgeEnhancementStrategyLeaf):
         )
 
 
-@dataclass(frozen=True, slots=True)
-class NumbaSobelStrategyDeclaration:
-    class_name: str
-    direction: EdgeDirection
-
-    def declare(self) -> type[NumbaSobelStrategy]:
-        return type(
-            self.class_name,
-            (NumbaSobelStrategy,),
-            {
-                "__module__": __name__,
-                "direction": self.direction,
-            },
-        )
+class NumbaSobelAllStrategy(NumbaSobelStrategy):
+    direction = EdgeDirection.ALL
 
 
-_NUMBA_SOBEL_STRATEGY_DECLARATIONS = (
-    NumbaSobelStrategyDeclaration("NumbaSobelAllStrategy", EdgeDirection.ALL),
-    NumbaSobelStrategyDeclaration(
-        "NumbaSobelHorizontalStrategy",
-        EdgeDirection.HORIZONTAL,
-    ),
-    NumbaSobelStrategyDeclaration("NumbaSobelVerticalStrategy", EdgeDirection.VERTICAL),
-)
-_NUMBA_SOBEL_STRATEGY_TYPES = tuple(
-    declaration.declare() for declaration in _NUMBA_SOBEL_STRATEGY_DECLARATIONS
-)
+class NumbaSobelHorizontalStrategy(NumbaSobelStrategy):
+    direction = EdgeDirection.HORIZONTAL
+
+
+class NumbaSobelVerticalStrategy(NumbaSobelStrategy):
+    direction = EdgeDirection.VERTICAL
 
 
 class NumpySobelAllStrategy(EdgeEnhancementStrategyLeaf):

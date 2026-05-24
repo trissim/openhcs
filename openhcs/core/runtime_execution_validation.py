@@ -109,7 +109,7 @@ def runtime_records_by_axis(
             context,
             owner_name=f"compiled context {axis_id!r}",
         )
-        records_by_axis[str(axis_id)] = tuple(store.observed_values())
+        records_by_axis[str(axis_id)] = tuple(store.observed_values)
     return MappingProxyType(records_by_axis)
 
 

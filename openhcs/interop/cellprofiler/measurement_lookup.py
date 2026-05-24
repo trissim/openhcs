@@ -11,7 +11,6 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.public_api import declared_public_names
 from openhcs.core.runtime_artifact_queries import (
-    measurement_scalar_value_for_feature,
     measurement_values_for_feature,
     measurement_values_for_label_slices,
 )
@@ -242,8 +241,7 @@ def child_count_feature_child_name(feature_name: str | None) -> str | None:
 __all__ = declared_public_names(
     globals(),
     extra_names=(
-    "measurement_scalar_value_for_feature",
-    "measurement_values_for_feature",
-    "measurement_values_for_label_slices",
+        "measurement_values_for_feature",
+        "measurement_values_for_label_slices",
     ),
 )

@@ -521,7 +521,7 @@ def prepare_processing_callable(func: Any) -> None:
     prepare_key = (
         "callable",
         f"{projection.module_name or '<unknown>'}.{projection.name}",
-        id(prepare),
+        _prepare_callable_identity(prepare),
     )
     with _PREPARED_CALLABLE_LOCK:
         if prepare_key in _PREPARED_CALLABLE_KEYS:
@@ -529,6 +529,11 @@ def prepare_processing_callable(func: Any) -> None:
     prepare()
     with _PREPARED_CALLABLE_LOCK:
         _PREPARED_CALLABLE_KEYS.add(prepare_key)
+
+
+def _prepare_callable_identity(prepare: Callable[..., Any]) -> tuple[str, str]:
+    """Return a stable identity for process-local prepare-hook caching."""
+    return str(prepare.__module__), str(prepare.__qualname__)
 
 
 def _prepare_processing_module(module_name: str) -> None:

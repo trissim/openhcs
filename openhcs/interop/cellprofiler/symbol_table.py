@@ -661,6 +661,15 @@ class _SymbolTableBuilder:
             )
         return measurement_outputs[0] if measurement_outputs else None
 
+    def measurement_outputs(self) -> tuple[CellProfilerSymbol, ...]:
+        """Return measurement outputs produced by previously visited modules."""
+        return CellProfilerSymbol.unique_by_key(
+            symbol
+            for contract in self._contracts
+            for symbol in contract.output_symbols
+            if symbol.kind is CellProfilerSymbolKind.MEASUREMENTS
+        )
+
     def declare(
         self,
         name: str,
@@ -1876,7 +1885,7 @@ class OpeningContractBuilder(ModuleContractBuilder):
 
 
 class CalculateMathContractBuilder(ModuleContractBuilder):
-    """Compile object dependencies for CalculateMath measurement rows."""
+    """Compile object and measurement dependencies for CalculateMath rows."""
 
     module_name = "CalculateMath"
 
@@ -1889,13 +1898,17 @@ class CalculateMathContractBuilder(ModuleContractBuilder):
             builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
             for name in calculate_math_object_dependencies(module)
         ]
+        measurement_inputs = builder.measurement_outputs()
         measurements = builder.declare(
             ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
         return self.assemble_contract(
-            module, builder, inputs=objects, outputs=[measurements]
+            module,
+            builder,
+            inputs=[*objects, *measurement_inputs],
+            outputs=[measurements],
         )
 
 

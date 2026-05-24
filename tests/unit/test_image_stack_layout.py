@@ -1,12 +1,14 @@
 import numpy as np
 
 from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
     payload_slices_for_alignment,
     project_singleton_stack_image_domain,
 )
 from openhcs.core.image_shapes import (
+    is_channel_first_volume_stack,
     is_channel_last_image_slice,
     is_color_image_slice,
     is_image_stack,
@@ -15,6 +17,7 @@ from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
+    MaskedImagePayload,
     image_payload_with_context,
 )
 
@@ -53,6 +56,29 @@ def test_image_stack_layout_stacks_color_volume_slices():
     )
 
     assert stacked.shape == (2, 3, 4, 5, 3)
+    assert is_image_stack(stacked)
+    unstacked = ImageStackLayout.for_stack(stacked).unstack(
+        array=stacked,
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+    np.testing.assert_array_equal(unstacked[0], first)
+    np.testing.assert_array_equal(unstacked[1], second)
+
+
+def test_image_stack_layout_stacks_channel_first_volume_slices():
+    first = np.zeros((2, 3, 4, 5), dtype=np.uint16)
+    second = np.ones((2, 3, 4, 5), dtype=np.uint16)
+
+    layout = ImageStackLayout.for_slices((first, second))
+    stacked = layout.stack(
+        slices=(first, second),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+
+    assert stacked.shape == (2, 2, 3, 4, 5)
+    assert is_channel_first_volume_stack(stacked)
     assert is_image_stack(stacked)
     unstacked = ImageStackLayout.for_stack(stacked).unstack(
         array=stacked,
@@ -116,6 +142,35 @@ def test_aligned_image_payload_composes_multiple_source_volumes_as_image_bundle(
         np.testing.assert_array_equal(composition.payload.data[index], volume)
 
 
+def test_aligned_image_payload_cycles_factorized_runtime_axes():
+    template_stack = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.float32),
+            np.full((4, 5), 2, dtype=np.float32),
+        )
+    )
+    first_stack = np.stack(
+        tuple(np.full((4, 5), index, dtype=np.float32) for index in range(6))
+    )
+    second_stack = first_stack + 10
+
+    composition = compose_aligned_image_payload(
+        "Align",
+        (template_stack, first_stack, second_stack),
+    )
+
+    assert composition.execution_mode is ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+    assert isinstance(composition.payload, AlignedImageStack)
+    assert len(composition.payload.slices) == 6
+    for slice_index, composed_slice in enumerate(composition.payload.slices):
+        np.testing.assert_array_equal(
+            composed_slice[0],
+            template_stack[slice_index % 2],
+        )
+        np.testing.assert_array_equal(composed_slice[1], first_stack[slice_index])
+        np.testing.assert_array_equal(composed_slice[2], second_stack[slice_index])
+
+
 def test_image_stack_layout_preserves_unambiguous_single_volume_stack():
     stacked = np.zeros((2, 3, 4, 5), dtype=np.uint16)
 
@@ -170,3 +225,40 @@ def test_image_stack_layout_unstacks_result_matching_source_volume_as_single_sli
 
     assert len(observed) == 1
     np.testing.assert_array_equal(observed[0], volume)
+
+
+def test_image_stack_layout_unstacks_masked_volume_stack_payload_with_slice_context():
+    stack = np.zeros((1, 3, 4, 5), dtype=np.uint16)
+    mask = np.ones((1, 3, 4, 5), dtype=bool)
+    payload = MaskedImagePayload(data=stack, mask=mask)
+
+    observed = ImageStackLayout.unstack_result_for_source_slices(
+        payload,
+        source_slice_shapes=((3, 4, 5),),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+
+    assert len(observed) == 1
+    assert isinstance(observed[0], MaskedImagePayload)
+    assert observed[0].data.shape == (3, 4, 5)
+    assert observed[0].mask.shape == (3, 4, 5)
+
+
+def test_image_stack_layout_stacks_masked_volume_slices_by_array_operand():
+    first = MaskedImagePayload(
+        data=np.zeros((3, 4, 5), dtype=np.uint16),
+        mask=np.ones((3, 4, 5), dtype=bool),
+    )
+    second = MaskedImagePayload(
+        data=np.ones((3, 4, 5), dtype=np.uint16),
+        mask=np.ones((3, 4, 5), dtype=bool),
+    )
+
+    observed = ImageStackLayout.for_slices((first, second)).stack(
+        slices=(first, second),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+
+    assert observed.shape == (2, 3, 4, 5)

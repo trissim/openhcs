@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import traceback
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, ClassVar, Mapping, Sequence
 
 from metaclass_registry import AutoRegisterMeta
@@ -50,6 +53,159 @@ from openhcs.core.steps.function_runtime import (
 
 logger = logging.getLogger(__name__)
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+_PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
+PatternCollection = list[Any] | dict[Any, list[Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePatternResolutionContext:
+    """Source paths and metadata available while filtering execution anchors."""
+
+    parser: Any
+    source_paths_by_virtual_path: Mapping[str, str]
+    source_metadata_by_path: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=dict
+    )
+
+    @property
+    def has_virtual_source_workspace(self) -> bool:
+        return bool(self.source_paths_by_virtual_path)
+
+    def candidate_paths(self, pattern: Any) -> tuple[str, ...]:
+        pattern_path = str(pattern)
+        path = Path(pattern_path)
+        keys = tuple(dict.fromkeys((pattern_path, path.as_posix(), path.name)))
+        virtual_matches = tuple(
+            virtual_path
+            for key in keys
+            for virtual_path in self._matching_virtual_paths(key)
+        )
+        mapped = tuple(
+            self.source_paths_by_virtual_path[key]
+            for key in (*keys, *virtual_matches)
+            if key in self.source_paths_by_virtual_path
+        )
+        return tuple(dict.fromkeys((*keys, *virtual_matches, *mapped)))
+
+    def _matching_virtual_paths(self, pattern_key: str) -> tuple[str, ...]:
+        if pattern_key in self.source_paths_by_virtual_path:
+            return ()
+        matcher = SourceAnchorPatternTemplateMatcher.from_pattern(pattern_key)
+        if matcher is None:
+            return ()
+        return tuple(
+            virtual_path
+            for virtual_path in self.source_paths_by_virtual_path
+            if not Path(virtual_path).is_absolute()
+            and matcher.matches(Path(virtual_path).name)
+        )
+
+    def candidate_metadata(self, pattern: Any) -> tuple[Mapping[str, Any], ...]:
+        paths = self.candidate_paths(pattern)
+        declared = tuple(
+            metadata
+            for path in paths
+            for metadata in (self.source_metadata_by_path.get(path),)
+            if metadata
+        )
+        parsed = tuple(
+            metadata
+            for path in paths
+            if path not in self.source_metadata_by_path
+            for metadata in (self.parser.parse_filename(path) or {},)
+            if metadata
+        )
+        return (*declared, *parsed)
+
+    def has_metadata_field(
+        self,
+        patterns: Sequence[Any],
+        field: str,
+    ) -> bool:
+        return any(
+            source_metadata_value(metadata, field) is not None
+            for pattern in patterns
+            for metadata in self.candidate_metadata(pattern)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAnchorPatternTemplateMatcher:
+    """Matcher for OpenHCS anchor patterns with variable-component placeholders."""
+
+    pattern: str
+    regex: re.Pattern[str]
+
+    @classmethod
+    def from_pattern(
+        cls,
+        pattern: str,
+    ) -> "SourceAnchorPatternTemplateMatcher | None":
+        if "{" not in pattern or "}" not in pattern:
+            return None
+        regex_parts: list[str] = []
+        cursor = 0
+        for match in re.finditer(r"\{[^{}]+\}", pattern):
+            regex_parts.append(re.escape(pattern[cursor : match.start()]))
+            regex_parts.append(r"[^/]*")
+            cursor = match.end()
+        regex_parts.append(re.escape(pattern[cursor:]))
+        return cls(
+            pattern=pattern,
+            regex=re.compile(rf"^{''.join(regex_parts)}$"),
+        )
+
+    def matches(self, virtual_path: str) -> bool:
+        return bool(
+            self.regex.match(virtual_path)
+            or self.regex.match(Path(virtual_path).as_posix())
+            or self.regex.match(Path(virtual_path).name)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceWorkspaceAnchorProjection:
+    """Source workspace paths and metadata projected for anchor resolution."""
+
+    paths_by_virtual_path: Mapping[str, str]
+    metadata_by_path: Mapping[str, Mapping[str, Any]]
+
+    @classmethod
+    def from_openhcs_metadata(
+        cls,
+        metadata: Mapping[str, Any],
+    ) -> "SourceWorkspaceAnchorProjection":
+        from openhcs.microscopes.openhcs import FIELDS
+
+        subdirectories = metadata.get(FIELDS.SUBDIRECTORIES)
+        if not isinstance(subdirectories, Mapping):
+            return cls(paths_by_virtual_path={}, metadata_by_path={})
+
+        paths_by_virtual_path: dict[str, str] = {}
+        metadata_by_path: dict[str, Mapping[str, Any]] = {}
+        for subdirectory_metadata in subdirectories.values():
+            if not isinstance(subdirectory_metadata, Mapping):
+                continue
+
+            workspace_mapping = subdirectory_metadata.get(FIELDS.WORKSPACE_MAPPING)
+            if isinstance(workspace_mapping, Mapping):
+                paths_by_virtual_path.update(
+                    {
+                        str(virtual_path): str(source_path)
+                        for virtual_path, source_path in workspace_mapping.items()
+                    }
+                )
+
+            source_metadata = subdirectory_metadata.get(FIELDS.SOURCE_METADATA)
+            if isinstance(source_metadata, Mapping):
+                for virtual_path, values in source_metadata.items():
+                    if isinstance(values, Mapping):
+                        metadata_by_path[str(virtual_path)] = values
+
+        return cls(
+            paths_by_virtual_path=paths_by_virtual_path,
+            metadata_by_path=metadata_by_path,
+        )
 
 
 def _runtime_profile_enabled() -> bool:
@@ -61,14 +217,17 @@ def _log_step_profile(label: str, seconds: float, **fields: Any) -> None:
         return
     field_text = " ".join(f"{key}={value}" for key, value in fields.items())
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+    if profile_path := os.environ.get(_PROFILE_RUNTIME_PATH_ENV):
+        with open(profile_path, "a", encoding="utf-8") as handle:
+            handle.write(f"RUNTIME_PROFILE {label} {seconds:.6f}s {field_text}\n")
 
 
 def _filter_patterns_by_component(
-    patterns: list[Any] | dict[Any, list[Any]],
+    patterns: PatternCollection,
     component: str,
     target_value: str,
     microscope_handler: Any,
-) -> list[Any] | dict[Any, list[Any]]:
+) -> PatternCollection:
     """Filter pattern strings by a fixed parsed component value."""
     from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 
@@ -120,7 +279,7 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         pattern_list: Sequence[Any],
         *,
         bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         """Return source-compatible anchor patterns for one execution group."""
 
@@ -129,24 +288,50 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         pattern_list: Sequence[Any],
         *,
         bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         selector_bindings = self._selector_bindings(bindings)
         if not selector_bindings:
             return list(pattern_list)
 
-        return [
+        compatible = [
             pattern
             for pattern in pattern_list
             if any(
                 self._pattern_matches_source_binding(
                     pattern,
                     binding=binding,
-                    parser=parser,
+                    source_context=source_context,
                 )
                 for binding in selector_bindings
             )
         ]
+        if compatible:
+            return compatible
+        if self._metadata_selector_fields_are_unavailable(
+            pattern_list,
+            bindings=selector_bindings,
+            source_context=source_context,
+        ):
+            return list(pattern_list)
+        return compatible
+
+    @staticmethod
+    def _metadata_selector_fields_are_unavailable(
+        pattern_list: Sequence[Any],
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        source_context: SourcePatternResolutionContext,
+    ) -> bool:
+        metadata_fields = tuple(
+            selector.field
+            for binding in bindings
+            for selector in binding.selector.metadata
+        )
+        return bool(metadata_fields) and not any(
+            source_context.has_metadata_field(pattern_list, field)
+            for field in metadata_fields
+        )
 
     @staticmethod
     def _selector_bindings(
@@ -163,33 +348,38 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         pattern: Any,
         *,
         binding: NamedSourceBinding,
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> bool:
-        pattern_path = str(pattern)
         selector = binding.selector
-        if not source_filters_match(pattern_path, selector.filters):
+        if not any(
+            source_filters_match(path, selector.filters)
+            for path in source_context.candidate_paths(pattern)
+        ):
             return False
 
         if not selector.components and not selector.metadata:
             return True
 
-        metadata = parser.parse_filename(pattern_path) or {}
+        metadata_candidates = source_context.candidate_metadata(pattern)
         for component_selector in selector.components:
-            values = source_component_metadata_values(
-                metadata,
-                component_selector.component,
-            )
             if not any(
                 source_metadata_values_equal(value, str(component_selector.value))
-                for value in values
+                for metadata in metadata_candidates
+                for value in source_component_metadata_values(
+                    metadata,
+                    component_selector.component,
+                )
             ):
                 return False
 
         for metadata_selector in selector.metadata:
-            value = source_metadata_value(metadata, metadata_selector.field)
-            if value is None or not source_metadata_values_equal(
-                value,
-                metadata_selector.value,
+            if not any(
+                value is not None
+                and source_metadata_values_equal(value, metadata_selector.value)
+                for metadata in metadata_candidates
+                for value in (
+                    source_metadata_value(metadata, metadata_selector.field),
+                )
             ):
                 return False
 
@@ -204,12 +394,12 @@ class DefaultSourceBoundAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
         pattern_list: Sequence[Any],
         *,
         bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         return self._source_compatible_anchor_patterns(
             pattern_list,
             bindings=bindings,
-            parser=parser,
+            source_context=source_context,
         )
 
 
@@ -223,12 +413,12 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
         pattern_list: Sequence[Any],
         *,
         bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         compatible = self._source_compatible_anchor_patterns(
             pattern_list,
             bindings=bindings,
-            parser=parser,
+            source_context=source_context,
         )
         selector_bindings = self._selector_bindings(bindings)
         anchor_bindings = tuple(
@@ -242,7 +432,7 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
         return self._deduplicate_matched_image_sets(
             compatible,
             selector_bindings=anchor_bindings,
-            parser=parser,
+            source_context=source_context,
         )
 
     @abstractmethod
@@ -251,7 +441,7 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
         compatible: Sequence[Any],
         *,
         selector_bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         """Return one execution anchor per matched image set."""
 
@@ -266,10 +456,15 @@ class OrderMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPolicy
         compatible: Sequence[Any],
         *,
         selector_bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         alias_count = len(selector_bindings)
         if len(compatible) % alias_count:
+            if (
+                source_context.has_virtual_source_workspace
+                and len(compatible) < alias_count
+            ):
+                return list(compatible)
             raise ValueError(
                 "ORDER source binding produced an incomplete image set: "
                 f"{len(compatible)} source anchors for {alias_count} aliases."
@@ -291,7 +486,7 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
         compatible: Sequence[Any],
         *,
         selector_bindings: Sequence[NamedSourceBinding],
-        parser: Any,
+        source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
         if self._match_plan is None or not self._match_plan.dimensions:
             raise ValueError(
@@ -303,12 +498,14 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
         deduplicated: list[Any] = []
         seen: set[tuple[str, ...]] = set()
         for pattern in compatible:
-            metadata = parser.parse_filename(str(pattern)) or {}
+            metadata = next(iter(source_context.candidate_metadata(pattern)), {})
             binding = self._matching_binding(
                 pattern,
                 selector_bindings=selector_bindings,
-                parser=parser,
+                source_context=source_context,
             )
+            if binding is None:
+                return list(compatible)
             key = self._metadata_image_set_key(
                 metadata,
                 binding=binding,
@@ -325,17 +522,21 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
         pattern: Any,
         *,
         selector_bindings: Sequence[NamedSourceBinding],
-        parser: Any,
-    ) -> NamedSourceBinding:
+        source_context: SourcePatternResolutionContext,
+    ) -> NamedSourceBinding | None:
         matches = tuple(
             binding
             for binding in selector_bindings
             if self._pattern_matches_source_binding(
                 pattern,
                 binding=binding,
-                parser=parser,
+                source_context=source_context,
             )
         )
+        if len(matches) > 1 and source_context.has_virtual_source_workspace:
+            return matches[0]
+        if len(matches) == 0 and source_context.has_virtual_source_workspace:
+            return None
         if len(matches) != 1:
             raise ValueError(
                 "METADATA source binding expected exactly one alias match for "
@@ -359,12 +560,6 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
                     "METADATA source binding dimension is missing alias "
                     f"{binding.alias!r}."
                 )
-            for dimension_field in dimension.fields:
-                if dimension_field.alias not in bindings_by_alias:
-                    raise ValueError(
-                        "METADATA source binding dimension references unknown alias "
-                        f"{dimension_field.alias!r}."
-                    )
             value = source_metadata_value(metadata, field)
             if value is None:
                 raise ValueError(
@@ -382,6 +577,30 @@ class FunctionStepExecutor:
     def __init__(self, context: ProcessingContext, step_index: int) -> None:
         self.context = context
         self.plan = FunctionStepExecutionPlan.from_context(context, step_index)
+        self._source_workspace_anchor_projection: (
+            SourceWorkspaceAnchorProjection | None
+        ) = None
+
+    def _source_pattern_context(self) -> SourcePatternResolutionContext:
+        """Return source-path context used to filter source-bound anchors."""
+
+        projection = self._source_workspace_projection()
+        return SourcePatternResolutionContext(
+            parser=self.context.microscope_handler.parser,
+            source_paths_by_virtual_path=projection.paths_by_virtual_path,
+            source_metadata_by_path=projection.metadata_by_path,
+        )
+
+    def _source_workspace_projection(self) -> SourceWorkspaceAnchorProjection:
+        """Return declared source workspace views used by anchor policies."""
+
+        if self._source_workspace_anchor_projection is None:
+            metadata_handler = self.context.microscope_handler.metadata_handler
+            metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
+            self._source_workspace_anchor_projection = (
+                SourceWorkspaceAnchorProjection.from_openhcs_metadata(metadata)
+            )
+        return self._source_workspace_anchor_projection
 
     @classmethod
     def execute(cls, context: ProcessingContext, step_index: int) -> None:
@@ -685,13 +904,10 @@ class FunctionStepExecutor:
             ).select(
                 pattern_list,
                 bindings=bindings,
-                parser=self.context.microscope_handler.parser,
+                source_context=self._source_pattern_context(),
             )
-            if compatible:
-                filtered[component_value] = compatible
-                changed = changed or len(compatible) != len(pattern_list)
-            else:
-                filtered[component_value] = pattern_list
+            filtered[component_value] = compatible
+            changed = changed or len(compatible) != len(pattern_list)
 
         if changed:
             _log_step_profile(
@@ -773,7 +989,9 @@ class FunctionStepExecutor:
     ) -> list[Any]:
         seen: set[tuple[tuple[str, Any], ...]] = set()
         deduplicated: list[Any] = []
-        variable_components = set(self.plan.variable_component_values)
+        identity_components = set(self.plan.variable_component_values)
+        if self.plan.group_by_value is not None:
+            identity_components.add(self.plan.group_by_value)
         parser = self.context.microscope_handler.parser
 
         for pattern in pattern_list:
@@ -785,7 +1003,7 @@ class FunctionStepExecutor:
                 sorted(
                     (component, value)
                     for component, value in metadata.items()
-                    if component in variable_components
+                    if component in identity_components
                 )
             )
             if key in seen:

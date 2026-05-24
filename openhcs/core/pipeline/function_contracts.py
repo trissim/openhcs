@@ -7,7 +7,6 @@ from typing import Callable, TypeVar
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.runtime_batch_contracts import (
-    PURE_2D_BATCH_EXECUTOR_ATTR,
     RUNTIME_BATCH_EXECUTORS_ATTR,
     Pure2DSliceBatchExecutor,
     RuntimeBatchExecutionDomain,

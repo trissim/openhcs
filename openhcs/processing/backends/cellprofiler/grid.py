@@ -17,9 +17,9 @@ from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_semantics import SpatialGridOrdering, SpatialGridOrigin
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
+    SourceImageObjectLabelBuildRequest,
     SpatialGrid,
     object_label_dense_array,
-    object_label_payload_from_source_image,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -493,7 +493,11 @@ class GridDefinition:
             | (centers[0, :] >= labels.shape[0])
             | (centers[1, :] >= labels.shape[1])
         )
-        rounded_centers = np.round(centers).astype(int)
+        rounded_centers = np.zeros_like(centers, dtype=int)
+        valid_centers = ~bad_centers
+        rounded_centers[:, valid_centers] = np.round(
+            centers[:, valid_centers]
+        ).astype(int)
         masked_labels = labels.copy()
         y_border = int(np.ceil(self.y_spacing / 10))
         x_border = int(np.ceil(self.x_spacing / 10))
@@ -505,7 +509,6 @@ class GridDefinition:
             xmask = labels[:, x_border:] != labels[:, :-x_border]
             masked_labels[:, x_border:][xmask] = 0
             masked_labels[:, :-x_border][xmask] = 0
-        rounded_centers[:, bad_centers] = 0
         label_center_grid_ids = masked_labels[
             rounded_centers[0, :],
             rounded_centers[1, :],
@@ -515,20 +518,26 @@ class GridDefinition:
 
     def filtered_guides(self, guide_labels: np.ndarray) -> np.ndarray:
         """Relabel accepted guide objects by the grid cell containing their center."""
-        labels = self.filled_labels()
         return _filter_labels_by_grid_numba(
             np.asarray(guide_labels, dtype=np.int32),
-            self.guide_label_center_grid_ids(guide_labels, grid_labels=labels),
+            self.guide_label_center_grid_ids(
+                guide_labels,
+                grid_labels=self.filled_labels(),
+            ),
         )
 
     def labels_from_filtered_guides(self, filtered_guides: np.ndarray) -> np.ndarray:
-        """Return accepted guide shapes already relabeled by center grid cell."""
-        labels = self.labels_for_shape(filtered_guides.shape)
-        result = np.zeros_like(labels)
-        result[0 : filtered_guides.shape[0], 0 : filtered_guides.shape[1]] = (
-            filtered_guides
+        """Return grid-object IDs masked by accepted guide-object pixels."""
+        return _mask_grid_labels_by_filtered_guides_numba(
+            self.labels_for_shape(filtered_guides.shape),
+            np.asarray(filtered_guides, dtype=np.int32),
         )
-        return result
+
+    def labels_as_grid_ids(self, labels: np.ndarray) -> np.ndarray:
+        """Project any positive grid-object mask onto authoritative grid IDs."""
+        label_array = np.asarray(labels, dtype=np.int32)
+        grid_labels = self.labels_for_shape(label_array.shape)
+        return _mask_grid_labels_by_filtered_guides_numba(grid_labels, label_array)
 
 
 @dataclass
@@ -655,11 +664,18 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
             diameter_choice=self.diameter_choice,
             circle_diameter=self.circle_diameter,
         ).labels(self.shape_choice)
-        return self.image, self.stats(), object_label_payload_from_source_image(
-            self.image,
-            labels.astype(np.int32, copy=False),
-            declared_object_count=self.object_count,
+        if self.shape_choice is not ShapeChoice.NATURAL:
+            labels = self.grid.labels_as_grid_ids(labels)
+        declared_object_extent = max(
+            self.object_count,
+            int(labels.max()) if labels.size else 0,
         )
+        return self.image, self.stats(), SourceImageObjectLabelBuildRequest(
+            image=self.image,
+            labels=labels.astype(np.int32, copy=False),
+            declared_object_count=declared_object_extent,
+            declared_object_ids=tuple(range(1, declared_object_extent + 1)),
+        ).payload()
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -1175,7 +1191,7 @@ class NaturalGridShapeStrategy(GridShapeStrategy):
     requires_guides = True
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
-        return request.grid.labels_from_filtered_guides(request.required_filtered_guides)
+        return np.asarray(request.required_filtered_guides, dtype=np.int32)
 
 
 __all__ = public_names_from_objects(

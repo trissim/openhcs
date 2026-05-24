@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -26,11 +29,6 @@ class RuntimeBatchCallableMetadataField(str, Enum):
     """Callable metadata fields owned by runtime batch contracts."""
 
     EXECUTORS = "__openhcs_runtime_batch_executors__"
-    LEGACY_PURE_2D_EXECUTOR = "__openhcs_pure_2d_batch_executor__"
-
-    def read(self, func: Callable, default: Any = None) -> Any:
-        """Read this metadata field from a callable namespace."""
-        return _callable_namespace(func).get(self.value, default)
 
     def write(self, func: F, value: Any) -> F:
         """Write this metadata field to a callable and return the callable."""
@@ -43,17 +41,30 @@ class RuntimeBatchCallableMetadataField(str, Enum):
 
 
 RUNTIME_BATCH_EXECUTORS_ATTR = RuntimeBatchCallableMetadataField.EXECUTORS.value
-PURE_2D_BATCH_EXECUTOR_ATTR = (
-    RuntimeBatchCallableMetadataField.LEGACY_PURE_2D_EXECUTOR.value
-)
 
 
-def _callable_namespace(func: Callable) -> Mapping[str, Any]:
-    """Return a callable metadata namespace without probing dynamic attributes."""
-    try:
-        return vars(func)
-    except TypeError:
-        return {}
+@dataclass(frozen=True, slots=True)
+class RuntimeBatchCallableMetadata:
+    """Runtime-batch metadata projection for one callable."""
+
+    namespace: Mapping[str, Any]
+
+    @classmethod
+    def from_callable(cls, func: Callable) -> "RuntimeBatchCallableMetadata":
+        """Project callable metadata without probing dynamic attributes."""
+        try:
+            namespace = vars(func)
+        except TypeError:
+            namespace = {}
+        return cls(namespace)
+
+    def value(
+        self,
+        field: RuntimeBatchCallableMetadataField,
+        default: Any = None,
+    ) -> Any:
+        """Read one runtime-batch metadata field."""
+        return self.namespace.get(field.value, default)
 
 
 class RuntimeBatchExecutor(ABC, metaclass=AutoRegisterMeta):
@@ -128,11 +139,17 @@ class RuntimeBatchCallableFamily:
 class Pure2DSliceBatchExecutor(RuntimeBatchExecutor):
     """Base contract for equivalent pure-2D slice batch execution."""
 
+    executor_priority: ClassVar[int] = 0
+
     @classmethod
     def default_executor(cls) -> "Pure2DSliceBatchExecutor":
-        """Return the MRO-selected default pure-2D batch executor."""
-        for executor_type in cls._concrete_subclasses():
-            return executor_type()
+        """Return the highest-priority registered pure-2D batch executor."""
+        executor_types = cls._concrete_subclasses()
+        if executor_types:
+            return max(
+                executor_types,
+                key=lambda executor_type: executor_type.executor_priority,
+            )()
         raise RuntimeError("No concrete Pure2DSliceBatchExecutor is registered.")
 
     @classmethod
@@ -141,9 +158,26 @@ class Pure2DSliceBatchExecutor(RuntimeBatchExecutor):
         concrete_types: list[type[Pure2DSliceBatchExecutor]] = []
         for subclass in cls.__subclasses__():
             concrete_types.extend(subclass._concrete_subclasses())
-            if not getattr(subclass, "__abstractmethods__", ()):
+            if not inspect.isabstract(subclass):
                 concrete_types.append(subclass)
         return tuple(dict.fromkeys(concrete_types))
+
+
+class ParallelPure2DSliceBatchExecutor(Pure2DSliceBatchExecutor):
+    """Default thread-backed executor for independent pure-2D slice batches."""
+
+    executor_name = "parallel_pure_2d_slices"
+    executor_priority = 100
+
+    def __call__(
+        self,
+        request: RuntimePure2DSliceBatchRequest,
+    ) -> list[Any]:
+        max_workers = min(request.slice_count, os.cpu_count() or 1)
+        if max_workers <= 1:
+            return [request.execute_one(0)]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return list(executor.map(request.execute_one, range(request.slice_count)))
 
 
 class SerialPure2DSliceBatchExecutor(Pure2DSliceBatchExecutor):
@@ -166,8 +200,8 @@ def runtime_batch_executors_from_callable(
 ) -> Mapping[RuntimeBatchExecutionDomain, Callable]:
     """Return declared batch executors keyed by runtime batch domain."""
     executors_field = RuntimeBatchCallableMetadataField.EXECUTORS
-    legacy_pure_2d_field = RuntimeBatchCallableMetadataField.LEGACY_PURE_2D_EXECUTOR
-    declared = executors_field.read(func, {})
+    metadata = RuntimeBatchCallableMetadata.from_callable(func)
+    declared = metadata.value(executors_field, {})
     if declared is None:
         declared = {}
     if not isinstance(declared, Mapping):
@@ -187,18 +221,6 @@ def runtime_batch_executors_from_callable(
                 f"be callable, got {type(executor).__name__}."
             )
         batch_executors[domain] = executor
-
-    legacy_executor = legacy_pure_2d_field.read(func)
-    if legacy_executor is not None:
-        if not callable(legacy_executor):
-            raise TypeError(
-                f"{legacy_pure_2d_field.owner_label(func)} must be callable, "
-                f"got {type(legacy_executor).__name__}."
-            )
-        batch_executors.setdefault(
-            RuntimeBatchExecutionDomain.PURE_2D_SLICES,
-            legacy_executor,
-        )
     return MappingProxyType(batch_executors)
 
 
@@ -225,11 +247,6 @@ def runtime_batch_executor(
             func,
             MappingProxyType(batch_executors),
         )
-        if domain is RuntimeBatchExecutionDomain.PURE_2D_SLICES:
-            RuntimeBatchCallableMetadataField.LEGACY_PURE_2D_EXECUTOR.write(
-                func,
-                executor,
-            )
         return func
 
     return decorator

@@ -36,9 +36,11 @@ class RuntimeSliceAlignedValueSet(ABC, Generic[SliceValueT]):
             return self.value_for_slice(slice_index)
         if self.slice_count == 1:
             return self.value_for_slice(0)
+        if slice_count % self.slice_count == 0:
+            return self.value_for_slice(slice_index % self.slice_count)
         raise ValueError(
             "Runtime-slice-aligned value has incompatible slice count "
-            f"{self.slice_count}; expected 1 or {slice_count}."
+            f"{self.slice_count}; expected a divisor of {slice_count}."
         )
 
 

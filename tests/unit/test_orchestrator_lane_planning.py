@@ -14,11 +14,14 @@ from openhcs.core.orchestrator.orchestrator import (
     ExecutionStateProjector,
     ExecutionVisualizerCleanup,
     ExecutorShutdownPlan,
+    ForkInheritedWorkerExecutionState,
+    ForkInheritedWorkerLaneRunner,
     PooledWorkerLaneRunner,
     WorkerLaneExecutionIdentity,
     WorkerLaneExecutionPlan,
     WorkerExecutorFactory,
 )
+from openhcs.core.compiled_execution import CompiledExecutionBundle
 
 
 def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
@@ -128,6 +131,33 @@ def test_executor_factory_uses_inline_lane_for_single_threaded_worker(monkeypatc
     assert resources.inline_worker_lane_execution is True
     assert resources.fork_inherited_execution is False
     assert resources.use_multiprocessing is False
+
+
+def test_executor_factory_uses_inline_lane_for_single_fork_worker(monkeypatch):
+    context = object()
+    monkeypatch.setattr(
+        orchestrator_module.multiprocessing,
+        "get_context",
+        lambda method: context,
+    )
+
+    resources = WorkerExecutorFactory(
+        log_file_base="/tmp/worker",
+        progress_queue="queue",
+        progress_context={"execution_id": "exec", "plate_id": "plate"},
+    ).create(
+        effective_config=SimpleNamespace(
+            use_threading=False,
+            multiprocessing_start_method=MultiprocessingStartMethod.FORK,
+        ),
+        actual_max_workers=1,
+    )
+
+    assert resources.executor is None
+    assert resources.multiprocessing_context is context
+    assert resources.inline_worker_lane_execution is True
+    assert resources.fork_inherited_execution is False
+    assert resources.use_multiprocessing is True
 
 
 def test_executor_factory_creates_thread_pool_for_multi_worker_threading(monkeypatch):
@@ -348,6 +378,58 @@ def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch)
     )
 
     assert submitted_pipeline == [stripped_step]
+
+
+def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
+    executed = []
+
+    class ForbiddenMultiprocessingContext:
+        def Pipe(self, *, duplex):
+            raise AssertionError("single active lane must not open a pipe")
+
+        def Process(self, **kwargs):
+            raise AssertionError("single active lane must not launch a process")
+
+    class FakeWorkerLaneExecutor:
+        def __init__(self, *, pipeline_definition, lane_axis_contexts, **kwargs):
+            executed.append((pipeline_definition, lane_axis_contexts))
+
+        def execute(self):
+            return {"A01": ExecutionResult.success("A01")}
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "WorkerLaneExecutor",
+        FakeWorkerLaneExecutor,
+    )
+    ForkInheritedWorkerExecutionState.install(
+        CompiledExecutionBundle(
+            pipeline_definition=["step"],
+            runtime_contexts={"A01": "runtime-context"},
+            transport_contexts={},
+            worker_assignments={"worker_0": ["A01"]},
+        )
+    )
+    try:
+        execution_plan = WorkerLaneExecutionPlan(
+            identity=WorkerLaneExecutionIdentity(
+                execution_id="exec",
+                plate_id="plate",
+                debug_execution_policy=NoOpDebugExecutionPolicy(),
+            ),
+            lane_axis_contexts={"worker_0": [("A01", ["A01"])]},
+            worker_assignments={"worker_0": ["A01"]},
+            runtime_observation_mode=RuntimeObservationMode.OMIT,
+        )
+
+        results = ForkInheritedWorkerLaneRunner(
+            ForbiddenMultiprocessingContext()
+        ).run(execution_plan)
+    finally:
+        ForkInheritedWorkerExecutionState.clear()
+
+    assert results == {"A01": ExecutionResult.success("A01")}
+    assert executed == [(["step"], [("A01", [("A01", "runtime-context")])])]
 
 
 def test_pooled_worker_lane_runner_emits_error_before_reraising(monkeypatch):

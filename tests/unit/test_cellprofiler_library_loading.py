@@ -261,6 +261,27 @@ def test_resize_volumetric_preserves_resized_image_mask() -> None:
     np.testing.assert_array_equal(resized.mask, mask[:, ::2, ::2])
 
 
+def test_resize_volumetric_preserves_leading_channel_axis() -> None:
+    image = np.arange(2 * 3 * 4 * 4, dtype=np.float32).reshape(2, 3, 4, 4)
+    mask = np.ones_like(image, dtype=bool)
+    mask[:, :, 0, :] = False
+
+    raw_resize = resize_volumetric
+    while hasattr(raw_resize, "__wrapped__"):
+        raw_resize = raw_resize.__wrapped__
+
+    resized = raw_resize(
+        MaskedImagePayload(data=image, mask=mask),
+        resizing_factor_x=0.5,
+        resizing_factor_y=0.5,
+        resizing_factor_z=1.0,
+    )
+
+    assert isinstance(resized, MaskedImagePayload)
+    assert resized.data.shape == (2, 3, 2, 2)
+    assert resized.mask.shape == resized.data.shape
+
+
 def test_resize_volumetric_projects_default_cellprofiler_validity_mask() -> None:
     image = np.ones((2, 4, 4), dtype=np.float32)
 
@@ -486,6 +507,39 @@ def test_threshold_uses_and_preserves_input_image_mask() -> None:
         ),
     )
     np.testing.assert_array_equal(image_payload_mask(binary), payload.mask)
+    assert measurements.final_threshold == 0.5
+
+
+def test_threshold_projects_explicit_mask_to_image_domain() -> None:
+    image = np.array(
+        [
+            [0.0, 1.0, 1.0],
+            [0.25, 0.75, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    mask = np.ones((2, *image.shape), dtype=bool)
+    mask[1, :, 2] = False
+
+    binary, measurements = threshold(
+        image,
+        mask=mask,
+        predefined_threshold=0.5,
+        dtype_config=DtypeConfig(),
+    )
+
+    expected_mask = np.all(mask, axis=0)
+    np.testing.assert_array_equal(image_payload_mask(binary), expected_mask)
+    np.testing.assert_array_equal(
+        image_payload_data(binary),
+        np.array(
+            [
+                [False, True, False],
+                [False, True, False],
+            ],
+            dtype=np.float32,
+        ),
+    )
     assert measurements.final_threshold == 0.5
 
 
@@ -752,6 +806,46 @@ def test_measure_colocalization_objects_accepts_unmasked_finite_images():
     assert np.array_equal(output, image[0:1])
     assert [row.object_label for row in rows] == [1, 2]
     assert all(np.isfinite(row.correlation) for row in rows)
+
+
+def test_colocalization_object_label_context_broadcasts_planar_labels_to_mask_stack():
+    labels = np.array([[1, 0], [2, 2]], dtype=np.int32)
+    pair_valid_mask = np.stack(
+        (
+            np.array([[True, False], [True, True]]),
+            np.array([[True, False], [False, True]]),
+        )
+    )
+
+    context = ColocalizationObjectLabelContext.from_dense_labels(
+        labels,
+        pair_valid_mask=pair_valid_mask,
+    )
+
+    assert context.labels.shape == pair_valid_mask.shape
+    assert context.object_mask.shape == pair_valid_mask.shape
+    np.testing.assert_array_equal(context.labels[0], labels)
+    np.testing.assert_array_equal(context.labels[1], labels)
+    assert context.object_counts.tolist() == [2, 3]
+
+
+def test_colocalization_object_label_context_projects_stack_to_measurement_plane():
+    labels = np.stack(
+        (
+            np.array([[1, 0], [0, 2]], dtype=np.int32),
+            np.array([[1, 0], [0, 2]], dtype=np.int32),
+        )
+    )
+
+    context = ColocalizationObjectLabelContext.from_dense_labels(
+        labels,
+        pair_valid_mask=None,
+        measurement_shape=(2, 2),
+    )
+
+    assert context.labels.shape == (2, 2)
+    np.testing.assert_array_equal(context.labels, labels[0])
+    assert context.object_counts.tolist() == [1, 1]
 
 
 def test_colocalization_image_pair_context_accepts_aligned_image_stack() -> None:
@@ -1310,6 +1404,26 @@ def test_identify_primary_objects_does_not_size_filter_after_hole_fill() -> None
 
     assert stats.object_count == 1
     assert int(np.count_nonzero(labels.labels)) == 25
+
+
+def test_watershed_xy_downsample_factors_preserve_leading_axes():
+    from openhcs.processing.backends.cellprofiler.watershed import (
+        watershed_connected_components,
+        watershed_regionprops_stats,
+        watershed_xy_downsample_factors,
+    )
+
+    assert watershed_xy_downsample_factors(2, 2) == (2.0, 2.0)
+    assert watershed_xy_downsample_factors(3, 2) == (1.0, 2.0, 2.0)
+    assert watershed_xy_downsample_factors(4, 2) == (1.0, 1.0, 2.0, 2.0)
+    labels = watershed_connected_components(
+        np.ones((2, 3, 4, 5), dtype=bool),
+    )
+    assert labels.shape == (2, 3, 4, 5)
+    assert labels.dtype == np.int32
+    object_count, mean_area = watershed_regionprops_stats(labels)
+    assert object_count == 2
+    assert mean_area == 60.0
 
 
 def test_identify_primary_objects_declumping_maxima_geometry_matches_public_semantics():
@@ -2000,6 +2114,105 @@ def test_measure_texture_objects_uses_cellprofiler_object_backend(monkeypatch):
     assert measurements[0].variance == 0.0
 
 
+def test_measure_texture_objects_measures_plane_domain_label_stack_against_one_image():
+    from benchmark.cellprofiler_library.functions.measuretexture import (
+        measure_texture_objects,
+    )
+
+    image = np.ones((5, 5), dtype=np.float32)
+    labels = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                [[1, 1, 0, 0, 0], [1, 1, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+                [[2, 2, 0, 0, 0], [2, 2, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+            ),
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1,), (2,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    _, measurements = measure_texture_objects(
+        image,
+        labels,
+        scale=1,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert [measurement.object_label for measurement in measurements[::4]] == [1, 2]
+    assert [measurement.slice_index for measurement in measurements[::4]] == [0, 1]
+
+
+def test_measure_texture_objects_zero_fills_declared_texture_domain():
+    from benchmark.cellprofiler_library.functions.measuretexture import (
+        measure_texture_objects,
+    )
+
+    image = np.ones((5, 5), dtype=np.float32)
+    labels = ObjectLabelPayload(
+        labels=np.asarray(
+            [[1, 1, 0, 0, 0], [1, 1, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+            dtype=np.int32,
+        ),
+        declared_object_count=2,
+    )
+
+    _, measurements = measure_texture_objects(
+        image,
+        labels,
+        scale=1,
+        dtype_config=DtypeConfig(),
+    )
+
+    by_label = {}
+    for measurement in measurements:
+        by_label.setdefault(measurement.object_label, []).append(measurement)
+
+    assert tuple(by_label) == (1, 2)
+    assert len(by_label[2]) == 4
+    assert all(measurement.angular_second_moment == 0.0 for measurement in by_label[2])
+
+
+def test_measure_texture_objects_batch_preserves_projected_label_domain():
+    from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
+    from openhcs.processing.backends.cellprofiler.texture import (
+        measure_texture_objects,
+        measure_texture_objects_batch,
+    )
+
+    labels = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                [[1, 1, 0, 0, 0], [1, 1, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+                [[3, 3, 0, 0, 0], [3, 3, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+            ),
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1, 2), (3, 4)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    results = measure_texture_objects_batch(
+        RuntimePure2DSliceBatchRequest(
+            func=measure_texture_objects.__wrapped__,
+            slices_2d=(
+                np.ones((5, 5), dtype=np.float32),
+                np.ones((5, 5), dtype=np.float32),
+            ),
+            kwargs={"labels": labels, "scale": 1},
+            execute_slice=(
+                lambda func, image, kwargs, _slice_index, _slice_count: func(
+                    image,
+                    **kwargs,
+                )
+            ),
+        )
+    )
+
+    assert [row.object_label for row in results[0][1][::4]] == [1, 2]
+    assert [row.object_label for row in results[1][1][::4]] == [3, 4]
+
+
 def test_numba_haralick_backend_matches_mahotas_reference():
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -2112,6 +2325,124 @@ def test_measure_object_intensity_measures_3d_objects_as_single_volume_domain():
     assert measurements[0].integrated_intensity == 12.0
     assert measurements[0].center_mass_intensity_z == 1.0
     assert measurements[0].max_intensity_z == 2.0
+
+
+def test_measure_object_intensity_accepts_singleton_label_stack_for_2d_image():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    labels = np.array([[[1, 1], [0, 2]]], dtype=np.int32)
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    by_label = {measurement.object_label: measurement for measurement in measurements}
+    assert by_label[1].integrated_intensity == 3.0
+    assert by_label[2].integrated_intensity == 4.0
+
+
+def test_measure_object_intensity_preserves_sparse_object_ids_without_dense_lookup():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.ones((3, 4), dtype=np.float32)
+    labels = np.zeros((3, 4), dtype=np.int32)
+    labels[1, 1:3] = 100_000
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert [measurement.object_label for measurement in measurements] == [100_000]
+    assert measurements[0].integrated_intensity == 2.0
+
+
+def test_measure_object_intensity_honors_positive_label_extent_domain():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.ones((2, 3), dtype=np.float32)
+    labels = ObjectLabelPayload(
+        labels=np.asarray([[1, 0, 3], [0, 0, 0]], dtype=np.int32),
+        declared_object_count=4,
+    )
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    by_label = {measurement.object_label: measurement for measurement in measurements}
+    assert tuple(by_label) == (1, 2, 3)
+    assert by_label[1].integrated_intensity == 1.0
+    assert by_label[2].integrated_intensity == 0.0
+    assert by_label[3].integrated_intensity == 1.0
+
+
+def test_measure_object_intensity_zero_fills_compact_missing_declared_ids():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.ones((2, 3), dtype=np.float32)
+    labels = ObjectLabelPayload(
+        labels=np.asarray([[1, 0, 3], [0, 0, 5]], dtype=np.int32),
+        declared_object_ids=(1, 3, 5),
+    )
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    by_label = {measurement.object_label: measurement for measurement in measurements}
+    assert tuple(by_label) == (1, 2, 3, 4, 5)
+    assert by_label[2].integrated_intensity == 0.0
+    assert by_label[4].integrated_intensity == 0.0
+
+
+def test_measure_object_intensity_measures_plane_domain_label_stack_against_one_image():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.ones((3, 3), dtype=np.float32)
+    labels = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                [[1, 0, 0], [0, 0, 0], [0, 0, 0]],
+                [[2, 2, 0], [0, 0, 0], [0, 0, 0]],
+            ),
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1,), (2,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    by_label = {
+        int(row["object_label"]): row
+        for row in measurements.row_mappings()
+    }
+    assert tuple(by_label) == (1, 2)
+    assert by_label[1]["integrated_intensity"] == 1.0
+    assert by_label[2]["integrated_intensity"] == 2.0
 
 
 def test_measure_object_intensity_maximum_position_tie_matches_cellprofiler():
@@ -2440,6 +2771,26 @@ def test_measure_object_neighbors_returns_retained_count_image():
     assert count_image.shape == (7, 7, 3)
     np.testing.assert_array_equal(count_image[labels == 0], 0)
     assert np.any(count_image[labels > 0] > 0)
+    assert [measurement.number_of_neighbors for measurement in measurements] == [1, 1]
+
+
+def test_measure_object_neighbors_accepts_singleton_label_stack_for_2d_image():
+    from benchmark.cellprofiler_library.functions.measureobjectneighbors import (
+        DistanceMethod,
+        measure_object_neighbors,
+    )
+
+    labels = np.zeros((1, 7, 7), dtype=np.int32)
+    labels[0, 3, 2] = 1
+    labels[0, 3, 4] = 2
+
+    _, measurements = measure_object_neighbors(
+        np.zeros((7, 7), dtype=float),
+        labels,
+        distance_method=DistanceMethod.EXPAND,
+        dtype_config=DtypeConfig(),
+    )
+
     assert [measurement.number_of_neighbors for measurement in measurements] == [1, 1]
 
 
@@ -3514,6 +3865,30 @@ def test_mask_image_uses_aligned_mask_stack_planes():
     assert np.count_nonzero(image_payload_data(masked)[0]) == 4
     assert np.count_nonzero(image_payload_data(masked)[1]) == 9
     assert np.array_equal(image_payload_mask(masked), mask > 0)
+
+
+def test_mask_image_uses_geometric_planes_for_disjoint_source_domains():
+    image = image_payload_with_context(
+        np.ones((2, 5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_image_names=("origMemb",)),
+    )
+    mask = image_payload_with_context(
+        np.zeros((2, 5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_image_names=("origDNA",)),
+    )
+    image_payload_data(mask)[0, 1:3, 1:3] = 1.0
+    image_payload_data(mask)[1, 2:5, 3:6] = 1.0
+
+    masked = mask_image(
+        image,
+        mask,
+        mask_source="image",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert masked.shape == image_payload_data(image).shape
+    assert np.count_nonzero(image_payload_data(masked)[0]) == 4
+    assert np.count_nonzero(image_payload_data(masked)[1]) == 9
 
 
 def test_mask_image_projects_mask_stack_to_single_image_plane():

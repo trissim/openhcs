@@ -76,9 +76,9 @@ def test_runtime_execution_observation_merges_into_parent_contexts():
         contexts=(
             RuntimeContextObservation(
                 context_key="A01",
-                records=worker_store.observed_values(),
+                records=worker_store.observed_values,
             ),
         ),
     ).merge_into({"A01": parent_context})
 
-    assert parent_context.runtime_value_store.observed_values() == (record,)
+    assert parent_context.runtime_value_store.observed_values == (record,)

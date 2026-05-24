@@ -20,13 +20,14 @@ from openhcs.core.image_shapes import (
     is_color_image_stack,
     is_grayscale_image_stack,
     is_grayscale_volume_slice,
+    trailing_spatial_target_shape,
 )
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import image_mask_for_data_domain
 from openhcs.core.runtime_values import image_payload_data
 from openhcs.core.runtime_values import image_payload_mask
 from openhcs.core.runtime_values import image_payload_metadata
 from openhcs.core.runtime_values import image_payload_with_context
-from openhcs.core.measurement_image_alignment import ReplicatedChannelMonochromeProjection
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.pipeline.function_contracts import special_inputs
@@ -184,6 +185,37 @@ class ResizeGeometry:
             interpolation_order=cls.resolve_interpolation_order(interpolation),
         )
 
+    @classmethod
+    def from_trailing_spatial_parameters(
+        cls,
+        input_shape: tuple[int, ...],
+        *,
+        resize_method: ResizeMethod,
+        resizing_factors: tuple[float, ...],
+        specific_shape: tuple[int, ...],
+        interpolation: InterpolationMethod,
+    ) -> "ResizeGeometry":
+        spatial_rank = len(resizing_factors)
+        if resize_method is ResizeMethod.BY_FACTOR:
+            spatial_shape = input_shape[-spatial_rank:]
+            output_spatial_shape = tuple(
+                int(np.round(axis_size * factor))
+                for axis_size, factor in zip(
+                    spatial_shape,
+                    resizing_factors,
+                    strict=True,
+                )
+            )
+        else:
+            output_spatial_shape = specific_shape
+        return cls(
+            output_shape=trailing_spatial_target_shape(
+                input_shape,
+                output_spatial_shape,
+            ),
+            interpolation_order=cls.resolve_interpolation_order(interpolation),
+        )
+
     @staticmethod
     def resolve_interpolation_order(interpolation: InterpolationMethod) -> int:
         if interpolation is InterpolationMethod.NEAREST_NEIGHBOR:
@@ -221,7 +253,7 @@ class ResizeGeometry:
         else:
             mask_array = np.asarray(mask, dtype=bool)
 
-        output_shape = self.output_shape[: mask_array.ndim]
+        output_shape = self.output_shape[-mask_array.ndim:]
         zoom = tuple(
             output_size / input_size
             for output_size, input_size in zip(
@@ -251,10 +283,11 @@ class ResizeGeometry:
     def resize_payload(self, image: Any) -> Any:
         pixels = image_payload_data(image)
         output_pixels = self.resize_pixels(pixels)
+        mask = image_mask_for_data_domain(source_payload=image, data=pixels)
         return image_payload_with_context(
             output_pixels,
             mask=self.resize_mask(
-                image_payload_mask(image),
+                mask,
                 input_shape=tuple(np.asarray(pixels).shape),
             ),
             metadata=image_payload_metadata(image).without_spatial_domain(),
@@ -342,6 +375,116 @@ class CellProfilerImageMaskPlane:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class SourceImageMaskPlaneAlignment:
+    """Source-provenance match between one image plane and mask plane candidates."""
+
+    image_plane: Any
+    mask_planes: tuple[Any, ...]
+
+    @staticmethod
+    def source_image_names(payload: Any) -> tuple[str, ...]:
+        names = tuple(str(name) for name in getattr(payload, "source_image_names", ()))
+        if names:
+            return names
+        return tuple(str(name) for name in image_payload_metadata(payload).source_image_names)
+
+    @staticmethod
+    def source_component_identity(payload: Any) -> tuple[tuple[str, str], ...]:
+        metadata = {
+            **dict(image_payload_metadata(payload).source_component_metadata or {}),
+            **dict(getattr(payload, "source_component_metadata", {}) or {}),
+        }
+        return tuple(
+            sorted(
+                (str(key), str(value))
+                for key, value in metadata.items()
+                if value is not None and "channel" not in str(key).lower()
+            )
+        )
+
+    @classmethod
+    def component_identity_matches(cls, image_plane: Any, mask_plane: Any) -> bool:
+        image_identity = dict(cls.source_component_identity(image_plane))
+        mask_identity = dict(cls.source_component_identity(mask_plane))
+        shared_keys = image_identity.keys() & mask_identity.keys()
+        if not shared_keys:
+            return False
+        return all(image_identity[key] == mask_identity[key] for key in shared_keys)
+
+    @classmethod
+    def aligned_mask_planes(
+        cls,
+        image_planes: tuple[Any, ...],
+        mask_planes: tuple[Any, ...],
+    ) -> tuple[Any, ...] | None:
+        """Return mask planes ordered by image-plane provenance when declared."""
+        if len(image_planes) <= 1 or len(mask_planes) <= 1:
+            return None
+        matched_planes: list[Any] = []
+        used_mask_indices: set[int] = set()
+        saw_provenance = False
+        for image_plane in image_planes:
+            alignment = cls(image_plane=image_plane, mask_planes=mask_planes)
+            if alignment.source_image_names(image_plane) or alignment.source_component_identity(image_plane):
+                saw_provenance = True
+            mask_plane = alignment.matched_mask_plane()
+            if mask_plane is None:
+                return None
+            mask_index = next(
+                index
+                for index, candidate in enumerate(mask_planes)
+                if candidate is mask_plane
+            )
+            if mask_index in used_mask_indices:
+                raise ValueError(
+                    "MaskImage source-provenance alignment assigned one mask "
+                    "plane to multiple image planes."
+                )
+            used_mask_indices.add(mask_index)
+            matched_planes.append(mask_plane)
+        return tuple(matched_planes) if saw_provenance else None
+
+    def matched_mask_plane(self) -> Any | None:
+        image_names = frozenset(self.source_image_names(self.image_plane))
+        if not image_names:
+            mask_matches = ()
+        else:
+            mask_matches = tuple(
+                mask_plane
+                for mask_plane in self.mask_planes
+                if image_names
+                & frozenset(self.source_image_names(mask_plane))
+            )
+        if not mask_matches:
+            mask_matches = tuple(
+                mask_plane
+                for mask_plane in self.mask_planes
+                if self.component_identity_matches(self.image_plane, mask_plane)
+            )
+        if len(mask_matches) == 1:
+            return mask_matches[0]
+        if mask_matches:
+            raise ValueError(
+                "MaskImage source-provenance alignment is ambiguous for image "
+                f"sources {tuple(sorted(image_names))!r}: {len(mask_matches)} "
+                "mask planes matched."
+            )
+        mask_source_names = frozenset(
+            source_name
+            for mask_plane in self.mask_planes
+            for source_name in self.source_image_names(mask_plane)
+        )
+        if image_names and mask_source_names and not (image_names & mask_source_names):
+            return None
+        if mask_source_names:
+            raise ValueError(
+                "MaskImage could not find a mask plane matching image sources "
+                f"{tuple(sorted(image_names))!r}."
+            )
+        return None
+
+
 def aligned_image_mask_planes(
     image: np.ndarray,
     mask: np.ndarray,
@@ -352,9 +495,30 @@ def aligned_image_mask_planes(
     """Align a mask payload to each image plane using CellProfiler slice rules."""
     image_planes = payload_slices_for_alignment(image)
     mask_planes = payload_slices_for_alignment(mask)
+    source_aligned_mask_planes = SourceImageMaskPlaneAlignment.aligned_mask_planes(
+        image_planes,
+        mask_planes,
+    )
+    if source_aligned_mask_planes is not None:
+        mask_planes = source_aligned_mask_planes
     if len(image_planes) == 1 and len(mask_planes) > 1:
         image_plane = image_planes[0]
         geometry = CellProfilerPlaneGeometry.from_image_plane(image_plane)
+        matched_mask_plane = SourceImageMaskPlaneAlignment(
+            image_plane=image_plane,
+            mask_planes=mask_planes,
+        ).matched_mask_plane()
+        if matched_mask_plane is not None:
+            return (
+                CellProfilerImageMaskPlane(
+                    image=image_plane,
+                    mask=geometry.binary_mask(
+                        matched_mask_plane,
+                        threshold=threshold,
+                        labels=labels,
+                    ),
+                ),
+            )
         if geometry.spatial_rank == 3:
             projected_volume_mask = np.stack(
                 tuple(
@@ -654,16 +818,6 @@ def collapse_singleton_plane_stack(payload: Any) -> Any:
     return payload
 
 
-def cellprofiler_grayscale_plane(payload: Any, name: str) -> np.ndarray:
-    """Return CP's must_be_grayscale pixel plane for one image payload.
-
-    CellProfiler does not split arbitrary RGB images for grayscale modules. It
-    accepts a multichannel image only when the first three channels are identical
-    and then exposes channel 0 through GrayscaleImage.pixel_data.
-    """
-    return ReplicatedChannelMonochromeProjection().plane(payload, name=name)
-
-
 @numpy
 @special_inputs("mask")
 def mask_image(
@@ -709,15 +863,29 @@ def masked_image_plane(
     *,
     invert_mask: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
+    image_data = collapse_singleton_plane_stack(image_payload_data(image))
     if invert_mask:
         binary_mask = ~binary_mask
+    projected_mask = image_mask_for_data_domain(
+        source_payload=image_data,
+        data=image_data,
+        explicit_mask=binary_mask,
+    )
+    if projected_mask is None:
+        raise ValueError(
+            "MaskImage mask cannot be projected into the image data domain; "
+            f"got mask={np.shape(binary_mask)!r}, image={np.shape(image_data)!r}."
+        )
+    binary_mask = np.asarray(projected_mask, dtype=bool)
     existing_mask = image_payload_mask(image)
     if existing_mask is not None:
-        binary_mask = np.asarray(binary_mask, dtype=bool) & np.asarray(
-            collapse_singleton_plane_stack(existing_mask),
-            dtype=bool,
+        existing_projected_mask = image_mask_for_data_domain(
+            source_payload=image_data,
+            data=image_data,
+            explicit_mask=collapse_singleton_plane_stack(existing_mask),
         )
-    image_data = collapse_singleton_plane_stack(image_payload_data(image))
+        if existing_projected_mask is not None:
+            binary_mask = binary_mask & np.asarray(existing_projected_mask, dtype=bool)
     masked = image_data.copy()
     masked[~binary_mask] = 0
     return masked, np.asarray(binary_mask, dtype=bool)
@@ -904,8 +1072,8 @@ def resize_volumetric(
     interpolation = coerce_cellprofiler_enum(InterpolationMethod, interpolation)
 
     pixels = image_payload_data(image)
-    geometry = ResizeGeometry.from_parameters(
-        tuple(np.asarray(pixels).shape[:3]),
+    geometry = ResizeGeometry.from_trailing_spatial_parameters(
+        tuple(np.asarray(pixels).shape),
         resize_method=resize_method,
         resizing_factors=(resizing_factor_z, resizing_factor_y, resizing_factor_x),
         specific_shape=(specific_planes, specific_height, specific_width),

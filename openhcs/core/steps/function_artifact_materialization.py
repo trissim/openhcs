@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
 
@@ -22,10 +20,7 @@ from openhcs.core.runtime_stores import (
 )
 from openhcs.core.runtime_values import image_payload_metadata
 from openhcs.core.source_matching import source_component_metadata_value
-from openhcs.core.registry_strategies import str_enum_member_with_payload
-from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 
 logger = logging.getLogger(__name__)
@@ -71,113 +66,6 @@ class StreamingOnlyArtifactMaterializationTargetPlan(ArtifactMaterializationTarg
 
     def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
         return {}
-
-
-@dataclass(frozen=True, slots=True)
-class MaterializerInputLocation:
-    """Resolved path universe for one materializer input source."""
-
-    directory: Path
-    backend: str
-
-
-MaterializerInputLocationResolver = Callable[
-    [FunctionStepExecutionPlan],
-    MaterializerInputLocation,
-]
-
-
-def step_input_materializer_location(
-    plan: FunctionStepExecutionPlan,
-) -> MaterializerInputLocation:
-    """Resolve materializer inputs from the step input universe."""
-    return MaterializerInputLocation(plan.input_dir, plan.read_backend)
-
-
-def step_output_materializer_location(
-    plan: FunctionStepExecutionPlan,
-) -> MaterializerInputLocation:
-    """Resolve materializer inputs from the step output universe."""
-    return MaterializerInputLocation(plan.output_dir, Backend.MEMORY.value)
-
-
-class MaterializerInputKind(str, Enum):
-    """Supported extra input payload shapes for artifact materializers."""
-
-    IMAGE_SLICES = "image_slices"
-
-
-class MaterializerInputSource(str, Enum):
-    """Source universe for extra inputs passed to artifact materializers."""
-
-    def __new__(
-        cls,
-        value: str,
-        location_resolver: MaterializerInputLocationResolver,
-    ):
-        return str_enum_member_with_payload(
-            cls,
-            value,
-            payload_attribute="_location_resolver",
-            payload=location_resolver,
-        )
-
-    STEP_INPUT = ("step_input", step_input_materializer_location)
-    STEP_OUTPUT = ("step_output", step_output_materializer_location)
-    location_resolver = AliasProperty[MaterializerInputLocationResolver](
-        "_location_resolver"
-    )
-
-    def location_for(
-        self,
-        plan: FunctionStepExecutionPlan,
-    ) -> MaterializerInputLocation:
-        """Resolve this source against the compiled step execution plan."""
-        return self.location_resolver(plan)
-
-
-@dataclass(frozen=True, slots=True)
-class MaterializerInputSpec:
-    """Validated descriptor for one materializer-declared input."""
-
-    name: str
-    kind: MaterializerInputKind
-    source: MaterializerInputSource
-    group_by: str | None = None
-
-    @classmethod
-    def from_mapping(
-        cls,
-        name: str,
-        raw: Mapping[str, Any],
-    ) -> "MaterializerInputSpec":
-        """Build a typed materializer input descriptor from legacy options."""
-        kind = coerce_enum(
-            MaterializerInputKind,
-            raw.get("kind"),
-            f"Materialization input {name!r} kind",
-        )
-        source = coerce_enum(
-            MaterializerInputSource,
-            raw.get("source"),
-            f"Materialization input {name!r} source",
-        )
-        group_by = raw.get("group_by")
-        return cls(
-            name=str(name),
-            kind=kind,
-            source=source,
-            group_by=None if group_by is None else str(group_by),
-        )
-
-    def require_image_slices(self) -> None:
-        """Fail loudly when a materializer asks for an unsupported input kind."""
-        if self.kind is not MaterializerInputKind.IMAGE_SLICES:
-            supported = ", ".join(repr(kind.value) for kind in MaterializerInputKind)
-            raise ValueError(
-                f"Unsupported materialization input kind for {self.name!r}: "
-                f"{self.kind.value!r}. Supported kinds: {supported}."
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,92 +218,6 @@ def _backend_kwargs_with_component_metadata(
     }
 
 
-def _resolve_materializer_inputs(
-    mat_spec: Any,
-    *,
-    dict_key: str | None,
-    plan: FunctionStepExecutionPlan,
-    filemanager: Any,
-    context: Any,
-) -> dict[str, Any]:
-    """Resolve materializer-declared image inputs for one artifact invocation."""
-    options = getattr(mat_spec, "options", {}) or {}
-    inputs_spec = options.get("inputs") or {}
-    if not inputs_spec:
-        return {}
-    if not isinstance(inputs_spec, dict):
-        raise ValueError(
-            f"MaterializationSpec.options['inputs'] must be a dict, got {type(inputs_spec)}"
-        )
-
-    resolved: dict[str, Any] = {}
-    for input_name, input_desc in inputs_spec.items():
-        if not isinstance(input_desc, dict):
-            raise ValueError(
-                f"Materialization input '{input_name}' must be a dict, got {type(input_desc)}"
-            )
-
-        input_spec = MaterializerInputSpec.from_mapping(input_name, input_desc)
-        input_spec.require_image_slices()
-        location = input_spec.source.location_for(plan)
-
-        paths = plan.get_paths_for_axis(location.directory, location.backend)
-        if dict_key is not None:
-            paths = _filter_group_materializer_paths(
-                input_spec=input_spec,
-                paths=paths,
-                dict_key=dict_key,
-                plan=plan,
-                context=context,
-            )
-
-        if not paths:
-            raise ValueError(
-                f"Materialization input '{input_name}' resolved to 0 paths "
-                f"(source={input_spec.source.value}, dir={location.directory}, "
-                f"backend={location.backend}, group={dict_key})."
-            )
-
-        resolved[input_name] = filemanager.load_batch(paths, location.backend)
-
-    return resolved
-
-
-def _filter_group_materializer_paths(
-    *,
-    input_spec: MaterializerInputSpec,
-    paths: list[str],
-    dict_key: str,
-    plan: FunctionStepExecutionPlan,
-    context: Any,
-) -> list[str]:
-    """Filter materializer input paths to the current dict/group invocation."""
-    group_by_key = input_spec.group_by
-    if group_by_key is None:
-        group_by_key = plan.group_by_value
-
-    if group_by_key is None:
-        raise ValueError(
-            f"Cannot resolve materialization input '{input_spec.name}' for group '{dict_key}': "
-            "no group_by specified in the input spec and the step has no group_by."
-        )
-    if context is None:
-        raise ValueError(
-            f"Cannot resolve materialization input '{input_spec.name}' for group '{dict_key}': "
-            "context is required for filename parsing."
-        )
-
-    parser = context.microscope_handler.parser
-    return [
-        path
-        for path in paths
-        if (
-            (metadata := parser.parse_filename(Path(path).name))
-            and str(metadata.get(group_by_key)) == str(dict_key)
-        )
-    ]
-
-
 def _planned_artifact_paths(output_plan: ArtifactOutputPlan) -> frozenset[str]:
     """Return every compiler-planned memory path for one artifact output."""
     paths = {output_plan.path}
@@ -529,13 +331,6 @@ def materialize_artifact_outputs(
                 record=record,
             )
             analysis_path = analysis_output_dir / output_descriptor.filename
-            extra_inputs = _resolve_materializer_inputs(
-                mat_spec,
-                dict_key=dict_key,
-                plan=plan,
-                filemanager=filemanager,
-                context=context,
-            )
             materialize(
                 mat_spec,
                 data,
@@ -547,5 +342,4 @@ def materialize_artifact_outputs(
                     output_descriptor.component_metadata,
                 ),
                 context=context,
-                extra_inputs=extra_inputs,
             )

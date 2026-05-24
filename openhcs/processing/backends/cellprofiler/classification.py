@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import json
 from typing import ClassVar
@@ -557,9 +557,62 @@ def classify_objects_single_measurement(
     custom_thresholds: str = "0,1",
     bin_names: str | None = None,
     classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int | None = None,
 ) -> tuple[np.ndarray, ClassificationResult | tuple[ClassificationResult, ...]]:
     """Classify objects based on one measurement or declared rule rows."""
-    labels = object_label_dense_array(labels, dtype=np.int32)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    if (
+        slice_index is None
+        and np.asarray(image).ndim == 2
+        and label_array.ndim == 3
+        and label_array.shape[-2:] == np.asarray(image).shape
+    ):
+        results: list[ClassificationResult] = []
+        value_offset = 0
+        measurement_vector = (
+            None
+            if measurement_values is None
+            else np.asarray(measurement_values, dtype=np.float64).reshape(-1)
+        )
+        for plane_index, label_plane in enumerate(label_array):
+            object_count = int(np.unique(label_plane[label_plane > 0]).size)
+            plane_values = None
+            if measurement_vector is not None:
+                plane_values = measurement_vector[
+                    value_offset : value_offset + object_count
+                ]
+            value_offset += object_count
+            _image, result = classify_objects_single_measurement(
+                image,
+                label_plane,
+                measurement_values=plane_values,
+                measurement_values_by_rule=measurement_values_by_rule,
+                classification_rules=classification_rules,
+                bin_choice=bin_choice,
+                bin_count=bin_count,
+                low_threshold=low_threshold,
+                high_threshold=high_threshold,
+                wants_low_bin=wants_low_bin,
+                wants_high_bin=wants_high_bin,
+                custom_thresholds=custom_thresholds,
+                bin_names=bin_names,
+                classification_backend_provider=classification_backend_provider,
+                slice_index=plane_index,
+            )
+            if isinstance(result, tuple):
+                results.extend(
+                    replace(item, slice_index=plane_index) for item in result
+                )
+            else:
+                results.append(replace(result, slice_index=plane_index))
+        return image, tuple(results)
+
+    slice_index = 0 if slice_index is None else int(slice_index)
+    labels = _labels_for_image_slice(
+        label_array,
+        image,
+        slice_index,
+    )
     backend = object_classification_backend(
         backend_provider=classification_backend_provider
     )
@@ -597,6 +650,24 @@ def classify_objects_single_measurement(
         custom_thresholds=custom_thresholds,
         bin_names=bin_names,
     ).classify(image, labels, backend)
+
+
+def _labels_for_image_slice(
+    labels: np.ndarray,
+    image: np.ndarray,
+    slice_index: int,
+) -> np.ndarray:
+    image_array = np.asarray(image)
+    if (
+        image_array.ndim == 2
+        and labels.ndim > 2
+        and labels.shape[-2:] == image_array.shape
+    ):
+        if 0 <= slice_index < labels.shape[0]:
+            labels = labels[slice_index]
+        if labels.ndim > 2:
+            labels = np.max(labels, axis=tuple(range(labels.ndim - 2)))
+    return np.asarray(labels, dtype=np.int32)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

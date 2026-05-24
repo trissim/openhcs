@@ -313,12 +313,15 @@ class SourceSchemaWorkspaceMaterialization:
     def source_paths_for_primary_wells(
         self,
         well_ids: Iterable[str],
+        *,
+        imported_metadata_tables: Iterable[ImportedMetadataTable] = (),
     ) -> tuple[Path, ...]:
         """Return the complete source universe required for selected wells.
 
         Primary mappings define the selected sample identities. Auxiliary mappings are
-        source artifacts, not sample-defining image sets, so they remain available to
-        native consumers that need illumination images or object seeds.
+        source artifacts, not sample-defining image sets. Imported metadata tables are
+        also runtime inputs for native CellProfiler. Both remain available to native
+        consumers without broadening the selected sample identity.
         """
         selected_wells = set(str(well_id) for well_id in well_ids)
         if not selected_wells:
@@ -336,6 +339,10 @@ class SourceSchemaWorkspaceMaterialization:
         paths.extend(
             (self.workspace_root / real_path).resolve()
             for real_path in self.auxiliary_mappings.values()
+        )
+        paths.extend(
+            ImportedMetadataPathResolver(self.source_root).path(table)
+            for table in imported_metadata_tables
         )
         return tuple(dict.fromkeys(paths))
 
@@ -355,6 +362,131 @@ class SourceSchemaCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateIdentity:
+    """Stable identity for source-schema candidate deduplication."""
+
+    path: str
+    relative_path: str
+    metadata_items: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def from_candidate(
+        cls,
+        candidate: SourceSchemaCandidate,
+    ) -> "SourceSchemaCandidateIdentity":
+        return cls(
+            path=str(candidate.path),
+            relative_path=candidate.relative_path,
+            metadata_items=tuple(sorted(candidate.metadata.items())),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateDiscoveryRequest:
+    """Inputs for discovering typed source-schema candidates from a source tree."""
+
+    source_root: Path
+    source_files: tuple[Path, ...]
+    schema: PipelineImageSchema
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_root", Path(self.source_root))
+        object.__setattr__(
+            self,
+            "source_files",
+            tuple(Path(path) for path in self.source_files),
+        )
+        if not isinstance(self.schema, PipelineImageSchema):
+            raise TypeError(
+                "SourceSchemaCandidateDiscoveryRequest.schema must be a "
+                f"PipelineImageSchema, got {type(self.schema).__name__}."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateMetadataRequest:
+    """Inputs for deriving one source-schema candidate's metadata."""
+
+    source_root: Path
+    schema: PipelineImageSchema
+    path: Path
+    relative_path: str
+    imported_metadata: tuple["ImportedMetadataRows", ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_root", Path(self.source_root))
+        object.__setattr__(self, "path", Path(self.path))
+        object.__setattr__(self, "relative_path", self.relative_path.replace(os.sep, "/"))
+        if not isinstance(self.schema, PipelineImageSchema):
+            raise TypeError(
+                "SourceSchemaCandidateMetadataRequest.schema must be a "
+                f"PipelineImageSchema, got {type(self.schema).__name__}."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateMetadataResolver:
+    """Derive source-schema candidate metadata from rules and imported tables."""
+
+    request: SourceSchemaCandidateMetadataRequest
+
+    def metadata(self) -> Mapping[str, str]:
+        metadata = metadata_from_rules(
+            str(self.request.path),
+            self.request.schema.metadata_rules,
+            filter_path=self.request.relative_path,
+        )
+        metadata = _metadata_with_imported_tables(
+            metadata,
+            self.request.imported_metadata,
+            path=self.request.relative_path,
+        )
+        return SourceSchemaFilenameComponentFallbackPolicy.for_schema(
+            self.request.schema
+        ).metadata(self.request.path.name, metadata)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateDiscovery:
+    """Discover source files admitted by a typed source schema."""
+
+    request: SourceSchemaCandidateDiscoveryRequest
+
+    def candidates(self) -> tuple[SourceSchemaCandidate, ...]:
+        imported_metadata = _imported_metadata_rows(
+            self.request.source_root,
+            self.request.schema,
+        )
+        candidates: list[SourceSchemaCandidate] = []
+        for path in self.request.source_files:
+            relative_path = path.relative_to(self.request.source_root).as_posix()
+            if not self._schema_admits_path(relative_path):
+                continue
+            candidates.append(
+                SourceSchemaCandidate(
+                    path=path,
+                    relative_path=relative_path,
+                    metadata=SourceSchemaCandidateMetadataResolver(
+                        SourceSchemaCandidateMetadataRequest(
+                            self.request.source_root,
+                            self.request.schema,
+                            path,
+                            relative_path,
+                            imported_metadata,
+                        )
+                    ).metadata(),
+                )
+            )
+        return tuple(candidates)
+
+    def _schema_admits_path(self, relative_path: str) -> bool:
+        images_rule = self.request.schema.images_rule
+        if images_rule is None:
+            return True
+        return source_filters_match(relative_path, images_rule.filters)
+
+
+@dataclass(frozen=True, slots=True)
 class SourceSchemaCandidateCollection:
     """Deduplicated ordered source-schema candidates."""
 
@@ -362,18 +494,14 @@ class SourceSchemaCandidateCollection:
 
     def __post_init__(self) -> None:
         deduplicated: list[SourceSchemaCandidate] = []
-        seen: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
+        seen: set[SourceSchemaCandidateIdentity] = set()
         for candidate in self.candidates:
             if not isinstance(candidate, SourceSchemaCandidate):
                 raise TypeError(
                     "SourceSchemaCandidateCollection values must be "
                     f"SourceSchemaCandidate, got {type(candidate).__name__}."
                 )
-            key = (
-                str(candidate.path),
-                candidate.relative_path,
-                tuple(sorted(candidate.metadata.items())),
-            )
+            key = SourceSchemaCandidateIdentity.from_candidate(candidate)
             if key in seen:
                 continue
             seen.add(key)
@@ -999,6 +1127,18 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
     ) -> str | None:
         return source_metadata_value(metadata, component.value)
 
+    def first_metadata_value(
+        self,
+        metadata: Mapping[str, str],
+        normalized_keys: tuple[str, ...],
+    ) -> str | None:
+        """Return the first normalized metadata value owned by this projection."""
+        for key in normalized_keys:
+            value = source_metadata_value(metadata, key)
+            if value is not None:
+                return value
+        return None
+
     @abstractmethod
     def value(
         self,
@@ -1016,8 +1156,11 @@ class WellRowColumnMetadataProjection(ComponentProjection):
         metadata: Mapping[str, str],
         image_set_index: int,
     ) -> str | None:
-        row = _first_metadata_value(metadata, ("wellrow", "row"))
-        column = _first_metadata_value(metadata, ("wellcolumn", "wellcol", "column", "col"))
+        row = self.first_metadata_value(metadata, ("wellrow", "row"))
+        column = self.first_metadata_value(
+            metadata,
+            ("wellcolumn", "wellcol", "column", "col"),
+        )
         if row is None or column is None:
             return None
         return f"{row.strip().upper()}{int(column):02d}"
@@ -1045,6 +1188,57 @@ class ImageNumberSiteProjection(ComponentProjection):
         image_set_index: int,
     ) -> str | None:
         return source_metadata_value(metadata, "imagenumber")
+
+
+class FrameNumberSingletonSiteProjection(ComponentProjection):
+    """Keep time-series frames on one site when no explicit site metadata exists."""
+
+    component = AllComponents.SITE
+
+    def value(
+        self,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+    ) -> str | None:
+        del image_set_index
+        if self.first_metadata_value(metadata, ("framenumber", "frame")) is None:
+            return None
+        return "1"
+
+
+class FrameNumberTimepointProjection(ComponentProjection):
+    """Project frame metadata onto the OpenHCS timepoint component."""
+
+    component = AllComponents.TIMEPOINT
+
+    def value(
+        self,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+    ) -> str | None:
+        del image_set_index
+        return self.first_metadata_value(
+            metadata,
+            (
+                "timepoint",
+                "time",
+                "framenumber",
+                "frame",
+            ),
+        )
+
+
+class SourceSchemaSingletonTimepointProjection(ComponentProjection):
+    component = AllComponents.TIMEPOINT
+    metadata_derived = False
+
+    def value(
+        self,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+    ) -> str | None:
+        del metadata, image_set_index
+        return "1"
 
 
 class OrdinalSiteProjection(ComponentProjection):
@@ -1214,7 +1408,9 @@ def materialize_source_schema_workspace(
         filemanager=filemanager,
         backend=source_backend_name,
     )
-    local_candidates = _source_candidates(source_root, source_files, schema)
+    local_candidates = SourceSchemaCandidateDiscovery(
+        SourceSchemaCandidateDiscoveryRequest(source_root, source_files, schema)
+    ).candidates()
     candidates = SourceSchemaCandidateCollection.merge(
         local_candidates,
         _image_plane_source_candidates(workspace_root, schema, local_candidates),
@@ -1486,43 +1682,6 @@ def _source_files(
     )
 
 
-def _source_candidates(
-    source_root: Path,
-    source_files: tuple[Path, ...],
-    schema: PipelineImageSchema,
-) -> tuple[SourceSchemaCandidate, ...]:
-    imported_metadata = _imported_metadata_rows(source_root, schema)
-    candidates: list[SourceSchemaCandidate] = []
-    for path in source_files:
-        relative_path = path.relative_to(source_root).as_posix()
-        if schema.images_rule is not None and not source_filters_match(
-            relative_path,
-            schema.images_rule.filters,
-        ):
-            continue
-        metadata = metadata_from_rules(
-            str(path),
-            schema.metadata_rules,
-            filter_path=relative_path,
-        )
-        metadata = _metadata_with_imported_tables(
-            metadata,
-            imported_metadata,
-            path=relative_path,
-        )
-        metadata = SourceSchemaFilenameComponentFallbackPolicy.for_schema(
-            schema
-        ).metadata(path.name, metadata)
-        candidates.append(
-            SourceSchemaCandidate(
-                path=path,
-                relative_path=relative_path,
-                metadata=metadata,
-            )
-        )
-    return tuple(candidates)
-
-
 @dataclass(frozen=True, slots=True)
 class SourceSchemaFilenameComponentFallbackPolicy:
     """Recover missing component tokens from common source filename conventions."""
@@ -1629,7 +1788,7 @@ def _read_imported_metadata_rows(
     source_root: Path,
     table: ImportedMetadataTable,
 ) -> tuple[Mapping[str, str], ...]:
-    table_path = _imported_metadata_path(source_root, table)
+    table_path = ImportedMetadataPathResolver(source_root).path(table)
     if not table_path.is_file():
         raise FileNotFoundError(f"Imported metadata table does not exist: {table_path}")
     with table_path.open(newline="", encoding="utf-8") as handle:
@@ -1681,38 +1840,43 @@ def _imported_metadata_row_join_key(
     return tuple(values)
 
 
-def _imported_metadata_path(
-    source_root: Path,
-    table: ImportedMetadataTable,
-) -> Path:
-    if table.location is None:
-        raise ValueError("Imported metadata tables require a location.")
-    location = Path(table.location)
-    candidates = tuple(
-        dict.fromkeys(_imported_metadata_path_candidates(source_root, location))
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return candidates[0]
+@dataclass(frozen=True, slots=True)
+class ImportedMetadataPathResolver:
+    """Resolve CellProfiler imported metadata paths against a source root."""
 
+    source_root: Path
 
-def _imported_metadata_path_candidates(
-    source_root: Path,
-    location: Path,
-) -> tuple[Path, ...]:
-    if location.is_absolute():
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_root", Path(self.source_root))
+
+    def path(self, table: ImportedMetadataTable) -> Path:
+        """Return the first existing path for an imported metadata table."""
+        candidates = self.path_candidates(table)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        return candidates[0]
+
+    def path_candidates(self, table: ImportedMetadataTable) -> tuple[Path, ...]:
+        """Return candidate local paths for a CellProfiler metadata declaration."""
+        if table.location is None:
+            raise ValueError("Imported metadata tables require a location.")
+        location = Path(table.location)
+        return tuple(dict.fromkeys(self._path_candidates_for_location(location)))
+
+    def _path_candidates_for_location(self, location: Path) -> tuple[Path, ...]:
+        if location.is_absolute():
+            return (
+                location,
+                self.source_root / location.name,
+                self.source_root.parent / location.name,
+            )
         return (
-            location,
-            source_root / location.name,
-            source_root.parent / location.name,
+            self.source_root / location,
+            self.source_root / location.name,
+            self.source_root.parent / location,
+            self.source_root.parent / location.name,
         )
-    return (
-        source_root / location,
-        source_root / location.name,
-        source_root.parent / location,
-        source_root.parent / location.name,
-    )
 
 
 def _metadata_with_imported_tables(
@@ -1968,11 +2132,12 @@ def _primary_workspace_mappings(
     }
     wells: dict[str, None] = {}
     sites: dict[str, None] = {}
+    timepoints: dict[str, None] = {}
     primary_mappings: dict[str, str] = {}
     primary_mapping_sink = WorkspaceMappingSink(primary_mappings)
     source_metadata: dict[str, Mapping[str, str]] = {}
     site_indexes_by_well: dict[str, int] = {}
-    used_paths_by_well_channel: dict[tuple[str, int], set[str]] = {}
+    used_paths_by_well_channel_timepoint: dict[tuple[str, int, int | str], set[str]] = {}
     for image_set in image_sets:
         well = SourceSchemaImageSetIdentity(schema, image_set).well
         site_index = site_indexes_by_well.get(well, 0)
@@ -1981,10 +2146,17 @@ def _primary_workspace_mappings(
             image_set.metadata,
             site_index,
         )
+        timepoint = ComponentProjection.resolve(
+            AllComponents.TIMEPOINT,
+            image_set.metadata,
+            site_index,
+        )
         site_indexes_by_well[well] = site_index + 1
         preferred_site_component = _component_ordinal_or_label(site)
+        timepoint_component = _component_ordinal_or_label(timepoint)
         wells[well] = None
         sites[str(preferred_site_component)] = None
+        timepoints[str(timepoint_component)] = None
         for channel_index, assignment in enumerate(stack_assignments, start=1):
             candidate = image_set.candidates_by_alias[assignment.alias]
             site_component = _collision_free_site_component(
@@ -1993,9 +2165,10 @@ def _primary_workspace_mappings(
                 preferred_site_component=preferred_site_component,
                 ordinal_site_component=site_index + 1,
                 channel_index=channel_index,
+                timepoint=timepoint_component,
                 extension=candidate.path.suffix,
-                used_paths=used_paths_by_well_channel.setdefault(
-                    (well, channel_index),
+                used_paths=used_paths_by_well_channel_timepoint.setdefault(
+                    (well, channel_index, timepoint_component),
                     set(),
                 ),
             )
@@ -2006,7 +2179,7 @@ def _primary_workspace_mappings(
                     site_component,
                     channel_index,
                     1,
-                    1,
+                    timepoint_component,
                     candidate.path.suffix,
                 )
             )
@@ -2026,7 +2199,7 @@ def _primary_workspace_mappings(
             AllComponents.WELL: MappingProxyType(wells),
             AllComponents.SITE: MappingProxyType(sites),
             AllComponents.Z_INDEX: MappingProxyType({"1": None}),
-            AllComponents.TIMEPOINT: MappingProxyType({"1": None}),
+            AllComponents.TIMEPOINT: MappingProxyType(timepoints),
         }
     )
     return (
@@ -2105,6 +2278,7 @@ def _collision_free_site_component(
     preferred_site_component: int | str,
     ordinal_site_component: int,
     channel_index: int,
+    timepoint: int | str,
     extension: str,
     used_paths: set[str],
 ) -> int | str:
@@ -2114,7 +2288,7 @@ def _collision_free_site_component(
             preferred_site_component,
             channel_index,
             1,
-            1,
+            timepoint,
             extension,
         )
     )
@@ -2130,7 +2304,7 @@ def _collision_free_site_component(
                 ordinal_component,
                 channel_index,
                 1,
-                1,
+                timepoint,
                 extension,
             )
         )
@@ -2376,17 +2550,6 @@ def _image_set_match_value(
     if component is None:
         return None
     return ComponentProjection.resolve_from_metadata(component, metadata)
-
-
-def _first_metadata_value(
-    metadata: Mapping[str, str],
-    normalized_keys: tuple[str, ...],
-) -> str | None:
-    for key in normalized_keys:
-        value = source_metadata_value(metadata, key)
-        if value is not None:
-            return value
-    return None
 
 
 def _component_ordinal_or_label(value: str) -> int | str:

@@ -21,6 +21,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.image_shapes import trailing_spatial_factors
 from openhcs.core.runtime_semantics import DenseObjectLabelConsecutiveRelabelingStrategy
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -43,6 +44,48 @@ PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 NDIMAGE_CONSTANT_MODE = "constant"
 WATERSHED_STRATEGY_REGISTRY_KEY = "strategy_label"
 logger = logging.getLogger(__name__)
+
+
+def watershed_xy_downsample_factors(ndim: int, factor: int) -> tuple[int, ...]:
+    """Return rank-matched factors that downsample only the XY image domain."""
+    return tuple(
+        int(value)
+        for value in trailing_spatial_factors(ndim, (factor, factor))
+    )
+
+
+def watershed_connected_components(labels_like: np.ndarray) -> np.ndarray:
+    """Label connected components over skimage-supported trailing spatial axes."""
+    import skimage.measure
+
+    labels_array = np.asarray(labels_like)
+    spatial_rank = min(labels_array.ndim, 3)
+    if labels_array.ndim == spatial_rank:
+        return skimage.measure.label(labels_array).astype(np.int32, copy=False)
+    output = np.zeros(labels_array.shape, dtype=np.int32)
+    leading_shape = labels_array.shape[: labels_array.ndim - spatial_rank]
+    for leading_index in np.ndindex(leading_shape):
+        output[leading_index] = skimage.measure.label(labels_array[leading_index])
+    return output
+
+
+def watershed_regionprops_stats(labels: np.ndarray) -> tuple[int, float]:
+    """Return object count and mean area over skimage-supported spatial labels."""
+    from skimage.measure import regionprops
+
+    labels_array = np.asarray(labels)
+    spatial_rank = min(labels_array.ndim, 3)
+    if labels_array.ndim == spatial_rank:
+        props = regionprops(labels_array)
+    else:
+        props = []
+        leading_shape = labels_array.shape[: labels_array.ndim - spatial_rank]
+        for leading_index in np.ndindex(leading_shape):
+            props.extend(regionprops(labels_array[leading_index]))
+    return (
+        len(props),
+        float(np.mean([prop.area for prop in props]) if props else 0.0),
+    )
 
 
 def watershed_profile_enabled() -> bool:
@@ -78,6 +121,26 @@ class WatershedProfiler:
         **fields: object,
     ) -> None:
         self.record(label, started_at, method=method.value, **fields)
+
+
+@dataclass(frozen=True, slots=True)
+class WatershedFactorProfiler:
+    """Profiler projection for a watershed phase family sharing one factor."""
+
+    profiler: WatershedProfiler
+    factor: int
+    ndim: int
+
+    def record(
+        self,
+        label: str,
+        started_at: float,
+        **fields: object,
+    ) -> None:
+        self.profiler.record(label, started_at, factor=self.factor, **fields)
+
+    def record_downsample(self, label: str, started_at: float) -> None:
+        self.record(label, started_at, ndim=self.ndim)
 
 
 class WatershedMethod(str, Enum):
@@ -562,43 +625,43 @@ class CellProfiler4DistanceInitialWatershedStrategy(
         import skimage.transform
 
         profiler = WatershedProfiler()
+        factor_profiler = WatershedFactorProfiler(
+            profiler=profiler,
+            factor=parameters.downsample,
+            ndim=image.ndim,
+        )
         total_started_at = time.perf_counter()
         input_shape = image.shape
         factor = parameters.downsample
         x_data = image
         if factor > 1:
             phase_started_at = time.perf_counter()
-            factors = (1, factor, factor) if image.ndim > 2 else (factor, factor)
+            factors = watershed_xy_downsample_factors(image.ndim, factor)
             x_data = skimage.transform.downscale_local_mean(x_data, factors)
-            profiler.record_factor(
+            factor_profiler.record_downsample(
                 "watershed_cp4_distance_downsample",
                 phase_started_at,
-                factor=factor,
-                ndim=image.ndim,
             )
 
         phase_started_at = time.perf_counter()
         threshold = skimage.filters.threshold_otsu(x_data)
         x_data = x_data > threshold
-        profiler.record_factor(
+        factor_profiler.record(
             "watershed_cp4_distance_threshold",
             phase_started_at,
-            factor=factor,
         )
         phase_started_at = time.perf_counter()
         distance = scipy.ndimage.distance_transform_edt(x_data)
-        profiler.record_factor(
+        factor_profiler.record(
             "watershed_cp4_distance_edt",
             phase_started_at,
-            factor=factor,
         )
         phase_started_at = time.perf_counter()
         distance = mahotas.stretch(distance)
         surface = distance.max() - distance
-        profiler.record_factor(
+        factor_profiler.record(
             "watershed_cp4_distance_surface",
             phase_started_at,
-            factor=factor,
         )
         phase_started_at = time.perf_counter()
         peak_footprint = np.ones((parameters.footprint,) * image.ndim)
@@ -612,18 +675,16 @@ class CellProfiler4DistanceInitialWatershedStrategy(
                 seed_connectivity,
             )
         )
-        profiler.record_factor(
+        factor_profiler.record(
             "watershed_cp4_distance_markers",
             phase_started_at,
-            factor=factor,
             seeds=marker_count,
         )
         phase_started_at = time.perf_counter()
         y_data = mahotas.cwatershed(surface, seed_markers) * x_data
-        profiler.record_factor(
+        factor_profiler.record(
             "watershed_cp4_distance_cwatershed",
             phase_started_at,
-            factor=factor,
         )
 
         if factor > 1:
@@ -637,15 +698,13 @@ class CellProfiler4DistanceInitialWatershedStrategy(
             )
             y_data = np.rint(y_data).astype(np.uint16)
             x_data = image > threshold
-            profiler.record_factor(
+            factor_profiler.record(
                 "watershed_cp4_distance_upsample",
                 phase_started_at,
-                factor=factor,
             )
-        profiler.record_factor(
+        factor_profiler.record(
             "watershed_cp4_distance_initial_total",
             total_started_at,
-            factor=factor,
         )
         return y_data, x_data
 
@@ -780,7 +839,7 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
                 seeds,
                 parameters.structuring_element,
             )
-            number_objects = skimage.measure.label(y_data, return_num=True)[1]
+            number_objects = int(np.max(watershed_connected_components(y_data)))
             seeds_dtype = (
                 np.uint16
                 if number_objects < np.iinfo(np.uint16).max
@@ -819,7 +878,7 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
             )
 
         phase_started_at = time.perf_counter()
-        labels = skimage.measure.label(y_data).astype(np.int32, copy=False)
+        labels = watershed_connected_components(y_data)
         profiler.record_method(
             "watershed_cp4_final_label",
             phase_started_at,
@@ -863,11 +922,7 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
             else object_label_dense_array(markers, dtype=np.int32)
         )
         if parameters.downsample > 1:
-            factors = (
-                (1, parameters.downsample, parameters.downsample)
-                if binary.ndim > 2
-                else (parameters.downsample, parameters.downsample)
-            )
+            factors = watershed_xy_downsample_factors(binary.ndim, parameters.downsample)
             working_image = downscale_local_mean(binary.astype(np.float32), factors)
             if working_mask is not None:
                 working_mask = (
@@ -950,17 +1005,24 @@ class LegacyWatershedBackendStrategy(
 
     __registry_key__ = "backend_key"
     __skip_if_no_key__ = True
+    prefer_fast: ClassVar[bool]
 
-    @abstractmethod
-    def legacy_watershed(
+    def validated_request(
         self,
         image: np.ndarray,
         *,
         markers: np.ndarray,
         mask: np.ndarray,
         connectivity: int | np.ndarray = 1,
-    ) -> np.ndarray:
-        """Run CellProfiler 4.2/skimage 0.18 watershed semantics."""
+    ) -> "LegacyWatershedRequest":
+        """Build a validated legacy watershed request for this backend family."""
+        return LegacyWatershedRequest.from_inputs(
+            image,
+            markers=markers,
+            mask=mask,
+            connectivity=connectivity,
+            prefer_fast=self.prefer_fast,
+        )
 
 
 class NumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
@@ -969,22 +1031,7 @@ class NumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
     backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY)
     memory_type = MemoryType.NUMPY
     is_default_backend = False
-
-    def legacy_watershed(
-        self,
-        image: np.ndarray,
-        *,
-        markers: np.ndarray,
-        mask: np.ndarray,
-        connectivity: int | np.ndarray = 1,
-    ) -> np.ndarray:
-        return _cellprofiler_legacy_watershed_numpy(
-            image,
-            markers=markers,
-            mask=mask,
-            connectivity=connectivity,
-            prefer_fast=False,
-        )
+    prefer_fast = False
 
 
 class NumbaNumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
@@ -997,29 +1044,18 @@ class NumbaNumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
+    prefer_fast = True
 
     def prepare_backend(self) -> None:
         image = np.arange(9, dtype=np.float64).reshape((3, 3))
         markers = np.array([[1, 0, 0], [0, 0, 2], [0, 0, 0]], dtype=np.int32)
         mask = np.ones(markers.shape, dtype=np.bool_)
-        self.legacy_watershed(image, markers=markers, mask=mask, connectivity=1)
-
-    def legacy_watershed(
-        self,
-        image: np.ndarray,
-        *,
-        markers: np.ndarray,
-        mask: np.ndarray,
-        connectivity: int | np.ndarray = 1,
-    ) -> np.ndarray:
-        return _cellprofiler_legacy_watershed_numpy(
+        self.validated_request(
             image,
             markers=markers,
             mask=mask,
-            connectivity=connectivity,
-            prefer_fast=True,
-        )
-
+            connectivity=1,
+        ).execute()
 
 class CellProfiler4DistanceMarkerBackendStrategy(
     CellProfilerBackendStrategyMixin,
@@ -1129,12 +1165,12 @@ def cellprofiler_legacy_watershed(
     return LegacyWatershedBackendStrategy.for_memory_type(
         MemoryType.NUMPY,
         backend_provider=backend_provider,
-    ).legacy_watershed(
+    ).validated_request(
         image,
         markers=markers,
         mask=mask,
         connectivity=connectivity,
-    )
+    ).execute()
 
 
 @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
@@ -1175,8 +1211,6 @@ def watershed(
     runtime_family: WatershedRuntimeFamily | str = WatershedRuntimeFamily.LIBRARY,
 ) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
     """Apply watershed segmentation using the registered CP runtime family."""
-    from skimage.measure import regionprops
-
     method = coerce_watershed_method(watershed_method)
     resolved_declump_method = coerce_watershed_declump_method(declump_method)
     if not use_advanced_settings:
@@ -1231,33 +1265,14 @@ def watershed(
         ),
     )
 
-    props = regionprops(labels)
+    object_count, mean_area = watershed_regionprops_stats(labels)
     stats = WatershedStats(
         slice_index=0,
-        object_count=len(props),
-        mean_area=float(np.mean([prop.area for prop in props]) if props else 0.0),
+        object_count=object_count,
+        mean_area=mean_area,
     )
 
     return image, stats, labels.astype(np.int32)
-
-
-def _cellprofiler_legacy_watershed_numpy(
-    image: np.ndarray,
-    *,
-    markers: np.ndarray,
-    mask: np.ndarray,
-    connectivity: int | np.ndarray = 1,
-    prefer_fast: bool = True,
-) -> np.ndarray:
-    return _cellprofiler_legacy_watershed_request(
-        LegacyWatershedRequest.from_inputs(
-            image,
-            markers=markers,
-            mask=mask,
-            connectivity=connectivity,
-            prefer_fast=prefer_fast,
-        )
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1307,66 +1322,113 @@ class LegacyWatershedRequest:
             prefer_fast=self.prefer_fast,
         )
 
-
-def _cellprofiler_legacy_watershed_request(
-    request: LegacyWatershedRequest,
-) -> np.ndarray:
-    from skimage.morphology._util import (
-        _offsets_to_raveled_neighbors,
-        _validate_connectivity,
-    )
-    from skimage.util import crop
-
-    if _is_planewise_watershed(
-        request.image,
-        request.connectivity,
-    ):
-        return _cellprofiler_legacy_watershed_planewise(request)
-
-    connectivity_array, offset = _validate_connectivity(
-        request.image.ndim,
-        request.connectivity,
-        None,
-    )
-    pad_width = [(int(width), int(width)) for width in offset]
-    padded_image = np.pad(request.image, pad_width, mode=NDIMAGE_CONSTANT_MODE)
-    padded_mask = np.pad(
-        request.mask.astype(np.bool_, copy=False),
-        pad_width,
-        mode=NDIMAGE_CONSTANT_MODE,
-    ).ravel()
-    output = np.pad(
-        request.markers.astype(np.int32, copy=False),
-        pad_width,
-        mode=NDIMAGE_CONSTANT_MODE,
-    )
-    output_flat = output.ravel()
-    image_flat = padded_image.ravel()
-    neighbor_offsets = _offsets_to_raveled_neighbors(
-        padded_image.shape,
-        connectivity_array,
-        center=offset,
-    ).astype(np.int64, copy=False)
-    marker_locations = np.flatnonzero(output_flat).astype(np.int64, copy=False)
-
-    if request.prefer_fast:
-        _legacy_watershed_raveled_numba(
-            image_flat,
-            padded_mask,
-            output_flat,
-            neighbor_offsets,
-            marker_locations,
+    def execute(self) -> np.ndarray:
+        """Execute the validated legacy watershed request."""
+        from skimage.morphology._util import (
+            _offsets_to_raveled_neighbors,
+            _validate_connectivity,
         )
+        from skimage.util import crop
+
+        if self.is_planewise:
+            return self.execute_planewise()
+
+        connectivity_array, offset = _validate_connectivity(
+            self.image.ndim,
+            self.connectivity,
+            None,
+        )
+        pad_width = [(int(width), int(width)) for width in offset]
+        padded_image = np.pad(self.image, pad_width, mode=NDIMAGE_CONSTANT_MODE)
+        padded_mask = np.pad(
+            self.mask.astype(np.bool_, copy=False),
+            pad_width,
+            mode=NDIMAGE_CONSTANT_MODE,
+        ).ravel()
+        output = np.pad(
+            self.markers.astype(np.int32, copy=False),
+            pad_width,
+            mode=NDIMAGE_CONSTANT_MODE,
+        )
+        state = LegacyWatershedRaveledState(
+            image_flat=padded_image.ravel(),
+            mask_flat=padded_mask,
+            output_flat=output.ravel(),
+            neighbor_offsets=_offsets_to_raveled_neighbors(
+                padded_image.shape,
+                connectivity_array,
+                center=offset,
+            ).astype(np.int64, copy=False),
+            marker_locations=np.flatnonzero(output).astype(np.int64, copy=False),
+        )
+        if self.prefer_fast:
+            state.execute_numba()
+        else:
+            state.execute_python()
         return crop(output, pad_width, copy=True)
 
-    _legacy_watershed_raveled_python(
-        image_flat,
-        padded_mask,
-        output_flat,
-        neighbor_offsets,
-        marker_locations,
-    )
-    return crop(output, pad_width, copy=True)
+    @property
+    def is_planewise(self) -> bool:
+        if self.image.ndim <= 2:
+            return False
+        if np.isscalar(self.connectivity):
+            return False
+        return np.asarray(self.connectivity).ndim == 2
+
+    def execute_planewise(self) -> np.ndarray:
+        output = np.empty(self.markers.shape, dtype=np.int32)
+        output_planes = output.reshape((-1, *output.shape[-2:]))
+        for plane_index in range(output_planes.shape[0]):
+            output_planes[plane_index] = self.plane(plane_index).execute()
+        return output
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyWatershedRaveledState:
+    """Raveled legacy watershed buffers and neighborhood provenance."""
+
+    image_flat: np.ndarray
+    mask_flat: np.ndarray
+    output_flat: np.ndarray
+    neighbor_offsets: np.ndarray
+    marker_locations: np.ndarray
+
+    def execute_python(self) -> None:
+        heap = LegacyWatershedPythonHeap()
+        for marker_location in self.marker_locations:
+            location = int(marker_location)
+            heap.push(float(self.image_flat[location]), 0, location, location)
+
+        age = 1
+        while heap:
+            _value, _entry_age, index, source = heap.pop()
+            label = int(self.output_flat[index])
+            if label == 0:
+                label = int(self.output_flat[source])
+            for offset_value in self.neighbor_offsets:
+                neighbor_index = int(index + offset_value)
+                if (
+                    not self.mask_flat[neighbor_index]
+                    or self.output_flat[neighbor_index] != 0
+                ):
+                    continue
+                self.output_flat[neighbor_index] = label
+                age += 1
+                heap.push(
+                    float(self.image_flat[neighbor_index]),
+                    age,
+                    neighbor_index,
+                    source,
+                )
+
+    def execute_numba(self) -> None:
+        _legacy_watershed_raveled_numba(
+            self.image_flat,
+            self.mask_flat,
+            self.output_flat,
+            self.neighbor_offsets,
+            self.marker_locations,
+        )
 
 
 def _footprint_offsets_3d(footprint: np.ndarray) -> np.ndarray:
@@ -1454,183 +1516,107 @@ def _cellprofiler4_regional_maxima_from_candidates_3d_numba(
     return output
 
 
-def _is_planewise_watershed(
-    image: np.ndarray,
-    connectivity: int | np.ndarray,
-) -> bool:
-    if image.ndim <= 2:
-        return False
-    if np.isscalar(connectivity):
-        return False
-    return np.asarray(connectivity).ndim == 2
+@dataclass(slots=True)
+class LegacyWatershedPythonHeap:
+    """Priority heap for the Python legacy watershed reference path."""
 
+    values: list[float]
+    ages: list[int]
+    indexes: list[int]
+    sources: list[int]
 
-def _cellprofiler_legacy_watershed_planewise(
-    request: LegacyWatershedRequest,
-) -> np.ndarray:
-    output = np.empty(request.markers.shape, dtype=np.int32)
-    output_planes = output.reshape((-1, *output.shape[-2:]))
-    for plane_index in range(output_planes.shape[0]):
-        output_planes[plane_index] = _cellprofiler_legacy_watershed_request(
-            request.plane(plane_index)
+    def __init__(self) -> None:
+        self.values = []
+        self.ages = []
+        self.indexes = []
+        self.sources = []
+
+    def __bool__(self) -> bool:
+        return bool(self.values)
+
+    @staticmethod
+    def item_less(
+        left_value: float,
+        left_age: int,
+        right_value: float,
+        right_age: int,
+    ) -> bool:
+        if left_value != right_value:
+            return left_value < right_value
+        return left_age < right_age
+
+    def swap(self, left: int, right: int) -> None:
+        self.values[left], self.values[right] = self.values[right], self.values[left]
+        self.ages[left], self.ages[right] = self.ages[right], self.ages[left]
+        self.indexes[left], self.indexes[right] = (
+            self.indexes[right],
+            self.indexes[left],
         )
-    return output
-
-
-def _legacy_watershed_raveled_python(
-    image_flat: np.ndarray,
-    mask_flat: np.ndarray,
-    output_flat: np.ndarray,
-    neighbor_offsets: np.ndarray,
-    marker_locations: np.ndarray,
-) -> None:
-    heap_values: list[float] = []
-    heap_ages: list[int] = []
-    heap_indexes: list[int] = []
-    heap_sources: list[int] = []
-
-    for marker_location in marker_locations:
-        location = int(marker_location)
-        _heap_push_python(
-            heap_values,
-            heap_ages,
-            heap_indexes,
-            heap_sources,
-            float(image_flat[location]),
-            0,
-            location,
-            location,
+        self.sources[left], self.sources[right] = (
+            self.sources[right],
+            self.sources[left],
         )
 
-    age = 1
-    while heap_values:
-        _value, _entry_age, index, source = _heap_pop_python(
-            heap_values,
-            heap_ages,
-            heap_indexes,
-            heap_sources,
-        )
-        label = int(output_flat[index])
-        if label == 0:
-            label = int(output_flat[source])
-        for offset_value in neighbor_offsets:
-            neighbor_index = int(index + offset_value)
-            if not mask_flat[neighbor_index] or output_flat[neighbor_index] != 0:
-                continue
-            output_flat[neighbor_index] = label
-            age += 1
-            _heap_push_python(
-                heap_values,
-                heap_ages,
-                heap_indexes,
-                heap_sources,
-                float(image_flat[neighbor_index]),
-                age,
-                neighbor_index,
-                source,
-            )
+    def push(self, value: float, age: int, index: int, source: int) -> None:
+        self.values.append(value)
+        self.ages.append(age)
+        self.indexes.append(index)
+        self.sources.append(source)
+        position = len(self.values) - 1
+        while position > 0:
+            parent = (position - 1) // 2
+            if not self.item_less(
+                self.values[position],
+                self.ages[position],
+                self.values[parent],
+                self.ages[parent],
+            ):
+                break
+            self.swap(position, parent)
+            position = parent
 
+    def pop(self) -> tuple[float, int, int, int]:
+        value = self.values[0]
+        age = self.ages[0]
+        index = self.indexes[0]
+        source = self.sources[0]
+        last = len(self.values) - 1
+        if last == 0:
+            self.values.pop()
+            self.ages.pop()
+            self.indexes.pop()
+            self.sources.pop()
+            return value, age, index, source
 
-def _heap_item_less_python(
-    left_value: float,
-    left_age: int,
-    right_value: float,
-    right_age: int,
-) -> bool:
-    if left_value != right_value:
-        return left_value < right_value
-    return left_age < right_age
-
-
-def _heap_swap_python(
-    values: list[float],
-    ages: list[int],
-    indexes: list[int],
-    sources: list[int],
-    left: int,
-    right: int,
-) -> None:
-    values[left], values[right] = values[right], values[left]
-    ages[left], ages[right] = ages[right], ages[left]
-    indexes[left], indexes[right] = indexes[right], indexes[left]
-    sources[left], sources[right] = sources[right], sources[left]
-
-
-def _heap_push_python(
-    values: list[float],
-    ages: list[int],
-    indexes: list[int],
-    sources: list[int],
-    value: float,
-    age: int,
-    index: int,
-    source: int,
-) -> None:
-    values.append(value)
-    ages.append(age)
-    indexes.append(index)
-    sources.append(source)
-    position = len(values) - 1
-    while position > 0:
-        parent = (position - 1) // 2
-        if not _heap_item_less_python(
-            values[position],
-            ages[position],
-            values[parent],
-            ages[parent],
-        ):
-            break
-        _heap_swap_python(values, ages, indexes, sources, position, parent)
-        position = parent
-
-
-def _heap_pop_python(
-    values: list[float],
-    ages: list[int],
-    indexes: list[int],
-    sources: list[int],
-) -> tuple[float, int, int, int]:
-    value = values[0]
-    age = ages[0]
-    index = indexes[0]
-    source = sources[0]
-    last = len(values) - 1
-    if last == 0:
-        values.pop()
-        ages.pop()
-        indexes.pop()
-        sources.pop()
+        self.values[0] = self.values.pop()
+        self.ages[0] = self.ages.pop()
+        self.indexes[0] = self.indexes.pop()
+        self.sources[0] = self.sources.pop()
+        size = len(self.values)
+        position = 0
+        while True:
+            left = position * 2 + 1
+            right = left + 1
+            if left >= size:
+                break
+            smallest = left
+            if right < size and self.item_less(
+                self.values[right],
+                self.ages[right],
+                self.values[left],
+                self.ages[left],
+            ):
+                smallest = right
+            if not self.item_less(
+                self.values[smallest],
+                self.ages[smallest],
+                self.values[position],
+                self.ages[position],
+            ):
+                break
+            self.swap(position, smallest)
+            position = smallest
         return value, age, index, source
-
-    values[0] = values.pop()
-    ages[0] = ages.pop()
-    indexes[0] = indexes.pop()
-    sources[0] = sources.pop()
-    size = len(values)
-    position = 0
-    while True:
-        left = position * 2 + 1
-        right = left + 1
-        if left >= size:
-            break
-        smallest = left
-        if right < size and _heap_item_less_python(
-            values[right],
-            ages[right],
-            values[left],
-            ages[left],
-        ):
-            smallest = right
-        if not _heap_item_less_python(
-            values[smallest],
-            ages[smallest],
-            values[position],
-            ages[position],
-        ):
-            break
-        _heap_swap_python(values, ages, indexes, sources, position, smallest)
-        position = smallest
-    return value, age, index, source
 
 
 @njit(cache=True)
@@ -1651,13 +1637,11 @@ def _heap_item_less(
 
 @njit(cache=True)
 def _heap_swap(
-    values: np.ndarray,
-    ages: np.ndarray,
-    indexes: np.ndarray,
-    sources: np.ndarray,
+    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     left: int,
     right: int,
 ) -> None:
+    values, ages, indexes, sources = heap_arrays
     value = values[left]
     age = ages[left]
     index = indexes[left]
@@ -1674,16 +1658,14 @@ def _heap_swap(
 
 @njit(cache=True)
 def _heap_push(
-    values: np.ndarray,
-    ages: np.ndarray,
-    indexes: np.ndarray,
-    sources: np.ndarray,
+    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     size: int,
     value: float,
     age: int,
     index: int,
     source: int,
 ) -> int:
+    values, ages, indexes, sources = heap_arrays
     values[size] = value
     ages[size] = age
     indexes[size] = index
@@ -1703,19 +1685,17 @@ def _heap_push(
             sources[parent],
         ):
             break
-        _heap_swap(values, ages, indexes, sources, position, parent)
+        _heap_swap(heap_arrays, position, parent)
         position = parent
     return size
 
 
 @njit(cache=True)
 def _heap_pop(
-    values: np.ndarray,
-    ages: np.ndarray,
-    indexes: np.ndarray,
-    sources: np.ndarray,
+    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     size: int,
 ) -> tuple[int, float, int, int, int]:
+    values, ages, indexes, sources = heap_arrays
     value = values[0]
     age = ages[0]
     index = indexes[0]
@@ -1755,7 +1735,7 @@ def _heap_pop(
                 sources[position],
             ):
                 break
-            _heap_swap(values, ages, indexes, sources, position, smallest)
+            _heap_swap(heap_arrays, position, smallest)
             position = smallest
     return size, value, age, index, source
 
@@ -1773,15 +1753,13 @@ def _legacy_watershed_raveled_numba(
     heap_ages = np.empty(capacity, dtype=np.int64)
     heap_indexes = np.empty(capacity, dtype=np.int64)
     heap_sources = np.empty(capacity, dtype=np.int64)
+    heap_arrays = (heap_values, heap_ages, heap_indexes, heap_sources)
     heap_size = 0
 
     for marker_location in marker_locations:
         location = int(marker_location)
         heap_size = _heap_push(
-            heap_values,
-            heap_ages,
-            heap_indexes,
-            heap_sources,
+            heap_arrays,
             heap_size,
             float(image_flat[location]),
             0,
@@ -1792,10 +1770,7 @@ def _legacy_watershed_raveled_numba(
     age = 1
     while heap_size > 0:
         heap_size, _value, _entry_age, index, source = _heap_pop(
-            heap_values,
-            heap_ages,
-            heap_indexes,
-            heap_sources,
+            heap_arrays,
             heap_size,
         )
         label = int(output_flat[index])
@@ -1808,10 +1783,7 @@ def _legacy_watershed_raveled_numba(
             output_flat[neighbor_index] = label
             age += 1
             heap_size = _heap_push(
-                heap_values,
-                heap_ages,
-                heap_indexes,
-                heap_sources,
+                heap_arrays,
                 heap_size,
                 float(image_flat[neighbor_index]),
                 age,

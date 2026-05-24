@@ -12,6 +12,7 @@ import time
 
 import numpy as np
 from numba import njit
+from scipy import ndimage as ndi
 
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -355,9 +356,7 @@ def background_corrected_pixels(
         back_pixels = pixels.copy()
         back_shape = new_shape
 
-    footprint_offsets = disk_offsets(element_radius)
-    back_pixels = gray_erosion_offsets_reflect_numba(back_pixels, footprint_offsets)
-    back_pixels = gray_dilation_offsets_reflect_numba(back_pixels, footprint_offsets)
+    back_pixels = GranularityDiskOpening(int(element_radius)).apply(back_pixels)
 
     if background_subsample_size < 1:
         row_scale = (
@@ -458,6 +457,38 @@ def disk_offsets(radius: int) -> np.ndarray:
             if row * row + col * col <= radius_sq:
                 coords.append((row, col))
     return np.asarray(coords, dtype=np.int32)
+
+
+@lru_cache(maxsize=None)
+def disk_footprint(radius: int) -> np.ndarray:
+    """Return a boolean disk footprint matching ``disk_offsets``."""
+    radius = int(radius)
+    offsets = disk_offsets(radius)
+    diameter = radius * 2 + 1
+    footprint = np.zeros((diameter, diameter), dtype=bool)
+    for row_offset, col_offset in offsets:
+        footprint[int(row_offset) + radius, int(col_offset) + radius] = True
+    return footprint
+
+
+@dataclass(frozen=True, slots=True)
+class GranularityDiskOpening:
+    """Exact reflected grayscale opening for granularity background correction."""
+
+    radius: int
+
+    def apply(self, image: np.ndarray) -> np.ndarray:
+        if not self.footprint_fits(image):
+            offsets = disk_offsets(self.radius)
+            eroded = gray_erosion_offsets_reflect_numba(image, offsets)
+            return gray_dilation_offsets_reflect_numba(eroded, offsets)
+        footprint = disk_footprint(self.radius)
+        eroded = ndi.grey_erosion(image, footprint=footprint, mode="reflect")
+        return ndi.grey_dilation(eroded, footprint=footprint, mode="reflect")
+
+    def footprint_fits(self, image: np.ndarray) -> bool:
+        diameter = int(self.radius) * 2 + 1
+        return image.ndim == 2 and min(image.shape) >= diameter
 
 
 @njit(cache=True)

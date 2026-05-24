@@ -215,6 +215,24 @@ Checkpoint 17:
   deeper size pressure inside the histogram/multi-Otsu kernel family and the
   separate diagnostics sub-boundary/context-record work.
 
+Checkpoint 18:
+
+- Split the quantized threshold diagnostic Numba kernels into
+  `thresholding_threshold_numba_diagnostics_quantized.py`.
+- Kept `thresholding_threshold_numba_diagnostics.py` as the diagnostic table,
+  mask-domain, deterministic-noise, and non-quantized diagnostic kernel
+  authority.
+- Added `QuantizedThresholdDiagnosticContext` so the rectangular-mask and
+  unmasked quantized diagnostic kernels share one nominal seven-array context
+  instead of re-threading the same provenance bundle.
+- Renamed the cross-module mask-domain and deterministic-noise helpers to
+  explicit public helper names within the diagnostic implementation module.
+- Focused threshold diagnostics tests pass, and advisor reports no findings for
+  the two diagnostic modules. The broader CP compatibility gate is not
+  currently green in this dirty tree: with writable napari cache it reports
+  `419 passed, 22 failed`, with failures in existing object-measurement/runtime
+  generated-pipeline areas outside this diagnostic split.
+
 Optional after behavior-adjacent changes:
 
 ```bash

@@ -20,10 +20,13 @@ from openhcs.core.runtime_semantics import (
     DenseObjectLabelConsecutiveRelabelingStrategy,
     DenseObjectLabelPairAligner,
     ObjectLabelIdDomainStrategy,
+    ObjectLabelLineageGeometry,
     dense_object_label_extent_id_domain,
     dense_object_label_id_domain,
     dense_object_label_identity_domains,
     dense_object_label_plane_id_domains,
+    object_label_lineage_geometry,
+    object_label_lineage_payload,
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import (
@@ -399,6 +402,51 @@ def test_aligned_dense_object_label_stack_alignment_restores_secondary_domain() 
     np.testing.assert_array_equal(restored, compact_secondary)
 
 
+def test_dense_object_label_stack_alignment_preserves_conflicting_label_planes() -> None:
+    first = np.stack(
+        (
+            np.array([[1, 0], [0, 2]], dtype=np.int32),
+            np.array([[3, 0], [0, 4]], dtype=np.int32),
+        )
+    )
+    second = np.array([[10, 0], [0, 20]], dtype=np.int32)
+
+    alignment = DenseObjectLabelPairAligner(
+        first,
+        second,
+    ).aligned_stack_context(2)
+
+    assert alignment is not None
+    np.testing.assert_array_equal(alignment.first_stack, first)
+    np.testing.assert_array_equal(alignment.second_stack[0], second)
+    np.testing.assert_array_equal(alignment.second_stack[1], second)
+
+
+def test_dense_object_label_pair_alignment_cycles_factorized_runtime_axes() -> None:
+    first = np.stack(
+        tuple(np.full((4, 5), index + 1, dtype=np.int32) for index in range(6))
+    )
+    second = np.stack(
+        (
+            np.full((4, 5), 7, dtype=np.int32),
+            np.full((4, 5), 8, dtype=np.int32),
+        )
+    )
+
+    aligned_first, aligned_second = DenseObjectLabelPairAligner(
+        first,
+        second,
+    ).aligned()
+
+    assert aligned_first.shape == first.shape
+    assert aligned_second.shape == first.shape
+    for slice_index in range(first.shape[0]):
+        np.testing.assert_array_equal(
+            aligned_second[slice_index],
+            second[slice_index % second.shape[0]],
+        )
+
+
 def test_dense_object_label_id_domain_uses_declared_count_for_empty_labels() -> None:
     payload = ObjectLabelPayload(
         labels=np.zeros((3, 3), dtype=np.int32),
@@ -414,6 +462,34 @@ def test_dense_object_label_id_domain_uses_present_dense_ids_without_declaration
 
     assert dense_object_label_id_domain(labels) == (1, 3)
     assert dense_object_label_extent_id_domain(labels) == (1, 2, 3)
+
+
+def test_object_label_lineage_uses_identity_domain_for_3d_resize_geometry() -> None:
+    parent = np.zeros((3, 4, 5), dtype=np.int32)
+    child = np.zeros((2, 4, 5), dtype=np.int32)
+    parent[0, 1, 1] = 1
+    parent[1, 1, 2] = 2
+    parent[2, 1, 3] = 3
+    child[0, 1, 1] = 1
+    child[1, 1, 2] = 2
+
+    payload = object_label_lineage_payload(parent, child)
+
+    assert object_label_lineage_geometry(parent, child) is ObjectLabelLineageGeometry.IDENTITY_DOMAIN
+    assert payload.parent_ids == (1, 2)
+    assert payload.child_ids == (1, 2)
+
+
+def test_dense_object_label_id_domain_handles_sparse_high_integer_ids() -> None:
+    labels = np.array([[0, 100_000]], dtype=np.int32)
+
+    assert dense_object_label_id_domain(labels) == (100_000,)
+
+
+def test_dense_object_label_id_domain_handles_float_labels() -> None:
+    labels = np.array([[0.0, 2.0]], dtype=np.float64)
+
+    assert dense_object_label_id_domain(labels) == (2,)
 
 
 def test_object_label_id_domain_uses_sparse_ijv_labels_without_densifying() -> None:

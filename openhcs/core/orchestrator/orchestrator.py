@@ -170,6 +170,14 @@ class WorkerLaneExecutionPlan:
     worker_assignments: Dict[str, List[str]]
     runtime_observation_mode: RuntimeObservationMode
 
+    def active_lane_items(self) -> tuple[tuple[str, List[Any]], ...]:
+        """Return worker lanes that own at least one axis context."""
+        return tuple(
+            (worker_slot, lane_contexts)
+            for worker_slot, lane_contexts in self.lane_axis_contexts.items()
+            if lane_contexts
+        )
+
     def lane_context(self, worker_slot: str) -> WorkerLaneExecutionContext:
         return WorkerLaneExecutionContext(
             identity=self.identity,
@@ -356,13 +364,12 @@ class WorkerExecutorFactory:
         multiprocessing_context = multiprocessing.get_context(
             effective_config.multiprocessing_start_method.value
         )
+        inline_worker_lane_execution = actual_max_workers == 1
         fork_inherited_execution = (
-            not effective_config.use_threading
+            not inline_worker_lane_execution
+            and not effective_config.use_threading
             and effective_config.multiprocessing_start_method
             is MultiprocessingStartMethod.FORK
-        )
-        inline_worker_lane_execution = (
-            effective_config.use_threading and actual_max_workers == 1
         )
 
         if inline_worker_lane_execution or fork_inherited_execution:
@@ -661,12 +668,19 @@ class ForkInheritedWorkerLaneRunner:
         self,
         execution_plan: WorkerLaneExecutionPlan,
     ) -> Dict[str, ExecutionResult]:
+        active_lanes = execution_plan.active_lane_items()
+        if len(active_lanes) == 1:
+            worker_slot, lane_contexts = active_lanes[0]
+            return self.run_inline_single_lane(
+                worker_slot,
+                lane_contexts,
+                execution_plan,
+            )
+
         processes: list[tuple[str, List[str], Any, Any]] = []
         execution_results: Dict[str, ExecutionResult] = {}
 
-        for worker_slot, lane_contexts in execution_plan.lane_axis_contexts.items():
-            if not lane_contexts:
-                continue
+        for worker_slot, lane_contexts in active_lanes:
             owned_wells = list(execution_plan.worker_assignments[worker_slot])
             worker_lane_context = execution_plan.lane_context(worker_slot)
             result_reader, result_writer = self._multiprocessing_context.Pipe(
@@ -725,6 +739,28 @@ class ForkInheritedWorkerLaneRunner:
 
         return execution_results
 
+    def run_inline_single_lane(
+        self,
+        worker_slot: str,
+        lane_axis_context_keys: List[tuple[str, List[str]]],
+        execution_plan: WorkerLaneExecutionPlan,
+    ) -> Dict[str, ExecutionResult]:
+        """Run a single fork-inherited lane without launching a child process."""
+        execution_state = ForkInheritedWorkerExecutionState.require_current()
+        lane_axis_contexts = ForkInheritedWorkerExecutionState.resolve_lane_contexts(
+            lane_axis_context_keys
+        )
+        lane_results = WorkerLaneExecutor(
+            pipeline_definition=list(execution_state.pipeline_definition),
+            lane_axis_contexts=lane_axis_contexts,
+            lane_context=execution_plan.lane_context(worker_slot),
+            runtime_observation_mode=execution_plan.runtime_observation_mode,
+        ).execute()
+        if execution_plan.runtime_observation_mode.collects_records:
+            for result in lane_results.values():
+                result.runtime_observation.merge_into(execution_state.runtime_contexts)
+        return lane_results
+
 
 class InlineWorkerLaneRunner:
     """Runs a single deterministic worker lane in the orchestrator process."""
@@ -734,11 +770,7 @@ class InlineWorkerLaneRunner:
         pipeline_definition: List[AbstractStep],
         execution_plan: WorkerLaneExecutionPlan,
     ) -> Dict[str, ExecutionResult]:
-        active_lanes = [
-            (worker_slot, lane_contexts)
-            for worker_slot, lane_contexts in execution_plan.lane_axis_contexts.items()
-            if lane_contexts
-        ]
+        active_lanes = execution_plan.active_lane_items()
         if len(active_lanes) != 1:
             raise RuntimeError(
                 "Inline worker lane execution requires exactly one active lane, "
@@ -1166,7 +1198,7 @@ def _execute_axis_with_sequential_combinations(
             runtime_observations.append(
                 RuntimeContextObservation(
                     context_key=context_key,
-                    records=runtime_store.observed_values(),
+                    records=runtime_store.observed_values,
                 )
             )
         elif runtime_observation_mode.releases_worker_records:

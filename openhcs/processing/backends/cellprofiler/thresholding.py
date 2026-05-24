@@ -23,7 +23,7 @@ from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     image_payload_data,
-    image_payload_mask,
+    image_mask_for_data_domain,
     image_payload_metadata,
     image_payload_with_context,
     image_intensity_scale_for_dtype,
@@ -47,14 +47,17 @@ from openhcs.processing.backends.cellprofiler.perf_fixtures import (
 from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagnostics import (
     _deterministic_normal_noise,
     _quantized_log_tables,
-    _rectangular_mask_domain,
-    _smooth_with_deterministic_noise,
     _threshold_diagnostics_numba,
-    _threshold_diagnostics_rectangular_mask_quantized_numba,
     _threshold_diagnostics_unmasked_finite_numba,
-    _threshold_diagnostics_unmasked_finite_quantized_numba,
     _threshold_sum_of_entropies_numba,
     _threshold_weighted_variance_numba,
+    rectangular_mask_domain,
+    smooth_with_deterministic_noise,
+)
+from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagnostics_quantized import (
+    QuantizedThresholdDiagnosticContext,
+    _threshold_diagnostics_rectangular_mask_quantized_numba,
+    _threshold_diagnostics_unmasked_finite_quantized_numba,
 )
 from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_otsu import (
     CELLPROFILER_LI_TOLERANCE,
@@ -819,25 +822,30 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             self._validate_inputs(image_array, mask_array, binary_array)
             full_mask = bool(np.all(mask_array))
             if not full_mask:
-                mask_domain = _rectangular_mask_domain(mask_array)
+                mask_domain = rectangular_mask_domain(mask_array)
                 if mask_domain is not None:
                     cropped_image = image_array[mask_domain.slices]
                     if bool(np.all(np.isfinite(cropped_image))):
                         if proven_unit_interval_scale is not None:
                             scale = int(proven_unit_interval_scale)
                             log_tables = _quantized_log_tables(scale)
+                            context = QuantizedThresholdDiagnosticContext(
+                                codes=np.ascontiguousarray(
+                                    np.rint(image_array * scale).astype(np.int64),
+                                ),
+                                binary_image=np.ascontiguousarray(binary_array),
+                                noise=_deterministic_normal_noise(image_array.shape),
+                                values=log_tables.values,
+                                weighted_log_values=log_tables.weighted_log_values,
+                                entropy_log_values=log_tables.entropy_log_values,
+                                entropy_log_delta_values=(
+                                    log_tables.entropy_log_delta_values
+                                ),
+                            )
                             y_slice, x_slice = mask_domain.slices
                             weighted_variance, sum_of_entropies = (
                                 _threshold_diagnostics_rectangular_mask_quantized_numba(
-                                    np.ascontiguousarray(
-                                        np.rint(image_array * scale).astype(np.int64),
-                                    ),
-                                    np.ascontiguousarray(binary_array),
-                                    _deterministic_normal_noise(image_array.shape),
-                                    log_tables.values,
-                                    log_tables.weighted_log_values,
-                                    log_tables.entropy_log_values,
-                                    log_tables.entropy_log_delta_values,
+                                    context,
                                     int(y_slice.start),
                                     int(y_slice.stop),
                                     int(x_slice.start),
@@ -849,17 +857,20 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             if proven_unit_interval_scale is not None:
                 scale = int(proven_unit_interval_scale)
                 log_tables = _quantized_log_tables(scale)
+                context = QuantizedThresholdDiagnosticContext(
+                    codes=np.ascontiguousarray(
+                        np.rint(image_array * scale).astype(np.int64),
+                    ),
+                    binary_image=np.ascontiguousarray(binary_array),
+                    noise=_deterministic_normal_noise(image_array.shape),
+                    values=log_tables.values,
+                    weighted_log_values=log_tables.weighted_log_values,
+                    entropy_log_values=log_tables.entropy_log_values,
+                    entropy_log_delta_values=log_tables.entropy_log_delta_values,
+                )
                 weighted_variance, sum_of_entropies = (
                     _threshold_diagnostics_unmasked_finite_quantized_numba(
-                        np.ascontiguousarray(
-                            np.rint(image_array * scale).astype(np.int64),
-                        ),
-                        np.ascontiguousarray(binary_array),
-                        _deterministic_normal_noise(image_array.shape),
-                        log_tables.values,
-                        log_tables.weighted_log_values,
-                        log_tables.entropy_log_values,
-                        log_tables.entropy_log_delta_values,
+                        context,
                     )
                 )
                 return float(weighted_variance), float(sum_of_entropies)
@@ -907,17 +918,20 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             if request.proven_unit_interval_scale is not None:
                 scale = int(request.proven_unit_interval_scale)
                 log_tables = _quantized_log_tables(scale)
+                context = QuantizedThresholdDiagnosticContext(
+                    codes=np.ascontiguousarray(
+                        np.rint(flat_image * scale).astype(np.int64),
+                    ),
+                    binary_image=flat_binary,
+                    noise=noise,
+                    values=log_tables.values,
+                    weighted_log_values=log_tables.weighted_log_values,
+                    entropy_log_values=log_tables.entropy_log_values,
+                    entropy_log_delta_values=log_tables.entropy_log_delta_values,
+                )
                 weighted_variance, sum_of_entropies = (
                     _threshold_diagnostics_unmasked_finite_quantized_numba(
-                        np.ascontiguousarray(
-                            np.rint(flat_image * scale).astype(np.int64),
-                        ),
-                        flat_binary,
-                        noise,
-                        log_tables.values,
-                        log_tables.weighted_log_values,
-                        log_tables.entropy_log_values,
-                        log_tables.entropy_log_delta_values,
+                        context,
                     )
                 )
                 return float(weighted_variance), float(sum_of_entropies)
@@ -2224,12 +2238,12 @@ def threshold(
     """Apply CP-compatible thresholding and emit the module measurement row."""
     source_payload = image
     image = np.asarray(image_payload_data(source_payload), dtype=np.float32)
-    if mask is not None:
-        mask = np.asarray(image_payload_data(mask))
-    else:
-        mask = image_payload_mask(source_payload)
-    if mask is not None:
-        mask = np.asarray(mask, dtype=bool)
+    projected_mask = image_mask_for_data_domain(
+        explicit_mask=mask,
+        source_payload=source_payload,
+        data=image,
+    )
+    mask = None if projected_mask is None else np.asarray(projected_mask, dtype=bool)
 
     threshold_scope = coerce_cellprofiler_enum(ThresholdScope, threshold_scope)
     threshold_method = coerce_cellprofiler_enum(ThresholdMethod, threshold_method)
@@ -2398,7 +2412,7 @@ def _numpy_threshold_sum_of_entropies(
 
     clamped_image = image_array.copy()
     clamped_image[clamped_image < minval] = minval
-    smoothed_image = _smooth_with_deterministic_noise(clamped_image, bits=8)
+    smoothed_image = smooth_with_deterministic_noise(clamped_image, bits=8)
     im_min = np.min(smoothed_image)
     im_max = np.max(smoothed_image)
     upper = np.log2(im_max)

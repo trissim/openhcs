@@ -12,13 +12,14 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_artifact_queries import (
+    MeasurementFeatureQuery,
     measurement_values_for_feature,
     normalize_measurement_token,
-    optional_measurement_value_index,
     ordered_measurement_feature_candidates,
 )
 from openhcs.core.runtime_semantics import (
@@ -49,6 +50,7 @@ from openhcs.processing.materialization import csv_materializer, segmentation_ma
 from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
+    ObjectLabelValue,
     ObjectRelationship,
     object_label_dense_array,
     object_label_payload_with_dense_labels,
@@ -193,6 +195,55 @@ class FilterObjectsStats:
             objects_pre_filter=objects_pre_filter,
             objects_post_filter=objects_post_filter,
             objects_removed=objects_pre_filter - objects_post_filter,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsRelabeledPlane:
+    """Relabeled object plane plus the direct input-to-output relationship."""
+
+    labels: np.ndarray
+    relationship: ParentChildRelationshipPayload
+
+    @classmethod
+    def from_ordered_parent_ids(
+        cls,
+        labels: np.ndarray,
+        *,
+        parent_ids_by_child: Sequence[int],
+    ) -> "FilterObjectsRelabeledPlane":
+        """Relabel ``labels`` in child order and retain the exact parent mapping."""
+        label_array = np.asarray(labels, dtype=np.int32)
+        max_label = int(label_array.max()) if label_array.size else 0
+        label_mapping = np.zeros(max_label + 1, dtype=np.int32)
+        parent_ids: list[int] = []
+        child_ids: list[int] = []
+        for child_id, parent_id in enumerate(parent_ids_by_child, start=1):
+            if 0 < parent_id <= max_label:
+                label_mapping[int(parent_id)] = child_id
+                parent_ids.append(int(parent_id))
+                child_ids.append(child_id)
+        return cls(
+            labels=label_mapping[label_array],
+            relationship=ParentChildRelationshipPayload(
+                parent_ids=tuple(parent_ids),
+                child_ids=tuple(child_ids),
+            ),
+        )
+
+    @classmethod
+    def from_retained_mask(
+        cls,
+        labels: np.ndarray,
+        retained_mask: np.ndarray,
+    ) -> "FilterObjectsRelabeledPlane":
+        """Relabel source IDs overlapping retained primary objects."""
+        label_array = np.asarray(labels, dtype=np.int32)
+        source_ids = np.unique(label_array[np.asarray(retained_mask, dtype=bool)])
+        source_ids = source_ids[source_ids > 0]
+        return cls.from_ordered_parent_ids(
+            label_array,
+            parent_ids_by_child=tuple(int(source_id) for source_id in source_ids),
         )
 
 
@@ -419,11 +470,10 @@ class TableFilterObjectsMeasurementValuesSource(
         feature_name: str,
     ) -> ObjectLabelMeasurementValues:
         if request.measurement_tables:
-            value_index = optional_measurement_value_index(
-                request.measurement_tables,
+            value_index = MeasurementFeatureQuery(
                 feature_name,
                 dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-            )
+            ).optional_value_index(request.measurement_tables)
             if value_index is not None:
                 values_by_label, positional_values = value_index
                 if values_by_label:
@@ -1031,9 +1081,9 @@ def selected_labels_to_list(selected: np.ndarray) -> list[int]:
 
 
 def filtered_object_payloads(
-    inputs: Sequence[np.ndarray],
+    inputs: Sequence[ObjectLabelValue],
     outputs: Sequence[np.ndarray],
-) -> tuple[np.ndarray | ObjectLabelPayload, ...]:
+) -> tuple[ObjectLabelValue, ...]:
     """Return dense object payloads preserving the original object domain."""
     return tuple(
         filtered_object_payload(input_value, output_labels)
@@ -1042,9 +1092,9 @@ def filtered_object_payloads(
 
 
 def filtered_object_payload(
-    input_value: np.ndarray,
+    input_value: ObjectLabelValue,
     output_labels: np.ndarray,
-) -> np.ndarray | ObjectLabelPayload:
+) -> ObjectLabelValue:
     """Wrap filtered labels with the input object's dense extent domain."""
     return object_label_payload_with_dense_labels(
         input_value,
@@ -1079,20 +1129,16 @@ def relabel_overlapping_objects(
     filtered_primary_labels: np.ndarray,
 ) -> np.ndarray:
     """Relabel additional objects by overlap with retained primary objects."""
-    labels = labels.astype(np.int32)
     retained_mask = filtered_primary_labels > 0
+    labels = labels.astype(np.int32)
     if labels.shape != retained_mask.shape:
         raise ValueError(
             "FilterObjects additional object labels must match primary labels."
         )
-    retained_source_labels = np.unique(labels[retained_mask])
-    retained_source_labels = retained_source_labels[retained_source_labels > 0]
-    if retained_source_labels.size == 0:
-        return np.zeros_like(labels, dtype=np.int32)
-    mapping = np.zeros(labels.max() + 1, dtype=np.int32)
-    for new_idx, old_idx in enumerate(retained_source_labels, start=1):
-        mapping[int(old_idx)] = new_idx
-    return mapping[labels]
+    return FilterObjectsRelabeledPlane.from_retained_mask(
+        labels,
+        retained_mask,
+    ).labels
 
 
 def object_transform_relationships(
@@ -1214,19 +1260,22 @@ def filter_objects(
             objects_pre_filter=0,
             objects_post_filter=0,
         )
+        relabeled_planes = tuple(
+            FilterObjectsRelabeledPlane.from_ordered_parent_ids(
+                label_plane,
+                parent_ids_by_child=(),
+            )
+            for label_plane in (labels, *additional_label_planes)
+        )
         relabeled_objects = filtered_object_payloads(
             object_labels,
-            (labels, *additional_label_planes),
-        )
-        relationships = object_transform_relationships(
-            input_label_planes,
-            relabeled_objects,
+            tuple(plane.labels for plane in relabeled_planes),
         )
         return (
             image,
             stats,
             *relabeled_objects,
-            *relationships,
+            *(plane.relationship for plane in relabeled_planes),
             *filter_objects_outline_images(relabeled_objects, outline_object_indices),
         )
 
@@ -1234,7 +1283,7 @@ def filter_objects(
     selection_measurement_values = (
         None
         if measurement_values is None
-        else ObjectLabelMeasurementValues.from_label_indexed_values(
+        else ObjectLabelMeasurementValues.from_positional_values(
             object_ids,
             measurement_values,
         )
@@ -1272,25 +1321,20 @@ def filter_objects(
         )
     )
 
-    label_mapping = np.zeros(max_label + 1, dtype=np.int32)
-    for new_idx, old_idx in enumerate(indexes_to_keep, start=1):
-        if old_idx <= max_label:
-            label_mapping[old_idx] = new_idx
-
-    filtered_labels = label_mapping[labels]
+    primary_plane = FilterObjectsRelabeledPlane.from_ordered_parent_ids(
+        labels,
+        parent_ids_by_child=tuple(indexes_to_keep),
+    )
+    filtered_labels = primary_plane.labels
+    retained_mask = filtered_labels > 0
+    additional_relabeled_planes = tuple(
+        FilterObjectsRelabeledPlane.from_retained_mask(additional, retained_mask)
+        for additional in additional_label_planes
+    )
+    relabeled_planes = (primary_plane, *additional_relabeled_planes)
     relabeled_objects = filtered_object_payloads(
         object_labels,
-        (
-            filtered_labels,
-            *(
-                relabel_overlapping_objects(additional, filtered_labels)
-                for additional in additional_label_planes
-            ),
-        ),
-    )
-    relationships = object_transform_relationships(
-        input_label_planes,
-        relabeled_objects,
+        tuple(plane.labels for plane in relabeled_planes),
     )
     stats = FilterObjectsStats.from_counts(
         objects_pre_filter=len(object_ids),
@@ -1301,7 +1345,7 @@ def filter_objects(
         image,
         stats,
         *relabeled_objects,
-        *relationships,
+        *(plane.relationship for plane in relabeled_planes),
         *filter_objects_outline_images(relabeled_objects, outline_object_indices),
     )
 
@@ -1412,34 +1456,34 @@ def filter_border_objects(
     return image, stats, label_mapping[labels]
 
 
-__all__ = [
-    "FilterMethod",
-    "FilterMode",
-    "FilterObjectsMeasurementValuesSource",
-    "FilterObjectsLabelPlane",
-    "FilterObjectsMeasurementLimitWindow",
+__all__ = public_names_from_objects(
+    FilterMethod,
+    FilterMode,
+    FilterObjectsMeasurementValuesSource,
+    FilterObjectsLabelPlane,
+    FilterObjectsMeasurementLimitWindow,
     "FilterObjectsParentChildRelationship",
     "FilterObjectsParentChildRelationships",
-    "FilterObjectsRelationshipEndpointIds",
-    "FilterObjectsSelectionRequest",
-    "FilterObjectsStats",
-    "FilterSelectionStrategy",
+    FilterObjectsRelationshipEndpointIds,
+    FilterObjectsSelectionRequest,
+    FilterObjectsStats,
+    FilterSelectionStrategy,
     "FilterSelectionKey",
-    "PerObjectAssignment",
-    "PerObjectAssignmentRequest",
-    "PerObjectAssignmentStrategy",
-    "best_child_indexes_both_parents",
-    "best_child_indexes_parent_with_most_overlap",
-    "filter_objects_outline_image",
-    "filter_objects_outline_images",
-    "filter_objects_relationship_tuple",
-    "filter_border_objects",
-    "filter_objects",
-    "filter_objects_by_size",
-    "filtered_object_payload",
-    "filtered_object_payloads",
-    "keep_one_object",
-    "object_transform_relationships",
-    "relabel_overlapping_objects",
-    "require_enclosing_labels",
-]
+    PerObjectAssignment,
+    PerObjectAssignmentRequest,
+    PerObjectAssignmentStrategy,
+    best_child_indexes_both_parents,
+    best_child_indexes_parent_with_most_overlap,
+    filter_objects_outline_image,
+    filter_objects_outline_images,
+    filter_objects_relationship_tuple,
+    filter_border_objects,
+    filter_objects,
+    filter_objects_by_size,
+    filtered_object_payload,
+    filtered_object_payloads,
+    keep_one_object,
+    object_transform_relationships,
+    relabel_overlapping_objects,
+    require_enclosing_labels,
+)

@@ -71,6 +71,8 @@ class NumbaNumpyObjectOutlineBackendStrategy(ObjectOutlineBackendStrategy):
 
     def outline(self, labels: np.ndarray) -> np.ndarray:
         label_array = np.asarray(labels, dtype=np.int32)
+        if label_array.ndim > 2:
+            label_array = np.max(label_array, axis=tuple(range(label_array.ndim - 2)))
         if label_array.ndim != 2:
             raise NotImplementedError("Object outlines currently support 2-D labels.")
         return _outline_numba(np.ascontiguousarray(label_array))

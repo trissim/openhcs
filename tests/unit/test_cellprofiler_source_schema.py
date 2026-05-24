@@ -841,8 +841,69 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     assert "SourceFilterClause(" in generated.code
     assert "SourceFilterMatchType.CONTAINS" in generated.code
     assert "input_source=InputSource.PIPELINE_START," in generated.code
-    assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
-    assert "group_by=GroupBy.SITE," in generated.code
+    assert "variable_components=[VariableComponents.SITE]," in generated.code
+    assert "group_by=GroupBy.NONE," in generated.code
+
+
+def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Specimen>.*)_(?P<Stain>.*)_(?P<FrameNumber>[0-9]*)",
+                ),
+                ("Select the filtering criteria", 'and (file does contain "GFPHistone")'),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "1"),
+                (
+                    "Select the rule criteria",
+                    'and (file does contain "GFPHistone")',
+                ),
+                ("Name to assign these images", "OrigGray"),
+                ("Select the image type", "Grayscale image"),
+            ],
+        ),
+    ]
+    processing_modules = [
+        ModuleBlock(
+            name="IdentifyPrimaryObjects",
+            module_num=3,
+            settings={
+                "Select the input image": "OrigGray",
+                "Name the primary objects to be identified": "Embryos",
+            },
+        ),
+        ModuleBlock(
+            name="MeasureObjectSizeShape",
+            module_num=4,
+            settings={"Select object sets to measure": "Embryos"},
+        ),
+    ]
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_timepoint_lineage",
+        source_cppipe=Path("source.pipeline"),
+        modules=processing_modules,
+        skipped_modules=setup_modules,
+    )
+
+    assert (
+        "variable_components=[VariableComponents.SITE, VariableComponents.TIMEPOINT]"
+        in generated.code
+    )
+    assert generated.code.count(
+        "variable_components=[VariableComponents.SITE, VariableComponents.TIMEPOINT]"
+    ) == 2
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

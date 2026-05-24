@@ -117,6 +117,51 @@ def test_execute_function_core_saves_named_step_result_artifacts():
     assert stored[0].value.data == [{"count": 2}]
 
 
+def test_execute_function_core_saves_artifact_to_runtime_group_path():
+    context = ContextStub()
+
+    def analyze(image):
+        return StepResult(
+            image=image,
+            artifacts={"measurements": [{"site": "2", "count": 3}]},
+        )
+
+    _execute_function_core(
+        FunctionExecutionRequest(
+            func_callable=analyze,
+            main_data_arg=41,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "measurements": ArtifactOutputPlan(
+                    name="measurements",
+                    path="/memory/A01_measurements.pkl",
+                    kind=ArtifactKind.MEASUREMENTS,
+                    group_keys=("1", "2"),
+                    paths_by_group={
+                        "1": "/memory/A01_s1_measurements.pkl",
+                        "2": "/memory/A01_s2_measurements.pkl",
+                    },
+                )
+            },
+            group_key="2",
+        )
+    )
+
+    assert context.filemanager.saved[
+        ("/memory/A01_s2_measurements.pkl", "memory")
+    ] == [{"site": "2", "count": 3}]
+    stored = context.runtime_value_store.find(
+        name="measurements",
+        axis_id="A01",
+        group_key="2",
+        match_group=True,
+    )
+    assert len(stored) == 1
+    assert stored[0].path == "/memory/A01_s2_measurements.pkl"
+
+
 def test_execute_function_core_preserves_main_output_source_metadata():
     context = ContextStub()
     source = image_payload_with_context(

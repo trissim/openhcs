@@ -48,6 +48,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
+    ObjectLabelValue,
     image_payload_data,
     image_payload_metadata,
     object_label_dense_array,
@@ -101,6 +102,7 @@ SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
 MORPH_CONVOLUTION_MODE = "constant"
 MORPH_CONVEX_HULL_OPERATION = "convex_hull"
 MORPHOLOGY_STRATEGY_REGISTRY_KEY = "strategy_label"
+SPARSE_CUBIC_BOOLEAN_RESAMPLE_RADIUS = 2.0
 EIGHT_NEIGHBOR_KERNEL = np.array(
     [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
     dtype=np.uint8,
@@ -1134,6 +1136,87 @@ class DeclumpingMaximaGeometry:
         if automatic_suppression:
             return cls(1.0, float(min_diameter) / 1.5)
         return cls(1.0, manual_declumping_size(maxima_suppression_size))
+
+
+@dataclass(frozen=True, slots=True)
+class SparseBooleanCubicMapCoordinatesThreshold:
+    """Sparse evaluator for thresholded cubic boolean coordinate resampling."""
+
+    source: np.ndarray
+    target_shape: tuple[int, int]
+    divisor: float
+    threshold: float = 0.5
+
+    def execute(self) -> np.ndarray:
+        """Return the thresholded cubic-resampled boolean image."""
+        from scipy import ndimage as ndi
+
+        source_array = np.asarray(self.source, dtype=bool)
+        points = np.argwhere(source_array)
+        if points.size == 0:
+            return np.zeros(self.target_shape, dtype=bool)
+
+        radius = SPARSE_CUBIC_BOOLEAN_RESAMPLE_RADIUS
+        window_diameter = int(np.ceil((radius * 2.0) * float(self.divisor))) + 3
+        dense_area = int(self.target_shape[0]) * int(self.target_shape[1])
+        sparse_area = int(points.shape[0]) * window_diameter * window_diameter
+        if sparse_area >= dense_area:
+            coordinates = _declumping_resize_coordinates(self.target_shape, self.divisor)
+            return (
+                ndi.map_coordinates(source_array.astype(float), coordinates)
+                > self.threshold
+            )
+
+        coefficients = ndi.spline_filter(source_array.astype(float), order=3)
+        output = np.zeros(self.target_shape, dtype=bool)
+        for source_y, source_x in points:
+            self._evaluate_source_window(
+                output,
+                coefficients,
+                int(source_y),
+                int(source_x),
+                radius,
+            )
+        return output
+
+    def _evaluate_source_window(
+        self,
+        output: np.ndarray,
+        coefficients: np.ndarray,
+        source_y: int,
+        source_x: int,
+        radius: float,
+    ) -> None:
+        """Evaluate one sparse source point's affected target window."""
+        from scipy import ndimage as ndi
+
+        y_start = max(0, int(np.floor((float(source_y) - radius) * self.divisor)))
+        y_stop = min(
+            self.target_shape[0],
+            int(np.ceil((float(source_y) + radius) * self.divisor)) + 1,
+        )
+        x_start = max(0, int(np.floor((float(source_x) - radius) * self.divisor)))
+        x_stop = min(
+            self.target_shape[1],
+            int(np.ceil((float(source_x) + radius) * self.divisor)) + 1,
+        )
+        if y_start >= y_stop or x_start >= x_stop:
+            return
+
+        coordinates = _declumping_resize_coordinates(
+            (y_stop - y_start, x_stop - x_start),
+            self.divisor,
+        )
+        y_coordinates = coordinates[0] + (float(y_start) / self.divisor)
+        x_coordinates = coordinates[1] + (float(x_start) / self.divisor)
+        output[y_start:y_stop, x_start:x_stop] |= (
+            ndi.map_coordinates(
+                coefficients,
+                (y_coordinates, x_coordinates),
+                prefilter=False,
+            )
+            > self.threshold
+        )
 
 
 def manual_declumping_size(size: float) -> float:
@@ -2619,8 +2702,9 @@ def _scipy_declumping_seed_points(
             1,
             np.ceil(np.asarray(image_array.shape) * float(image_resize_factor)),
         ).astype(int)
-        coordinates = np.mgrid[0 : shape[0], 0 : shape[1]].astype(float) / float(
-            image_resize_factor
+        coordinates = _declumping_resize_coordinates(
+            (int(shape[0]), int(shape[1])),
+            float(image_resize_factor),
         )
         resized_image = ndi.map_coordinates(image_array, coordinates)
         resized_labels = ndi.map_coordinates(
@@ -2641,13 +2725,30 @@ def _scipy_declumping_seed_points(
 
     if image_resize_factor < 1.0:
         inverse_resize_factor = float(image_array.shape[0]) / float(maxima.shape[0])
-        coordinates = (
-            np.mgrid[0 : image_array.shape[0], 0 : image_array.shape[1]].astype(float)
-            / inverse_resize_factor
+        coordinates = _declumping_resize_coordinates(
+            (int(image_array.shape[0]), int(image_array.shape[1])),
+            inverse_resize_factor,
         )
-        maxima = ndi.map_coordinates(maxima.astype(float), coordinates) > 0.5
+        maxima = SparseBooleanCubicMapCoordinatesThreshold(
+            maxima,
+            (int(image_array.shape[0]), int(image_array.shape[1])),
+            inverse_resize_factor,
+        ).execute()
 
     return morphology.shrink_components_to_seed_points(maxima)
+
+
+@lru_cache(maxsize=128)
+def _declumping_resize_coordinates(
+    target_shape: tuple[int, int],
+    divisor: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return cached CellProfiler-style coordinate grids for declumping resize."""
+    return tuple(
+        np.mgrid[0 : target_shape[0], 0 : target_shape[1]].astype(float)
+        / float(divisor)
+    )
+
 
 
 def _positive_label_bounding_boxes(
@@ -4468,7 +4569,7 @@ def prepare_expand_or_shrink_objects() -> None:
 @special_outputs(("labels", segmentation_mask_rois()))
 def expand_or_shrink_objects(
     image: np.ndarray,
-    labels: np.ndarray | ObjectLabelPayload,
+    labels: ObjectLabelValue,
     mode: ExpandShrinkMode | str = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
     iterations: int = 1,
     fill_holes: bool = True,

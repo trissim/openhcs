@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -12,7 +13,19 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import (
+    pure_2d_batch_executor,
+    special_inputs,
+    special_outputs,
+)
+from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
+from openhcs.core.runtime_semantics import dense_object_label_id_domain
+from openhcs.core.runtime_values import (
+    DenseObjectLabelPlaneDomainStack,
+    ObjectLabelValue,
+    ObjectLabelMeasurementPayloadStrategy,
+    object_label_dense_array,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -385,6 +398,7 @@ def _texture_measurement(
 
 def _object_texture_measurement(
     *,
+    slice_index: int,
     object_label: int,
     scale: int,
     direction: int,
@@ -392,7 +406,7 @@ def _object_texture_measurement(
     features: np.ndarray,
 ) -> ObjectTextureMeasurement:
     return ObjectTextureMeasurement(
-        slice_index=0,
+        slice_index=slice_index,
         object_label=object_label,
         scale=scale,
         direction=direction,
@@ -477,6 +491,70 @@ def measure_texture(
     return image, measurements
 
 
+def _complete_object_texture_measurements(
+    measurements: list[ObjectTextureMeasurement],
+    *,
+    labels: Any,
+    scale: int | tuple[int, ...] | list[int],
+    gray_levels: int,
+) -> list[ObjectTextureMeasurement]:
+    object_domain = dense_object_label_id_domain(labels)
+    if not object_domain:
+        return measurements
+
+    axes = tuple(
+        dict.fromkeys(
+            (
+                measurement.slice_index,
+                measurement.scale,
+                measurement.direction,
+                measurement.gray_levels,
+            )
+            for measurement in measurements
+        )
+    )
+    if not axes:
+        axes = tuple(
+            (0, texture_scale, direction, gray_levels)
+            for texture_scale in _texture_scales(scale)
+            for direction in range(N_DIRECTIONS_2D)
+        )
+
+    by_key = {
+        (
+            measurement.object_label,
+            measurement.slice_index,
+            measurement.scale,
+            measurement.direction,
+            measurement.gray_levels,
+        ): measurement
+        for measurement in measurements
+    }
+    complete: list[ObjectTextureMeasurement] = []
+    zero_features = np.zeros((len(F_HARALICK),), dtype=float)
+    for object_label in object_domain:
+        for axis_slice_index, texture_scale, direction, axis_gray_levels in axes:
+            key = (
+                object_label,
+                axis_slice_index,
+                texture_scale,
+                direction,
+                axis_gray_levels,
+            )
+            complete.append(
+                by_key.get(key)
+                or _object_texture_measurement(
+                    object_label=object_label,
+                    slice_index=axis_slice_index,
+                    scale=texture_scale,
+                    direction=direction,
+                    gray_levels=axis_gray_levels,
+                    features=zero_features,
+                )
+            )
+    return complete
+
+
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
 @special_outputs(
@@ -515,8 +593,31 @@ def measure_texture_objects(
     gray_levels: int = 256,
     texture_crop_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int = 0,
 ) -> tuple[np.ndarray, list[ObjectTextureMeasurement]]:
     """Measure Haralick texture features for each labeled object."""
+    image_array = np.asarray(image)
+    original_labels = labels
+    if image_array.ndim == 2 and slice_index == 0:
+        plane_domain_stack = DenseObjectLabelPlaneDomainStack.from_payload(
+            labels,
+            dtype=np.int32,
+        )
+        if plane_domain_stack is not None:
+            measurements: list[ObjectTextureMeasurement] = []
+            for plane_index in range(plane_domain_stack.plane_count):
+                _image, plane_measurements = measure_texture_objects.__wrapped__(
+                    image,
+                    plane_domain_stack.plane(plane_index),
+                    scale=scale,
+                    gray_levels=gray_levels,
+                    texture_crop_backend_provider=texture_crop_backend_provider,
+                    haralick_backend_provider=haralick_backend_provider,
+                    slice_index=plane_index,
+                )
+                measurements.extend(plane_measurements)
+            return image, measurements
+
     gray_levels = _normalize_gray_levels(gray_levels)
     pixel_data = CellProfilerTexturePixelDataRequest(
         image=image,
@@ -528,12 +629,24 @@ def measure_texture_objects(
     )
 
     measurements = []
+    labels_2d = _texture_labels_for_slice(
+        _texture_dense_labels(labels),
+        np.asarray(image),
+        slice_index,
+    )
+    if labels_2d is not None:
+        labels = labels_2d
     object_labels, intensity_crops = crop_backend.object_intensity_crops(
         pixel_data,
         labels,
     )
     if object_labels.size == 0:
-        return image, measurements
+        return image, _complete_object_texture_measurements(
+            measurements,
+            labels=original_labels,
+            scale=scale,
+            gray_levels=gray_levels,
+        )
 
     for object_label, label_data in zip(object_labels, intensity_crops, strict=True):
         for texture_scale in _texture_scales(scale):
@@ -548,6 +661,7 @@ def measure_texture_objects(
                 measurements.append(
                     _object_texture_measurement(
                         object_label=int(object_label),
+                        slice_index=slice_index,
                         scale=texture_scale,
                         direction=direction,
                         gray_levels=gray_levels,
@@ -555,7 +669,99 @@ def measure_texture_objects(
                     )
                 )
 
-    return image, measurements
+    return image, _complete_object_texture_measurements(
+        measurements,
+        labels=original_labels,
+        scale=scale,
+        gray_levels=gray_levels,
+    )
+
+
+def measure_texture_objects_batch(
+    request: RuntimePure2DSliceBatchRequest,
+) -> list[Any]:
+    """Measure per-slice object texture with labels projected to each image plane."""
+    kwargs = request.kwargs
+    labels = kwargs.get("labels")
+    label_array = _texture_dense_labels(labels)
+    results: list[Any] = []
+    for slice_index, slice_2d in enumerate(request.slices_2d):
+        slice_kwargs = kwargs
+        slice_array = np.asarray(slice_2d)
+        labels_2d = _texture_labels_for_slice(
+            label_array,
+            slice_array,
+            slice_index,
+        )
+        if labels_2d is not None:
+            slice_kwargs = dict(kwargs)
+            slice_kwargs["labels"] = _texture_label_payload_for_slice(
+                labels,
+                labels_2d,
+                slice_index,
+            )
+        results.append(
+            request.execute_slice(
+                request.func,
+                slice_2d,
+                slice_kwargs,
+                slice_index,
+                request.slice_count,
+            )
+        )
+    return results
+
+
+def _texture_dense_labels(labels: Any) -> np.ndarray | None:
+    return TextureDenseLabelArray.from_value(labels)
+
+
+class TextureDenseLabelArray:
+    """Dense label coercion for MeasureTexture object inputs."""
+
+    @classmethod
+    def from_value(cls, labels: Any) -> np.ndarray | None:
+        if labels is None:
+            return None
+        if isinstance(labels, ObjectLabelValue):
+            return object_label_dense_array(labels, dtype=np.int32)
+        return np.asarray(labels)
+
+
+def _texture_label_payload_for_slice(
+    source: Any,
+    labels_2d: np.ndarray,
+    slice_index: int,
+) -> Any:
+    return ObjectLabelMeasurementPayloadStrategy.for_source(
+        source
+    ).with_projected_plane(
+        source,
+        labels_2d,
+        slice_index,
+    )
+
+
+def _texture_labels_for_slice(
+    label_array: np.ndarray | None,
+    slice_array: np.ndarray,
+    slice_index: int,
+) -> np.ndarray | None:
+    if label_array is None or slice_array.ndim != 2:
+        return None
+    selected = label_array
+    while (
+        selected.ndim > 2
+        and selected.shape[-2:] == slice_array.shape
+        and selected.shape[0] > 0
+    ):
+        selected = selected[min(slice_index, selected.shape[0] - 1)]
+    if selected.ndim == 2 and selected.shape == slice_array.shape:
+        return np.asarray(selected, dtype=np.int32)
+    return None
+
+
+pure_2d_batch_executor(measure_texture_objects_batch)(measure_texture_objects)
 
 
 def _prepare_measure_texture() -> None:

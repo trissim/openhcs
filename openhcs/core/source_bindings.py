@@ -605,6 +605,21 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
         )
 
     @property
+    def requires_pipeline_start_image_set_stack(self) -> bool:
+        """Whether pipeline-start bindings form multi-alias image sets."""
+
+        return any(
+            sum(
+                1
+                for binding in group.bindings
+                if binding.origin is SourceBindingOrigin.PIPELINE_START
+                and binding.participates_in_execution_anchoring
+            )
+            > 1
+            for group in self.groups
+        )
+
+    @property
     def requires_step_input_selector_resolution(self) -> bool:
         """Whether any step-input binding needs selector-aware source matching."""
 

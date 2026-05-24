@@ -2,7 +2,7 @@ import pytest
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import normalize_artifact_value
+from openhcs.core.runtime_values import MeasurementTable, normalize_artifact_value
 
 
 def _runtime_value(name="measurements", path="/memory/measurements.pkl"):
@@ -75,6 +75,51 @@ def test_runtime_value_store_replace_updates_current_binding_and_keeps_locations
     ) == (replacement,)
 
 
+def test_runtime_value_store_preserves_same_artifact_measurement_subjects():
+    store = RuntimeValueStore()
+    output_plan = ArtifactOutputPlan(
+        name="RelateObjects_measurements",
+        path="/memory/RelateObjects_measurements.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+    )
+    parent_value = normalize_artifact_value(
+        output_plan,
+        MeasurementTable(
+            name="RelateObjects_measurements",
+            rows=({"object_label": 1, "children_count": 2},),
+            object_name="ParentObjects",
+        ),
+        axis_id="A01",
+    )
+    child_value = normalize_artifact_value(
+        output_plan,
+        MeasurementTable(
+            name="RelateObjects_measurements",
+            rows=({"object_label": 1, "parent_id": 1},),
+            object_name="ChildObjects",
+        ),
+        axis_id="A01",
+    )
+
+    parent_record = store.replace(
+        parent_value,
+        path="/memory/RelateObjects_measurements.pkl",
+        backend="memory",
+    )
+    child_record = store.replace(
+        child_value,
+        path="/memory/RelateObjects_measurements.pkl",
+        backend="memory",
+    )
+
+    assert parent_value.key != child_value.key
+    assert store.find(
+        name="RelateObjects_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    ) == (parent_record, child_record)
+
+
 def test_runtime_value_store_merges_observed_records_from_worker_boundary():
     worker_store = RuntimeValueStore()
     value = _runtime_value()
@@ -85,11 +130,11 @@ def test_runtime_value_store_merges_observed_records_from_worker_boundary():
     )
 
     parent_store = RuntimeValueStore()
-    parent_store.merge_observed_values(worker_store.observed_values())
-    parent_store.merge_observed_values(worker_store.observed_values())
+    parent_store.merge_observed_values(worker_store.observed_values)
+    parent_store.merge_observed_values(worker_store.observed_values)
 
     assert parent_store.get(value.key) == record
-    assert parent_store.observed_values() == (record,)
+    assert parent_store.observed_values == (record,)
 
 
 def test_runtime_value_store_clear_releases_records_and_advances_revision():
@@ -102,4 +147,4 @@ def test_runtime_value_store_clear_releases_records_and_advances_revision():
 
     assert store.revision > revision
     assert store.values() == ()
-    assert store.observed_values() == ()
+    assert store.observed_values == ()

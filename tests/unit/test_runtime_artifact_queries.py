@@ -7,19 +7,17 @@ import pytest
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    MeasurementTableAxisProjection,
     MeasurementTableAxisQuery,
     MeasurementTableObjectFeatureSemantics,
     MeasurementTableObjectFeatureSemanticsCache,
     annotate_measurement_row_object,
     matching_measurement_field,
     measurement_feature_candidates,
-    measurement_table_for_image_number,
-    measurement_table_for_slice,
-    measurement_tables_for_image_number,
-    measurement_tables_for_slice,
     ordered_measurement_feature_candidates,
     measurement_row_mapping,
     measurement_values_for_feature,
+    measurement_values_for_label_slices,
     runtime_measurement_tables_for_object,
     runtime_relationship,
 )
@@ -34,6 +32,9 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectRelationship,
     normalize_artifact_value,
+)
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
 
 
@@ -181,6 +182,137 @@ def test_matching_measurement_field_prefers_specific_feature_suffix() -> None:
     assert field == "FormFactor"
 
 
+def test_cellprofiler_shape_area_query_uses_volume_when_area_is_empty() -> None:
+    table = MeasurementTable(
+        name="ShapeMeasurements",
+        rows=(
+            {"image_number": 1, "object_label": 1, "area": "", "volume": 12.0},
+            {"image_number": 1, "object_label": 2, "area": None, "volume": 24.0},
+        ),
+        object_name="Cells",
+    )
+
+    values = measurement_values_for_feature(
+        (table,),
+        "AreaShape_Area",
+        object_count=2,
+        object_name="Cells",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert values.tolist() == [12.0, 24.0]
+
+
+def test_heterogeneous_shape_rows_prefer_area_over_later_volume_alias() -> None:
+    table = MeasurementTable(
+        name="MixedShapeMeasurements",
+        rows=(
+            {"slice_index": 0, "object_name": "Cells", "object_label": 1, "volume": 7.0},
+            {"slice_index": 0, "object_name": "Nuclei", "object_label": 1, "area": 3.0},
+            {"slice_index": 0, "object_name": "Nuclei", "object_label": 2, "area": 5.0},
+        ),
+    )
+    labels = pytest.importorskip("numpy").array([[1, 2]], dtype="int32")
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "AreaShape_Area",
+        labels,
+        object_name="Nuclei",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == ([3.0, 5.0],)
+
+
+def test_label_slice_measurement_lookup_uses_declared_image_number_axis() -> None:
+    labels = pytest.importorskip("numpy").array(
+        (
+            ((1, 2),),
+            ((1, 0),),
+        ),
+        dtype="int32",
+    )
+    table = MeasurementTable(
+        name="ShapeMeasurements",
+        rows=(
+            {"image_number": 1, "object_label": 1, "FormFactor": 0.5},
+            {"image_number": 1, "object_label": 2, "FormFactor": 0.7},
+            {"image_number": 2, "object_label": 1, "FormFactor": 0.9},
+        ),
+        object_name="Cells",
+    )
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "AreaShape_FormFactor",
+        labels,
+        object_name="Cells",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == ([0.5, 0.7], [0.9])
+
+
+def test_mixed_wide_and_long_measurement_rows_resolve_explicit_feature_rows() -> None:
+    table = MeasurementTable(
+        name="RelationshipMeasurements",
+        rows=(
+            {
+                "parent_object_count": 2,
+                "child_object_count": 2,
+                "mean_children_per_parent": 1.0,
+            },
+            {
+                "object_name": "Objects1",
+                "object_label": 1,
+                "feature_name": "Children_Objects2_Count",
+                "result_value": 2.0,
+            },
+            {
+                "object_name": "Objects1",
+                "object_label": 2,
+                "feature_name": "Children_Objects2_Count",
+                "result_value": 0.0,
+            },
+        ),
+    )
+
+    values = measurement_values_for_feature(
+        (table,),
+        "Children_Objects2_Count",
+        object_count=2,
+        object_name="Objects1",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert values.tolist() == [2.0, 0.0]
+
+
+def test_row_sequence_feature_semantics_ignore_stale_partition_fields() -> None:
+    table = MeasurementTable(
+        name="RelationshipMeasurements",
+        rows=(
+            {
+                "object_name": "Objects2",
+                "object_label": 1,
+                "Parent_Objects1": 1,
+            },
+        ),
+        object_name="Objects2",
+        fields=(
+            FieldSpec("object_name"),
+            FieldSpec("object_label"),
+            FieldSpec("Children_Objects2_Count"),
+        ),
+        validated_runtime_schema=True,
+    )
+
+    semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
+
+    assert "Children_Objects2_Count" not in semantics.feature_names
+
+
 def test_measurement_table_axis_query_projects_sequence_rows() -> None:
     table = MeasurementTable(
         name="ObjectMeasurements",
@@ -191,8 +323,12 @@ def test_measurement_table_axis_query_projects_sequence_rows() -> None:
         object_name="Objects",
     )
 
-    query = MeasurementTableAxisQuery.slice(1)
-    projected = query.table(table)
+    query = MeasurementTableAxisQuery(MeasurementRowAxisField.SLICE_INDEX, 1)
+    projected = MeasurementTableAxisProjection(
+        table,
+        query.axis,
+        query.value,
+    ).apply()
 
     assert query.axis is MeasurementRowAxisField.SLICE_INDEX
     assert query.value == 1
@@ -214,13 +350,16 @@ def test_measurement_table_axis_query_projects_table_sequences() -> None:
         rows=({"area": 99.0},),
     )
 
-    projected = MeasurementTableAxisQuery.image_number(2).tables((first, second))
+    projected = MeasurementTableAxisQuery(
+        MeasurementRowAxisField.IMAGE_NUMBER,
+        2,
+    ).tables((first, second))
 
     assert tuple(projected[0].rows) == ({"image_number": 2, "area": 20.0},)
     assert projected[1] is second
 
 
-def test_axis_specific_measurement_table_wrappers_delegate_to_query() -> None:
+def test_axis_specific_measurement_table_query_projects_declared_axes() -> None:
     table = MeasurementTable(
         name="ObjectMeasurements",
         rows=(
@@ -230,17 +369,21 @@ def test_axis_specific_measurement_table_wrappers_delegate_to_query() -> None:
         object_name="Objects",
     )
 
-    assert measurement_table_for_slice(table, 1) == (
-        MeasurementTableAxisQuery.slice(1).table(table)
+    assert tuple(
+        MeasurementTableAxisQuery(
+            MeasurementRowAxisField.SLICE_INDEX,
+            1,
+        ).tables((table,))[0].rows
+    ) == (
+        {"slice_index": 1, "image_number": 2, "area": 20.0},
     )
-    assert measurement_table_for_image_number(table, 2) == (
-        MeasurementTableAxisQuery.image_number(2).table(table)
-    )
-    assert measurement_tables_for_slice((table,), 1) == (
-        MeasurementTableAxisQuery.slice(1).tables((table,))
-    )
-    assert measurement_tables_for_image_number((table,), 2) == (
-        MeasurementTableAxisQuery.image_number(2).tables((table,))
+    assert tuple(
+        MeasurementTableAxisQuery(
+            MeasurementRowAxisField.IMAGE_NUMBER,
+            2,
+        ).tables((table,))[0].rows
+    ) == (
+        {"slice_index": 1, "image_number": 2, "area": 20.0},
     )
 
 

@@ -14,6 +14,7 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     MorphologyBackendStrategy,
     NumbaNumpyMorphologyBackendStrategy,
     NumpyMorphologyBackendStrategy,
+    SparseBooleanCubicMapCoordinatesThreshold,
 )
 
 
@@ -409,12 +410,12 @@ def test_declumping_seed_points_matches_legacy_resize_path() -> None:
     footprint = MORPHOLOGY.disk_footprint(1)
     resize_factor = 0.5
 
-    expected = _legacy_declumping_seed_points(
+    expected = LegacyDeclumpingSeedPointsAuthority(
         image,
         labels,
         footprint,
         resize_factor,
-    )
+    ).execute()
 
     seeds = MORPHOLOGY.declumping_seed_points(
         image,
@@ -439,12 +440,12 @@ def test_declumping_integer_lattice_fast_path_matches_legacy_resize_path() -> No
         image[labels == 0] = 0.0
         resize_factor = 1.0 / step
 
-        expected = _legacy_declumping_seed_points(
+        expected = LegacyDeclumpingSeedPointsAuthority(
             image,
             labels,
             footprint,
             resize_factor,
-        )
+        ).execute()
         seeds = MORPHOLOGY.declumping_seed_points(
             image,
             labels,
@@ -453,6 +454,31 @@ def test_declumping_integer_lattice_fast_path_matches_legacy_resize_path() -> No
         )
 
         np.testing.assert_array_equal(seeds, expected)
+
+
+def test_sparse_boolean_cubic_declumping_resize_matches_dense_scipy() -> None:
+    from scipy import ndimage as ndi
+
+    source = np.zeros((84, 100), dtype=bool)
+    source[12, 17] = True
+    source[41, 53] = True
+    source[73, 88] = True
+    target_shape = (1000, 1200)
+    divisor = 1000.0 / 84.0
+
+    coordinates = morphology_module._declumping_resize_coordinates(
+        target_shape,
+        divisor,
+    )
+    expected = ndi.map_coordinates(source.astype(float), coordinates) > 0.5
+
+    resized = SparseBooleanCubicMapCoordinatesThreshold(
+        source,
+        target_shape,
+        divisor,
+    ).execute()
+
+    np.testing.assert_array_equal(resized, expected)
 
 
 def test_declumping_downsample_grid_uses_cellprofiler_pixel_origins() -> None:
@@ -667,37 +693,48 @@ def test_morphology_backend_unregistered_provider_is_explicit_error() -> None:
         )
 
 
-def _legacy_declumping_seed_points(
-    image: np.ndarray,
-    labels: np.ndarray,
-    footprint: np.ndarray,
-    image_resize_factor: float,
-) -> np.ndarray:
-    from scipy import ndimage as ndi
+class LegacyDeclumpingSeedPointsAuthority:
+    """Dense SciPy reference for CellProfiler declumping seed extraction tests."""
 
-    low_res_shape = np.maximum(
-        1,
-        np.ceil(np.asarray(image.shape) * image_resize_factor),
-    ).astype(int)
-    low_res_coordinates = np.mgrid[0 : low_res_shape[0], 0 : low_res_shape[1]].astype(
-        float
-    ) / image_resize_factor
-    low_res_image = ndi.map_coordinates(image, low_res_coordinates)
-    low_res_labels = ndi.map_coordinates(
-        labels,
-        low_res_coordinates,
-        order=0,
-    ).astype(labels.dtype)
-    expected = MORPHOLOGY.local_maxima_by_label(
-        low_res_image,
-        low_res_labels,
-        footprint,
-    )
-    expected[low_res_image <= 0] = 0
-    inverse_resize_factor = float(image.shape[0]) / float(expected.shape[0])
-    high_res_coordinates = (
-        np.mgrid[0 : image.shape[0], 0 : image.shape[1]].astype(float)
-        / inverse_resize_factor
-    )
-    expected = ndi.map_coordinates(expected.astype(float), high_res_coordinates) > 0.5
-    return MORPHOLOGY.shrink_components_to_seed_points(expected)
+    def __init__(
+        self,
+        image: np.ndarray,
+        labels: np.ndarray,
+        footprint: np.ndarray,
+        image_resize_factor: float,
+    ) -> None:
+        self.image = image
+        self.labels = labels
+        self.footprint = footprint
+        self.image_resize_factor = image_resize_factor
+
+    def execute(self) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        low_res_shape = np.maximum(
+            1,
+            np.ceil(np.asarray(self.image.shape) * self.image_resize_factor),
+        ).astype(int)
+        low_res_coordinates = np.mgrid[
+            0 : low_res_shape[0],
+            0 : low_res_shape[1],
+        ].astype(float) / self.image_resize_factor
+        low_res_image = ndi.map_coordinates(self.image, low_res_coordinates)
+        low_res_labels = ndi.map_coordinates(
+            self.labels,
+            low_res_coordinates,
+            order=0,
+        ).astype(self.labels.dtype)
+        expected = MORPHOLOGY.local_maxima_by_label(
+            low_res_image,
+            low_res_labels,
+            self.footprint,
+        )
+        expected[low_res_image <= 0] = 0
+        inverse_resize_factor = float(self.image.shape[0]) / float(expected.shape[0])
+        high_res_coordinates = (
+            np.mgrid[0 : self.image.shape[0], 0 : self.image.shape[1]].astype(float)
+            / inverse_resize_factor
+        )
+        expected = ndi.map_coordinates(expected.astype(float), high_res_coordinates) > 0.5
+        return MORPHOLOGY.shrink_components_to_seed_points(expected)

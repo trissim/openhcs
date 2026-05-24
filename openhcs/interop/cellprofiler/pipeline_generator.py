@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -24,6 +25,7 @@ from typing import Any, ClassVar, Iterable, List, Mapping, Optional
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
     NO_ARTIFACT_MATERIALIZATION,
@@ -33,6 +35,8 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from openhcs.core.source_bindings import StepSourceBindingsConfig
+from openhcs.core.source_matching import source_metadata_component
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
@@ -123,6 +127,7 @@ _INPUTLESS_ARTIFACT_ONLY_KINDS = frozenset(
     }
 )
 _SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
+_GROUPING_COMPONENTS = frozenset((AllComponents.WELL, AllComponents.SITE))
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +136,54 @@ class ModuleProcessingComponents:
 
     variable_components: tuple[str, ...]
     group_by_literal: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactProcessingScope:
+    """OpenHCS execution scope for modules driven only by runtime artifacts."""
+
+    contract: ModuleArtifactContracts
+    lineage_variable_components: tuple[str, ...] = ()
+    lineage_requires_pairwise_object_domain_scope: bool = False
+    module_requires_pairwise_object_domain_scope: bool = False
+
+    def components(self) -> ModuleProcessingComponents:
+        variable_components = self.lineage_variable_components
+        if self.module_requires_pairwise_object_domain_scope or (
+            self.lineage_requires_pairwise_object_domain_scope
+            and self.uses_measurement_only_runtime_inputs()
+        ):
+            return ModuleProcessingComponents((), "GroupBy.SITE")
+        if any(
+            spec.kind.participates_in_object_domain_scope
+            for spec in self.contract.outputs
+        ):
+            if variable_components:
+                return ModuleProcessingComponents(variable_components, "GroupBy.NONE")
+            return ModuleProcessingComponents((), "GroupBy.SITE")
+        return ModuleProcessingComponents(
+            variable_components or ("VariableComponents.SITE",),
+            "GroupBy.NONE",
+        )
+
+    def requires_pairwise_object_domain_scope(self) -> bool:
+        object_domain_inputs = tuple(
+            spec
+            for spec in self.contract.runtime_artifact_inputs
+            if spec.kind.participates_in_pairwise_object_domain_input
+        )
+        object_domain_outputs = tuple(
+            spec
+            for spec in self.contract.outputs
+            if spec.kind.participates_in_object_domain_scope
+        )
+        return len(object_domain_inputs) > 1 and bool(object_domain_outputs)
+
+    def uses_measurement_only_runtime_inputs(self) -> bool:
+        return bool(self.contract.runtime_artifact_inputs) and all(
+            spec.kind is ArtifactKind.MEASUREMENTS
+            for spec in self.contract.runtime_artifact_inputs
+        )
 
 
 class ModuleProcessingComponentStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -155,8 +208,18 @@ class ModuleProcessingComponentStrategy(ABC, metaclass=AutoRegisterMeta):
         contract: ModuleArtifactContracts,
         bound_kwargs: Mapping[str, Any],
         category_defaults: Mapping[str, tuple[str, ...]],
+        lineage_variable_components: tuple[str, ...] = (),
+        lineage_requires_pairwise_object_domain_scope: bool = False,
     ) -> ModuleProcessingComponents:
         """Return generated processing-component literals for this module."""
+
+    def requires_pairwise_object_domain_scope(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> bool:
+        return RuntimeArtifactProcessingScope(
+            contract,
+        ).requires_pairwise_object_domain_scope()
 
 
 class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy):
@@ -171,16 +234,10 @@ class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy
         contract: ModuleArtifactContracts,
         bound_kwargs: Mapping[str, Any],
         category_defaults: Mapping[str, tuple[str, ...]],
+        lineage_variable_components: tuple[str, ...] = (),
+        lineage_requires_pairwise_object_domain_scope: bool = False,
     ) -> ModuleProcessingComponents:
         del bound_kwargs
-        if canonical_module_name(contract.module_name) == "TrackObjects":
-            return ModuleProcessingComponents(
-                (
-                    "VariableComponents.SITE",
-                    "VariableComponents.CHANNEL",
-                ),
-                "GroupBy.NONE",
-            )
         source_bindings = contract.source_bindings
         if not source_bindings.is_empty:
             if source_bindings.requires_step_input_channel_stack:
@@ -188,14 +245,24 @@ class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy
                     ("VariableComponents.CHANNEL",),
                     "GroupBy.SITE",
                 )
-            if source_bindings.requires_pipeline_start_resolution:
+            if source_bindings.requires_pipeline_start_image_set_stack:
                 return ModuleProcessingComponents(
                     ("VariableComponents.CHANNEL",),
                     "GroupBy.SITE",
                 )
+            if source_bindings.requires_pipeline_start_resolution:
+                return ModuleProcessingComponents(
+                    source_binding_variable_component_literals(source_bindings),
+                    "GroupBy.NONE",
+                )
             return ModuleProcessingComponents(("VariableComponents.SITE",))
         if contract.runtime_artifact_inputs:
-            return ModuleProcessingComponents(("VariableComponents.SITE",), "GroupBy.NONE")
+            return RuntimeArtifactProcessingScope(
+                contract,
+                lineage_variable_components,
+                lineage_requires_pairwise_object_domain_scope,
+                self.requires_pairwise_object_domain_scope(contract),
+            ).components()
         if _is_inputless_artifact_only_contract(contract):
             return ModuleProcessingComponents(("VariableComponents.SITE",), "GroupBy.NONE")
         return ModuleProcessingComponents(
@@ -206,6 +273,151 @@ class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy
                 )
             )
         )
+
+
+def source_binding_variable_component_literals(
+    source_bindings: StepSourceBindingsConfig,
+) -> tuple[str, ...]:
+    """Return OpenHCS variable components declared by source metadata semantics."""
+    components: list[AllComponents] = [AllComponents.SITE]
+    for rule in source_bindings.metadata_rules:
+        for field_name in re.compile(rule.pattern).groupindex:
+            component = source_metadata_component(field_name)
+            if component is None or component in _GROUPING_COMPONENTS:
+                continue
+            if component.name not in VariableComponents.__members__:
+                continue
+            if component not in components:
+                components.append(component)
+    return tuple(f"VariableComponents.{component.name}" for component in components)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactSourceLineage:
+    """Variable-component scope inherited from source-bound artifact ancestry."""
+
+    contracts_by_module_num: Mapping[int, ModuleArtifactContracts]
+
+    def variable_components_for(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> tuple[str, ...]:
+        components: list[str] = []
+        self._collect(contract, components, set())
+        return tuple(components)
+
+    def requires_pairwise_object_domain_scope_for(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> bool:
+        return self._collect_pairwise_object_domain_scope(contract, set())
+
+    def _collect(
+        self,
+        contract: ModuleArtifactContracts,
+        components: list[str],
+        seen_module_nums: set[int],
+    ) -> None:
+        if contract.module_num in seen_module_nums:
+            return
+        seen_module_nums.add(contract.module_num)
+
+        if not contract.source_bindings.is_empty:
+            self._extend_unique(
+                components,
+                source_binding_variable_component_literals(contract.source_bindings),
+            )
+
+        for symbol in contract.input_symbols:
+            producer_module_num = symbol.producer_module_num
+            if producer_module_num is None:
+                continue
+            producer_contract = self.contracts_by_module_num.get(producer_module_num)
+            if producer_contract is None:
+                continue
+            self._collect(producer_contract, components, seen_module_nums)
+
+    def _collect_pairwise_object_domain_scope(
+        self,
+        contract: ModuleArtifactContracts,
+        seen_module_nums: set[int],
+    ) -> bool:
+        if contract.module_num in seen_module_nums:
+            return False
+        seen_module_nums.add(contract.module_num)
+
+        if ModuleProcessingComponentStrategy.for_module(
+            contract.module_name
+        ).requires_pairwise_object_domain_scope(contract):
+            return True
+
+        for symbol in contract.input_symbols:
+            producer_module_num = symbol.producer_module_num
+            if producer_module_num is None:
+                continue
+            producer_contract = self.contracts_by_module_num.get(producer_module_num)
+            if producer_contract is None:
+                continue
+            if self._collect_pairwise_object_domain_scope(
+                producer_contract,
+                seen_module_nums,
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _extend_unique(components: list[str], values: Iterable[str]) -> None:
+        for value in values:
+            if value not in components:
+                components.append(value)
+
+
+class TrackObjectsProcessingComponentStrategy(DefaultModuleProcessingComponentStrategy):
+    """Track labels across source-frame timepoint order without stacking channels."""
+
+    module_name = "TrackObjects"
+
+    def components(
+        self,
+        *,
+        category: str,
+        contract: ModuleArtifactContracts,
+        bound_kwargs: Mapping[str, Any],
+        category_defaults: Mapping[str, tuple[str, ...]],
+        lineage_variable_components: tuple[str, ...] = (),
+        lineage_requires_pairwise_object_domain_scope: bool = False,
+    ) -> ModuleProcessingComponents:
+        del (
+            category,
+            contract,
+            bound_kwargs,
+            category_defaults,
+            lineage_variable_components,
+            lineage_requires_pairwise_object_domain_scope,
+        )
+        return ModuleProcessingComponents(
+            ("VariableComponents.TIMEPOINT",),
+            "GroupBy.NONE",
+        )
+
+
+class MeasureImageAreaOccupiedProcessingComponentStrategy(
+    DefaultModuleProcessingComponentStrategy
+):
+    """Scope object-area aggregate rows per image set."""
+
+    module_name = "MeasureImageAreaOccupiedBinary"
+
+    def requires_pairwise_object_domain_scope(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> bool:
+        object_domain_inputs = tuple(
+            spec
+            for spec in contract.runtime_artifact_inputs
+            if spec.kind.participates_in_pairwise_object_domain_input
+        )
+        return len(object_domain_inputs) > 1
 
 
 class CorrectIlluminationCalculateProcessingComponentStrategy(
@@ -222,6 +434,8 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
         contract: ModuleArtifactContracts,
         bound_kwargs: Mapping[str, Any],
         category_defaults: Mapping[str, tuple[str, ...]],
+        lineage_variable_components: tuple[str, ...] = (),
+        lineage_requires_pairwise_object_domain_scope: bool = False,
     ) -> ModuleProcessingComponents:
         raw_scope = bound_kwargs.get(
             "calculation_scope",
@@ -238,6 +452,10 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
             contract=contract,
             bound_kwargs=bound_kwargs,
             category_defaults=category_defaults,
+            lineage_variable_components=lineage_variable_components,
+            lineage_requires_pairwise_object_domain_scope=(
+                lineage_requires_pairwise_object_domain_scope
+            ),
         )
 
 
@@ -654,6 +872,7 @@ class PipelineGeneratorCodeEmitter:
             "pipeline_steps = [",
         ]
         setting_coverage: list[ModuleSettingCoverageRecord] = []
+        source_lineage = RuntimeArtifactSourceLineage(artifact_contracts)
 
         for module in modules:
             meta = self.generator.registry.module_metadata(module.name)
@@ -699,6 +918,14 @@ class PipelineGeneratorCodeEmitter:
                 contract=artifact_contract,
                 bound_kwargs=translated_kwargs,
                 category_defaults=self.generator.CATEGORY_TO_VARIABLE_COMPONENTS,
+                lineage_variable_components=source_lineage.variable_components_for(
+                    artifact_contract
+                ),
+                lineage_requires_pairwise_object_domain_scope=(
+                    source_lineage.requires_pairwise_object_domain_scope_for(
+                        artifact_contract
+                    )
+                ),
             )
 
             lines.append("    FunctionStep(")

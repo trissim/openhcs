@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import shutil
 import subprocess
@@ -30,6 +31,7 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
+from openhcs.core.pipeline_image_schema import ImportedMetadataTable
 from openhcs.core.source_schema_workspace import (
     SourceSchemaWorkspaceMaterialization,
     materialize_source_schema_workspace,
@@ -79,6 +81,7 @@ class NativeCellProfilerProvenanceField(StrEnum):
     SELECTED_SOURCE_FILE_COUNT = "native_selected_source_file_count"
     SELECTED_SOURCE_MODE = "native_selected_source_mode"
     SELECTED_SOURCE_FLATTENED = "native_selected_source_flattened"
+    SELECTED_SOURCE_STAGING_ROOT = "native_selected_source_staging_root"
     FILE_LIST_PATH = "native_file_list_path"
 
 
@@ -166,16 +169,49 @@ class NativeCellProfilerInputDomain:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeCellProfilerSourcePlacement:
+    """One selected native CellProfiler source and its input-dir relative path."""
+
+    source_path: Path
+    relative_path: Path
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_path", Path(self.source_path))
+        object.__setattr__(
+            self,
+            "relative_path",
+            Path(str(self.relative_path).lstrip("/")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class NativeCellProfilerSelectedSourceUniverse:
     """Selected source-schema files projected into a native CP input directory."""
 
     source_paths: tuple[Path, ...]
+    placements: tuple[NativeCellProfilerSourcePlacement, ...] = ()
+    imported_metadata_paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
+        source_paths = tuple(Path(path) for path in self.source_paths)
         object.__setattr__(
             self,
             "source_paths",
-            tuple(Path(path) for path in self.source_paths),
+            source_paths,
+        )
+        placements = tuple(self.placements) or tuple(
+            NativeCellProfilerSourcePlacement(path, Path(path.name))
+            for path in source_paths
+        )
+        object.__setattr__(
+            self,
+            "placements",
+            placements,
+        )
+        object.__setattr__(
+            self,
+            "imported_metadata_paths",
+            tuple(Path(path) for path in self.imported_metadata_paths),
         )
 
     @classmethod
@@ -183,8 +219,24 @@ class NativeCellProfilerSelectedSourceUniverse:
         cls,
         workspace: SourceSchemaWorkspaceMaterialization,
         well_ids: tuple[str, ...],
+        *,
+        imported_metadata_tables: tuple[ImportedMetadataTable, ...] = (),
     ) -> "NativeCellProfilerSelectedSourceUniverse":
-        return cls(workspace.source_paths_for_primary_wells(well_ids))
+        source_paths = workspace.source_paths_for_primary_wells(
+            well_ids,
+            imported_metadata_tables=imported_metadata_tables,
+        )
+        placement_plan = NativeCellProfilerImportedMetadataPlacementPlan(
+            workspace.source_root,
+            imported_metadata_tables,
+            source_paths,
+        )
+        placements = placement_plan.placements()
+        imported_metadata_paths = tuple(
+            placement_plan.imported_metadata_path(table)
+            for table in imported_metadata_tables
+        )
+        return cls(source_paths, placements, imported_metadata_paths)
 
     def materialize_flat_input_dir(self, input_dir: Path) -> tuple[Path, ...]:
         input_dir = Path(input_dir)
@@ -192,22 +244,170 @@ class NativeCellProfilerSelectedSourceUniverse:
             shutil.rmtree(input_dir)
         input_dir.mkdir(parents=True, exist_ok=True)
         projected_paths: list[Path] = []
-        seen_names: dict[str, Path] = {}
-        for source_path in self.source_paths:
-            target_path = input_dir / source_path.name
-            existing = seen_names.get(target_path.name)
-            if existing is not None and existing != source_path:
+        seen_targets: dict[Path, Path] = {}
+        for placement in self.placements:
+            target_path = input_dir / placement.relative_path
+            existing = seen_targets.get(target_path)
+            if existing is not None and existing != placement.source_path:
                 raise ToolExecutionError(
                     "Native CellProfiler selected source universe has ambiguous "
-                    f"basename {target_path.name!r}: {existing} and {source_path}."
+                    f"target path {target_path!s}: {existing} and {placement.source_path}."
                 )
-            seen_names[target_path.name] = source_path
-            try:
-                target_path.symlink_to(source_path)
-            except OSError:
-                shutil.copy2(source_path, target_path)
+            seen_targets[target_path] = placement.source_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if placement.source_path in self.imported_metadata_paths:
+                self._materialize_selected_imported_metadata_table(
+                    placement.source_path,
+                    target_path,
+                )
+            else:
+                try:
+                    target_path.symlink_to(placement.source_path)
+                except OSError:
+                    shutil.copy2(placement.source_path, target_path)
             projected_paths.append(target_path)
         return tuple(projected_paths)
+
+    def _materialize_selected_imported_metadata_table(
+        self,
+        source_path: Path,
+        target_path: Path,
+    ) -> None:
+        source_names = {path.name for path in self.source_paths}
+        with source_path.open(newline="", encoding="utf-8") as source_handle:
+            reader = csv.DictReader(source_handle)
+            if reader.fieldnames is None:
+                raise ToolExecutionError(
+                    f"Imported metadata table {source_path} has no header row."
+                )
+            rows = [
+                row
+                for row in reader
+                if self._metadata_row_references_selected_source(row, source_names)
+            ]
+        with target_path.open("w", newline="", encoding="utf-8") as target_handle:
+            writer = csv.DictWriter(target_handle, fieldnames=reader.fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    @staticmethod
+    def _metadata_row_references_selected_source(
+        row: Mapping[str, str],
+        source_names: set[str],
+    ) -> bool:
+        filenames = tuple(
+            str(value).strip()
+            for key, value in row.items()
+            if key.startswith("Image_FileName_") and value
+        )
+        if not filenames:
+            return True
+        return any(filename in source_names for filename in filenames)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeCellProfilerScannerSafeInputPath:
+    """Stage native inputs away from accidental folder-metadata tokens."""
+
+    request: CellProfilerRunRequest
+    source: CPPipeSourceResolution
+
+    def input_dir(self) -> Path:
+        return self.staging_root() / "input"
+
+    def staging_root(self) -> Path:
+        digest = hashlib.sha256(self.identity().encode("utf-8")).hexdigest()
+        return Path("/tmp") / "openhcsnativecellprofiler" / _alpha_slug(digest[:16])
+
+    def identity(self) -> str:
+        selection = self.request.openhcs_axis_selection
+        return json.dumps(
+            {
+                "axis_filter": selection.axis_filter,
+                "dataset": str(self.request.dataset_path),
+                "max_axis_count": selection.max_axis_count,
+                "pipeline": str(self.source.path),
+            },
+            sort_keys=True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NativeCellProfilerImportedMetadataPlacementPlan:
+    """Project CP imported metadata path columns into native input paths."""
+
+    source_root: Path
+    imported_metadata_tables: tuple[ImportedMetadataTable, ...]
+    source_paths: tuple[Path, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_root", Path(self.source_root))
+        object.__setattr__(
+            self,
+            "imported_metadata_tables",
+            tuple(self.imported_metadata_tables),
+        )
+        object.__setattr__(
+            self,
+            "source_paths",
+            tuple(Path(path) for path in self.source_paths),
+        )
+
+    def placements(self) -> tuple[NativeCellProfilerSourcePlacement, ...]:
+        relative_paths_by_name = self.relative_paths_by_name()
+        placements: list[NativeCellProfilerSourcePlacement] = []
+        for source_path in self.source_paths:
+            relative_path = relative_paths_by_name.get(
+                source_path.name,
+                Path(source_path.name),
+            )
+            placements.append(
+                NativeCellProfilerSourcePlacement(source_path, relative_path)
+            )
+        return tuple(placements)
+
+    def relative_paths_by_name(self) -> Mapping[str, Path]:
+        relative_paths: dict[str, Path] = {}
+        for table in self.imported_metadata_tables:
+            table_path = self.imported_metadata_path(table)
+            with table_path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    for filename_key, filename in row.items():
+                        if not filename_key.startswith("Image_FileName_") or not filename:
+                            continue
+                        alias = filename_key.removeprefix("Image_FileName_")
+                        path_name = row.get(f"Image_PathName_{alias}", "")
+                        relative_path = Path(str(path_name).strip()) / str(filename).strip()
+                        if relative_path.is_absolute():
+                            relative_path = Path(relative_path.name)
+                        existing = relative_paths.get(str(filename).strip())
+                        if existing is not None and existing != relative_path:
+                            raise ToolExecutionError(
+                                "Native CellProfiler imported metadata gives "
+                                f"ambiguous paths for {filename!r}: {existing} and "
+                                f"{relative_path}."
+                            )
+                        relative_paths[str(filename).strip()] = relative_path
+        return relative_paths
+
+    def imported_metadata_path(self, table: ImportedMetadataTable) -> Path:
+        if table.location is None:
+            raise ToolExecutionError("Imported metadata table requires a location.")
+        location = Path(table.location)
+        candidates = (
+            location,
+            self.source_root / location,
+            self.source_root / location.name,
+            self.source_root.parent / location,
+            self.source_root.parent / location.name,
+        )
+        for candidate in dict.fromkeys(candidates):
+            if candidate.is_file():
+                return candidate
+        raise ToolExecutionError(
+            "Imported metadata table does not exist for native CellProfiler: "
+            f"{table.location!r}."
+        )
 
 
 class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -314,6 +514,7 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
         selected_source_universe = NativeCellProfilerSelectedSourceUniverse.from_workspace_wells(
             workspace,
             selected_wells,
+            imported_metadata_tables=schema.imported_metadata_tables,
         )
         selected_paths = selected_source_universe.source_paths
         if not selected_paths:
@@ -350,22 +551,24 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
                     ),
                 },
             )
-        file_list_paths = (
-            selected_source_universe.materialize_flat_input_dir(
-                request.output_dir / "native_cellprofiler_selected_input",
+        requires_flat_input_dir = bool(
+            workspace.auxiliary_mappings or schema.imported_metadata_tables
+        )
+        selected_input_path = NativeCellProfilerScannerSafeInputPath(request, source)
+        selected_input_dir = selected_input_path.input_dir()
+        file_list_path = None
+        if requires_flat_input_dir:
+            selected_source_universe.materialize_flat_input_dir(selected_input_dir)
+        else:
+            file_list_path = self._write_file_list(
+                request.output_dir / "native_cellprofiler_file_list.txt",
+                selected_paths,
             )
-            if workspace.auxiliary_mappings
-            else selected_paths
-        )
-        file_list_path = self._write_file_list(
-            request.output_dir / "native_cellprofiler_file_list.txt",
-            file_list_paths,
-        )
         return NativeCellProfilerInputDomain(
             cppipe_path=execution_cppipe_path,
             input_dir=(
-                request.output_dir / "native_cellprofiler_selected_input"
-                if workspace.auxiliary_mappings
+                selected_input_dir
+                if requires_flat_input_dir
                 else request.dataset_path
             ),
             file_list_path=file_list_path,
@@ -384,7 +587,12 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
                     NativeCellProfilerSelectedSourceMode.FILE_LIST
                 ),
                 NativeCellProfilerProvenanceField.SELECTED_SOURCE_FLATTENED: bool(
-                    workspace.auxiliary_mappings
+                    requires_flat_input_dir
+                ),
+                NativeCellProfilerProvenanceField.SELECTED_SOURCE_STAGING_ROOT: (
+                    str(selected_input_path.staging_root())
+                    if requires_flat_input_dir
+                    else None
                 ),
             },
         )
@@ -844,6 +1052,10 @@ def _optional_positive_int(value: Any, parameter_name: str) -> int | None:
     if resolved_value <= 0:
         raise ValueError(f"{parameter_name} must be positive.")
     return resolved_value
+
+
+def _alpha_slug(value: str) -> str:
+    return "".join(chr(ord("a") + int(char, 16)) for char in value.lower())
 
 
 def _request_has_openhcs_axis_selection(request: CellProfilerRunRequest) -> bool:

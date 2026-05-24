@@ -232,13 +232,13 @@ class ObjectLabelsSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrate
 
     def source_data(self, payload: Any) -> Any:
         data = np.asarray(image_payload_data(payload))
+        if is_color_image_slice(data):
+            return self.color_label_plane_to_ids(data)
         if is_color_image_stack(data):
             return np.stack(
                 tuple(self.color_label_plane_to_ids(plane) for plane in data),
                 axis=0,
             )
-        if is_color_image_slice(data):
-            return self.color_label_plane_to_ids(data)
         return data
 
     @staticmethod

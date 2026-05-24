@@ -1,99 +1,219 @@
-"""Shared image payload shape predicates for OpenHCS runtime paths."""
+"""Nominal image payload shape roles for OpenHCS runtime paths."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 from typing import TypeVar
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta
 
 
 COLOR_CHANNEL_COUNTS = frozenset((3, 4))
 ArrayT = TypeVar("ArrayT", bound=np.ndarray)
 
 
+@dataclass(frozen=True, slots=True)
+class ArrayShape:
+    """Nominal shape capability for array-like image payloads."""
+
+    ndim: int
+    shape: tuple[int, ...]
+
+    @classmethod
+    def from_value(cls, value: Any) -> "ArrayShape | None":
+        try:
+            array = np.asarray(value)
+        except (TypeError, ValueError):
+            return None
+        if array.ndim == 0:
+            return None
+        return cls(ndim=int(array.ndim), shape=tuple(int(axis) for axis in array.shape))
+
+    def has_rank(self, ndim: int) -> bool:
+        return self.ndim == ndim
+
+    def has_channel_last(self) -> bool:
+        return self.shape[-1] in COLOR_CHANNEL_COUNTS
+
+
+class ImageShapeRole(ABC, metaclass=AutoRegisterMeta):
+    """Nominal owner for one OpenHCS image slice/stack shape family."""
+
+    __registry_key__ = "role_key"
+    __skip_if_no_key__ = True
+    role_key: ClassVar[str | None] = None
+
+    @classmethod
+    def matches_slice(cls, value: Any) -> bool:
+        array_shape = ArrayShape.from_value(value)
+        return array_shape is not None and cls.matches_slice_shape(array_shape)
+
+    @classmethod
+    def matches_stack(cls, value: Any) -> bool:
+        array_shape = ArrayShape.from_value(value)
+        return array_shape is not None and cls.matches_stack_shape(array_shape)
+
+    @classmethod
+    @abstractmethod
+    def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
+        """Return True when the shape is one file-level image payload."""
+
+    @classmethod
+    @abstractmethod
+    def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
+        """Return True when the shape is an OpenHCS main-flow image stack."""
+
+
+class ColorImageShapeRole(ImageShapeRole):
+    """Channel-last RGB/RGBA image planes and stacks."""
+
+    role_key = "color"
+
+    @classmethod
+    def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(3) and array_shape.has_channel_last()
+
+    @classmethod
+    def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(4) and array_shape.has_channel_last()
+
+
+class GrayscaleImageShapeRole(ImageShapeRole):
+    """2D grayscale image planes and (N, H, W) stacks."""
+
+    role_key = "grayscale"
+
+    @classmethod
+    def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(2)
+
+    @classmethod
+    def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
+        return (
+            array_shape.has_rank(3)
+            and not ColorImageShapeRole.matches_slice_shape(array_shape)
+        )
+
+
+class GrayscaleVolumeShapeRole(ImageShapeRole):
+    """ZYX grayscale volumes and (N, Z, H, W) volume stacks."""
+
+    role_key = "grayscale_volume"
+
+    @classmethod
+    def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
+        return (
+            array_shape.has_rank(3)
+            and not ColorImageShapeRole.matches_slice_shape(array_shape)
+        )
+
+    @classmethod
+    def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
+        return (
+            array_shape.has_rank(4)
+            and not ColorImageShapeRole.matches_stack_shape(array_shape)
+        )
+
+
+class ColorVolumeShapeRole(ImageShapeRole):
+    """Channel-last RGB/RGBA volumes and volume stacks."""
+
+    role_key = "color_volume"
+
+    @classmethod
+    def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(4) and array_shape.has_channel_last()
+
+    @classmethod
+    def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(5) and array_shape.has_channel_last()
+
+
+class ChannelFirstVolumeShapeRole(ImageShapeRole):
+    """CZYX channel-first volumes and (N, C, Z, H, W) stacks."""
+
+    role_key = "channel_first_volume"
+
+    @classmethod
+    def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(4) and array_shape.shape[0] > 1
+
+    @classmethod
+    def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
+        return array_shape.has_rank(5) and array_shape.shape[1] > 1
+
+
 def is_grayscale_image_slice(value: Any) -> bool:
     """Return True for one 2D grayscale image plane."""
-    return hasattr(value, "ndim") and value.ndim == 2
+    return GrayscaleImageShapeRole.matches_slice(value)
 
 
 def is_color_image_slice(value: Any) -> bool:
     """Return True for one HWC RGB/RGBA image plane."""
-    return (
-        is_channel_last_image_slice(value)
-        and value.shape[-1] in COLOR_CHANNEL_COUNTS
-    )
+    return ColorImageShapeRole.matches_slice(value)
 
 
 def is_grayscale_image_stack(value: Any) -> bool:
     """Return True for an OpenHCS grayscale stack shaped (N, H, W)."""
-    return hasattr(value, "ndim") and value.ndim == 3 and not is_color_image_slice(value)
+    return GrayscaleImageShapeRole.matches_stack(value)
 
 
 def is_color_image_stack(value: Any) -> bool:
     """Return True for an OpenHCS color stack shaped (N, H, W, C)."""
-    return (
-        is_channel_last_image_stack(value)
-        and value.shape[-1] in COLOR_CHANNEL_COUNTS
-    )
+    return ColorImageShapeRole.matches_stack(value)
 
 
 def is_channel_last_image_slice(value: Any) -> bool:
     """Return True for one channel-last image plane, regardless of channel count."""
-    return hasattr(value, "ndim") and hasattr(value, "shape") and value.ndim == 3
+    array_shape = ArrayShape.from_value(value)
+    return array_shape is not None and array_shape.has_rank(3)
 
 
 def is_channel_last_image_stack(value: Any) -> bool:
     """Return True for an OpenHCS stack of channel-last image planes."""
-    return hasattr(value, "ndim") and hasattr(value, "shape") and value.ndim == 4
+    array_shape = ArrayShape.from_value(value)
+    return array_shape is not None and array_shape.has_rank(4)
 
 
 def is_grayscale_volume_slice(value: Any) -> bool:
     """Return True for one grayscale volume shaped (Z, H, W)."""
-    return (
-        hasattr(value, "ndim")
-        and value.ndim == 3
-        and not is_color_image_slice(value)
-    )
+    return GrayscaleVolumeShapeRole.matches_slice(value)
 
 
 def is_grayscale_volume_stack(value: Any) -> bool:
     """Return True for an OpenHCS grayscale volume stack shaped (N, Z, H, W)."""
-    return (
-        hasattr(value, "ndim")
-        and value.ndim == 4
-        and not is_color_image_stack(value)
-    )
+    return GrayscaleVolumeShapeRole.matches_stack(value)
 
 
 def is_color_volume_slice(value: Any) -> bool:
     """Return True for one channel-last RGB/RGBA volume shaped (Z, H, W, C)."""
-    return (
-        hasattr(value, "ndim")
-        and hasattr(value, "shape")
-        and value.ndim == 4
-        and value.shape[-1] in COLOR_CHANNEL_COUNTS
-    )
+    return ColorVolumeShapeRole.matches_slice(value)
 
 
 def is_color_volume_stack(value: Any) -> bool:
     """Return True for OpenHCS color volume stacks shaped (N, Z, H, W, C)."""
-    return (
-        hasattr(value, "ndim")
-        and hasattr(value, "shape")
-        and value.ndim == 5
-        and value.shape[-1] in COLOR_CHANNEL_COUNTS
-    )
+    return ColorVolumeShapeRole.matches_stack(value)
+
+
+def is_channel_first_volume_slice(value: Any) -> bool:
+    """Return True for one channel-first volume shaped (C, Z, H, W)."""
+    return ChannelFirstVolumeShapeRole.matches_slice(value)
+
+
+def is_channel_first_volume_stack(value: Any) -> bool:
+    """Return True for OpenHCS channel-first volume stacks shaped (N, C, Z, H, W)."""
+    return ChannelFirstVolumeShapeRole.matches_stack(value)
 
 
 def is_image_stack(value: Any) -> bool:
     """Return True for OpenHCS main-flow image stacks."""
-    return (
-        is_grayscale_image_stack(value)
-        or is_color_image_stack(value)
-        or is_grayscale_volume_stack(value)
-        or is_color_volume_stack(value)
+    return any(
+        shape_role.matches_stack(value)
+        for shape_role in ImageShapeRole.__registry__.values()
     )
 
 

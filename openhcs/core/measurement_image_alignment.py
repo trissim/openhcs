@@ -9,16 +9,36 @@ from typing import Any, ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
+from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_color_image_stack,
     is_image_stack,
 )
-from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
+from openhcs.core.registry_strategies import (
+    NominalTypeKeyedStrategyMixin,
+    MostDerivedContextStrategyMixin,
+)
 from openhcs.core.runtime_semantics import (
     MeasurementImageReferenceDomain,
+    RegistryFamily,
+    RegistryKeyAttribute,
+    RuntimePlaneAxis,
+    RuntimePlaneAxisProjectionRequest,
+    RuntimePlaneAxisProjector,
     SourceSpatialDomainAdapter,
     coerce_enum,
+)
+from openhcs.core.runtime_values import (
+    ObjectLabelMeasurementPayloadStrategy,
+    ObjectLabelPayload,
+    ObjectLabelRuntimeSliceStackContract,
+    ObjectLabelSet,
+    ObjectLabelValue,
+    SingletonObjectLabelStackCollapseStrategy,
+    SourceImageContext,
+    image_payload_data,
+    object_label_dense_array,
 )
 
 
@@ -124,6 +144,8 @@ class MeasurementImageLabelAlignmentRequest:
     reference_domain: MeasurementImageReferenceDomain
     image_name: str = "measurement image"
     label_payload: Any | None = None
+    plane_projector: RuntimePlaneAxisProjector | None = None
+    source_image_names: tuple[str, ...] = ()
     monochrome_projection: MeasurementImageMonochromeProjection = field(
         default_factory=ReplicatedChannelMonochromeProjection
     )
@@ -137,6 +159,11 @@ class MeasurementImageLabelAlignmentRequest:
                 self.reference_domain,
                 "MeasurementImageLabelAlignmentRequest.reference_domain",
             ),
+        )
+        object.__setattr__(
+            self,
+            "source_image_names",
+            tuple(str(name) for name in self.source_image_names),
         )
 
     @property
@@ -197,6 +224,285 @@ class MeasurementImageLabelAlignmentStrategy(
         """Return the aligned measurement image."""
 
 
+@dataclass(frozen=True, slots=True)
+class MeasurementDomainAlignmentRequest:
+    """Two-stage alignment request for object-measurement image/label domains."""
+
+    image: Any
+    labels: Any
+    label_payload: Any | None = None
+    plane_projector: RuntimePlaneAxisProjector | None = None
+    source_image_names: tuple[str, ...] = ()
+    reference_domain: MeasurementImageReferenceDomain = (
+        MeasurementImageReferenceDomain.SOURCE_IMAGE
+    )
+
+    def aligned_labels(self) -> Any:
+        """Return labels projected into this measurement image source domain."""
+        return MeasurementLabelSourceAlignmentStrategy.align(
+            self.image,
+            self.source_axis_projected_value(self.labels),
+            label_payload=self.label_payload,
+        )
+
+    def aligned_image(self, labels: Any | None = None) -> Any:
+        """Return the measurement image projected into the supplied label domain."""
+        image = self.source_axis_projected_value(self.image)
+        return MeasurementImageLabelAlignmentStrategy.align(
+            MeasurementImageLabelAlignmentRequest(
+                image=image,
+                image_data=image_payload_data(image),
+                labels=self.labels if labels is None else labels,
+                label_payload=self.label_payload,
+                plane_projector=self.plane_projector,
+                source_image_names=self.source_image_names,
+                reference_domain=self.reference_domain,
+            )
+        )
+
+    def source_axis_projected_value(self, value: Any) -> Any:
+        """Project dense values carrying the execution source-binding axis."""
+        projection = self.source_axis_projection()
+        if projection is None:
+            return value
+        return projection.project(value)
+
+    def source_axis_projection(self) -> "SourceBindingAxisProjection | None":
+        """Return the source-axis projection contract for this request."""
+        if self.plane_projector is None or not self.source_image_names:
+            return None
+        if not hasattr(self.plane_projector, "plane_index_for_axis"):
+            return None
+        if not hasattr(self.plane_projector, "source_binding_axis_size"):
+            return None
+        plane_index = self.plane_projector.plane_index_for_axis(
+            RuntimePlaneAxisProjectionRequest(
+                axis=RuntimePlaneAxis.SOURCE_BINDING,
+                source_aliases=self.source_image_names,
+            )
+        )
+        axis_size = self.plane_projector.source_binding_axis_size(
+            self.source_image_names,
+        )
+        if axis_size is None:
+            return None
+        return SourceBindingAxisProjection(
+            source_aliases=self.source_image_names,
+            plane_index=plane_index,
+            axis_size=axis_size,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingAxisProjection:
+    """Projection of values that explicitly carry a source-binding leading axis."""
+
+    source_aliases: tuple[str, ...]
+    plane_index: int | None
+    axis_size: int
+
+    def project(self, value: Any) -> Any:
+        """Return the selected source-binding plane when the value carries that axis."""
+        plane_index = self.plane_index_for_value(value)
+        if plane_index is None:
+            return value
+        if isinstance(value, (ObjectLabelPayload, ObjectLabelSet)):
+            return self.project_object_labels(value, plane_index)
+        return self.project_array_payload(value, plane_index)
+
+    def plane_index_for_value(self, value: Any) -> int | None:
+        """Return the selected source-binding plane for this value."""
+        if (
+            isinstance(value, SourceImageContext)
+            and value.source_image_name in self.source_aliases
+        ):
+            return self.source_aliases.index(value.source_image_name)
+        return self.plane_index
+
+    def project_array_payload(self, value: Any, plane_index: int) -> Any:
+        """Project image-like values carrying a source-binding leading axis."""
+        data = image_payload_data(value)
+        if not isinstance(data, np.ndarray):
+            return value
+        if not self.data_carries_axis(data):
+            return value
+        self.validate_plane_index(plane_index, data.shape)
+        return data[plane_index]
+
+    def project_object_labels(
+        self,
+        value: ObjectLabelValue,
+        plane_index: int,
+    ) -> ObjectLabelValue:
+        """Project object labels while preserving their nominal metadata."""
+        labels = object_label_dense_array(value)
+        if not self.data_carries_axis(labels):
+            return value
+        self.validate_plane_index(plane_index, labels.shape)
+        return ObjectLabelMeasurementPayloadStrategy.for_source(value).with_projected_plane(
+            value,
+            labels[plane_index],
+            plane_index,
+        )
+
+    def data_carries_axis(self, data: np.ndarray) -> bool:
+        """Return whether dense data explicitly carries this source-binding axis."""
+        return data.ndim >= 3 and data.shape[0] == self.axis_size
+
+    @staticmethod
+    def validate_plane_index(plane_index: int, shape: tuple[int, ...]) -> None:
+        """Validate a selected source-binding plane against dense data shape."""
+        if plane_index < 0 or plane_index >= shape[0]:
+            raise RuntimeError(
+                "Source-binding axis projection produced an out-of-range plane "
+                f"index {plane_index} for shape {shape!r}."
+            )
+
+
+class MeasurementLabelSourceAlignmentStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Align measurement labels to the source domain of a measurement image."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+
+    @classmethod
+    def align(
+        cls,
+        image: Any,
+        labels: Any,
+        *,
+        label_payload: Any | None = None,
+    ) -> Any:
+        strategy = cls.for_nominal_value(image)
+        if strategy is None:
+            strategy = DefaultMeasurementLabelSourceAlignmentStrategy()
+        return strategy.labels_for_image(
+            image,
+            labels,
+            label_payload=label_payload,
+        )
+
+    @abstractmethod
+    def labels_for_image(
+        self,
+        image: Any,
+        labels: Any,
+        *,
+        label_payload: Any | None = None,
+    ) -> Any:
+        """Return labels in the measurement image's execution domain."""
+
+
+class DefaultMeasurementLabelSourceAlignmentStrategy(
+    MeasurementLabelSourceAlignmentStrategy
+):
+    """Align labels directly to a non-aligned measurement image payload."""
+
+    def labels_for_image(
+        self,
+        image: Any,
+        labels: Any,
+        *,
+        label_payload: Any | None = None,
+    ) -> Any:
+        if self.preserves_runtime_slice_label_stack(image, label_payload):
+            return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+                labels
+            )
+        return self.source_aligned_labels(image, labels)
+
+    @staticmethod
+    def source_aligned_labels(image: Any, labels: Any) -> Any:
+        labels = SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+            labels
+        )
+        image_array = np.asarray(image)
+        label_array = np.asarray(labels)
+        if image_array.ndim == 0 or label_array.ndim == 0:
+            return labels
+        image_domain_adapter = measurement_image_source_spatial_adapter(image)
+        if image_domain_adapter is not None:
+            labels = image_domain_adapter.extract_source_array(labels)
+        return collapse_repeated_label_stack_for_image(image, labels)
+
+    @staticmethod
+    def preserves_runtime_slice_label_stack(
+        image: Any,
+        label_payload: Any | None,
+    ) -> bool:
+        """Return whether dense labels carry the image runtime-slice axis."""
+        image_data = image_payload_data(image)
+        if not isinstance(image_data, np.ndarray) or not is_image_stack(image_data):
+            return False
+        return ObjectLabelRuntimeSliceStackContract.preserves_runtime_slice_stack(
+            label_payload,
+            slice_count=int(image_data.shape[0]),
+        )
+
+
+class AlignedStackMeasurementLabelSourceAlignmentStrategy(
+    DefaultMeasurementLabelSourceAlignmentStrategy
+):
+    """Preserve runtime-slice labels until aligned image slices are selected."""
+
+    value_type = AlignedImageStack
+
+    def labels_for_image(
+        self,
+        image: Any,
+        labels: Any,
+        *,
+        label_payload: Any | None = None,
+    ) -> Any:
+        if not isinstance(image, AlignedImageStack):
+            raise TypeError(
+                "AlignedStackMeasurementLabelSourceAlignmentStrategy requires "
+                f"AlignedImageStack, got {type(image).__name__}."
+            )
+        if (
+            label_payload is not None
+            and ObjectLabelRuntimeSliceStackContract.preserves_runtime_slice_stack(
+                label_payload,
+                slice_count=len(image.slices),
+            )
+        ):
+            return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+                labels
+            )
+        return self.source_aligned_labels(image, labels)
+
+
+def measurement_image_source_spatial_adapter(
+    image: Any,
+) -> SourceSpatialDomainAdapter | None:
+    """Return the nominal source-domain adapter for a measurement image."""
+    if isinstance(image, AlignedImageStack):
+        return image.first_slice_source_spatial_adapter()
+    return SourceSpatialDomainAdapter.for_value(image)
+
+
+def collapse_repeated_label_stack_for_image(image: Any, labels: Any) -> Any:
+    """Collapse channel-broadcast object labels before measurement calls."""
+    if not isinstance(image, np.ndarray) or not isinstance(labels, np.ndarray):
+        return labels
+    if not is_image_stack(image) or labels.ndim != image.ndim:
+        return labels
+    if tuple(labels.shape[1:]) != tuple(image.shape[1:]):
+        return labels
+    if labels.shape[0] == 0:
+        return labels
+    first_plane = labels[0]
+    if all(
+        np.array_equal(first_plane, labels[index])
+        for index in range(1, labels.shape[0])
+    ):
+        return first_plane
+    return labels
+
+
 class PayloadMeasurementImageLabelAlignmentStrategy(MeasurementImageLabelAlignmentStrategy):
     """Fallback preserving non-array measurement payloads."""
 
@@ -240,6 +546,11 @@ class ArrayMeasurementImageLabelAlignmentStrategy(
         labels = request.label_array
         if tuple(image.shape) == tuple(labels.shape):
             return image
+        if (
+            labels.ndim > image.ndim
+            and tuple(image.shape) == tuple(labels.shape[-image.ndim :])
+        ):
+            return image
         return np.zeros(tuple(labels.shape), dtype=image.dtype)
 
 
@@ -271,6 +582,46 @@ class ObjectLabelLeadingPlaneMeasurementImageLabelAlignmentStrategy(
 
     def project_image(self, request: MeasurementImageLabelAlignmentRequest) -> np.ndarray:
         return request.image_array[0]
+
+
+class SourceBindingPlaneMeasurementImageLabelAlignmentStrategy(
+    ArrayMeasurementImageLabelAlignmentStrategy
+):
+    """Select the source-binding plane that owns this measurement image alias."""
+
+    strategy_key = "source_binding_plane"
+
+    def matches(self, request: MeasurementImageLabelAlignmentRequest) -> bool:
+        return (
+            request.has_array_pair
+            and request.reference_domain is MeasurementImageReferenceDomain.SOURCE_IMAGE
+            and request.plane_projector is not None
+            and request.source_image_names
+            and request.image_array.ndim == request.label_array.ndim + 1
+            and self.plane_index(request) is not None
+        )
+
+    def project_image(self, request: MeasurementImageLabelAlignmentRequest) -> np.ndarray:
+        plane_index = self.plane_index(request)
+        if plane_index is None:
+            raise RuntimeError("Source-binding plane strategy matched without an index.")
+        if plane_index >= request.image_array.shape[0]:
+            raise RuntimeError(
+                "Source-binding measurement image projection produced an out-of-range "
+                f"plane index {plane_index} for image shape {request.image_array.shape!r}."
+            )
+        return request.image_array[plane_index]
+
+    @staticmethod
+    def plane_index(request: MeasurementImageLabelAlignmentRequest) -> int | None:
+        if request.plane_projector is None:
+            return None
+        return request.plane_projector.plane_index_for_axis(
+            RuntimePlaneAxisProjectionRequest(
+                axis=RuntimePlaneAxis.SOURCE_BINDING,
+                source_aliases=request.source_image_names,
+            )
+        )
 
 
 class ColorImageStackMeasurementImageLabelAlignmentStrategy(
@@ -360,11 +711,8 @@ class ObjectLabelSourceSpatialCropMeasurementImageLabelAlignmentStrategy(
             return False
         return True
 
-    def project_image(self, request: MeasurementImageLabelAlignmentRequest) -> np.ndarray:
-        return self.contract(request).project_image()
-
     def aligned_image(self, request: MeasurementImageLabelAlignmentRequest) -> Any:
-        image = self.project_image(request)
+        image = self.contract(request).project_image()
         labels = request.label_array
         if (
             image.ndim == labels.ndim + 1

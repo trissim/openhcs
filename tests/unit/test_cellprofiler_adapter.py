@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ from benchmark.adapters.cellprofiler import (
     CELLPROFILER_LAST_IMAGE_SET_PARAM,
     DETERMINISTIC_PYTHONHASHSEED,
     HeadlessCellProfilerPipelinePolicy,
+    NativeCellProfilerImportedMetadataPlacementPlan,
     NativeCellProfilerInputDomainStrategyKey,
     NativeCellProfilerProvenanceField,
     PYTHONHASHSEED_ENV,
@@ -21,6 +23,9 @@ from benchmark.adapters.cellprofiler import (
     native_cellprofiler_reference_is_complete,
 )
 from benchmark.contracts.tool_adapter import ToolNotInstalledError
+from openhcs.core.pipeline_image_schema import ImportedMetadataTable
+from openhcs.core.source_bindings import SourceBindingRuntimeContext
+from openhcs.interop.cellprofiler.runtime.adapter import SourceCandidatePathProjection
 
 
 def test_cellprofiler_adapter_requires_executable(monkeypatch) -> None:
@@ -31,6 +36,56 @@ def test_cellprofiler_adapter_requires_executable(monkeypatch) -> None:
 
     with pytest.raises(ToolNotInstalledError, match="CellProfiler executable"):
         CellProfilerAdapter().validate_installation()
+
+
+def test_native_cellprofiler_imported_metadata_places_files_by_path_columns(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    image_dir = source_root / "20585"
+    image_dir.mkdir(parents=True)
+    image_path = image_dir / "IXMtest_A01_s1_w1.tif"
+    image_path.write_bytes(b"image")
+    csv_path = source_root / "20585_AE.csv"
+    csv_path.write_text(
+        "Image_FileName_OrigHoechst,Image_PathName_OrigHoechst\n"
+        "IXMtest_A01_s1_w1.tif,20585/\n",
+        encoding="utf-8",
+    )
+
+    placements = NativeCellProfilerImportedMetadataPlacementPlan(
+        source_root,
+        (ImportedMetadataTable(location="20585_AE.csv"),),
+        (image_path, csv_path),
+    ).placements()
+
+    assert {
+        placement.source_path.name: placement.relative_path.as_posix()
+        for placement in placements
+    } == {
+        "IXMtest_A01_s1_w1.tif": "20585/IXMtest_A01_s1_w1.tif",
+        "20585_AE.csv": "20585_AE.csv",
+    }
+
+
+def test_source_candidate_paths_preserve_virtual_well_identity_for_shared_source(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "Channel 1-01-A-01-00.tif"
+    source_path.write_bytes(b"image")
+    context = SourceBindingRuntimeContext(
+        step_input_dir=str(tmp_path),
+        step_input_source_paths={
+            "W001_s001_w1_z001_t001.tif": str(source_path),
+            "W002_s001_w1_z001_t001.tif": str(source_path),
+        },
+    )
+    adapter = SimpleNamespace(source_binding_context=context)
+
+    assert SourceCandidatePathProjection(str(source_path), adapter).paths() == (
+        ("W001_s001_w1_z001_t001.tif", str(source_path)),
+        ("W002_s001_w1_z001_t001.tif", str(source_path)),
+    )
 
 
 def test_cellprofiler_adapter_accepts_executable_env(monkeypatch) -> None:

@@ -363,6 +363,41 @@ class RuntimePlaneAxis(str, Enum):
         return self.plane_index_resolver(projector, source_aliases)
 
 
+class RuntimePlaneAxisSliceProjectionPolicy(
+    EnumKeyedStrategyMixin[RuntimePlaneAxis],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Policy for axes that can be selected by a runtime slice index."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+    __enum_member_attr__ = "axis"
+    axis: ClassVar[RuntimePlaneAxis]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def supports_slice_projection(self) -> bool:
+        """Return whether this plane axis is addressable by slice index."""
+
+
+class RuntimeSlicePlaneAxisSliceProjectionPolicy(RuntimePlaneAxisSliceProjectionPolicy):
+    """Runtime-slice planes are directly selected by the runtime slice index."""
+
+    axis = RuntimePlaneAxis.RUNTIME_SLICE
+
+    def supports_slice_projection(self) -> bool:
+        return True
+
+
+class SourceBindingPlaneAxisSliceProjectionPolicy(RuntimePlaneAxisSliceProjectionPolicy):
+    """Source-binding planes are selected by slice index during source-bound execution."""
+
+    axis = RuntimePlaneAxis.SOURCE_BINDING
+
+    def supports_slice_projection(self) -> bool:
+        return True
+
+
 class MeasurementImageReferenceDomain(str, Enum):
     """Semantic image domain used as the reference for object measurement."""
 
@@ -463,6 +498,13 @@ class RuntimePlaneAxisProjector(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not provide source-binding plane projection."
         )
+
+    def source_binding_axis_size(
+        self,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Return the source-binding axis size for this execution scope."""
+        return None
 
     def plane_index_for_axis(
         self,
@@ -983,11 +1025,52 @@ class ObjectLabelIdDomainStrategy(
             or np.issubdtype(label_array.dtype, np.bool_)
         ):
             return ()
+        dense_integer_domain = DenseIntegerObjectLabelIdDomain.from_array(label_array)
+        if dense_integer_domain is not None:
+            return dense_integer_domain.present_ids()
         return tuple(
             int(object_id)
             for object_id in np.unique(label_array)
             if object_id > 0
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DenseIntegerObjectLabelIdDomain:
+    """Exact present-ID extractor for bounded nonnegative dense integer labels."""
+
+    labels: np.ndarray
+    max_label: int
+
+    @classmethod
+    def from_array(
+        cls,
+        labels: np.ndarray,
+    ) -> "DenseIntegerObjectLabelIdDomain | None":
+        if not (
+            np.issubdtype(labels.dtype, np.integer)
+            or np.issubdtype(labels.dtype, np.bool_)
+        ):
+            return None
+        if labels.size == 0:
+            return None
+        min_label = int(labels.min())
+        if min_label < 0:
+            return None
+        max_label = int(labels.max())
+        if max_label > labels.size:
+            return None
+        return cls(labels=labels, max_label=max_label)
+
+    def present_ids(self) -> tuple[int, ...]:
+        if self.max_label <= 0:
+            return ()
+        counts = np.bincount(
+            np.asarray(self.labels, dtype=np.int64).ravel(),
+            minlength=self.max_label + 1,
+        )
+        present_ids = np.flatnonzero(counts)
+        return tuple(int(label_id) for label_id in present_ids if label_id > 0)
 
 
 class DenseArrayObjectLabelIdDomainStrategy(ObjectLabelIdDomainStrategy):
@@ -1486,6 +1569,13 @@ class ObjectMeasurementValueRow:
     result_value: float
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementSliceValueRow(ObjectMeasurementValueRow):
+    """Long-form object measurement row scoped to a runtime slice."""
+
+    slice_index: int
+
+
 class ObjectIntensityZernikeFeatureNameStrategy(
     EnumKeyedStrategyMixin[ObjectZernikeDescriptorFeature],
     ABC,
@@ -1556,6 +1646,7 @@ class ObjectIntensityDistributionMeasurementRows:
     radial_arrays: Any
     object_ids: Sequence[int]
     bin_count: int
+    slice_index: int | None = None
 
     def rows(self) -> list[ObjectMeasurementValueRow]:
         object_ids = tuple(int(object_id) for object_id in self.object_ids)
@@ -1564,7 +1655,11 @@ class ObjectIntensityDistributionMeasurementRows:
             [None] * (len(object_ids) * int(self.radial_arrays.n_bins) * 3),
         )
         row_index = 0
-        row_type = ObjectMeasurementValueRow
+        row_type = (
+            ObjectMeasurementValueRow
+            if self.slice_index is None
+            else ObjectMeasurementSliceValueRow
+        )
         fraction_at_distance = self.radial_arrays.fraction_at_distance
         mean_pixel_fraction = self.radial_arrays.mean_pixel_fraction
         radial_cv_by_bin = self.radial_arrays.radial_cv_by_bin
@@ -1606,21 +1701,28 @@ class ObjectIntensityDistributionMeasurementRows:
                     object_label=object_label,
                     feature_name=fraction_at_distance_feature,
                     result_value=frac_at_d,
+                    **self.slice_kwargs,
                 )
                 row_index += 1
                 rows[row_index] = row_type(
                     object_label=object_label,
                     feature_name=mean_fraction_feature,
                     result_value=mean_frac,
+                    **self.slice_kwargs,
                 )
                 row_index += 1
                 rows[row_index] = row_type(
                     object_label=object_label,
                     feature_name=radial_cv_feature,
                     result_value=float(radial_cv[obj_idx]),
+                    **self.slice_kwargs,
                 )
                 row_index += 1
         return rows
+
+    @property
+    def slice_kwargs(self) -> dict[str, int]:
+        return {} if self.slice_index is None else {"slice_index": self.slice_index}
 
 @lru_cache(maxsize=None)
 def indexed_object_intensity_zernike_feature_name(
@@ -1649,6 +1751,7 @@ class ObjectIntensityZernikeMeasurementRows:
     magnitudes: Any
     phases: Any
     include_phase: bool
+    slice_index: int | None = None
 
     def rows(self) -> list[ObjectMeasurementValueRow]:
         """Return rows in canonical magnitude-then-phase feature order."""
@@ -1665,7 +1768,11 @@ class ObjectIntensityZernikeMeasurementRows:
             [None] * (object_ids.size * len(zernike_indexes) * descriptor_count),
         )
         row_index = 0
-        row_type = ObjectMeasurementValueRow
+        row_type = (
+            ObjectMeasurementValueRow
+            if self.slice_index is None
+            else ObjectMeasurementSliceValueRow
+        )
         for index, (degree, repetition) in enumerate(zernike_indexes):
             magnitude_feature = indexed_object_intensity_zernike_feature_name(
                 ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
@@ -1678,6 +1785,7 @@ class ObjectIntensityZernikeMeasurementRows:
                     object_label=int(object_label),
                     feature_name=magnitude_feature,
                     result_value=float(value),
+                    **self.slice_kwargs,
                 )
                 row_index += 1
             if self.include_phase:
@@ -1692,9 +1800,14 @@ class ObjectIntensityZernikeMeasurementRows:
                         object_label=int(object_label),
                         feature_name=phase_feature,
                         result_value=float(value),
+                        **self.slice_kwargs,
                     )
                     row_index += 1
         return rows
+
+    @property
+    def slice_kwargs(self) -> dict[str, int]:
+        return {} if self.slice_index is None else {"slice_index": self.slice_index}
 
 
 class MeasurementRowAxisField(str, Enum):
@@ -1815,10 +1928,9 @@ class MeasuredObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy)
     domain = ObjectFeatureArrayDomain.MEASURED_OBJECT_ID
 
     def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
-        try:
-            value_index = context.measured_object_ids.index(context.object_id)
-        except ValueError:
+        if context.object_id not in context.measured_object_ids:
             return None
+        value_index = context.measured_object_ids.index(context.object_id)
         return value_index if value_index < context.value_count else None
 
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
@@ -1864,10 +1976,9 @@ class RowOrdinalFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
     domain = ObjectFeatureArrayDomain.ROW_ORDINAL
 
     def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
-        try:
-            value_index = context.object_domain.index(context.object_id)
-        except ValueError:
+        if context.object_id not in context.object_domain:
             return None
+        value_index = context.object_domain.index(context.object_id)
         return value_index if value_index < context.value_count else None
 
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
@@ -2128,13 +2239,6 @@ class ShapeObjectFeatureValueTable(ObjectFeatureValueTable):
             field_name: ObjectFeatureArrayDomain.ROW_ORDINAL
             for field_name in zernike_shape_feature_names(max_order=9)
         },
-        **{
-            feature.value: ObjectFeatureArrayDomain.LABEL_ID
-            for feature in (
-                ObjectShapeMeasurementFeature.CENTER_X,
-                ObjectShapeMeasurementFeature.CENTER_Y,
-            )
-        },
     }
     feature_missing_values: ClassVar[Mapping[str, ObjectFeatureMissingValue]] = {
         feature.value: ObjectFeatureMissingValue.ZERO
@@ -2389,6 +2493,7 @@ class MeasurementObjectRowIdentity(str, Enum):
 
     LABEL_ID = "label_id"
     ROW_ORDINAL = "row_ordinal"
+    ROW_SEQUENCE = "row_sequence"
 
 
 def measurement_row_axis_field_names() -> frozenset[str]:
@@ -2909,6 +3014,18 @@ class ObjectRelationshipPayloadStrategy(
             child_ids=tuple(related_child_ids),
         )
 
+    @staticmethod
+    def related_payload_from_dense_parent_vector(
+        parents_of: np.ndarray,
+    ) -> ParentChildRelationshipPayload:
+        """Return related dense child ids directly from a 1-indexed parent vector."""
+        parent_vector = np.asarray(parents_of, dtype=np.int64)
+        related_child_indexes = np.flatnonzero(parent_vector > 0)
+        return ParentChildRelationshipPayload(
+            parent_ids=tuple(int(parent_vector[index]) for index in related_child_indexes),
+            child_ids=tuple(int(index + 1) for index in related_child_indexes),
+        )
+
 
 class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
     """Dense label images use maximum positive-pixel overlap."""
@@ -2949,11 +3066,7 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
             child_array,
             child_count,
         )
-        present_children = np.unique(child_array[child_array > 0]).astype(
-            np.int32,
-            copy=False,
-        )
-        return self.related_payload_from_parents_of(parents_of, present_children)
+        return self.related_payload_from_dense_parent_vector(parents_of)
 
     def relationship_slice_count(
         self,
@@ -3004,14 +3117,7 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
                 child_plane,
                 child_count,
             )
-            present_children = np.unique(child_plane[child_plane > 0]).astype(
-                np.int32,
-                copy=False,
-            )
-            payload = self.related_payload_from_parents_of(
-                parents_of,
-                present_children,
-            )
+            payload = self.related_payload_from_dense_parent_vector(parents_of)
             parent_ids.extend(payload.parent_ids)
             child_ids.extend(payload.child_ids)
             slice_indices.extend(slice_index for _child_id in payload.child_ids)
@@ -3651,6 +3757,18 @@ class DenseObjectLabelPairAligner:
         return alignment.first, alignment.second
 
     def alignment(self) -> DenseObjectLabelPairAlignment:
+        alignment = self.shared_geometry_alignment()
+        if alignment is None:
+            first = DenseObjectLabelStack.from_labels(self.first_labels).collapse_singleton_plane()
+            second = DenseObjectLabelStack.from_labels(self.second_labels).collapse_singleton_plane()
+            raise ValueError(
+                "Dense object-label payloads must share a common geometry after "
+                f"alignment; got {first.shape} and {second.shape}."
+            )
+        return alignment
+
+    def shared_geometry_alignment(self) -> DenseObjectLabelPairAlignment | None:
+        """Return aligned labels when the pair has a declared shared geometry."""
         alignment = SourceSpatialAlignmentPair.from_values(
             self.first_labels,
             self.second_labels,
@@ -3659,6 +3777,16 @@ class DenseObjectLabelPairAligner:
         first = DenseObjectLabelStack.from_labels(first).collapse_singleton_plane()
         second = DenseObjectLabelStack.from_labels(second).collapse_singleton_plane()
         if first.shape == second.shape:
+            return DenseObjectLabelPairAlignment(
+                first=first,
+                second=second,
+                first_projection=alignment.first_projection,
+                second_projection=alignment.second_projection,
+            )
+
+        factorized = self._factorized_pair(first, second)
+        if factorized is not None:
+            first, second = factorized
             return DenseObjectLabelPairAlignment(
                 first=first,
                 second=second,
@@ -3675,10 +3803,7 @@ class DenseObjectLabelPairAligner:
                 second
             ).project_xy_plane_without_relabeling()
         if first.shape != second.shape:
-            raise ValueError(
-                "Dense object-label payloads must share a common geometry after "
-                f"alignment; got {first.shape} and {second.shape}."
-            )
+            return None
         return DenseObjectLabelPairAlignment(
             first=first,
             second=second,
@@ -3696,7 +3821,10 @@ class DenseObjectLabelPairAligner:
         self,
         slice_count: int,
     ) -> DenseObjectLabelStackAlignment | None:
-        alignment = self.alignment()
+        alignment = SourceSpatialAlignmentPair.from_values(
+            self.first_labels,
+            self.second_labels,
+        ).aligned()
         first_stack = self._stack_view(alignment.first, slice_count)
         second_stack = self._stack_view(alignment.second, slice_count)
         if first_stack is None or second_stack is None:
@@ -3720,9 +3848,37 @@ class DenseObjectLabelPairAligner:
         array = np.asarray(value, dtype=np.int32)
         if array.ndim == 3 and array.shape[0] == slice_count:
             return np.ascontiguousarray(array)
+        if (
+            array.ndim == 3
+            and array.shape[0] > 0
+            and slice_count % array.shape[0] == 0
+        ):
+            indexes = np.arange(slice_count) % array.shape[0]
+            return np.ascontiguousarray(array[indexes])
         if array.ndim == 2:
             return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
         return None
+
+    @classmethod
+    def _factorized_pair(cls, first: Any, second: Any) -> tuple[Any, Any] | None:
+        import numpy as np
+
+        first_array = np.asarray(first, dtype=np.int32)
+        second_array = np.asarray(second, dtype=np.int32)
+        if (
+            first_array.ndim != 3
+            or second_array.ndim != 3
+            or first_array.shape[1:] != second_array.shape[1:]
+        ):
+            return None
+        max_count = max(first_array.shape[0], second_array.shape[0])
+        first_stack = cls._stack_view(first_array, max_count)
+        second_stack = cls._stack_view(second_array, max_count)
+        if first_stack is None or second_stack is None:
+            return None
+        if first_stack.shape != second_stack.shape:
+            return None
+        return first_stack, second_stack
 
 
 @dataclass(frozen=True, slots=True)
@@ -4283,11 +4439,19 @@ def object_label_lineage_geometry(
     child_labels: Any,
 ) -> ObjectLabelLineageGeometry:
     """Classify the geometry contract for object-label lineage derivation."""
-    try:
-        DenseObjectLabelPairAligner(parent_labels, child_labels).aligned()
-    except ValueError:
-        return ObjectLabelLineageGeometry.IDENTITY_DOMAIN
-    return ObjectLabelLineageGeometry.SHARED_GEOMETRY
+    alignment = SourceSpatialAlignmentPair.from_values(
+        parent_labels,
+        child_labels,
+    ).aligned()
+    parent_stack = DenseObjectLabelStack.from_labels(
+        alignment.first,
+    ).collapse_singleton_plane()
+    child_stack = DenseObjectLabelStack.from_labels(
+        alignment.second,
+    ).collapse_singleton_plane()
+    if parent_stack.shape == child_stack.shape:
+        return ObjectLabelLineageGeometry.SHARED_GEOMETRY
+    return ObjectLabelLineageGeometry.IDENTITY_DOMAIN
 
 
 @dataclass(frozen=True, slots=True)

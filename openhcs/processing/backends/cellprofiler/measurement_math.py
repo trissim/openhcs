@@ -13,6 +13,7 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -345,25 +346,24 @@ class MathOperandSliceAlignment:
         )
         if not aligned_values:
             return None
-        slice_counts = {value.slice_count for value in aligned_values}
-        if len(slice_counts) != 1:
+        slice_count = max(value.slice_count for value in aligned_values)
+        if any(slice_count % value.slice_count != 0 for value in aligned_values):
             raise ValueError(
-                "CalculateMath aligned operands must have the same slice count."
+                "CalculateMath aligned operands must have compatible slice counts."
             )
-        slice_count = slice_counts.pop()
         return tuple(
             (
                 slice_index,
-                self.operand_value_for_slice(operand1, slice_index),
-                self.operand_value_for_slice(operand2, slice_index),
+                self.operand_value_for_slice(operand1, slice_index, slice_count),
+                self.operand_value_for_slice(operand2, slice_index, slice_count),
             )
             for slice_index in range(slice_count)
         )
 
     @staticmethod
-    def operand_value_for_slice(value: Any, slice_index: int) -> Any:
+    def operand_value_for_slice(value: Any, slice_index: int, slice_count: int) -> Any:
         if isinstance(value, RuntimeSliceAlignedValueSet):
-            return value.value_for_slice(slice_index)
+            return value.value_for_aligned_slice(slice_index, slice_count)
         return value
 
 
@@ -511,21 +511,21 @@ def float_or_nan(value: Any) -> float:
     return scalar if not np.isnan(scalar) else np.nan
 
 
-__all__ = [
-    "CalculateMathExecution",
-    "MathBounds",
-    "MathCalculationRequest",
-    "MathFinalTransform",
-    "MathOperand",
-    "MathOperandSliceAlignment",
-    "MathOperationStrategy",
-    "MathPowerTransform",
-    "MathResult",
-    "MathResultRows",
-    "RoundingStrategy",
-    "as_result_list",
-    "broadcast_operand_values",
-    "calculate_math",
-    "float_or_nan",
-    "scalar_operand_value",
-]
+__all__ = public_names_from_objects(
+    CalculateMathExecution,
+    MathBounds,
+    MathCalculationRequest,
+    MathFinalTransform,
+    MathOperand,
+    MathOperandSliceAlignment,
+    MathOperationStrategy,
+    MathPowerTransform,
+    MathResult,
+    MathResultRows,
+    RoundingStrategy,
+    as_result_list,
+    broadcast_operand_values,
+    calculate_math,
+    float_or_nan,
+    scalar_operand_value,
+)

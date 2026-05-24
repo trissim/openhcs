@@ -3,12 +3,14 @@ import numpy as np
 import pandas as pd
 
 from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactOutputPlan, ArtifactScope
+from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.runtime_values import (
     FieldSpec,
     DerivedImagePayloadContext,
+    DenseObjectLabelPlaneDomainStack,
     DenseObjectLabelSliceStack,
     ImagePayloadChannelProjection,
     ImagePayloadMetadata,
@@ -26,6 +28,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelMeasurementPayloadStrategy,
     ObjectLabelRepresentation,
     ObjectLabelPure2DSliceAggregator,
+    ObjectLabelSetPlaneStackContract,
     ObjectLabelVariantCompatibilityStrategy,
     RuntimePayloadDataStrategy,
     RelationshipEndpoint,
@@ -37,16 +40,17 @@ from openhcs.core.runtime_values import (
     SparseIJVLabelRows,
     SpatialGrid,
     SingletonObjectLabelStackCollapseStrategy,
+    SourceImageObjectLabelBuildRequest,
+    SourceImagePlaneAxisRequest,
     compose_image_payload_metadata,
     image_payload_data,
+    image_mask_for_data_domain,
     image_payload_metadata,
     image_payload_with_context,
     normalize_image_payload_intensity,
     normalize_artifact_value,
     object_label_dense_array,
-    object_label_payload_from_source_image,
     object_label_payload_with_dense_labels,
-    object_label_set_from_source_image,
     object_label_set_with_replacement_labels,
 )
 from openhcs.core.runtime_semantics import (
@@ -61,13 +65,29 @@ from openhcs.core.runtime_semantics import (
     ObjectFeatureValueTable,
     ObjectLabelVariant,
     ObjectShapeMeasurementFeature,
+    MeasurementRowAxisField,
+    MeasurementObjectRowIdentity,
     RuntimePlaneAxis,
     ShapeObjectFeatureValueTable,
     SpatialGridOrdering,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     Pure2DAuxiliaryOutputAggregator,
+    Pure2DSliceIndexProjector,
 )
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.shape import (
+    ObjectSizeShapeMeasurementRowsRequest,
+)
+
+def test_runtime_slice_aligned_values_repeat_across_divisible_outer_domain():
+    values = RuntimeSliceAlignedValues(("a", "b"))
+
+    assert [
+        values.value_for_aligned_slice(index, 4)
+        for index in range(4)
+    ] == ["a", "b", "a", "b"]
+
 
 
 class ArrayLike(RuntimeArrayPayload):
@@ -121,8 +141,14 @@ def test_measurement_table_slice_offset_reinfers_projected_row_schema():
 
     shifted = RuntimeSliceProjection.measurement_table_with_slice_offset(table, 1)
 
-    assert shifted.fields == ()
-    assert all("feature_name" in row for row in shifted.rows)
+    assert tuple(field.name for field in shifted.fields) == (
+        "slice_index",
+        "ObjectNumber",
+        "AreaShape_Area",
+    )
+    assert shifted.validated_runtime_schema is False
+    assert shifted.rows[0]["ObjectNumber"] == 1
+    assert shifted.rows[1]["feature_name"] == "AreaShape_Area"
     assert {row["slice_index"] for row in shifted.rows} == {1}
 
 
@@ -262,6 +288,198 @@ def test_object_label_pure_2d_aggregator_preserves_slice_source_paths() -> None:
     )
 
 
+def test_object_label_pure_2d_aggregator_declares_source_binding_plane_axis() -> None:
+    first = ObjectLabelPayload(
+        labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
+        source_path="/input/rawDNA.tif",
+    )
+    second = ObjectLabelPayload(
+        labels=np.asarray([[0, 2], [0, 0]], dtype=np.int32),
+        source_path="/input/rawGFP.tif",
+    )
+    first_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=first.labels,
+        source_path=first.source_path,
+        source_image_name="rawDNA",
+    )
+    second_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=second.labels,
+        source_path=second.source_path,
+        source_image_name="rawGFP",
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first_set, second_set),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelSet)
+    assert aggregated.domain_scope is ObjectLabelDomainScope.PLANE
+    assert aggregated.plane_axis is RuntimePlaneAxis.SOURCE_BINDING
+    assert aggregated.source_image_name == "rawDNA"
+    assert aggregated.channel_source_paths == (
+        "/input/rawDNA.tif",
+        "/input/rawGFP.tif",
+    )
+
+
+def test_object_label_pure_2d_aggregator_prefers_explicit_source_plane_aliases() -> None:
+    first_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
+        source_image_name="CellProfilerInternalImage",
+        source_image_names=("rawDNA",),
+    )
+    second_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray([[0, 2], [0, 0]], dtype=np.int32),
+        source_image_name="CellProfilerInternalImage",
+        source_image_names=("rawGFP",),
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first_set, second_set),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelSet)
+    assert aggregated.plane_axis is RuntimePlaneAxis.SOURCE_BINDING
+    assert aggregated.source_image_names == ("rawDNA", "rawGFP")
+    assert aggregated.source_image_name == "CellProfilerInternalImage"
+
+
+def test_object_label_pure_2d_aggregator_does_not_force_duplicate_source_aliases() -> None:
+    first_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
+        source_image_name="CellProfilerInternalImage",
+        source_image_names=("rawDNA",),
+    )
+    second_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray([[0, 2], [0, 0]], dtype=np.int32),
+        source_image_name="CellProfilerInternalImage",
+        source_image_names=("rawDNA",),
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first_set, second_set),
+        "numpy",
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+    )
+
+    assert isinstance(aggregated, ObjectLabelSet)
+    assert aggregated.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+    assert aggregated.source_image_names == ("rawDNA", "rawDNA")
+
+
+def test_object_label_projected_plane_reduces_domain_to_payload_scope() -> None:
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray(
+            [
+                [[0, 1], [0, 0]],
+                [[0, 2], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1,), (2,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_names=("rawDNA", "rawGFP"),
+    )
+
+    projected = labels.with_projected_plane(labels.labels[1], 1)
+
+    assert projected.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert projected.declared_object_ids == (2,)
+    assert projected.declared_object_id_domains == ()
+    assert projected.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+    assert projected.source_image_names == ("rawGFP",)
+
+
+def test_source_backed_object_label_stack_declares_plane_count_from_provenance() -> None:
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray(
+            [
+                [[0, 1], [0, 0]],
+                [[0, 2], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        channel_source_paths=("/input/A01_s1.tif", "/input/A01_s2.tif"),
+    )
+
+    plane_count = ObjectLabelSetPlaneStackContract().value_plane_count(labels)
+
+    assert plane_count == 2
+
+
+def test_object_label_measurement_replacement_projects_matching_plane_domain() -> None:
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.asarray(
+            [
+                [[0, 1], [0, 0]],
+                [[0, 2], [0, 0]],
+                [[0, 3], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1,), (2,), (3,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_names=("rawDNA", "rawGFP", "rawFarRed"),
+    )
+
+    projected = ObjectLabelMeasurementPayloadStrategy.for_source(labels).with_labels(
+        labels,
+        labels.labels[2],
+    )
+
+    assert projected.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert projected.declared_object_ids == (3,)
+    assert projected.declared_object_id_domains == ()
+    assert projected.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+    assert projected.source_image_names == ("rawFarRed",)
+
+
+def test_object_label_derived_plane_uses_replacement_domain_and_source_provenance() -> None:
+    source = ObjectLabelPayload(
+        labels=np.asarray(
+            [
+                [[0, 1], [0, 0]],
+                [[0, 9], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1,), (9,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_names=("rawDNA", "rawActin"),
+    )
+    derived = np.asarray([[0, 4], [0, 0]], dtype=np.int32)
+
+    projected = ObjectLabelMeasurementPayloadStrategy.for_source(
+        source,
+    ).with_derived_projected_plane(
+        source,
+        derived,
+        1,
+    )
+
+    assert isinstance(projected, ObjectLabelPayload)
+    assert projected.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert projected.declared_object_ids == (4,)
+    assert projected.declared_object_id_domains == ()
+    assert projected.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+    assert projected.source_image_names == ("rawActin",)
+    np.testing.assert_array_equal(projected.labels, derived)
+
+
 def test_object_label_pure_2d_aggregator_preserves_sparse_ijv_sets() -> None:
     first = ObjectLabelSet(
         name="Cells",
@@ -358,6 +576,56 @@ def test_shape_descriptor_row_ordinal_domain_is_registered_nominally() -> None:
     assert np.isnan(rows[2]["Zernike_0_0"])
 
 
+def test_shape_center_features_align_to_measured_sparse_object_ids() -> None:
+    table = ShapeObjectFeatureValueTable.from_feature_arrays(
+        {
+            ObjectShapeMeasurementFeature.CENTER_X.value: np.asarray([14.0]),
+            ObjectShapeMeasurementFeature.CENTER_Y.value: np.asarray([21.0]),
+        },
+        measured_object_ids=(892,),
+        object_domain=(1, 892),
+    )
+
+    rows = table.rows()
+
+    assert np.isnan(rows[0][ObjectShapeMeasurementFeature.CENTER_X.value])
+    assert rows[1][ObjectShapeMeasurementFeature.CENTER_X.value] == 14.0
+    assert rows[1][ObjectShapeMeasurementFeature.CENTER_Y.value] == 21.0
+
+
+def test_sparse_shape_measurement_preserves_high_object_id_feature_domain() -> None:
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=SparseIJVLabelRows(
+            np.asarray(
+                (
+                    (1, 2, 892),
+                    (1, 3, 892),
+                    (2, 2, 892),
+                    (2, 3, 892),
+                ),
+                dtype=np.int32,
+            )
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        declared_object_ids=(892,),
+    )
+
+    rows = ObjectSizeShapeMeasurementRowsRequest(
+        labels=labels,
+        calculate_advanced=False,
+        calculate_zernikes=True,
+        shape_backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
+        zernike_backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    ).rows()
+
+    assert len(rows) == 1
+    assert rows[0][MeasurementRowAxisField.OBJECT_LABEL.value] == 892
+    assert rows[0][ObjectShapeMeasurementFeature.AREA.value] == 4.0
+    assert rows[0][ObjectShapeMeasurementFeature.CENTER_X.value] == 2.5
+    assert ObjectShapeMeasurementFeature.ZERNIKE.value + "_0_0" in rows[0]
+
+
 def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
     source_labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
     transformed_labels = np.array([[0, 2], [1, 0]], dtype=np.float32)
@@ -410,11 +678,11 @@ def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
     )
     labels = np.array([[0, 1], [2, 0]], dtype=np.int32)
 
-    payload = object_label_payload_from_source_image(
-        image,
-        labels,
+    payload = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=labels,
         declared_object_count=2,
-    )
+    ).payload()
 
     assert payload.labels is labels
     assert payload.declared_object_count == 2
@@ -427,6 +695,71 @@ def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
     assert tuple(dict(item) for item in payload.channel_source_component_metadata) == (
         {"well": "A01", "site": "1", "channel": "1"},
         {"well": "A01", "site": "2", "channel": "1"},
+    )
+
+
+def test_object_label_payload_from_source_image_keeps_ambiguous_3d_domain_payload_scoped() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_dtype="float32"),
+    )
+    labels = np.array(
+        [
+            [[0, 1, 0, 0, 0], [0, 0, 2, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+            [[0, 3, 0, 0, 0], [0, 0, 4, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+        ],
+        dtype=np.int32,
+    )
+
+    payload = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=labels,
+        declared_object_count=4,
+    ).payload()
+
+    assert payload.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert payload.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+    assert payload.declared_object_count == 4
+    assert payload.declared_object_id_domains == ()
+
+
+def test_object_label_payload_from_source_image_declares_source_binding_plane_domain() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=("rawDNA.tif", "rawGFP.tif"),
+        ),
+    )
+    labels = np.array(
+        [
+            [[0, 1, 0, 0, 0], [0, 0, 2, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+            [[0, 3, 0, 0, 0], [0, 0, 4, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+        ],
+        dtype=np.int32,
+    )
+
+    payload = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=labels,
+    ).payload()
+
+    assert payload.domain_scope is ObjectLabelDomainScope.PLANE
+    assert payload.plane_axis is RuntimePlaneAxis.SOURCE_BINDING
+    assert payload.declared_object_count is None
+    assert payload.declared_object_id_domains == ((1, 2), (3, 4))
+
+
+def test_source_image_plane_axis_request_uses_channel_provenance() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=("rawDNA.tif", "rawGFP.tif"),
+        ),
+    )
+
+    assert (
+        SourceImagePlaneAxisRequest(image).plane_axis()
+        is RuntimePlaneAxis.SOURCE_BINDING
     )
 
 
@@ -444,12 +777,13 @@ def test_object_label_set_from_source_image_uses_image_metadata() -> None:
         np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32)
     )
 
-    label_set = object_label_set_from_source_image(
-        image,
-        name="OverlappingWorms",
+    label_set = SourceImageObjectLabelBuildRequest(
+        image=image,
         labels=sparse_rows,
-        representation=ObjectLabelRepresentation.SPARSE_IJV,
         declared_object_count=2,
+    ).label_set(
+        name="OverlappingWorms",
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
     )
 
     assert label_set.labels is sparse_rows
@@ -481,6 +815,24 @@ def test_source_image_loading_semantics_attaches_component_metadata() -> None:
         "site": "POS002",
         "channel": "D",
     }
+
+
+def test_object_label_source_image_semantics_treats_rgb_image_as_label_plane() -> None:
+    image = np.zeros((4, 5, 3), dtype=np.uint8)
+    image[0:2, 0:2] = (255, 0, 0)
+    image[2:4, 3:5] = (0, 255, 0)
+
+    payload = apply_source_image_loading_semantics(
+        image,
+        source_metadata={SOURCE_IMAGE_TYPE_METADATA_FIELD: "Objects"},
+        source_path="objects.png",
+    )
+
+    labels = image_payload_data(payload)
+    assert labels.shape == (4, 5)
+    assert labels.dtype == np.int32
+    assert set(np.unique(labels)) == {0, 1, 2}
+    assert image_payload_metadata(payload).source_path == "objects.png"
 
 
 def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> None:
@@ -630,6 +982,33 @@ def test_dense_object_label_slice_stack_projects_payload_labels() -> None:
     np.testing.assert_array_equal(stack.slice(2), labels)
 
 
+def test_dense_object_label_slice_stack_preserves_projected_payload_domain() -> None:
+    labels = np.array(
+        [
+            [[1, 0], [0, 2]],
+            [[1, 0], [0, 0]],
+        ],
+        dtype=np.int32,
+    )
+    payload = ObjectLabelPayload(
+        labels=labels,
+        declared_object_id_domains=((1, 2), (1, 2, 3)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    stack = DenseObjectLabelSliceStack.from_payload(
+        payload,
+        slice_count=2,
+        dtype=np.int32,
+    )
+
+    assert stack is not None
+    sliced = stack.slice(1)
+    assert isinstance(sliced, ObjectLabelPayload)
+    np.testing.assert_array_equal(sliced.labels, labels[1])
+    assert sliced.declared_object_ids == (1, 2, 3)
+
+
 def test_normalize_artifact_value_builds_key_schema_and_storage_policy():
     output_plan = ArtifactOutputPlan(
         name="measurements",
@@ -681,6 +1060,7 @@ def test_normalize_artifact_value_aggregates_slice_aligned_object_label_domains(
     assert isinstance(payload, ObjectLabelPayload)
     assert value.schema.slice_aligned is False
     assert payload.declared_object_count == 4
+    assert payload.declared_object_id_domains == ((1, 2, 3, 4), (1, 2, 3, 4))
     assert payload.domain_scope is ObjectLabelDomainScope.PLANE
     np.testing.assert_array_equal(
         payload.labels,
@@ -911,6 +1291,22 @@ def test_derived_image_payload_context_projects_bundle_mask_to_single_output() -
 
     assert isinstance(result, MaskedImagePayload)
     np.testing.assert_array_equal(result.mask, np.all(mask, axis=0))
+
+
+def test_image_mask_for_data_domain_broadcasts_spatial_mask_to_leading_axes() -> None:
+    image = np.zeros((2, 4, 5), dtype=np.float32)
+    mask = np.ones((4, 5), dtype=bool)
+    mask[0, 0] = False
+
+    projected = image_mask_for_data_domain(
+        source_payload=image,
+        data=image,
+        explicit_mask=mask,
+    )
+
+    assert projected.shape == image.shape
+    np.testing.assert_array_equal(projected[0], mask)
+    np.testing.assert_array_equal(projected[1], mask)
 
 
 def test_image_payload_channel_projection_preserves_channel_mask_and_metadata() -> None:
@@ -1216,6 +1612,101 @@ def test_pure_2d_auxiliary_aggregator_preserves_stacked_object_labels() -> None:
     assert stacked.unedited_labels.shape == (2, 2, 3, 4)
     np.testing.assert_array_equal(stacked.labels[0], first.labels)
     np.testing.assert_array_equal(stacked.labels[1], second.labels)
+
+
+def test_pure_2d_auxiliary_aggregator_uses_runtime_object_label_domains() -> None:
+    first = ObjectLabelPayload(
+        labels=np.asarray([[0, 4], [0, 0]], dtype=np.int32),
+        declared_object_ids=(4,),
+        source_image_names=("rawDNA",),
+    )
+    second = ObjectLabelPayload(
+        labels=np.asarray([[0, 7], [0, 0]], dtype=np.int32),
+        declared_object_ids=(7,),
+        source_image_names=("rawActin",),
+    )
+
+    stacked = Pure2DAuxiliaryOutputAggregator.aggregate([first, second], "numpy")
+
+    assert isinstance(stacked, ObjectLabelPayload)
+    assert stacked.domain_scope is ObjectLabelDomainScope.PLANE
+    assert stacked.declared_object_id_domains == ((4,), (7,))
+    assert stacked.source_image_names == ("rawDNA", "rawActin")
+
+
+def test_dense_object_label_plane_domain_stack_uses_square_diagonal_domains() -> None:
+    labels = np.zeros((2, 2, 2, 2), dtype=np.int32)
+    labels[0, 0] = np.asarray([[1, 0], [0, 2]], dtype=np.int32)
+    labels[1, 1] = np.asarray([[3, 0], [0, 4]], dtype=np.int32)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        declared_object_id_domains=((1, 2), (10,), (20,), (3, 4, 5)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        source_image_names=("A", "B"),
+    )
+
+    stack = DenseObjectLabelPlaneDomainStack.from_payload(payload)
+
+    assert stack is not None
+    assert stack.object_id_domains == ((1, 2), (3, 4, 5))
+    assert stack.measurement_row_identity is MeasurementObjectRowIdentity.ROW_SEQUENCE
+
+
+def test_dense_object_label_plane_domain_stack_projects_diagonal_plane_domains() -> None:
+    labels = np.zeros((2, 2, 2, 2), dtype=np.int32)
+    labels[0, 0] = np.asarray([[1, 0], [0, 2]], dtype=np.int32)
+    labels[1, 1] = np.asarray([[3, 0], [0, 4]], dtype=np.int32)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        declared_object_id_domains=((1, 2), (10,), (20,), (3, 4, 5)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        source_image_names=("A", "B"),
+    )
+
+    stack = DenseObjectLabelPlaneDomainStack.from_payload(payload)
+
+    assert stack is not None
+    first_plane = stack.plane(0)
+    second_plane = stack.plane(1)
+    assert isinstance(first_plane, ObjectLabelPayload)
+    assert isinstance(second_plane, ObjectLabelPayload)
+    assert first_plane.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert second_plane.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert first_plane.declared_object_ids == (1, 2)
+    assert second_plane.declared_object_ids == (3, 4, 5)
+
+
+def test_pure_2d_slice_index_projector_projects_object_label_payload_domains() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.asarray([[0, 7], [0, 0]], dtype=np.int32),
+        declared_object_id_domains=((1,), (7,), (9,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_names=("rawDNA", "rawActin", "rawMito"),
+    )
+
+    projected = Pure2DSliceIndexProjector.project(payload, 1)
+
+    assert isinstance(projected, ObjectLabelPayload)
+    assert projected.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert projected.declared_object_ids == (7,)
+    assert projected.source_image_names == ("rawActin",)
+
+
+def test_pure_2d_slice_index_projector_preserves_explicit_payload_domain() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.asarray([[0, 7], [0, 0]], dtype=np.int32),
+        declared_object_count=9,
+        source_image_names=("rawActin",),
+    )
+
+    projected = Pure2DSliceIndexProjector.project(payload, 0)
+
+    assert isinstance(projected, ObjectLabelPayload)
+    assert projected.domain_scope is ObjectLabelDomainScope.PAYLOAD
+    assert projected.declared_object_count == 9
+    assert projected.declared_object_ids == ()
+    assert projected.source_image_names == ("rawActin",)
 
 
 def test_normalize_image_payload_intensity_uses_semantic_scale() -> None:

@@ -26,6 +26,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     CellProfilerBackendAuthority,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -260,6 +261,29 @@ def labels_or_default(
     return default if labels is None else labels
 
 
+def _labels_aligned_to_image_plane(
+    labels: np.ndarray,
+    image: np.ndarray,
+    slice_index: int,
+) -> np.ndarray:
+    """Project leading label-stack axes when a pure-2D image is being measured."""
+    image_array = np.asarray(image)
+    if (
+        image_array.ndim == 2
+        and labels.ndim > 2
+        and labels.shape[-2:] == image_array.shape
+    ):
+        if 0 <= slice_index < labels.shape[0]:
+            labels = labels[slice_index]
+        if labels.ndim > 2:
+            labels = np.max(labels, axis=tuple(range(labels.ndim - 2)))
+        return labels.astype(
+            labels.dtype,
+            copy=False,
+        )
+    return labels
+
+
 def require_matching_shape(
     labels: np.ndarray,
     variant: np.ndarray,
@@ -418,6 +442,21 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
         neighbor_array = np.ascontiguousarray(neighbor_working_labels, dtype=np.int32)
         outline_array = np.ascontiguousarray(perimeter_outlines, dtype=np.int32)
         object_numbers_array = np.ascontiguousarray(object_numbers, dtype=np.int32)
+        if working_array.ndim > 2:
+            working_array = np.max(
+                working_array,
+                axis=tuple(range(working_array.ndim - 2)),
+            )
+        if neighbor_array.ndim > 2:
+            neighbor_array = np.max(
+                neighbor_array,
+                axis=tuple(range(neighbor_array.ndim - 2)),
+            )
+        if outline_array.ndim > 2:
+            outline_array = np.max(
+                outline_array,
+                axis=tuple(range(outline_array.ndim - 2)),
+            )
         if working_array.ndim != 2:
             raise NotImplementedError(
                 "CellProfiler neighbor topology currently supports 2-D labels."
@@ -525,7 +564,7 @@ def neighbor_topology_backend(
     )
 
 
-@numpy
+@numpy(contract=ProcessingContract.PURE_2D)
 def measure_object_neighbors(
     image: np.ndarray,
     labels: np.ndarray,
@@ -544,6 +583,7 @@ def measure_object_neighbors(
     outline_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int | None = None,
 ) -> tuple[np.ndarray, list]:
     """Measure neighbor relationships between objects."""
     from openhcs.processing.backends.cellprofiler.morphology import (
@@ -558,7 +598,44 @@ def measure_object_neighbors(
 
     profile_start = time.perf_counter()
     profile_mark = profile_start
-    labels = object_label_dense_array(labels, dtype=np.int32)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    if (
+        slice_index is None
+        and np.asarray(image).ndim == 2
+        and label_array.ndim == 3
+        and label_array.shape[-2:] == np.asarray(image).shape
+    ):
+        rows: list = []
+        for plane_index in range(label_array.shape[0]):
+            _image, plane_rows = measure_object_neighbors(
+                image,
+                label_array[plane_index],
+                neighbor_labels=neighbor_labels,
+                small_removed_labels=small_removed_labels,
+                small_removed_neighbor_labels=small_removed_neighbor_labels,
+                distance_method=distance_method,
+                neighbor_distance=neighbor_distance,
+                neighbors_are_same_objects=neighbors_are_same_objects,
+                consider_discarded_objects=consider_discarded_objects,
+                retain_neighbor_count_image=retain_neighbor_count_image,
+                neighbor_count_colormap=neighbor_count_colormap,
+                retain_percent_touching_image=retain_percent_touching_image,
+                percent_touching_colormap=percent_touching_colormap,
+                neighbor_topology_backend_provider=neighbor_topology_backend_provider,
+                outline_backend_provider=outline_backend_provider,
+                morphology_backend_provider=morphology_backend_provider,
+                relationship_backend_provider=relationship_backend_provider,
+                slice_index=plane_index,
+            )
+            rows.extend(plane_rows)
+        return image, rows
+
+    slice_index = 0 if slice_index is None else int(slice_index)
+    labels = _labels_aligned_to_image_plane(
+        label_array,
+        image,
+        slice_index,
+    )
     final_labels = labels
     retained_image_request = NeighborRetainedImageRequest(
         labels=final_labels,
@@ -570,12 +647,20 @@ def measure_object_neighbors(
     neighbor_final_labels = (
         final_labels
         if neighbor_labels is None
-        else object_label_dense_array(neighbor_labels, dtype=np.int32)
+        else _labels_aligned_to_image_plane(
+            object_label_dense_array(neighbor_labels, dtype=np.int32),
+            image,
+            slice_index,
+        )
     )
     measured_variant_labels = labels_or_default(
         None
         if small_removed_labels is None
-        else object_label_dense_array(small_removed_labels, dtype=np.int32),
+            else _labels_aligned_to_image_plane(
+                object_label_dense_array(small_removed_labels, dtype=np.int32),
+                image,
+                slice_index,
+            ),
         final_labels,
     )
     neighbor_variant_labels = (
@@ -584,7 +669,11 @@ def measure_object_neighbors(
         else labels_or_default(
             None
             if small_removed_neighbor_labels is None
-            else object_label_dense_array(small_removed_neighbor_labels, dtype=np.int32),
+            else _labels_aligned_to_image_plane(
+                object_label_dense_array(small_removed_neighbor_labels, dtype=np.int32),
+                image,
+                slice_index,
+            ),
             neighbor_final_labels,
         )
     )
@@ -665,7 +754,7 @@ def measure_object_neighbors(
     if variant_object_count == 0 or variant_neighbor_count == 0:
         measurements = [
             NeighborMeasurements(
-                slice_index=0,
+                slice_index=slice_index,
                 object_id=i + 1,
                 scale=coerce_cellprofiler_enum(DistanceMethod, distance_method).value,
                 number_of_neighbors=0,
@@ -827,7 +916,7 @@ def measure_object_neighbors(
         if object_number <= 0:
             measurements.append(
                 NeighborMeasurements(
-                    slice_index=0,
+                    slice_index=slice_index,
                     object_id=i + 1,
                     scale=measurement_scale,
                     number_of_neighbors=0,
@@ -849,7 +938,7 @@ def measure_object_neighbors(
 
         measurements.append(
             NeighborMeasurements(
-                slice_index=0,
+                slice_index=slice_index,
                 object_id=i + 1,
                 scale=measurement_scale,
                 number_of_neighbors=int(neighbor_count[object_index]),

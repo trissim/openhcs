@@ -18,7 +18,10 @@ from openhcs.core.pipeline.function_contracts import (
     RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+)
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
@@ -160,37 +163,24 @@ class GaussianSmoothingBackendProviderPolicy(SmoothingBackendProviderPolicy):
         return CellProfilerBackendProvider.NATIVE
 
 
-def _declare_native_smoothing_provider_policy(
-    class_name: str,
-    method: SmoothingMethod,
-) -> type[NativeSmoothingBackendProviderPolicy]:
-    return type(
-        class_name,
-        (NativeSmoothingBackendProviderPolicy,),
-        {"method": method},
-    )
+class MedianSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.MEDIAN_FILTER
 
 
-MedianSmoothingBackendProviderPolicy = _declare_native_smoothing_provider_policy(
-    "MedianSmoothingBackendProviderPolicy",
-    SmoothingMethod.MEDIAN_FILTER,
-)
-EdgePreservingSmoothingBackendProviderPolicy = _declare_native_smoothing_provider_policy(
-    "EdgePreservingSmoothingBackendProviderPolicy",
-    SmoothingMethod.SMOOTH_KEEPING_EDGES,
-)
-PolynomialSmoothingBackendProviderPolicy = _declare_native_smoothing_provider_policy(
-    "PolynomialSmoothingBackendProviderPolicy",
-    SmoothingMethod.FIT_POLYNOMIAL,
-)
-CircularAverageSmoothingBackendProviderPolicy = _declare_native_smoothing_provider_policy(
-    "CircularAverageSmoothingBackendProviderPolicy",
-    SmoothingMethod.CIRCULAR_AVERAGE_FILTER,
-)
-SmoothToAverageBackendProviderPolicy = _declare_native_smoothing_provider_policy(
-    "SmoothToAverageBackendProviderPolicy",
-    SmoothingMethod.SMOOTH_TO_AVERAGE,
-)
+class EdgePreservingSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.SMOOTH_KEEPING_EDGES
+
+
+class PolynomialSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.FIT_POLYNOMIAL
+
+
+class CircularAverageSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.CIRCULAR_AVERAGE_FILTER
+
+
+class SmoothToAverageBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.SMOOTH_TO_AVERAGE
 
 
 class SmoothingStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -828,26 +818,26 @@ def prepare_smooth() -> None:
 pure_2d_batch_executor(smooth_batch)(smooth)
 
 
-__all__ = [
-    "CircularAverageSmoothingBackendProviderPolicy",
-    "EdgePreservingSmoothingBackendProviderPolicy",
-    "GaussianKernel1D",
-    "GaussianSmoothingBackendProviderPolicy",
-    "MaskedFilterRequest",
-    "MaskedLinearFilterRequest",
-    "MedianSmoothingBackendProviderPolicy",
-    "OpenCVMaskedGaussianFilterRequest",
-    "PolynomialSmoothingBackendProviderPolicy",
-    "SmoothToAverageBackendProviderPolicy",
-    "SmoothingBackendProviderPolicy",
-    "SmoothingBackendSelectionRequest",
-    "SmoothingMethod",
-    "SmoothingRequest",
-    "SmoothingStrategy",
-    "SmoothingStrategyKey",
-    "prepare_smooth",
-    "reducenoise",
-    "smooth",
-    "smooth_batch",
-    "smooth_image",
-]
+__all__ = public_names_from_objects(
+    CircularAverageSmoothingBackendProviderPolicy,
+    EdgePreservingSmoothingBackendProviderPolicy,
+    GaussianKernel1D,
+    GaussianSmoothingBackendProviderPolicy,
+    MaskedFilterRequest,
+    MaskedLinearFilterRequest,
+    MedianSmoothingBackendProviderPolicy,
+    OpenCVMaskedGaussianFilterRequest,
+    PolynomialSmoothingBackendProviderPolicy,
+    SmoothToAverageBackendProviderPolicy,
+    SmoothingBackendProviderPolicy,
+    SmoothingBackendSelectionRequest,
+    SmoothingMethod,
+    SmoothingRequest,
+    SmoothingStrategy,
+    SmoothingStrategyKey,
+    prepare_smooth,
+    reducenoise,
+    smooth,
+    smooth_batch,
+    smooth_image,
+)

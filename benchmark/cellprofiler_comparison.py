@@ -1116,6 +1116,8 @@ def _run_comparison_case(
         "raise_on_equivalence_failure": False,
         "cache_candidate_measurement_snapshot": not context.discard_openhcs_outputs,
     }
+    if case.value_only:
+        pipeline_params.setdefault("materialize_runtime_artifacts", False)
     if case.cellprofiler_timeout_seconds is not None:
         pipeline_params["cellprofiler_timeout_seconds"] = (
             case.cellprofiler_timeout_seconds

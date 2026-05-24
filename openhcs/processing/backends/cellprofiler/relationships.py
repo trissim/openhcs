@@ -11,6 +11,7 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory import stack_slices
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import (
     special_inputs,
@@ -40,6 +41,7 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.core.runtime_values import object_label_payload_with_dense_labels
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_dataclass_materializer
 
 
@@ -198,6 +200,8 @@ class NumbaNumpyObjectRelationshipBackendStrategy(
         )
 
     def label_centers(self, labels: np.ndarray) -> np.ndarray:
+        if labels.ndim > 2:
+            labels = np.max(labels, axis=tuple(range(labels.ndim - 2)))
         label_count = int(labels.max())
         if label_count == 0:
             return np.empty((0, 2), dtype=np.float64)
@@ -246,7 +250,72 @@ class RelateObjectsResult(RuntimeOutputBundle):
         return iter(self.as_runtime_tuple())
 
 
-@numpy_decorator
+def _combine_parent_child_payloads(
+    payloads: tuple[ParentChildRelationshipPayload | None, ...],
+) -> ParentChildRelationshipPayload | None:
+    """Combine per-slice relationship payloads while preserving slice identity."""
+    present_payloads = tuple(payload for payload in payloads if payload is not None)
+    if not present_payloads:
+        return None
+
+    parent_ids: list[int] = []
+    child_ids: list[int] = []
+    slice_indices: list[int] = []
+    for fallback_slice_index, payload in enumerate(payloads):
+        if payload is None:
+            continue
+        parent_ids.extend(payload.parent_ids)
+        child_ids.extend(payload.child_ids)
+        if payload.slice_indices:
+            slice_indices.extend(payload.slice_indices)
+        else:
+            slice_indices.extend([fallback_slice_index] * len(payload.parent_ids))
+
+    return ParentChildRelationshipPayload(
+        parent_ids=tuple(parent_ids),
+        child_ids=tuple(child_ids),
+        slice_indices=tuple(slice_indices),
+        slice_count=len(payloads),
+    )
+
+
+def _aggregate_relate_objects_slice_results(
+    slice_results: tuple[RelateObjectsResult, ...],
+    *,
+    memory_type: str,
+) -> RelateObjectsResult:
+    """Aggregate manual 2D RelateObjects slices for object-only stack inputs."""
+    output_labels = stack_slices(
+        [
+            object_label_dense_array(result.output_labels, dtype=np.float32)
+            for result in slice_results
+        ],
+        memory_type,
+        0,
+    )
+    parent_child_relationship = _combine_parent_child_payloads(
+        tuple(result.parent_child_relationship for result in slice_results)
+    )
+    if parent_child_relationship is None:
+        parent_child_relationship = ParentChildRelationshipPayload(
+            parent_ids=(),
+            child_ids=(),
+            slice_count=len(slice_results),
+        )
+    saved_child_relationship = _combine_parent_child_payloads(
+        tuple(result.saved_child_relationship for result in slice_results)
+    )
+    return RelateObjectsResult(
+        output_labels=output_labels,
+        parent_child_relationship=parent_child_relationship,
+        relationship_measurements=tuple(
+            result.relationship_measurements for result in slice_results
+        ),
+        saved_child_relationship=saved_child_relationship,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("parent_labels", "child_labels")
 @special_outputs(
     (
@@ -265,8 +334,39 @@ def relate_objects(
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int | None = None,
 ) -> RelateObjectsResult:
     """Relate CellProfiler child objects to parent objects by spatial overlap."""
+    parent_array = object_label_dense_array(parent_labels, dtype=np.int32)
+    child_array = object_label_dense_array(child_labels, dtype=np.int32)
+    if (
+        slice_index is None
+        and np.asarray(image).ndim == 2
+        and parent_array.ndim == 3
+        and child_array.ndim == 3
+        and parent_array.shape[0] == child_array.shape[0]
+        and parent_array.shape[-2:] == np.asarray(image).shape
+        and child_array.shape[-2:] == np.asarray(image).shape
+    ):
+        slice_results = tuple(
+            relate_objects(
+                image,
+                parent_array[index],
+                child_array[index],
+                calculate_distances=calculate_distances,
+                calculate_per_parent_means=calculate_per_parent_means,
+                save_children_with_parents=save_children_with_parents,
+                relationship_backend_provider=relationship_backend_provider,
+                slice_index=index,
+            )
+            for index in range(parent_array.shape[0])
+        )
+        return _aggregate_relate_objects_slice_results(
+            slice_results,
+            memory_type=MemoryType.NUMPY.value,
+        )
+
+    slice_index = 0 if slice_index is None else int(slice_index)
     raw_parent_labels = parent_labels
     raw_child_labels = child_labels
     calculate_distances = coerce_cellprofiler_enum(
@@ -350,7 +450,7 @@ def relate_objects(
         output_labels = child_labels.copy()
 
     measurements = RelationshipMeasurements(
-        slice_index=0,
+        slice_index=slice_index,
         parent_object_count=parent_count,
         child_object_count=child_count,
         children_with_parents_count=int(children_with_parents),
@@ -379,6 +479,8 @@ def relate_objects(
         related_relationship = ParentChildRelationshipPayload(
             parent_ids=related_parent_ids,
             child_ids=related_child_ids,
+            slice_indices=tuple(slice_index for _child_id in related_child_ids),
+            slice_count=slice_index + 1,
         )
     output_labels = object_label_payload_with_dense_labels(
         raw_child_labels,

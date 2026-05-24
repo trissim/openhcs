@@ -10,10 +10,24 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Iterator
 
+from openhcs.core.public_api import declared_public_names
 from openhcs.core.runtime_identifier import normalize_runtime_identifier
 
 
-_EMPTY_FEATURE_ALIASES: Mapping[tuple[str, ...], tuple[str, ...]] = MappingProxyType({})
+RuntimeMeasurementFeatureParts = tuple[str, ...]
+RuntimeMeasurementFeaturePartAliases = Mapping[
+    RuntimeMeasurementFeatureParts,
+    RuntimeMeasurementFeatureParts,
+]
+RuntimeMeasurementAlternativeFeaturePartAliases = Mapping[
+    RuntimeMeasurementFeatureParts,
+    tuple[RuntimeMeasurementFeatureParts, ...],
+]
+
+_EMPTY_FEATURE_ALIASES: RuntimeMeasurementFeaturePartAliases = MappingProxyType({})
+_EMPTY_ALTERNATIVE_FEATURE_ALIASES: (
+    RuntimeMeasurementAlternativeFeaturePartAliases
+) = MappingProxyType({})
 _EMPTY_FEATURE_FAMILIES: tuple[tuple[str, ...], ...] = ()
 
 
@@ -38,11 +52,14 @@ class RuntimeMeasurementObjectDomainPolicy:
 class RuntimeMeasurementLookupDialect:
     """Dialect used to resolve external measurement names to runtime fields."""
 
-    category_prefixes: tuple[tuple[str, ...], ...] = ()
-    feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = field(
+    category_prefixes: tuple[RuntimeMeasurementFeatureParts, ...] = ()
+    feature_part_aliases: RuntimeMeasurementFeaturePartAliases = field(
         default_factory=lambda: _EMPTY_FEATURE_ALIASES
     )
-    source_qualified_feature_families: tuple[tuple[str, ...], ...] = (
+    alternative_feature_part_aliases: (
+        RuntimeMeasurementAlternativeFeaturePartAliases
+    ) = field(default_factory=lambda: _EMPTY_ALTERNATIVE_FEATURE_ALIASES)
+    source_qualified_feature_families: tuple[RuntimeMeasurementFeatureParts, ...] = (
         _EMPTY_FEATURE_FAMILIES
     )
     object_domain_policy: RuntimeMeasurementObjectDomainPolicy = field(
@@ -67,6 +84,20 @@ class RuntimeMeasurementLookupDialect:
                         part for part in alias if part
                     )
                     for parts, alias in self.feature_part_aliases.items()
+                }
+            ),
+        )
+        object.__setattr__(
+            self,
+            "alternative_feature_part_aliases",
+            MappingProxyType(
+                {
+                    tuple(part for part in parts if part): tuple(
+                        tuple(alias_part for alias_part in alias if alias_part)
+                        for alias in aliases
+                        if tuple(alias)
+                    )
+                    for parts, aliases in self.alternative_feature_part_aliases.items()
                 }
             ),
         )
@@ -98,6 +129,14 @@ class RuntimeMeasurementLookupDialect:
                 resolved_parts = resolved_parts[len(prefix) :]
                 break
         return self.feature_part_aliases.get(resolved_parts, resolved_parts)
+
+    def alternative_feature_parts(
+        self,
+        parts: tuple[str, ...],
+    ) -> tuple[tuple[str, ...], ...]:
+        """Return ordered semantic fallback fields for one lookup token."""
+        feature_parts = self.feature_parts(parts)
+        return self.alternative_feature_part_aliases.get(feature_parts, ())
 
     def feature_lookup(self, feature_name: str) -> "RuntimeMeasurementFeatureLookup":
         """Return the nominal lookup identity for one external feature name."""
@@ -161,12 +200,7 @@ class RuntimeMeasurementFeatureLookup:
     @property
     def source_aliases(self) -> tuple[str, ...]:
         """Return source-image aliases encoded by a source-qualified feature."""
-        aliases: list[str] = []
-        for source_name in self.source_names:
-            for alias in (source_name, _compact_identifier(source_name)):
-                if alias and alias not in aliases:
-                    aliases.append(alias)
-        return tuple(aliases)
+        return self.compact_identifier_aliases(self.source_names)
 
     @property
     def dialect_feature_name(self) -> str:
@@ -185,13 +219,19 @@ class RuntimeMeasurementFeatureLookup:
 
     @property
     def source_qualified_field_names(self) -> tuple[str, ...]:
-        names: list[str] = []
-        for feature_family in self.source_qualified_feature_families:
-            feature_name = "_".join(feature_family)
-            for alias in (feature_name, _compact_identifier(feature_name)):
-                if alias and alias not in names:
-                    names.append(alias)
-        return tuple(names)
+        return self.compact_identifier_aliases(
+            "_".join(feature_family)
+            for feature_family in self.source_qualified_feature_families
+        )
+
+    def compact_identifier_aliases(self, names: Iterable[str]) -> tuple[str, ...]:
+        """Return ordered normalized and compact aliases for non-empty names."""
+        aliases: list[str] = []
+        for name in names:
+            for alias in (name, _compact_identifier(name)):
+                if alias and alias not in aliases:
+                    aliases.append(alias)
+        return tuple(aliases)
 
     @property
     def source_qualified_feature_families(self) -> tuple[tuple[str, ...], ...]:
@@ -209,12 +249,17 @@ class RuntimeMeasurementFeatureLookup:
         return self.dialect.feature_parts(self.normalized_parts)
 
     @property
+    def alternative_feature_parts(self) -> tuple[tuple[str, ...], ...]:
+        return self.dialect.alternative_feature_parts(self.normalized_parts)
+
+    @property
     def field_alias_spans(self) -> tuple[RuntimeMeasurementFeatureAliasSpan, ...]:
         """Return nominal field-name spans from most specific to broadest."""
         spans: list[RuntimeMeasurementFeatureAliasSpan] = []
         for parts in (
             self.normalized_parts,
             self.dialect_feature_parts,
+            *self.alternative_feature_parts,
             *self.source_qualified_feature_families,
             self.unqualified_feature_parts,
             self.metric_family_parts,
@@ -311,16 +356,10 @@ def runtime_measurement_lookup_dialect(
         _CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT.reset(token)
 
 
-__all__ = (
-    "CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT",
-    "CurrentRuntimeMeasurementLookupDialect",
-    "DEFAULT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT",
-    "RuntimeMeasurementFeatureLookup",
-    "RuntimeMeasurementFeatureAliasSpan",
-    "RuntimeMeasurementLookupDialect",
-    "RuntimeMeasurementLookupDialectLike",
-    "RuntimeMeasurementLookupDialectReference",
-    "RuntimeMeasurementObjectDomainPolicy",
-    "resolve_runtime_measurement_lookup_dialect",
-    "runtime_measurement_lookup_dialect",
+__all__ = declared_public_names(
+    globals(),
+    constant_prefixes=(
+        "CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT",
+        "DEFAULT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT",
+    ),
 )

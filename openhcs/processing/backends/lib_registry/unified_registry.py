@@ -36,26 +36,37 @@ from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optio
 import numpy as np
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import unstack_slices, stack_slices
+from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
-    ObjectLabelDomainScope,
-    RuntimePlaneAxis,
+    ParentChildRelationshipPayload,
 )
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     MaskedImagePayload,
     NativeRuntimeValue,
+    ObjectLabelDenseDataStrategy,
     ObjectLabelPayload,
+    ObjectLabelSet,
+    ObjectLabelMeasurementPayloadStrategy,
+    ObjectLabelPure2DSliceAggregator,
     RuntimeArrayPayload,
     compose_image_payload_metadata,
     image_payload_data,
     image_payload_mask,
     image_payload_slice_context,
     image_payload_with_context,
+    object_label_value_with_execution_slice,
 )
 from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.runtime_batch_contracts import (
+    Pure2DSliceBatchExecutor,
+    RuntimeBatchExecutionDomain,
+    RuntimePure2DSliceBatchRequest,
+    runtime_batch_executors_from_callable,
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
@@ -354,6 +365,17 @@ class Pure2DRegisteredStrategyFamily(ABC):
             )
         )
 
+    def type_distance(self, value: Any) -> int:
+        """Return nearest nominal MRO distance for this strategy family."""
+        declared_types = self.accepted_value_types()
+        if not declared_types:
+            return len(object.__mro__)
+        return min(
+            type(value).mro().index(declared_type)
+            for declared_type in declared_types
+            if isinstance(value, declared_type)
+        )
+
 
 class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMeta):
     """Unstack a PURE_2D main-flow input into nominal per-slice values."""
@@ -384,16 +406,6 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
         accepted_types = self.accepted_value_types()
         return bool(accepted_types) and isinstance(value, accepted_types)
 
-    def type_distance(self, value: Any) -> int:
-        declared_types = self.accepted_value_types()
-        if not declared_types:
-            return len(object.__mro__)
-        return min(
-            type(value).mro().index(declared_type)
-            for declared_type in declared_types
-            if isinstance(value, declared_type)
-        )
-
     @abstractmethod
     def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
         """Return nominal per-slice values for one PURE_2D input."""
@@ -409,7 +421,7 @@ class RegisteredImageLayoutPure2DInputSlicer(Pure2DInputSlicer):
     value_type = np.ndarray
 
     def is_single_plane_value(self, value: np.ndarray) -> bool:
-        return value.ndim == 2
+        return value.ndim == 2 or is_color_image_slice(value)
 
     def slice_value(self, value: np.ndarray, memory_type: str) -> tuple[Any, ...]:
         if self.is_single_plane_value(value):
@@ -554,14 +566,21 @@ class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
 
     def stack_array_slices(self, values: list[Any], memory_type: str) -> Any:
         """Stack dense slice arrays through OpenHCS image-layout semantics."""
-        try:
-            return ImageStackLayout.for_slices(values).stack(
+        layout = next(
+            (
+                layout_type()
+                for layout_type in ImageStackLayout.__registry__.values()
+                if all(layout_type.slice_predicate(value) for value in values)
+            ),
+            None,
+        )
+        if layout is not None:
+            return layout.stack(
                 slices=values,
                 memory_type=memory_type,
                 gpu_id=0,
             )
-        except ValueError:
-            return np.stack(tuple(np.asarray(value) for value in values), axis=0)
+        return np.stack(tuple(np.asarray(value) for value in values), axis=0)
 
 
 class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
@@ -619,7 +638,7 @@ class ImageMetadataPayloadPure2DAuxiliaryOutputAggregator(ImagePayloadPure2DAuxi
 
 
 class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
-    """Stack object-label payload slices and preserve object-domain metadata."""
+    """Delegate object-label slice aggregation to the runtime-value authority."""
 
     value_type = ObjectLabelPayload
     include_in_family = True
@@ -627,42 +646,16 @@ class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxili
     def _accepts_mixed_value(self, value: Any) -> bool:
         return isinstance(value, self.value_type)
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> ObjectLabelPayload:
-        labels = self.stack_array_slices([value.labels for value in values], memory_type)
-        unedited_labels = (
-            self.stack_array_slices(
-                [value.labels_for_variant("unedited") for value in values],
-                memory_type,
-            )
-            if any(value.unedited_labels is not None for value in values)
-            else None
-        )
-        small_removed_labels = (
-            self.stack_array_slices(
-                [value.labels_for_variant("small_removed") for value in values],
-                memory_type,
-            )
-            if any(value.small_removed_labels is not None for value in values)
-            else None
-        )
-        declared_counts = {value.declared_object_count for value in values}
-        declared_ids = {value.declared_object_ids for value in values}
-        domain_scope = (
-            ObjectLabelDomainScope.PLANE
-            if len(values) > 1
-            else ObjectLabelDomainScope.common(value.domain_scope for value in values)
-        )
-        return ObjectLabelPayload(
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-            declared_object_count=(
-                declared_counts.pop() if len(declared_counts) == 1 else None
-            ),
-            declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-            domain_scope=domain_scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        )
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+        return ObjectLabelPure2DSliceAggregator.aggregate(values, memory_type)
+
+
+class ObjectLabelSetPure2DAuxiliaryOutputAggregator(
+    ObjectLabelPayloadPure2DAuxiliaryOutputAggregator
+):
+    """Register native object-label values for PURE_2D auxiliary aggregation."""
+
+    value_type = ObjectLabelSet
 
 
 class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
@@ -722,12 +715,12 @@ class Pure2DSliceIndexProjector(Pure2DRegisteredStrategyFamily, metaclass=AutoRe
 
     @classmethod
     def project(cls, value: Any, slice_index: int) -> Any:
-        for strategy in cls.registered_strategies():
-            if not isinstance(strategy, Pure2DSliceIndexProjector):
-                continue
-            if strategy.supports(value):
-                return strategy.project_value(value, slice_index)
-        return value
+        projector = cls.nearest_registered_strategy(
+            Pure2DSliceIndexProjector,
+            supports=lambda strategy: strategy.supports(value),
+            distance=lambda strategy: strategy.type_distance(value),
+        )
+        return value if projector is None else projector.project_value(value, slice_index)
 
     def supports(self, value: Any) -> bool:
         accepted_types = self.accepted_value_types()
@@ -746,6 +739,54 @@ class RuntimeArraySliceIndexProjector(Pure2DSliceIndexProjector):
     def project_value(self, value: RuntimeArrayPayload, slice_index: int) -> RuntimeArrayPayload:
         del slice_index
         return value
+
+
+class ObjectLabelPayloadSliceIndexProjector(Pure2DSliceIndexProjector):
+    """Project derived object-label payloads onto the execution slice identity."""
+
+    value_type = ObjectLabelPayload
+
+    def project_value(
+        self,
+        value: ObjectLabelPayload,
+        slice_index: int,
+    ) -> ObjectLabelPayload:
+        return object_label_value_with_execution_slice(
+            value,
+            value.labels,
+            slice_index,
+        )
+
+
+class ObjectLabelSetSliceIndexProjector(Pure2DSliceIndexProjector):
+    """Project derived native object-label values onto the execution slice identity."""
+
+    value_type = ObjectLabelSet
+
+    def project_value(self, value: ObjectLabelSet, slice_index: int) -> ObjectLabelSet:
+        return object_label_value_with_execution_slice(
+            value,
+            value.labels,
+            slice_index,
+        )
+
+
+class ParentChildRelationshipPayloadSliceIndexProjector(Pure2DSliceIndexProjector):
+    """Project parent-child relationship pairs onto the execution slice identity."""
+
+    value_type = ParentChildRelationshipPayload
+
+    def project_value(
+        self,
+        value: ParentChildRelationshipPayload,
+        slice_index: int,
+    ) -> ParentChildRelationshipPayload:
+        return ParentChildRelationshipPayload(
+            parent_ids=value.parent_ids,
+            child_ids=value.child_ids,
+            slice_indices=tuple(slice_index for _child_id in value.child_ids),
+            slice_count=value.slice_count,
+        )
 
 
 class NumpyArraySliceIndexProjector(Pure2DSliceIndexProjector):
@@ -922,6 +963,12 @@ class ProcessingContract(Enum):
 
     def execute(self, registry, func, image, *args, **kwargs):
         """Execute the contract method on the registry."""
+        if self is ProcessingContract.PURE_3D:
+            return RuntimeCallablePolicy().invocation(
+                func,
+                (image, *args),
+                kwargs,
+            ).call()
         method = getattr(registry, self.value)
         return method(func, image, *args, **kwargs)
 
@@ -1269,29 +1316,75 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         return original_func
 
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
-    def execute_pure_3d(self, func, image, *args, **kwargs):
-        """Execute 3D→3D function directly (no change)."""
-        return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
-
     def execute_pure_2d(self, func, image, *args, **kwargs):
         """Execute 2D→2D function with unstack/restack wrapper."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
         slicer = Pure2DInputSlicer.strategy_for_value(image)
+        positional_kwargs = self._pure_2d_positional_kwargs(func, args)
+        if self._pure_2d_full_stack_object_measurement(
+            func,
+            image,
+            {**positional_kwargs, **kwargs},
+        ):
+            return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
         if slicer.is_single_plane_value(image):
             return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
+        if args:
+            signature = inspect.signature(func)
+            parameters = tuple(signature.parameters.values())
+            positional_parameters = tuple(
+                parameter
+                for parameter in parameters[1:]
+                if parameter.kind
+                in {
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                }
+            )
+            if len(args) > len(positional_parameters):
+                raise TypeError(
+                    f"{getattr(func, '__name__', type(func).__name__)} expected at "
+                    f"most {len(positional_parameters)} positional argument(s) after "
+                    f"image, got {len(args)}."
+                )
+            for parameter, value in zip(positional_parameters, args):
+                kwargs.setdefault(parameter.name, value)
+            args = args[len(positional_parameters):]
         slices = slicer.slice_value(image, memory_type)
-        slice_results = [
-            Pure2DSliceIndexProjector.project(
+        declared_batch_executor = runtime_batch_executors_from_callable(func).get(
+            RuntimeBatchExecutionDomain.PURE_2D_SLICES
+        )
+        batch_executor = (
+            declared_batch_executor
+            if callable(declared_batch_executor)
+            else Pure2DSliceBatchExecutor.default_executor()
+        )
+
+        def execute_slice(
+            slice_func: Callable[..., Any],
+            slice_2d: Any,
+            slice_kwargs: Mapping[str, Any],
+            slice_index: int,
+            _slice_count: int,
+        ) -> Any:
+            return Pure2DSliceIndexProjector.project(
                 RuntimeCallablePolicy().invocation(
-                    func,
+                    slice_func,
                     (slice_2d, *args),
-                    kwargs,
+                    slice_kwargs,
                 ).call(),
                 slice_index,
             )
-            for slice_index, slice_2d in enumerate(slices)
-        ]
+
+        slice_results = batch_executor(
+            RuntimePure2DSliceBatchRequest(
+                func=func,
+                slices_2d=tuple(slices),
+                kwargs=kwargs,
+                execute_slice=execute_slice,
+            )
+        )
         result_batch = Pure2DSliceResultBatch.from_results(slice_results)
         stacked_main_output = Pure2DAuxiliaryOutputAggregator.aggregate(
             result_batch.main_outputs,
@@ -1305,6 +1398,60 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         )
         return (stacked_main_output, *aggregated_auxiliary_outputs)
 
+    @staticmethod
+    def _pure_2d_positional_kwargs(
+        func: Callable[..., Any],
+        args: tuple[Any, ...],
+    ) -> dict[str, Any]:
+        """Project positional arguments after image into their callable names."""
+
+        if not args:
+            return {}
+        signature = inspect.signature(func)
+        parameters = tuple(signature.parameters.values())
+        positional_parameters = tuple(
+            parameter
+            for parameter in parameters[1:]
+            if parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+        )
+        return {
+            parameter.name: value
+            for parameter, value in zip(positional_parameters, args)
+        }
+
+    @staticmethod
+    def _pure_2d_full_stack_object_measurement(
+        func: Callable[..., Any],
+        image: Any,
+        kwargs: Mapping[str, Any],
+    ) -> bool:
+        """Return whether a PURE_2D wrapper must preserve a full object volume."""
+
+        from openhcs.core.pipeline.function_contracts import (
+            ObjectLabelMeasurementExecution,
+            object_label_measurement_execution_from_callable,
+        )
+
+        if (
+            object_label_measurement_execution_from_callable(func)
+            is not ObjectLabelMeasurementExecution.FULL_STACK
+        ):
+            return False
+        labels = kwargs.get("labels")
+        if labels is None:
+            return False
+        image_array = np.asarray(image)
+        label_array = np.asarray(ObjectLabelDenseDataStrategy.for_payload(labels).data(labels))
+        return (
+            image_array.ndim >= 3
+            and label_array.ndim == image_array.ndim
+            and tuple(label_array.shape) == tuple(image_array.shape)
+        )
+
     def execute_flexible(self, func, image, *args, **kwargs):
         """Execute function that handles both 3D→3D and 2D→2D with toggle."""
         # Check if slice_by_slice attribute is set on the function
@@ -1314,7 +1461,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             return self.execute_pure_2d(func, image, *args, **kwargs)
         else:
             # Use 3D-only execution logic (no modification)
-            return self.execute_pure_3d(func, image, *args, **kwargs)
+            return ProcessingContract.PURE_3D.execute(
+                self,
+                func,
+                image,
+                *args,
+                **kwargs,
+            )
 
     def execute_volumetric_to_slice(self, func, image, *args, **kwargs):
         """Execute 3D→2D function returning slice 3D array."""
@@ -1940,13 +2093,10 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         if not callable(func):
             return "not callable"
 
-        try:
-            sig = inspect.signature(func)
-            params = list(sig.parameters.values())
-            if not params:
-                return "no parameters (not pure function)"
-        except (ValueError, TypeError):
-            return "invalid signature"
+        sig = inspect.signature(func)
+        params = list(sig.parameters.values())
+        if not params:
+            return "no parameters (not pure function)"
 
         return "unknown"
 

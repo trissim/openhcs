@@ -60,7 +60,20 @@ class CellProfilerInvocationOptions(RuntimeInvocationOptions):
 
 CellProfilerImageExecutionContext = RuntimeImageExecutionContext
 CellProfilerResolvedInputRequest = ResolvedRuntimeInputRequest
-CellProfilerImageRequest = RuntimeImageRequest
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CellProfilerImageRequest(RuntimeImageRequest):
+    """CellProfiler image invocation payload with ordered source-plane aliases."""
+
+    source_image_names: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_image_names",
+            tuple(str(name) for name in self.source_image_names),
+        )
 
 
 @dataclass(frozen=True, slots=True)

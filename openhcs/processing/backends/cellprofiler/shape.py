@@ -32,8 +32,12 @@ from openhcs.core.runtime_semantics import (
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
-    ObjectLabelRuntimeSliceStackContract,
+    ObjectLabelDataPlaneStackContract,
+    DenseObjectLabelSliceStack,
+    ObjectLabelPayload,
+    ObjectLabelPlaneStackContract,
     ObjectLabelSet,
+    ObjectLabelValue,
     SparseIJVLabelRows,
     object_label_dense_array,
 )
@@ -186,24 +190,8 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
             objects=int(measured_labels.size),
         )
 
-        phase_started_at = time.perf_counter()
-        dense_center_y, dense_center_x = _dense_label_centers_2d(labels)
-        runtime_profiler.log(
-            "moss_dense_centers",
-            time.perf_counter() - phase_started_at,
-            function="measure_object_size_shape",
-            objects=int(dense_center_x.size),
-        )
-        center_x = _compact_values_with_dense_tail(
-            np.asarray(props["centroid-1"], dtype=float),
-            dense_center_x,
-            measured_labels=measured_labels,
-        )
-        center_y = _compact_values_with_dense_tail(
-            np.asarray(props["centroid-0"], dtype=float),
-            dense_center_y,
-            measured_labels=measured_labels,
-        )
+        center_x = np.asarray(props["centroid-1"], dtype=float)
+        center_y = np.asarray(props["centroid-0"], dtype=float)
 
         features = {
             _shape_feature(ObjectShapeMeasurementFeature.AREA): area,
@@ -402,23 +390,22 @@ class ObjectSizeShapeMeasurementRowsRequest(ObjectSizeShapeFeatureArrayOwner):
     """Backend-owned AreaShape row request for dense and sparse label payloads."""
 
     owner_key = "object_size_shape_rows"
-    labels: np.ndarray | ObjectLabelSet
+    labels: ObjectLabelValue
 
     def rows(self) -> list[dict[str, object]]:
-        dense_slice_count = (
-            ObjectLabelRuntimeSliceStackContract.runtime_slice_count(self.labels)
-            if isinstance(self.labels, ObjectLabelSet)
-            else None
-        )
+        plane_count = _measurement_plane_count(self.labels)
         if (
-            isinstance(self.labels, ObjectLabelSet)
-            and self.labels.representation is ObjectLabelRepresentation.DENSE_LABELS
-            and dense_slice_count is not None
-            and dense_slice_count > 1
+            isinstance(self.labels, (ObjectLabelPayload, ObjectLabelSet))
+            and (
+                isinstance(self.labels, ObjectLabelPayload)
+                or self.labels.representation is ObjectLabelRepresentation.DENSE_LABELS
+            )
+            and plane_count is not None
+            and plane_count > 1
         ):
-            return DenseRuntimeSliceObjectSizeShapeMeasurement(
+            return DensePlaneStackObjectSizeShapeMeasurement(
                 labels=self.labels,
-                slice_count=dense_slice_count,
+                plane_count=plane_count,
                 calculate_advanced=self.calculate_advanced,
                 calculate_zernikes=self.calculate_zernikes,
                 shape_backend_provider=self.shape_backend_provider,
@@ -450,6 +437,16 @@ class ObjectSizeShapeMeasurementRowsRequest(ObjectSizeShapeFeatureArrayOwner):
         ).rows()
 
 
+def _measurement_plane_count(labels: ObjectLabelValue) -> int | None:
+    """Return a per-plane measurement count for plane-scoped stacked labels."""
+    if not isinstance(labels, (ObjectLabelPayload, ObjectLabelSet)):
+        return None
+    data_count = ObjectLabelDataPlaneStackContract.plane_count(labels.labels)
+    if data_count is None or data_count <= 1:
+        return None
+    return ObjectLabelPlaneStackContract.plane_count(labels)
+
+
 @numpy_decorator
 @object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
 @special_outputs(
@@ -465,9 +462,32 @@ def measure_object_size_shape(
     calculate_zernikes: bool = True,
     shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
     """Measure CellProfiler AreaShape rows for labeled objects."""
     total_started_at = time.perf_counter()
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    if (
+        np.asarray(image).ndim == 2
+        and slice_index is not None
+        and label_array.ndim == 3
+        and label_array.shape[-2:] == np.asarray(image).shape
+    ):
+        label_stack = DenseObjectLabelSliceStack.from_payload(
+            labels,
+            slice_count=int(label_array.shape[0]),
+            dtype=np.int32,
+        )
+        if label_stack is not None:
+            projected_index = (
+                slice_index
+                if slice_index < label_stack.labels.shape[0]
+                else 0
+                if label_stack.labels.shape[0] == 1
+                else None
+            )
+            if projected_index is not None:
+                labels = label_stack.slice(projected_index)
     rows = ObjectSizeShapeMeasurementRowsRequest(
         labels=labels,
         calculate_advanced=calculate_advanced,
@@ -496,25 +516,41 @@ measure_object_size_shape.__openhcs_prepare__ = prepare_measure_object_size_shap
 
 
 @dataclass(frozen=True, slots=True)
-class DenseRuntimeSliceObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
-    """Per-plane 2D size/shape measurement for runtime-slice object domains."""
+class DensePlaneStackObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
+    """Per-plane 2D size/shape measurement for plane-scoped object domains."""
 
-    owner_key = "dense_runtime_slice"
-    labels: ObjectLabelSet
-    slice_count: int
+    owner_key = "dense_plane_stack"
+    labels: ObjectLabelValue
+    plane_count: int
 
     def rows(self) -> list[dict[str, object]]:
-        label_stack = object_label_dense_array(self.labels, dtype=np.int32)
-        if label_stack.ndim != 3 or label_stack.shape[0] != self.slice_count:
-            raise ValueError(
-                "Dense runtime-slice object labels must have shape "
-                f"(slice, y, x), got {label_stack.shape!r} for "
-                f"{self.slice_count} runtime slices."
-            )
+        label_stack, plane_count = self.measurement_label_stack()
         rows: list[dict[str, object]] = []
-        for slice_index in range(self.slice_count):
+        for slice_index in range(plane_count):
             rows.extend(self.slice_rows(label_stack[slice_index], slice_index))
         return rows
+
+    def measurement_label_stack(self) -> tuple[np.ndarray, int]:
+        label_stack = object_label_dense_array(self.labels, dtype=np.int32)
+        if (
+            label_stack.ndim == 4
+            and label_stack.shape[0] == self.plane_count
+            and label_stack.shape[1] == self.plane_count
+        ):
+            diagonal = tuple(label_stack[index, index] for index in range(self.plane_count))
+            if all(np.array_equal(diagonal[0], plane) for plane in diagonal[1:]):
+                return np.ascontiguousarray(diagonal[0][np.newaxis, ...]), 1
+            return (
+                np.ascontiguousarray(np.stack(diagonal, axis=0)),
+                self.plane_count,
+            )
+        if label_stack.ndim != 3 or label_stack.shape[0] != self.plane_count:
+            raise ValueError(
+                "Dense plane-scoped object labels must have shape "
+                f"(slice, y, x), got {label_stack.shape!r} for "
+                f"{self.plane_count} semantic planes."
+            )
+        return label_stack, self.plane_count
 
     def slice_rows(
         self,
@@ -526,7 +562,7 @@ class DenseRuntimeSliceObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwn
         )
         slice_domain = self.labels.object_label_domain().project_slice(
             slice_index,
-            self.slice_count,
+            self.plane_count,
         )
         rows = ShapeObjectFeatureValueTable.from_feature_arrays(
             feature_values,
@@ -1235,63 +1271,6 @@ def _indexed_shape_feature(
     *indices: int,
 ) -> str:
     return indexed_measurement_feature_name(feature, *indices)
-
-
-def _dense_label_centers_2d(labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    return _dense_label_centers_2d_numba(np.ascontiguousarray(labels, dtype=np.int32))
-
-
-@njit(cache=True)
-def _dense_label_centers_2d_numba(
-    labels: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    max_label = int(labels.max()) if labels.size else 0
-    if max_label <= 0:
-        empty = np.zeros(0, dtype=np.float64)
-        return empty, empty
-
-    counts = np.zeros(max_label + 1, dtype=np.float64)
-    y_sums = np.zeros(max_label + 1, dtype=np.float64)
-    x_sums = np.zeros(max_label + 1, dtype=np.float64)
-    height, width = labels.shape
-    for y in range(height):
-        for x in range(width):
-            label = int(labels[y, x])
-            if label <= 0:
-                continue
-            counts[label] += 1.0
-            y_sums[label] += float(y)
-            x_sums[label] += float(x)
-
-    center_y = np.empty(max_label, dtype=np.float64)
-    center_x = np.empty(max_label, dtype=np.float64)
-    for label in range(1, max_label + 1):
-        count = counts[label]
-        if count > 0.0:
-            center_y[label - 1] = y_sums[label] / count
-            center_x[label - 1] = x_sums[label] / count
-        else:
-            center_y[label - 1] = np.nan
-            center_x[label - 1] = np.nan
-    return center_y, center_x
-
-
-def _compact_values_with_dense_tail(
-    compact_values: np.ndarray,
-    dense_values: np.ndarray,
-    *,
-    measured_labels: np.ndarray,
-) -> np.ndarray:
-    compact = np.asarray(compact_values, dtype=float)
-    dense = np.asarray(dense_values, dtype=float)
-    if dense.shape[0] <= compact.shape[0]:
-        return compact
-    values = dense.copy()
-    for index, object_label in enumerate(np.asarray(measured_labels, dtype=np.int32)):
-        value_index = int(object_label) - 1
-        if 0 <= value_index < values.shape[0] and index < compact.shape[0]:
-            values[value_index] = compact[index]
-    return values
 
 
 def _advanced_2d_features(props: dict[str, np.ndarray]) -> dict[str, np.ndarray]:

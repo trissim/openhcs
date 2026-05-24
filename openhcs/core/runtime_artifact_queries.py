@@ -11,6 +11,7 @@ from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.measurement_lookup_dialect import (
@@ -71,6 +72,7 @@ MEASUREMENT_OBJECT_LABEL_FIELD = "object_label"
 MEASUREMENT_OBJECT_NUMBER_FIELD = "object_number"
 MEASUREMENT_OBJECT_ID_FIELD = "object_id"
 MEASUREMENT_LABEL_FIELD = "label"
+MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD = "openhcs_object_row_identity"
 MEASUREMENT_OBJECT_ID_FIELDS = (
     MEASUREMENT_OBJECT_LABEL_FIELD,
     MEASUREMENT_OBJECT_NUMBER_FIELD,
@@ -170,7 +172,15 @@ class ColumnarMeasurementTableSchema:
             return cached
         import numpy as np
 
-        mask = np.asarray(self.object_name_values, dtype=object) == object_name
+        normalized_object_name = normalize_runtime_identifier(object_name)
+        normalized_objects = np.asarray(
+            [
+                normalize_runtime_identifier(value)
+                for value in self.object_name_values
+            ],
+            dtype=object,
+        )
+        mask = normalized_objects == normalized_object_name
         self.object_masks_by_name[object_name] = mask
         return mask
 
@@ -252,12 +262,55 @@ class ColumnarMeasurementTableSchemaCache(IdentityBoundProcessCache):
 
 
 @dataclass(frozen=True, slots=True)
+class MeasurementTableUnion:
+    """Lossless row-owned view over same-artifact measurement subject tables."""
+
+    name: str
+    tables: tuple[MeasurementTable, ...]
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("MeasurementTableUnion.name cannot be empty.")
+        if not self.tables:
+            raise ValueError("MeasurementTableUnion.tables cannot be empty.")
+
+    def as_table(self) -> MeasurementTable:
+        if len(self.tables) == 1:
+            return self.tables[0]
+        return MeasurementTable(
+            name=self.name,
+            rows=self.rows(),
+            fields=(),
+        )
+
+    def rows(self) -> Sequence[object] | ColumnarRows:
+        if all(isinstance(table.rows, ColumnarRows) for table in self.tables):
+            return ConcatenatedColumnarRows(
+                tuple(table.rows for table in self.tables)
+            )
+        return tuple(
+            row
+            for table in self.tables
+            for row in measurement_rows((table,))
+        )
+
+
+def merged_measurement_table(
+    name: str,
+    tables: tuple[MeasurementTable, ...],
+) -> MeasurementTable:
+    """Return one row-owned measurement table for same-artifact subject records."""
+    return MeasurementTableUnion(name, tables).as_table()
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeArtifactQueryContext:
     """Execution-scope view over a RuntimeValueStore."""
 
     store: RuntimeValueStore
     axis_id: str
     group_key: str | None = None
+    match_group: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.store, RuntimeValueStore):
@@ -267,10 +320,6 @@ class RuntimeArtifactQueryContext:
             )
         if not self.axis_id:
             raise ValueError("RuntimeArtifactQueryContext.axis_id cannot be empty.")
-
-    @property
-    def match_group(self) -> bool:
-        return self.group_key is not None
 
     def find(
         self,
@@ -371,34 +420,38 @@ class MeasurementFeatureQuery:
     dialect: RuntimeMeasurementLookupDialectLike = (
         CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
     )
+    _field_candidates: tuple[str, ...] = field(init=False, repr=False)
+    _source_candidates: tuple[str, ...] = field(init=False, repr=False)
+    _query_object_name: str | None = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.feature_name:
             raise ValueError("MeasurementFeatureQuery.feature_name cannot be empty.")
         if self.object_name == "":
             raise ValueError("MeasurementFeatureQuery.object_name cannot be empty.")
+        lookup = resolve_runtime_measurement_lookup_dialect(
+            self.dialect
+        ).feature_lookup(self.feature_name)
+        object.__setattr__(self, "_field_candidates", lookup.field_aliases)
+        object.__setattr__(self, "_source_candidates", lookup.source_aliases)
+        object.__setattr__(
+            self,
+            "_query_object_name",
+            lookup.query_object_name(self.object_name),
+        )
 
     @property
     def field_candidates(self) -> tuple[str, ...]:
-        return ordered_measurement_feature_candidates(
-            self.feature_name,
-            dialect=self.dialect,
-        )
+        return self._field_candidates
 
     @property
     def source_candidates(self) -> tuple[str, ...]:
-        return ordered_measurement_source_candidates(
-            self.feature_name,
-            dialect=self.dialect,
-        )
+        return self._source_candidates
 
     @property
     def query_object_name(self) -> str | None:
         """Return the dialect-effective object constraint for this feature."""
-        dialect = resolve_runtime_measurement_lookup_dialect(self.dialect)
-        return dialect.feature_lookup(self.feature_name).query_object_name(
-            self.object_name
-        )
+        return self._query_object_name
 
     def row_value(self, row: object) -> object | None:
         """Return the row value matching this feature query, if present."""
@@ -408,14 +461,17 @@ class MeasurementFeatureQuery:
 
         candidates = self.field_candidates
         if measurement_row_feature_matches(row_mapping, candidates):
+            if not measurement_row_source_matches_feature(row_mapping, self):
+                return None
             return measurement_row_first_value(row_mapping)
 
-        field_name = matching_measurement_field(row_mapping, candidates)
-        if field_name is None:
-            return None
         if not measurement_row_source_matches_feature(row_mapping, self):
             return None
-        return row_mapping[field_name]
+        for field_name in matching_measurement_fields(row_mapping, candidates):
+            value = row_mapping[field_name]
+            if value not in (None, ""):
+                return value
+        return None
 
     def value_index(
         self,
@@ -426,9 +482,32 @@ class MeasurementFeatureQuery:
         if value_index is None:
             raise ValueError(
                 f"Could not resolve measurement feature {self.feature_name!r}; "
-                f"tables={self.table_summaries(measurement_tables)!r}."
+                f"tables={self.table_summaries(measurement_tables)!r}; "
+                f"matches={self.table_match_diagnostics(measurement_tables)!r}."
             )
         return value_index
+
+    def table_match_diagnostics(
+        self,
+        measurement_tables: tuple[MeasurementTable, ...],
+    ) -> tuple[str, ...]:
+        """Return compact row/field diagnostics for unresolved feature queries."""
+        diagnostics: list[str] = []
+        for table in measurement_tables:
+            rows = measurement_rows((table,))
+            first_row = measurement_row_mapping(rows[0]) if rows else {}
+            matching_fields = matching_measurement_fields(
+                first_row,
+                self.field_candidates,
+            )
+            diagnostics.append(
+                f"{table.name}/object={measurement_table_object_name(table) or '<none>'}/"
+                f"query_object={self.query_object_name or '<none>'}/"
+                f"row_count={len(rows)}/first_object={measurement_row_object_name(first_row) or '<none>'}/"
+                f"matching_fields={matching_fields}/"
+                f"first_keys={tuple(str(key) for key in tuple(first_row)[:12])}"
+            )
+        return tuple(diagnostics)
 
     def table_summaries(
         self,
@@ -439,10 +518,37 @@ class MeasurementFeatureQuery:
         for table in measurement_tables:
             semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
             features = tuple(sorted(semantics.feature_names))
+            feature_column = None
+            row_count = "unknown"
+            object_match_count = "unknown"
+            axis_values = ()
+            if isinstance(table.rows, ColumnarRows):
+                schema = ColumnarMeasurementTableSchema.from_table(table)
+                feature_column = schema.matching_feature_column(self)
+                row_count = str(len(table.rows))
+                query_object_name = self.query_object_name
+                object_mask = (
+                    schema.object_mask(query_object_name)
+                    if query_object_name is not None
+                    and measurement_table_object_name(table) is None
+                    else None
+                )
+                if object_mask is not None:
+                    object_match_count = str(int(object_mask.sum()))
+                axis_values = tuple(
+                    tuple(sorted(measurement_table_axis_values(table, axis)))
+                    for axis in (
+                        MeasurementRowAxisField.SLICE_INDEX,
+                        MeasurementRowAxisField.IMAGE_NUMBER,
+                    )
+                )
             summaries.append(
                 f"{table.name}/object={measurement_table_object_name(table) or '<none>'}/"
                 f"source={table.source_image_name or '<none>'}/"
-                f"rows={type(table.rows).__name__}/features={features[:8]}"
+                f"rows={type(table.rows).__name__}/objects={semantics.object_names[:8]}/"
+                f"feature_column={feature_column or '<none>'}/"
+                f"row_count={row_count}/object_matches={object_match_count}/"
+                f"axes={axis_values}/feature_count={len(features)}/features={features[:8]}"
             )
         return tuple(summaries)
 
@@ -456,6 +562,37 @@ class MeasurementFeatureQuery:
             self,
         )
         return value_index.as_query_result() if value_index.present else None
+
+    def table_may_carry_feature(
+        self,
+        table: MeasurementTable,
+        semantics: "MeasurementTableObjectFeatureSemantics | None" = None,
+    ) -> bool:
+        """Return whether table ownership and feature schema can satisfy this query."""
+        if not self.table_source_matches_feature(table):
+            return False
+        table_semantics = (
+            MeasurementTableObjectFeatureSemantics.from_table(table)
+            if semantics is None
+            else semantics
+        )
+        if not table_semantics.feature_names:
+            return True
+        candidates = frozenset(self.field_candidates)
+        return any(
+            normalize_measurement_token(feature_name) in candidates
+            for feature_name in table_semantics.feature_names
+        )
+
+    def table_source_matches_feature(self, table: MeasurementTable) -> bool:
+        """Return whether table-level source ownership matches this feature query."""
+        source_image_name = table.source_image_name
+        if source_image_name is None:
+            return True
+        normalized_source = normalize_measurement_token(source_image_name)
+        if normalized_source in MEASUREMENT_UNQUALIFIED_SOURCE_NAMES:
+            return True
+        return normalized_source in self.source_candidates
 
     def scalar_value(self, measurement_tables: tuple[MeasurementTable, ...]) -> float:
         """Return exactly one scalar measurement value for this feature."""
@@ -518,7 +655,7 @@ class MeasurementObjectFeatureVectorBatchQuery:
             for object_name in self.object_names
         }
         indexes_by_object = {
-            object_name: MeasurementFeatureValueIndex.empty()
+            object_name: MeasurementFeatureValueIndex()
             for object_name in self.object_names
         }
         objects_by_table_id: dict[int, list[str]] = {}
@@ -535,10 +672,10 @@ class MeasurementObjectFeatureVectorBatchQuery:
         )
         for table_id, table in tables_by_id.items():
             table_object_names = tuple(dict.fromkeys(objects_by_table_id[table_id]))
-            row_sequence_index = MeasurementRowSequenceFeatureValueIndex.from_table(
+            row_sequence_index = MeasurementRowSequenceFeatureValueIndexBuild(
                 table,
                 table_query,
-            )
+            ).index()
             if row_sequence_index is not None:
                 for object_name in table_object_names:
                     object_index = row_sequence_index.for_object(
@@ -547,7 +684,7 @@ class MeasurementObjectFeatureVectorBatchQuery:
                     if object_index is not None:
                         indexes_by_object[object_name] = indexes_by_object[
                             object_name
-                        ].merged(MeasurementFeatureValueIndex.from_query_result(object_index))
+                        ].merged(MeasurementFeatureValueIndex(*object_index))
                 continue
 
             for object_name in table_object_names:
@@ -559,7 +696,7 @@ class MeasurementObjectFeatureVectorBatchQuery:
                 if object_index is not None:
                     indexes_by_object[object_name] = indexes_by_object[
                         object_name
-                    ].merged(MeasurementFeatureValueIndex.from_query_result(object_index))
+                    ].merged(MeasurementFeatureValueIndex(*object_index))
 
         missing_object_names = tuple(
             object_name
@@ -591,19 +728,8 @@ class MeasurementObjectFeatureVectorBatchQuery:
 class MeasurementFeatureValueIndex:
     """Object-label and positional values for one measurement feature."""
 
-    values_by_label: dict[int, float]
-    positional_values: list[float]
-
-    @classmethod
-    def empty(cls) -> "MeasurementFeatureValueIndex":
-        return cls({}, [])
-
-    @classmethod
-    def from_query_result(
-        cls,
-        value_index: MeasurementValueIndexResult,
-    ) -> "MeasurementFeatureValueIndex":
-        return cls(dict(value_index[0]), list(value_index[1]))
+    values_by_label: dict[int, float] = field(default_factory=dict)
+    positional_values: list[float] = field(default_factory=list)
 
     @classmethod
     def from_tables(
@@ -611,7 +737,7 @@ class MeasurementFeatureValueIndex:
         measurement_tables: tuple[MeasurementTable, ...],
         query: MeasurementFeatureQuery,
     ) -> "MeasurementFeatureValueIndex":
-        index = cls.empty()
+        index = cls()
         for table in measurement_tables:
             index = index.merged(cls.from_table(table, query))
         return index
@@ -626,20 +752,20 @@ class MeasurementFeatureValueIndex:
         if columnar_index is not None:
             return columnar_index
 
-        row_sequence_index = MeasurementRowSequenceFeatureValueIndex.from_table(
+        row_sequence_index = MeasurementRowSequenceFeatureValueIndexBuild(
             table,
             query,
-        )
+        ).index()
         if row_sequence_index is not None:
             object_index = row_sequence_index.for_object(query.query_object_name)
             return (
-                cls.empty()
+                cls()
                 if object_index is None
-                else cls.from_query_result(object_index)
+                else cls(*object_index)
             )
 
         if _is_wide_row_sequence_measurement_table(table):
-            return cls.empty()
+            return cls()
         return cls.from_rows(
             measurement_rows((table,)),
             query,
@@ -662,7 +788,13 @@ class MeasurementFeatureValueIndex:
         schema = ColumnarMeasurementTableSchema.from_table(table)
         columns = schema.columns
         object_mask: Any | None = None
-        source_mask = schema.source_mask(query.source_candidates)
+        if not query.table_source_matches_feature(table):
+            return cls()
+        source_mask = (
+            None
+            if table.source_image_name is not None
+            else schema.source_mask(query.source_candidates)
+        )
         query_object_name = query.query_object_name
         if query_object_name is not None:
             table_object = measurement_table_object_name(table)
@@ -714,7 +846,7 @@ class MeasurementFeatureValueIndex:
         *,
         object_id_field: str | None,
     ) -> "MeasurementFeatureValueIndex":
-        index = cls.empty()
+        index = cls()
         for row in rows:
             row_mapping = measurement_row_mapping(row)
             if (
@@ -763,35 +895,15 @@ class MeasurementRowSequenceFeatureValueIndex:
     values_by_object: MeasurementFeatureValueIndexesByObject
 
     @classmethod
-    def from_table(
+    def from_rows(
         cls,
-        table: MeasurementTable,
+        rows: Sequence[object],
+        *,
+        feature_field: str,
+        object_id_field: str | None,
         query: MeasurementFeatureQuery,
     ) -> "MeasurementRowSequenceFeatureValueIndex | None":
-        rows = table.rows
-        if isinstance(rows, ColumnarRows):
-            return None
-        if not isinstance(rows, list | tuple) or not rows:
-            return None
-
-        field_names = cls.field_names(rows, query)
-        table_source_image_name = (
-            None
-            if cls.table_declares_object_identity(table, field_names)
-            else table.source_image_name
-        )
-        feature_field = cls.matching_row_value_field(
-            field_names,
-            query,
-            table_source_image_name=table_source_image_name,
-        )
-        if feature_field is None:
-            return None
-
-        object_id_field = cls.matching_object_id_field(
-            field_names,
-            measurement_table_object_id_field(table),
-        )
+        """Build a row-sequence index once field ownership has been resolved."""
         values_by_object: MeasurementFeatureValueIndexesByObject = {}
         for row in rows:
             row_mapping = measurement_row_mapping(row)
@@ -807,7 +919,7 @@ class MeasurementRowSequenceFeatureValueIndex:
             object_name = measurement_row_object_name(row_mapping)
             values_by_object.setdefault(
                 object_name,
-                MeasurementFeatureValueIndex.empty(),
+                MeasurementFeatureValueIndex(),
             ).add(object_label, value)
 
         if not any(index.present for index in values_by_object.values()):
@@ -828,10 +940,16 @@ class MeasurementRowSequenceFeatureValueIndex:
         field_names: list[str] = []
         seen: set[str] = set(first_row_names)
         field_names.extend(first_row_names)
-        specific_candidates = frozenset(query.field_candidates)
-        found_feature = any(
-            normalize_measurement_token(field_name) in specific_candidates
-            for field_name in first_row_names
+        candidate_rank = {
+            candidate: index for index, candidate in enumerate(query.field_candidates)
+        }
+        found_feature_rank = min(
+            (
+                candidate_rank[normalize_measurement_token(field_name)]
+                for field_name in first_row_names
+                if normalize_measurement_token(field_name) in candidate_rank
+            ),
+            default=None,
         )
         found_object_id = any(
             field_name in MEASUREMENT_OBJECT_ID_FIELDS
@@ -843,11 +961,17 @@ class MeasurementRowSequenceFeatureValueIndex:
                 if normalized_name not in seen:
                     seen.add(normalized_name)
                     field_names.append(normalized_name)
-                if normalize_measurement_token(normalized_name) in specific_candidates:
-                    found_feature = True
+                normalized_token = normalize_measurement_token(normalized_name)
+                if normalized_token in candidate_rank:
+                    rank = candidate_rank[normalized_token]
+                    found_feature_rank = (
+                        rank
+                        if found_feature_rank is None
+                        else min(found_feature_rank, rank)
+                    )
                 if normalized_name in MEASUREMENT_OBJECT_ID_FIELDS:
                     found_object_id = True
-            if found_feature and found_object_id:
+            if found_feature_rank == 0 and found_object_id:
                 break
         return tuple(field_names)
 
@@ -858,6 +982,20 @@ class MeasurementRowSequenceFeatureValueIndex:
         *,
         table_source_image_name: str | None,
     ) -> str | None:
+        fields = MeasurementRowSequenceFeatureValueIndex.matching_row_value_fields(
+            field_names,
+            query,
+            table_source_image_name=table_source_image_name,
+        )
+        return fields[0] if fields else None
+
+    @staticmethod
+    def matching_row_value_fields(
+        field_names: tuple[str, ...],
+        query: MeasurementFeatureQuery,
+        *,
+        table_source_image_name: str | None,
+    ) -> tuple[str, ...]:
         candidates = query.field_candidates
         if table_source_image_name is not None:
             normalized_source = normalize_measurement_token(table_source_image_name)
@@ -865,8 +1003,8 @@ class MeasurementRowSequenceFeatureValueIndex:
                 normalized_source not in MEASUREMENT_UNQUALIFIED_SOURCE_NAMES
                 and normalized_source not in query.source_candidates
             ):
-                return None
-        return matching_measurement_field(
+                return ()
+        return matching_measurement_fields(
             {field_name: None for field_name in field_names},
             candidates,
         )
@@ -886,29 +1024,12 @@ class MeasurementRowSequenceFeatureValueIndex:
                 return field_name
         return None
 
-    @classmethod
-    def table_declares_object_identity(
-        cls,
-        table: MeasurementTable,
-        field_names: tuple[str, ...],
-    ) -> bool:
-        """Return whether table-level image source should not qualify feature fields."""
-        return (
-            measurement_table_object_name(table) is not None
-            or MEASUREMENT_OBJECT_NAME_FIELD in field_names
-            or cls.matching_object_id_field(
-                field_names,
-                measurement_table_object_id_field(table),
-            )
-            is not None
-        )
-
     def for_object(
         self,
         object_name: str | None,
     ) -> OptionalMeasurementValueIndexResult:
         if object_name is None:
-            merged_index = MeasurementFeatureValueIndex.empty()
+            merged_index = MeasurementFeatureValueIndex()
             for index in self.values_by_object.values():
                 merged_index = merged_index.merged(index)
             return merged_index.as_query_result() if merged_index.present else None
@@ -920,6 +1041,132 @@ class MeasurementRowSequenceFeatureValueIndex:
         if object_index is None:
             return default_index.as_query_result()
         return default_index.merged(object_index).as_query_result()
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementRowSequenceLayout:
+    """Declared row shape for sequence-backed measurement tables."""
+
+    field_names: tuple[str, ...]
+    declares_feature_names: bool
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: Sequence[object],
+        query: MeasurementFeatureQuery | None = None,
+    ) -> "MeasurementRowSequenceLayout":
+        field_names: list[str] = []
+        seen: set[str] = set()
+        declares_feature_names = False
+        candidate_rank = (
+            {candidate: index for index, candidate in enumerate(query.field_candidates)}
+            if query is not None
+            else {}
+        )
+        found_feature_rank = 0 if not candidate_rank else None
+        found_object_id = False
+
+        for row in rows:
+            for field_name in measurement_row_mapping(row):
+                normalized_name = str(field_name)
+                if normalized_name not in seen:
+                    seen.add(normalized_name)
+                    field_names.append(normalized_name)
+                declares_feature_names = (
+                    declares_feature_names
+                    or normalized_name in MEASUREMENT_FEATURE_NAME_FIELDS
+                )
+                normalized_token = normalize_measurement_token(normalized_name)
+                if normalized_token in candidate_rank:
+                    rank = candidate_rank[normalized_token]
+                    found_feature_rank = (
+                        rank
+                        if found_feature_rank is None
+                        else min(found_feature_rank, rank)
+                    )
+                if normalized_name in MEASUREMENT_OBJECT_ID_FIELDS:
+                    found_object_id = True
+            if declares_feature_names:
+                found_feature_rank = 0
+            if found_feature_rank == 0 and found_object_id:
+                break
+        return cls(tuple(field_names), declares_feature_names)
+
+    @property
+    def is_wide_only(self) -> bool:
+        """Return whether rows expose only direct measurement columns."""
+        return not self.declares_feature_names
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementRowSequenceFeatureValueIndexBuild:
+    """Staged build request for row-sequence feature indexes."""
+
+    table: MeasurementTable
+    query: MeasurementFeatureQuery
+
+    @property
+    def rows(self) -> tuple[object, ...] | None:
+        table_rows = self.table.rows
+        if isinstance(table_rows, ColumnarRows):
+            return None
+        if not isinstance(table_rows, list | tuple) or not table_rows:
+            return None
+        return tuple(table_rows)
+
+    @property
+    def field_names(self) -> tuple[str, ...] | None:
+        layout = self.layout
+        return None if layout is None else layout.field_names
+
+    @property
+    def layout(self) -> MeasurementRowSequenceLayout | None:
+        rows = self.rows
+        if rows is None:
+            return None
+        return MeasurementRowSequenceLayout.from_rows(rows, self.query)
+
+    @property
+    def feature_field(self) -> str | None:
+        feature_fields = self.feature_fields
+        return feature_fields[0] if feature_fields else None
+
+    @property
+    def feature_fields(self) -> tuple[str, ...]:
+        field_names = self.field_names
+        if field_names is None:
+            return ()
+        return MeasurementRowSequenceFeatureValueIndex.matching_row_value_fields(
+            field_names,
+            self.query,
+            table_source_image_name=self.table.source_image_name,
+        )
+
+    @property
+    def object_id_field(self) -> str | None:
+        field_names = self.field_names
+        if field_names is None:
+            return None
+        return MeasurementRowSequenceFeatureValueIndex.matching_object_id_field(
+            field_names,
+            measurement_table_object_id_field(self.table),
+        )
+
+    def index(self) -> MeasurementRowSequenceFeatureValueIndex | None:
+        rows = self.rows
+        if rows is None:
+            return None
+        for feature_field in self.feature_fields:
+            index = MeasurementRowSequenceFeatureValueIndex.from_rows(
+                rows,
+                feature_field=feature_field,
+                object_id_field=self.object_id_field,
+                query=self.query,
+            )
+            if index is not None:
+                return index
+        return None
 
 
 class MeasurementTableObjectFeatureSemanticsCache(IdentityBoundProcessCache):
@@ -970,7 +1217,7 @@ class MeasurementTableObjectFeatureSemantics:
                 ),
                 feature_names=schema.feature_names,
             )
-        if _is_wide_row_sequence_measurement_table(table):
+        if isinstance(table.rows, list | tuple):
             return None
         if object_name is None:
             return None
@@ -1017,8 +1264,14 @@ class MeasurementTableObjectFeatureSemantics:
                     feature_names.add(str(value))
         if feature_names:
             return frozenset(feature_names)
-        return MeasurementTableObjectFeatureSemantics.feature_names_from_fields(
-            table.fields,
+        return MeasurementTableObjectFeatureSemantics.feature_names_from_names(
+            tuple(
+                dict.fromkeys(
+                    str(field_name)
+                    for row in rows
+                    for field_name in measurement_row_mapping(row)
+                )
+            ),
             table,
         )
 
@@ -1067,16 +1320,6 @@ class ObjectMeasurementLabelPlaneBinding:
         """Return the object IDs represented by this label plane."""
         return dense_object_label_id_domain(self.labels)
 
-    @property
-    def value_index(self) -> MeasurementValueIndexResult:
-        """Return prior measurements keyed by label or compact position."""
-        return measurement_value_index(
-            self.measurement_tables,
-            self.feature_name,
-            object_name=self.object_name,
-            dialect=self.dialect,
-        )
-
     def values(self) -> Any:
         """Return measurement values aligned to the label-plane domain."""
         policy = ObjectMeasurementLabelPlaneBindingPolicy.for_nominal_value(self)
@@ -1093,14 +1336,6 @@ class IndexedObjectMeasurementLabelPlaneBinding(ObjectMeasurementLabelPlaneBindi
     """Bind an already-indexed measurement feature onto a label plane."""
 
     indexed_values: MeasurementValueIndexResult
-    value_index: ClassVar[AliasProperty[MeasurementValueIndexResult]] = AliasProperty(
-        "indexed_values"
-    )
-
-    @property
-    def object_domain(self) -> tuple[int, ...]:
-        """Return object IDs materially present in this indexed label plane."""
-        return ObjectLabelIdDomainStrategy.for_value(self.labels).present_ids(self.labels)
 
 
 class ObjectMeasurementLabelPlaneBindingPolicy(
@@ -1131,36 +1366,58 @@ class DefaultObjectMeasurementLabelPlaneBindingPolicy(
         import numpy as np
 
         domain = binding.object_domain
-        values_by_label, positional_values = binding.value_index
+        values_by_label, positional_values = MeasurementFeatureQuery(
+            binding.feature_name,
+            object_name=binding.object_name,
+            dialect=binding.dialect,
+        ).value_index(binding.measurement_tables)
+        return self.values_for_index(binding, values_by_label, positional_values)
+
+    def values_for_index(
+        self,
+        binding: ObjectMeasurementLabelPlaneBinding,
+        values_by_label: Mapping[int, float],
+        positional_values: Sequence[float],
+    ) -> Any:
+        import numpy as np
+
+        domain = binding.object_domain
         if not domain:
             return np.array([], dtype=float)
         if values_by_label:
             return np.array([values_by_label.get(label, np.nan) for label in domain])
         if positional_values:
             return np.array(positional_values[: len(domain)])
+        if binding.measurement_tables:
+            summaries = MeasurementFeatureQuery(
+                binding.feature_name,
+                object_name=binding.object_name or None,
+                dialect=binding.dialect,
+            ).table_summaries(binding.measurement_tables)
+            raise ValueError(
+                f"Could not resolve measurement feature {binding.feature_name!r}; "
+                f"tables={summaries!r}."
+            )
         raise ValueError(
             f"Could not resolve measurement feature {binding.feature_name!r}."
         )
 
 
-def measurement_values_for_label_plane(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    labels: object,
-    *,
-    object_name: str,
-    dialect: RuntimeMeasurementLookupDialectLike = (
-        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
-    ),
-) -> Any:
-    """Return one feature vector aligned to a label-plane object domain."""
-    return ObjectMeasurementLabelPlaneBinding(
-        measurement_tables=measurement_tables,
-        object_name=object_name,
-        feature_name=feature_name,
-        labels=labels,
-        dialect=dialect,
-    ).values()
+class IndexedObjectMeasurementLabelPlaneBindingPolicy(
+    DefaultObjectMeasurementLabelPlaneBindingPolicy
+):
+    """Align pre-indexed measurements to their label-plane domain."""
+
+    value_type = IndexedObjectMeasurementLabelPlaneBinding
+
+    def values(self, binding: ObjectMeasurementLabelPlaneBinding) -> Any:
+        if not isinstance(binding, IndexedObjectMeasurementLabelPlaneBinding):
+            raise TypeError(
+                "IndexedObjectMeasurementLabelPlaneBindingPolicy requires "
+                "IndexedObjectMeasurementLabelPlaneBinding."
+            )
+        values_by_label, positional_values = binding.indexed_values
+        return self.values_for_index(binding, values_by_label, positional_values)
 
 
 def runtime_measurement_tables(
@@ -1283,26 +1540,17 @@ def _is_wide_row_sequence_measurement_table(table: MeasurementTable) -> bool:
     rows = table.rows
     if not isinstance(rows, list | tuple) or not rows:
         return False
-    first_row = measurement_row_mapping(rows[0])
-    return not any(field in first_row for field in MEASUREMENT_FEATURE_NAME_FIELDS)
+    return MeasurementRowSequenceLayout.from_rows(rows).is_wide_only
 
 
 def _columnar_measurement_rows(rows: ColumnarRows) -> tuple[Mapping[str, object], ...]:
     """Return record mappings from a nominal columnar table payload."""
-    columns = tuple(str(column) for column in rows.columns)
-    column_values = tuple(columnar_row_values(rows, column) for column in columns)
-    return tuple(
-        dict(zip(columns, values, strict=True))
-        for values in zip(*column_values, strict=True)
-    )
+    return rows.row_mappings()
 
 
 def columnar_row_values(rows: ColumnarRows, column: str) -> Sequence[object]:
     """Return one column from a nominal columnar payload."""
-    columns = rows.columns
-    if isinstance(columns, Mapping):
-        return columns[column]
-    return rows[column]
+    return rows.column_values(column)
 
 
 def normalize_measurement_token(value: object) -> str:
@@ -1371,12 +1619,22 @@ def matching_measurement_field(
     candidates: Sequence[str],
 ) -> str | None:
     """Return the first row field matching the ordered feature alias set."""
+    fields = matching_measurement_fields(row, candidates)
+    return fields[0] if fields else None
+
+
+def matching_measurement_fields(
+    row: Mapping[str, object],
+    candidates: Sequence[str],
+) -> tuple[str, ...]:
+    """Return row fields matching ordered feature aliases."""
+    fields: list[str] = []
     for candidate in candidates:
         for field_name in row:
             normalized = normalize_measurement_token(field_name)
-            if candidate == normalized:
-                return field_name
-    return None
+            if candidate == normalized and field_name not in fields:
+                fields.append(field_name)
+    return tuple(fields)
 
 
 def measurement_row_feature_matches(
@@ -1466,57 +1724,6 @@ def measurement_row_source_matches_feature(
     return normalized_source in query.source_candidates
 
 
-def measurement_value_index(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    *,
-    object_name: str | None = None,
-    dialect: RuntimeMeasurementLookupDialectLike = (
-        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
-    ),
-) -> MeasurementValueIndexResult:
-    """Return object-id and positional values for one feature."""
-    return MeasurementFeatureQuery(
-        feature_name,
-        object_name=object_name,
-        dialect=dialect,
-    ).value_index(measurement_tables)
-
-
-def optional_measurement_value_index(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    *,
-    object_name: str | None = None,
-    dialect: RuntimeMeasurementLookupDialectLike = (
-        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
-    ),
-) -> OptionalMeasurementValueIndexResult:
-    """Return object-id and positional values for one feature when present."""
-    return MeasurementFeatureQuery(
-        feature_name,
-        object_name=object_name,
-        dialect=dialect,
-    ).optional_value_index(measurement_tables)
-
-
-def measurement_scalar_value_for_feature(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    *,
-    object_name: str | None = None,
-    dialect: RuntimeMeasurementLookupDialectLike = (
-        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
-    ),
-) -> float:
-    """Return exactly one scalar measurement value for one feature."""
-    return MeasurementFeatureQuery(
-        feature_name,
-        object_name=object_name,
-        dialect=dialect,
-    ).scalar_value(measurement_tables)
-
-
 def measurement_values_for_feature(
     measurement_tables: tuple[MeasurementTable, ...],
     feature_name: str,
@@ -1529,12 +1736,11 @@ def measurement_values_for_feature(
     ),
 ) -> Any:
     """Return object-indexed measurement values for one feature."""
-    values_by_label, positional_values = measurement_value_index(
-        measurement_tables,
+    values_by_label, positional_values = MeasurementFeatureQuery(
         feature_name,
         object_name=object_name,
         dialect=dialect,
-    )
+    ).value_index(measurement_tables)
     resolved_object_ids = (
         tuple(range(1, object_count + 1))
         if object_ids is None
@@ -1664,10 +1870,18 @@ class MeasurementTableAxisProjection:
         return self._with_rows(rows, self.table.fields)
 
     def _row_sequence_table(self, rows: Sequence[object]) -> MeasurementTable:
+        declared_layout = measurement_table_row_layout_from_fields(self.table.fields)
+        if declared_layout is not None:
+            return self._with_rows(
+                rows,
+                self.table.fields,
+                validated_runtime_schema=True,
+            )
         normalized_rows = normalize_measurement_table_rows(rows, fields=())
         return self._with_rows(
             normalized_rows,
             self._compatible_fields(normalized_rows),
+            validated_runtime_schema=False,
         )
 
     def _compatible_fields(self, rows: object) -> tuple[FieldSpec, ...]:
@@ -1683,6 +1897,8 @@ class MeasurementTableAxisProjection:
         self,
         rows: object,
         fields: Iterable[FieldSpec],
+        *,
+        validated_runtime_schema: bool = False,
     ) -> MeasurementTable:
         return MeasurementTable(
             name=self.table.name,
@@ -1692,6 +1908,7 @@ class MeasurementTableAxisProjection:
             object_id_field=self.table.object_id_field,
             source_image_name=self.table.source_image_name,
             subject=self.table.subject,
+            validated_runtime_schema=validated_runtime_schema,
         )
 
 
@@ -1702,82 +1919,43 @@ class MeasurementTableAxisQuery:
     axis: MeasurementRowAxisField
     value: int
 
-    @classmethod
-    def slice(cls, slice_index: int) -> "MeasurementTableAxisQuery":
-        """Return a query for one runtime slice index."""
-        return cls(MeasurementRowAxisField.SLICE_INDEX, int(slice_index))
-
-    @classmethod
-    def image_number(cls, image_number: int) -> "MeasurementTableAxisQuery":
-        """Return a query for one CellProfiler ImageNumber row domain."""
-        return cls(MeasurementRowAxisField.IMAGE_NUMBER, int(image_number))
-
-    def table(self, table: MeasurementTable) -> MeasurementTable:
-        """Return one measurement table narrowed to this row-axis value."""
-        return MeasurementTableAxisProjection(table, self.axis, self.value).apply()
-
     def tables(
         self,
         measurement_tables: tuple[MeasurementTable, ...],
     ) -> tuple[MeasurementTable, ...]:
         """Return measurement tables narrowed to this row-axis value."""
-        return tuple(self.table(table) for table in measurement_tables)
-
-
-def measurement_table_for_slice(
-    table: MeasurementTable,
-    slice_index: int,
-) -> MeasurementTable:
-    """Return a measurement table narrowed to one slice when rows declare slices."""
-    return MeasurementTableAxisQuery.slice(slice_index).table(table)
+        return tuple(
+            MeasurementTableAxisProjection(table, self.axis, self.value).apply()
+            for table in measurement_tables
+        )
 
 
 def measurement_table_slice_indices(table: MeasurementTable) -> set[int]:
     """Return runtime slice indexes declared by one measurement table."""
-    if not table.subject.scope.projects_runtime_slices:
-        return set()
-    slice_field = MeasurementRowAxisField.SLICE_INDEX.value
+    return measurement_table_axis_values(table, MeasurementRowAxisField.SLICE_INDEX)
+
+
+def measurement_table_axis_values(
+    table: MeasurementTable,
+    axis: MeasurementRowAxisField,
+) -> set[int]:
+    """Return declared row-axis values for one measurement table."""
+    axis_field = axis.value
     if isinstance(table.rows, ColumnarRows):
         column_names = tuple(str(column) for column in table.rows.columns)
-        if slice_field not in column_names:
+        if axis_field not in column_names:
             return set()
         return {
-            int(slice_index)
-            for slice_index in columnar_row_values(table.rows, slice_field)
-            if slice_index is not None
+            int(axis_value)
+            for axis_value in columnar_row_values(table.rows, axis_field)
+            if axis_value is not None
         }
     return {
-        int(row_mapping[slice_field])
+        int(row_mapping[axis_field])
         for row in measurement_rows((table,))
         for row_mapping in (measurement_row_mapping(row),)
-        if row_mapping.get(slice_field) is not None
+        if row_mapping.get(axis_field) is not None
     }
-
-
-def measurement_tables_for_slice(
-    measurement_tables: tuple[MeasurementTable, ...],
-    slice_index: int,
-) -> tuple[MeasurementTable, ...]:
-    """Return measurement tables narrowed to one slice where row axes permit it."""
-    return MeasurementTableAxisQuery.slice(slice_index).tables(measurement_tables)
-
-
-def measurement_table_for_image_number(
-    table: MeasurementTable,
-    image_number: int,
-) -> MeasurementTable:
-    """Return a measurement table narrowed to one CellProfiler ImageNumber."""
-    return MeasurementTableAxisQuery.image_number(image_number).table(table)
-
-
-def measurement_tables_for_image_number(
-    measurement_tables: tuple[MeasurementTable, ...],
-    image_number: int,
-) -> tuple[MeasurementTable, ...]:
-    """Return measurement tables narrowed to one CellProfiler ImageNumber."""
-    return MeasurementTableAxisQuery.image_number(image_number).tables(
-        measurement_tables,
-    )
 
 
 def measurement_values_for_label_slices(
@@ -1786,136 +1964,322 @@ def measurement_values_for_label_slices(
     labels: object,
     *,
     object_name: str | None = None,
+    row_axis: MeasurementRowAxisField = MeasurementRowAxisField.SLICE_INDEX,
+    row_axis_start: int | None = None,
     dialect: RuntimeMeasurementLookupDialectLike = (
         CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
     ),
 ) -> tuple[Any, ...]:
     """Return measurement values aligned to positive label IDs in each label plane."""
-    import numpy as np
-
-    label_array = np.asarray(labels)
-    label_planes = (
-        (label_array,)
-        if label_array.ndim <= 2
-        else tuple(label_array[index] for index in range(label_array.shape[0]))
-    )
-    if label_array.ndim > 2:
-        values_by_slice = _measurement_value_indexes_by_slice(
-            measurement_tables,
+    return MeasurementLabelSliceFeatureQuery(
+        measurement_tables=measurement_tables,
+        feature_query=MeasurementFeatureQuery(
             feature_name,
             object_name=object_name,
             dialect=dialect,
+        ),
+        row_axis=row_axis,
+    ).values_for_labels(labels, row_axis_start=row_axis_start)
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementLabelSliceTableQuery(ABC):
+    """Shared table/feature authority for label-slice measurement lookup."""
+
+    measurement_tables: tuple[MeasurementTable, ...]
+    feature_query: MeasurementFeatureQuery
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementLabelSliceAxisSelection:
+    """Authoritative row-axis binding for label-stack measurement lookup."""
+
+    row_axis: MeasurementRowAxisField
+    row_axis_start: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementLabelSliceAxisResolver(MeasurementLabelSliceTableQuery):
+    """Resolve the table row axis that indexes a label stack."""
+
+    preferred_axis: MeasurementRowAxisField
+    label_slice_count: int
+
+    def select(self) -> MeasurementLabelSliceAxisSelection:
+        """Return the declared table axis and slice-to-row start offset."""
+        if self.label_slice_count <= 1:
+            return MeasurementLabelSliceAxisSelection(self.preferred_axis)
+        for axis in self.candidate_axes():
+            axis_values = self.axis_values(axis)
+            if not axis_values:
+                continue
+            return MeasurementLabelSliceAxisSelection(
+                row_axis=axis,
+                row_axis_start=self.axis_start(axis_values),
+            )
+        return MeasurementLabelSliceAxisSelection(self.preferred_axis)
+
+    def candidate_axes(self) -> tuple[MeasurementRowAxisField, ...]:
+        """Return row axes in preferred order without duplicating candidates."""
+        return tuple(
+            dict.fromkeys(
+                (
+                    self.preferred_axis,
+                    MeasurementRowAxisField.IMAGE_NUMBER,
+                    MeasurementRowAxisField.SLICE_INDEX,
+                )
+            )
         )
-        if values_by_slice is not None:
-            return tuple(
-                IndexedObjectMeasurementLabelPlaneBinding(
-                    measurement_tables=(),
-                    object_name=object_name or "",
-                    feature_name=feature_name,
-                    labels=label_plane,
-                    dialect=dialect,
-                    indexed_values=_measurement_value_index_for_label_slice(
-                        values_by_slice,
-                        slice_index,
+
+    def axis_values(self, axis: MeasurementRowAxisField) -> tuple[int, ...]:
+        """Return sorted row-axis values on tables that can carry the feature."""
+        values = {
+            value
+            for table in self.measurement_tables
+            if self.feature_query.table_may_carry_feature(table)
+            for value in measurement_table_axis_values(table, axis)
+        }
+        return tuple(sorted(values))
+
+    def axis_start(self, axis_values: tuple[int, ...]) -> int | None:
+        """Return the slice-index origin for a concrete table axis."""
+        if not axis_values:
+            return None
+        first_value = axis_values[0]
+        return None if first_value == 0 else first_value
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementLabelSliceFeatureQuery(MeasurementLabelSliceTableQuery):
+    """Query one measurement feature against a stack of object-label planes."""
+
+    row_axis: MeasurementRowAxisField = MeasurementRowAxisField.SLICE_INDEX
+
+    @property
+    def feature_name(self) -> str:
+        return self.feature_query.feature_name
+
+    @property
+    def object_name(self) -> str | None:
+        return self.feature_query.object_name
+
+    @property
+    def dialect(self) -> RuntimeMeasurementLookupDialectLike:
+        return self.feature_query.dialect
+
+    def values_for_labels(
+        self,
+        labels: object,
+        *,
+        row_axis_start: int | None = None,
+    ) -> tuple[Any, ...]:
+        """Return measurement values aligned to each label plane."""
+        import numpy as np
+
+        label_array = np.asarray(labels)
+        label_planes = (
+            (label_array,)
+            if label_array.ndim <= 2
+            else tuple(label_array[index] for index in range(label_array.shape[0]))
+        )
+        axis_selection = MeasurementLabelSliceAxisResolver(
+            measurement_tables=self.measurement_tables,
+            feature_query=self.feature_query,
+            preferred_axis=self.row_axis,
+            label_slice_count=len(label_planes),
+        ).select()
+        if axis_selection.row_axis is not self.row_axis:
+            return type(self)(
+                measurement_tables=self.measurement_tables,
+                feature_query=self.feature_query,
+                row_axis=axis_selection.row_axis,
+            ).values_for_labels(
+                labels,
+                row_axis_start=(
+                    row_axis_start
+                    if row_axis_start is not None
+                    else axis_selection.row_axis_start
+                ),
+            )
+        if row_axis_start is None:
+            row_axis_start = axis_selection.row_axis_start
+        if not self.measurement_tables:
+            label_domains = tuple(
+                dense_object_label_id_domain(label_plane)
+                for label_plane in label_planes
+            )
+            if not any(label_domains):
+                return tuple(
+                    ObjectLabelMeasurementValues(
+                        label_domain,
+                        np.empty(0, dtype=np.float64),
+                    ).values
+                    for label_domain in label_domains
+                )
+        if label_array.ndim > 2:
+            values_by_slice = self.value_indexes_by_axis()
+            if values_by_slice is not None:
+                return tuple(
+                    IndexedObjectMeasurementLabelPlaneBinding(
+                        measurement_tables=self.measurement_tables,
+                        object_name=self.object_name or "",
+                        feature_name=self.feature_name,
+                        labels=label_plane,
+                        dialect=self.dialect,
+                        indexed_values=self.value_index_for_label_slice(
+                            values_by_slice,
+                            slice_index,
+                            row_axis_start=row_axis_start,
+                            label_slice_count=len(label_planes),
+                        ),
+                    ).values()
+                    for slice_index, label_plane in enumerate(label_planes)
+                )
+        return tuple(
+            IndexedObjectMeasurementLabelPlaneBinding(
+                measurement_tables=slice_feature_tables,
+                object_name=self.object_name or "",
+                feature_name=self.feature_name,
+                labels=label_plane,
+                dialect=self.dialect,
+                indexed_values=self.feature_query.value_index(slice_feature_tables),
+            ).values()
+            for slice_index, label_plane, slice_feature_tables in (
+                (
+                    index,
+                    plane,
+                    self.feature_tables_for_axis(
+                        index,
+                        row_axis_start=row_axis_start,
                     ),
-                ).values()
-                for slice_index, label_plane in enumerate(label_planes)
+                )
+                for index, plane in enumerate(label_planes)
             )
-    return tuple(
-        IndexedObjectMeasurementLabelPlaneBinding(
-            measurement_tables=sliced_tables,
-            object_name=object_name or "",
-            feature_name=feature_name,
-            labels=label_plane,
-            dialect=dialect,
-            indexed_values=measurement_value_index(
-                sliced_tables,
-                feature_name,
-                object_name=object_name,
-                dialect=dialect,
-            ),
-        ).values()
-        for slice_index, label_plane, sliced_tables in (
-            (
-                index,
-                plane,
-                measurement_tables_for_slice(measurement_tables, index),
-            )
-            for index, plane in enumerate(label_planes)
         )
-    )
 
+    def feature_tables_for_axis(
+        self,
+        slice_index: int,
+        *,
+        row_axis_start: int | None = None,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return axis-projected tables, preserving axisless feature tables."""
+        projected_tables = self.axis_projected_tables(
+            slice_index,
+            row_axis_start=row_axis_start,
+        )
+        if projected_tables:
+            return projected_tables
+        axis_values = set()
+        for table in self.measurement_tables:
+            axis_values.update(measurement_table_axis_values(table, self.row_axis))
+        return self.measurement_tables if not axis_values else projected_tables
 
-def _measurement_value_index_for_label_slice(
-    values_by_slice: Mapping[int, MeasurementValueIndexResult],
-    slice_index: int,
-) -> MeasurementValueIndexResult:
-    """Return the measurement index for a label plane, broadcasting singletons."""
-    if slice_index in values_by_slice:
-        return values_by_slice[slice_index]
-    if -1 in values_by_slice:
-        return values_by_slice[-1]
-    concrete_slice_indexes = tuple(
-        index for index in values_by_slice if index >= 0
-    )
-    if len(concrete_slice_indexes) == 1:
-        return values_by_slice[concrete_slice_indexes[0]]
-    return {}, []
+    def axis_projected_tables(
+        self,
+        slice_index: int,
+        *,
+        row_axis_start: int | None = None,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return measurement tables projected to one label slice row-axis value."""
+        row_axis_value = (
+            slice_index
+            if row_axis_start is None
+            else row_axis_start + slice_index
+        )
+        return MeasurementTableAxisQuery(
+            self.row_axis,
+            row_axis_value,
+        ).tables(self.measurement_tables)
 
+    @staticmethod
+    def value_index_for_label_slice(
+        values_by_slice: Mapping[int, MeasurementValueIndexResult],
+        slice_index: int,
+        *,
+        row_axis_start: int | None = None,
+        label_slice_count: int | None = None,
+    ) -> MeasurementValueIndexResult:
+        """Return the measurement index for a label plane, broadcasting singletons."""
+        if row_axis_start is not None:
+            row_axis_value = row_axis_start + slice_index
+            if row_axis_value in values_by_slice:
+                return values_by_slice[row_axis_value]
+        if slice_index in values_by_slice:
+            return values_by_slice[slice_index]
+        if -1 in values_by_slice:
+            return values_by_slice[-1]
+        concrete_slice_indexes = tuple(
+            sorted(index for index in values_by_slice if index >= 0)
+        )
+        if (
+            label_slice_count is not None
+            and len(concrete_slice_indexes) == label_slice_count
+            and slice_index < label_slice_count
+        ):
+            return values_by_slice[concrete_slice_indexes[slice_index]]
+        if (
+            label_slice_count is not None
+            and concrete_slice_indexes
+            and label_slice_count % len(concrete_slice_indexes) == 0
+        ):
+            return values_by_slice[
+                concrete_slice_indexes[slice_index % len(concrete_slice_indexes)]
+            ]
+        if len(concrete_slice_indexes) == 1:
+            return values_by_slice[concrete_slice_indexes[0]]
+        return {}, []
 
-def _measurement_value_indexes_by_slice(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    *,
-    object_name: str | None,
-    dialect: RuntimeMeasurementLookupDialectLike,
-) -> dict[int, MeasurementValueIndexResult] | None:
-    """Return per-slice feature indexes without re-scanning tables per plane."""
-    query = MeasurementFeatureQuery(
-        feature_name,
-        object_name=object_name,
-        dialect=dialect,
-    )
-    defaults: MeasurementValueIndexResult = ({}, [])
-    by_slice: dict[int, MeasurementValueIndexResult] = {}
+    def value_indexes_by_axis(self) -> dict[int, MeasurementValueIndexResult] | None:
+        """Return per-axis feature indexes without re-scanning tables per plane."""
+        defaults: MeasurementValueIndexResult = ({}, [])
+        by_slice: dict[int, MeasurementValueIndexResult] = {}
+        query_object_name = self.feature_query.query_object_name
 
-    for table in measurement_tables:
-        if object_name is not None:
-            table_object = measurement_table_object_name(table)
-            if table_object not in (None, object_name):
+        for table in self.measurement_tables:
+            if query_object_name is not None:
+                table_object = measurement_table_object_name(table)
+                if table_object not in (None, query_object_name):
+                    continue
+
+            slice_indices = measurement_table_axis_values(table, self.row_axis)
+            if not slice_indices:
+                table_index = MeasurementFeatureValueIndex.from_table(
+                    table,
+                    self.feature_query,
+                )
+                if table_index.present:
+                    _merge_measurement_value_index(
+                        defaults,
+                        table_index.as_query_result(),
+                    )
                 continue
 
-        slice_indices = measurement_table_slice_indices(table)
-        if not slice_indices:
-            table_index = MeasurementFeatureValueIndex.from_table(table, query)
-            if table_index.present:
+            for slice_index in sorted(slice_indices):
+                table_index = MeasurementFeatureValueIndex.from_table(
+                    MeasurementTableAxisProjection(
+                        table,
+                        self.row_axis,
+                        slice_index,
+                    ).apply(),
+                    self.feature_query,
+                )
+                if not table_index.present:
+                    continue
                 _merge_measurement_value_index(
-                    defaults,
+                    by_slice.setdefault(slice_index, ({}, [])),
                     table_index.as_query_result(),
                 )
-            continue
 
-        for slice_index in sorted(slice_indices):
-            table_index = MeasurementFeatureValueIndex.from_table(
-                measurement_table_for_slice(table, slice_index),
-                query,
-            )
-            if not table_index.present:
-                continue
-            _merge_measurement_value_index(
-                by_slice.setdefault(slice_index, ({}, [])),
-                table_index.as_query_result(),
-            )
-
-    if defaults[0] or defaults[1]:
-        for slice_index in tuple(by_slice):
-            values_by_label = dict(defaults[0])
-            values_by_label.update(by_slice[slice_index][0])
-            positional_values = [*defaults[1], *by_slice[slice_index][1]]
-            by_slice[slice_index] = (values_by_label, positional_values)
-    if defaults[0] or defaults[1]:
-        by_slice.setdefault(-1, defaults)
-    return by_slice
+        if defaults[0] or defaults[1]:
+            for slice_index in tuple(by_slice):
+                values_by_label = dict(defaults[0])
+                values_by_label.update(by_slice[slice_index][0])
+                positional_values = [*defaults[1], *by_slice[slice_index][1]]
+                by_slice[slice_index] = (values_by_label, positional_values)
+        if defaults[0] or defaults[1]:
+            by_slice.setdefault(-1, defaults)
+        return by_slice if by_slice else None
 
 
 def _merge_measurement_value_index(
@@ -2072,6 +2436,87 @@ class MeasurementColumnarRowsView(ColumnarRows, ABC):
 
     def __len__(self) -> int:
         return len(next(iter(self._columns.values()))) if self._columns else 0
+
+
+def columnar_row_count(rows: ColumnarRows) -> int:
+    """Return row count for a nominal columnar payload."""
+    return rows.row_count()
+
+
+@dataclass(frozen=True, slots=True)
+class ConcatenatedColumnarRowColumns(Mapping[str, Sequence[object]]):
+    """Lazy mapping over columns concatenated from multiple columnar batches."""
+
+    row_batches: tuple[ColumnarRows, ...]
+    column_names: tuple[str, ...]
+
+    @classmethod
+    def from_row_batches(
+        cls,
+        row_batches: tuple[ColumnarRows, ...],
+    ) -> "ConcatenatedColumnarRowColumns":
+        return cls(
+            row_batches=row_batches,
+            column_names=tuple(
+                dict.fromkeys(
+                    str(column)
+                    for row_batch in row_batches
+                    for column in row_batch.columns
+                )
+            ),
+        )
+
+    def __getitem__(self, column_name: str) -> Sequence[object]:
+        if column_name not in self.column_names:
+            raise KeyError(column_name)
+        return np.concatenate(
+            tuple(
+                self._batch_column_values(row_batch, column_name)
+                for row_batch in self.row_batches
+            )
+        )
+
+    def _batch_column_values(
+        self,
+        row_batch: ColumnarRows,
+        column_name: str,
+    ) -> Sequence[object]:
+        batch_columns = {str(column): column for column in row_batch.columns}
+        if column_name in batch_columns:
+            return columnar_row_values(row_batch, batch_columns[column_name])
+        return (None,) * columnar_row_count(row_batch)
+
+    def __iter__(self):
+        return iter(self.column_names)
+
+    def __len__(self) -> int:
+        return len(self.column_names)
+
+
+@dataclass(frozen=True, slots=True)
+class ConcatenatedColumnarRows(ColumnarRows):
+    """Columnar table view over multiple columnar row batches."""
+
+    row_batches: tuple[ColumnarRows, ...]
+    _columns: Mapping[str, Sequence[object]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_columns",
+            ConcatenatedColumnarRowColumns.from_row_batches(self.row_batches),
+        )
+
+    columns: ClassVar[AliasProperty[Mapping[str, Sequence[object]]]] = (
+        AliasProperty("_columns")
+    )
+
+    def __len__(self) -> int:
+        return sum(columnar_row_count(row_batch) for row_batch in self.row_batches)
 
 
 @dataclass(frozen=True, slots=True)

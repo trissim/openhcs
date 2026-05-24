@@ -35,6 +35,8 @@ class RuntimeAdapterRequest:
         SourceBindingRuntimeContext.empty()
     )
     group_key: str | None = None
+    axis_component: str | None = None
+    axis_component_value: str | None = None
     plane_projection: RuntimePlaneProjection = field(
         default_factory=RuntimePlaneProjection.stack
     )

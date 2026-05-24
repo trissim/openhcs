@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from pyqt_reactive.theming import ColorScheme
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -20,6 +21,29 @@ class QtApplicationHarness:
     def app(cls) -> QApplication:
         cls.app_instance = QApplication.instance() or QApplication([])
         return cls.app_instance
+
+
+def close_widget(widget) -> None:
+    """Drain queued GUI updates from smoke widgets with monkeypatched setup."""
+
+    if getattr(widget, "item_list", None) is None:
+        widget.item_list = QListWidget()
+    if not getattr(widget, "buttons", None):
+        widget.buttons = {
+            name: QPushButton()
+            for name in (
+                "del_plate",
+                "edit_config",
+                "init_plate",
+                "compile_plate",
+                "code_plate",
+                "view_metadata",
+                "run_plate",
+            )
+        }
+    widget.cleanup()
+    widget.close()
+    QApplication.processEvents()
 
 
 class PlateManagerServiceStub:
@@ -49,8 +73,7 @@ def test_plate_manager_constructor_initializes_qobject_before_signal_use(monkeyp
     widget = PlateManagerWidget(PlateManagerServiceStub())
 
     assert widget.debug_snapshot_available is not None
-    widget.cleanup()
-    widget.close()
+    close_widget(widget)
 
 
 def test_plate_manager_loads_cellprofiler_pipeline_into_empty_plate(monkeypatch) -> None:
@@ -73,8 +96,7 @@ def test_plate_manager_loads_cellprofiler_pipeline_into_empty_plate(monkeypatch)
     assert pipeline_editor.updated_pipeline == ("/plate", pipeline_editor.pipeline_steps)
     assert len(pipeline_editor.pipeline_steps) == 1
     assert pipeline_editor.changed_steps == pipeline_editor.pipeline_steps
-    widget.cleanup()
-    widget.close()
+    close_widget(widget)
 
 
 def test_plate_manager_keeps_existing_pipeline_for_cellprofiler_plate(
@@ -99,8 +121,7 @@ def test_plate_manager_keeps_existing_pipeline_for_cellprofiler_plate(
 
     assert pipeline_editor.updated_pipeline is None
     assert pipeline_editor.changed_steps is None
-    widget.cleanup()
-    widget.close()
+    close_widget(widget)
 
 
 class PlatePipelineChangedSignalRecorder:
@@ -121,6 +142,8 @@ class PlatePipelineEditorRecorder:
         self.pipeline_steps = []
         self.pipeline_changed = PlatePipelineChangedSignalRecorder()
         self.updated_pipeline = None
+        self.cellprofiler_import_result = None
+        self.cellprofiler_import_results_by_plate = {}
 
     @property
     def changed_steps(self):
@@ -147,7 +170,10 @@ class CellProfilerWorkspaceResultFixture:
         return cls(
             ingestion=CellProfilerIngestionFixture(
                 prepared_pipeline=CellProfilerPreparedPipelineFixture(
-                    pipeline=CellProfilerPipelineFixture(steps=steps)
+                    pipeline=CellProfilerPipelineFixture(steps=steps),
+                    import_result=SimpleNamespace(
+                        pipeline=CellProfilerPipelineFixture(steps=steps),
+                    ),
                 )
             )
         )
@@ -161,6 +187,7 @@ class CellProfilerIngestionFixture:
 @dataclass(frozen=True, slots=True)
 class CellProfilerPreparedPipelineFixture:
     pipeline: object
+    import_result: object
 
 
 @dataclass(frozen=True, slots=True)

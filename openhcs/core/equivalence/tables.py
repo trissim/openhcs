@@ -23,6 +23,7 @@ from openhcs.core.equivalence.policy import (
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELDS,
     MEASUREMENT_OBJECT_ID_FIELDS,
+    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
     MEASUREMENT_OBJECT_NAME_FIELD,
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     MEASUREMENT_VALUE_FIELDS,
@@ -38,6 +39,7 @@ MEASUREMENT_IDENTITY_FIELDS = frozenset(
         "slice_index",
         *MEASUREMENT_OBJECT_ID_FIELDS,
         MEASUREMENT_OBJECT_NAME_FIELD,
+        MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
         MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
         "group_key",
         "number_object_number",

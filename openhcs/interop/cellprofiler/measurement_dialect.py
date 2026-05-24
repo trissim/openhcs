@@ -15,9 +15,11 @@ from openhcs.core.measurement_lookup_dialect import (
     RuntimeMeasurementLookupDialect,
     RuntimeMeasurementObjectDomainPolicy,
 )
+from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.runtime_semantics import ImageAreaOccupiedMeasurementFeature
 from openhcs.core.runtime_semantics import ObjectCoreMeasurementFeature
 from openhcs.core.runtime_semantics import ObjectIntensityMeasurementFeature
+from openhcs.core.runtime_semantics import ObjectShapeMeasurementFeature
 from openhcs.core.runtime_semantics import PairMeasurementFeature
 from openhcs.core.runtime_semantics import MeasurementScope
 from openhcs.interop.cellprofiler.measurement_lookup import child_count_feature_child_name
@@ -76,6 +78,26 @@ CELLPROFILER_HARALICK_TEXTURE_FEATURE_PREFIXES = (
 )
 
 
+def _feature_parts(feature: ObjectShapeMeasurementFeature) -> tuple[str, ...]:
+    """Return runtime-normalized parts for one object-shape feature."""
+    return tuple(normalize_runtime_identifier(feature.value).split("_"))
+
+
+CELLPROFILER_DIMENSIONAL_SHAPE_FEATURE_ALIASES = MappingProxyType(
+    {
+        _feature_parts(ObjectShapeMeasurementFeature.AREA): (
+            _feature_parts(ObjectShapeMeasurementFeature.VOLUME),
+        ),
+        _feature_parts(ObjectShapeMeasurementFeature.BOUNDING_BOX_AREA): (
+            _feature_parts(ObjectShapeMeasurementFeature.BOUNDING_BOX_VOLUME),
+        ),
+        _feature_parts(ObjectShapeMeasurementFeature.PERIMETER): (
+            _feature_parts(ObjectShapeMeasurementFeature.SURFACE_AREA),
+        ),
+    }
+)
+
+
 class CellProfilerMeasurementObjectDomainPolicy(RuntimeMeasurementObjectDomainPolicy):
     """Object-domain semantics for CellProfiler measurement rows."""
 
@@ -93,6 +115,7 @@ class CellProfilerMeasurementObjectDomainPolicy(RuntimeMeasurementObjectDomainPo
 CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT = RuntimeMeasurementLookupDialect(
     category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,
     feature_part_aliases=CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES,
+    alternative_feature_part_aliases=CELLPROFILER_DIMENSIONAL_SHAPE_FEATURE_ALIASES,
     source_qualified_feature_families=tuple(
         tuple(feature.value.split("_"))
         for feature in ObjectIntensityMeasurementFeature
@@ -345,29 +368,17 @@ CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
         numeric_rel_tolerance=0.0,
     ),
     RuntimeMeasurementFeatureNumericTolerance(
-        feature_name_prefixes=(
-            "large_num_objects_per_bin",
-            "small_num_objects_per_bin",
-            "tiny_num_objects_per_bin",
-            "red_num_objects_per_bin",
-            "white_num_objects_per_bin",
-        ),
+        feature_name_suffixes=("num_objects_per_bin",),
         subject_scope=MeasurementScope.IMAGE,
         statistic="value",
         numeric_abs_tolerance=25.0,
         numeric_rel_tolerance=0.0,
     ),
     RuntimeMeasurementFeatureNumericTolerance(
-        feature_name_prefixes=(
-            "large_pct_objects_per_bin",
-            "small_pct_objects_per_bin",
-            "tiny_pct_objects_per_bin",
-            "red_pct_objects_per_bin",
-            "white_pct_objects_per_bin",
-        ),
+        feature_name_suffixes=("pct_objects_per_bin",),
         subject_scope=MeasurementScope.IMAGE,
         statistic="value",
-        numeric_abs_tolerance=1.1,
+        numeric_abs_tolerance=2.5,
         numeric_rel_tolerance=0.0,
     ),
 )

@@ -10,10 +10,10 @@ from openhcs.core.memory import numpy
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
+    SourceImageObjectLabelBuildRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    object_label_payload_from_source_image,
 )
 
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -272,6 +272,16 @@ def identify_primary_objects(
         "ipo_threshold",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
+        threshold=float(thresh),
+        original_threshold=float(original_threshold),
+        mask_pixels=(
+            int(np.asarray(input_mask, dtype=bool).sum())
+            if input_mask is not None
+            else None
+        ),
+        image_sources=image_payload_metadata(image).source_image_names,
+        image_source_path=image_payload_metadata(image).source_path,
+        image_source_components=image_payload_metadata(image).source_component_metadata,
     )
     # Fill holes if requested (before declumping)
     if fill_holes.before_declump_requested(use_advanced_settings=use_advanced_settings):
@@ -536,13 +546,13 @@ def identify_primary_objects(
     return (
         image,
         stats,
-        object_label_payload_from_source_image(
-            image,
-            labeled_image.astype(np.int32, copy=False),
+        SourceImageObjectLabelBuildRequest(
+            image=image,
+            labels=labeled_image.astype(np.int32, copy=False),
             unedited_labels=unedited_labels.astype(np.int32, copy=False),
             small_removed_labels=small_removed_labels.astype(np.int32, copy=False),
             declared_object_count=object_count,
-        ),
+        ).payload(),
     )
 
 
@@ -566,6 +576,15 @@ def _prepare_identify_primary_objects() -> None:
     )
     filter_labels_by_diameter_range(labels, 2.0, 4.0)
     filter_physical_border_objects_numba(labels, True, True, True, True)
+    stacked_labels = np.stack((labels, labels), axis=0)
+    stacked_areas = np.bincount(stacked_labels.ravel())
+    filter_labels_by_area_numba(
+        np.ascontiguousarray(stacked_labels),
+        np.ascontiguousarray(stacked_areas),
+        2.0,
+        4.0,
+    )
+    filter_labels_by_diameter_range(stacked_labels, 2.0, 4.0)
     image = np.zeros((96, 96), dtype=np.float32)
     yy, xx = np.ogrid[:96, :96]
     image[((yy - 32) ** 2 + (xx - 32) ** 2) <= 12 * 12] = 0.8

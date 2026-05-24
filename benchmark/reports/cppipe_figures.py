@@ -978,7 +978,7 @@ def _plot_grouped_metric_broken(
                         edgecolor=FIGURE_STYLE.background,
                         linewidth=0.55,
                     )
-                if panel_break is None or axis is panel_axes[-1]:
+                if axis is panel_axes[-1]:
                     _draw_reference_lines(axis, metric=metric, log_y=False)
                 FIGURE_STYLE.decorate_axis(
                     axis,

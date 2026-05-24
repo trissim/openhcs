@@ -17,7 +17,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
-    AlignedImageStackKwargResolver,
+    aligned_image_stack_kwargs,
 )
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import (
@@ -27,6 +27,7 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_semantics import DenseObjectLabelStack
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     DenseObjectLabelAggregation,
@@ -683,10 +684,12 @@ class ColocalizationObjectLabelContext:
         labels: object,
         *,
         pair_valid_mask: np.ndarray | None,
+        measurement_shape: tuple[int, ...] | None = None,
     ) -> "ColocalizationObjectLabelContext":
         return cls.from_dense_labels(
             object_label_dense_array(labels, dtype=np.int32),
             pair_valid_mask=pair_valid_mask,
+            measurement_shape=measurement_shape,
         )
 
     @classmethod
@@ -695,8 +698,14 @@ class ColocalizationObjectLabelContext:
         label_array: np.ndarray,
         *,
         pair_valid_mask: np.ndarray | None,
+        measurement_shape: tuple[int, ...] | None = None,
     ) -> "ColocalizationObjectLabelContext":
         """Build reductions from an already-resolved dense label array."""
+        label_array = cls._labels_aligned_to_mask(
+            label_array,
+            pair_valid_mask,
+            measurement_shape=measurement_shape,
+        )
         max_label = int(np.max(label_array)) if label_array.size else 0
         label_range = np.arange(1, max_label + 1, dtype=np.int32)
         object_mask = label_array > 0
@@ -716,6 +725,36 @@ class ColocalizationObjectLabelContext:
             aggregation=aggregation,
             object_counts=aggregation.counts(),
         )
+
+    @staticmethod
+    def _labels_aligned_to_mask(
+        label_array: np.ndarray,
+        pair_valid_mask: np.ndarray | None,
+        *,
+        measurement_shape: tuple[int, ...] | None,
+    ) -> np.ndarray:
+        """Return labels in the same runtime-stack domain as the image mask."""
+        if (
+            measurement_shape is not None
+            and label_array.ndim == len(measurement_shape) + 1
+            and tuple(label_array.shape[1:]) == tuple(measurement_shape)
+        ):
+            try:
+                return DenseObjectLabelStack.from_labels(
+                    label_array,
+                ).project_xy_plane_without_relabeling()
+            except ValueError:
+                return np.max(label_array, axis=0).astype(np.int32, copy=False)
+        if pair_valid_mask is None:
+            return label_array
+        if tuple(label_array.shape) == tuple(pair_valid_mask.shape):
+            return label_array
+        if (
+            pair_valid_mask.ndim == label_array.ndim + 1
+            and tuple(pair_valid_mask.shape[1:]) == tuple(label_array.shape)
+        ):
+            return np.broadcast_to(label_array, pair_valid_mask.shape)
+        return label_array
 
 
 @dataclass(frozen=True, slots=True)
@@ -1022,6 +1061,7 @@ def _prepare_object_colocalization_context(
         object_label_context = ColocalizationObjectLabelContext.from_labels(
             labels,
             pair_valid_mask=image_pair_context.pair_valid_mask,
+            measurement_shape=tuple(image_pair_context.first_image.shape),
         )
     options = ColocalizationMeasurementOptions(
         threshold_percent=threshold_percent,
@@ -1809,6 +1849,7 @@ class ColocalizationCostesThresholdBatch:
             context = ColocalizationObjectLabelContext.from_dense_labels(
                 label_array,
                 pair_valid_mask=image_pair_context.pair_valid_mask,
+                measurement_shape=tuple(image_pair_context.first_image.shape),
             )
             self._label_contexts[key] = context
         return context
@@ -1856,14 +1897,14 @@ class ColocalizationCostesThresholdBatch:
         costes_thresholds: list[ColocalizationCostesThresholds | None] = []
         has_thresholds = False
         for slice_index, slice_payload in enumerate(image_data.slices):
-            resolver = AlignedImageStackKwargResolver(
-                slice_index=slice_index,
-                slice_count=len(image_data.slices),
-                reference_payload=slice_payload,
-            )
             slice_kwargs = {
                 **request.kwargs,
-                "labels": resolver.resolve(request.kwargs["labels"]),
+                **aligned_image_stack_kwargs(
+                    {"labels": request.kwargs["labels"]},
+                    slice_index,
+                    len(image_data.slices),
+                    reference_payload=slice_payload,
+                ),
             }
             slice_request = replace(request, image=slice_payload, kwargs=slice_kwargs)
             image_pair_context = self.image_pair_context(slice_request)

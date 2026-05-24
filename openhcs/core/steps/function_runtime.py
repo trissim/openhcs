@@ -39,13 +39,16 @@ from openhcs.core.debug import (
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
+    DEFAULT_GROUP_KEY,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import (
     convert_memory,
 )
 from openhcs.core.runtime_stores import (
+    RuntimeArtifactGroupTarget,
     RuntimeArtifactLocation,
+    RuntimeArtifactLocationTarget,
     RuntimeArtifactQuery,
     require_runtime_value_store,
     replace_runtime_artifact_payload,
@@ -70,13 +73,13 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ObjectLabelPayload,
     ObjectLabelSet,
+    SourceImageObjectLabelBuildRequest,
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
     image_payload_with_context,
     is_array_payload,
     normalize_artifact_value,
-    object_label_payload_from_source_image,
     with_image_payload_data,
 )
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -144,18 +147,51 @@ class FunctionInvocationCallableResolver:
         if isinstance(invocation.func, FunctionReference):
             return (
                 invocation.func.composite_key,
-                id(invocation.contract),
+                cls.contract_cache_key(invocation.contract),
             )
         if callable(invocation.func):
             return id(invocation.func)
         raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
+
+    @staticmethod
+    def contract_cache_key(contract: Any) -> object:
+        """Return semantic callable-contract identity for contextual rehydration.
+
+        Registry references can point many generated steps at the same importable
+        function. The module artifact contract is the runtime context that
+        distinguishes those steps, so it must be part of the cache identity.
+        """
+        return (
+            contract.module_artifact_contract,
+            contract.declared_processing_contract,
+            contract.processing_contract,
+            contract.runtime_adapter,
+            contract.runtime_image_execution_mode,
+        )
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+_PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
 PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
 ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
 _CALLABLE_PARAMETER_NAMES: WeakKeyDictionary[Callable, frozenset[str]] = (
     WeakKeyDictionary()
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactInvocationGroupKey:
+    """Resolve artifact group identity for one runtime invocation."""
+
+    invocation_group_key: str
+    component_value: Any
+
+    def artifact_group_key(self) -> str:
+        if (
+            self.invocation_group_key == DEFAULT_GROUP_KEY
+            and self.component_value is not None
+        ):
+            return str(self.component_value)
+        return self.invocation_group_key
 
 
 def _runtime_profile_enabled() -> bool:
@@ -167,6 +203,9 @@ def _log_runtime_profile(label: str, seconds: float, **fields: Any) -> None:
         return
     field_text = " ".join(f"{key}={value}" for key, value in fields.items())
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+    if profile_path := os.environ.get(_PROFILE_RUNTIME_PATH_ENV):
+        with open(profile_path, "a", encoding="utf-8") as handle:
+            handle.write(f"RUNTIME_PROFILE {label} {seconds:.6f}s {field_text}\n")
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +282,8 @@ class FunctionExecutionRequest:
         SourceBindingRuntimeContext.empty()
     )
     group_key: str | None = None
+    axis_component: str | None = None
+    axis_component_value: str | None = None
     plane_projection: RuntimePlaneProjection = field(
         default_factory=RuntimePlaneProjection.stack
     )
@@ -259,10 +300,10 @@ class FunctionChainExecutionRequest:
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
     runtime_plane_index: int
+    component_value: Any = None
     source_binding_context: SourceBindingRuntimeContext = (
         SourceBindingRuntimeContext.empty()
     )
-
 
 @dataclass(frozen=True, slots=True)
 class FunctionOutputContextRequest:
@@ -342,10 +383,10 @@ class ObjectLabelsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
             return request.output_value
         if not is_array_payload(request.output_value):
             return request.output_value
-        return object_label_payload_from_source_image(
-            request.source_payload,
-            request.output_value,
-        )
+        return SourceImageObjectLabelBuildRequest(
+            image=request.source_payload,
+            labels=request.output_value,
+        ).payload()
 
 
 @dataclass(frozen=True)
@@ -521,20 +562,23 @@ def _save_artifact_value(
     output_plan: ArtifactOutputPlan,
     value: Any,
     source_payload: Any,
+    *,
+    group_key: str | None,
 ) -> None:
     """Validate and save one planned artifact value to the memory VFS."""
-    vfs_path = output_plan.path
+    resolved_output_plan = output_plan.for_group(group_key)
+    vfs_path = resolved_output_plan.path
     axis_id = _require_axis_id(context)
     output_context_request = FunctionOutputContextRequest(
         source_payload=source_payload,
         output_value=value,
-        output_plan=output_plan,
+        output_plan=resolved_output_plan,
     )
     contextualized_value = FunctionOutputContextStrategy.for_output(
         output_context_request
     ).contextualize(output_context_request)
     runtime_value = normalize_artifact_value(
-        output_plan,
+        resolved_output_plan,
         contextualized_value,
         axis_id=axis_id,
     )
@@ -610,21 +654,23 @@ def _artifact_input_query(
     axis_id: str,
 ) -> RuntimeArtifactQuery:
     if input_plan.path != "self":
-        return RuntimeArtifactQuery.by_location(
+        return RuntimeArtifactQuery(
             name=input_plan.name,
             kind=input_plan.kind,
             axis_id=axis_id,
-            location=RuntimeArtifactLocation(
-                path=input_plan.path,
-                backend=Backend.MEMORY.value,
+            target=RuntimeArtifactLocationTarget(
+                RuntimeArtifactLocation(
+                    path=input_plan.path,
+                    backend=Backend.MEMORY.value,
+                )
             ),
         )
 
-    return RuntimeArtifactQuery.by_group(
+    return RuntimeArtifactQuery(
         name=input_plan.name,
         kind=input_plan.kind,
         axis_id=axis_id,
-        group_key=_single_input_group_key(input_plan),
+        target=RuntimeArtifactGroupTarget(_single_input_group_key(input_plan)),
     )
 
 
@@ -784,6 +830,8 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 source_binding_plan=request.source_binding_plan,
                 source_binding_context=request.source_binding_context,
                 group_key=request.group_key,
+                axis_component=request.axis_component,
+                axis_component_value=request.axis_component_value,
                 plane_projection=request.plane_projection,
             )
         )
@@ -817,6 +865,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     output_plan,
                     raw_function_output.artifacts[output_key],
                     request.main_data_arg,
+                    group_key=request.group_key,
                 )
                 profile.record_artifact_elapsed(
                     "artifact_output_save",
@@ -840,6 +889,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                         output_plan,
                         returned_artifact_values_tuple[i],
                         request.main_data_arg,
+                        group_key=request.group_key,
                     )
                     profile.record_artifact_elapsed(
                         "artifact_output_save",
@@ -871,6 +921,14 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
     for invocation in request.invocations:
         actual_callable = _resolve_invocation_callable(invocation)
         callable_name = invocation.key.function_name
+        artifact_group_key = invocation.key.group_key
+        runtime_artifact_group_key = RuntimeArtifactInvocationGroupKey(
+            invocation_group_key=artifact_group_key,
+            component_value=request.component_value,
+        ).artifact_group_key()
+        axis_component_value = (
+            None if request.component_value is None else str(request.component_value)
+        )
         debug_cursor = None
         if capture_debug_events:
             debug_cursor = DebugCursor.from_invocation(
@@ -944,12 +1002,14 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
                     invocation_options=invocation.invocation_options,
                     source_binding_plan=plan.source_binding_plan,
                     source_binding_context=request.source_binding_context,
-                    group_key=invocation.key.group_key,
+                    group_key=runtime_artifact_group_key,
+                    axis_component=plan.group_by_value,
+                    axis_component_value=axis_component_value,
                     plane_projection=RuntimePlaneProjection.for_group_key(
-                        invocation.key.group_key,
+                        runtime_artifact_group_key,
                         plane_index=(
                             request.runtime_plane_index
-                            if invocation.key.group_key is not None
+                            if runtime_artifact_group_key is not None
                             else None
                         ),
                     ),
@@ -1057,6 +1117,10 @@ def _stack_payload_metadata(raw_slices: Sequence[Any]) -> ImagePayloadMetadata:
         ),
         channel_source_paths=tuple(
             metadata.source_path
+            for metadata in slice_metadata
+        ),
+        channel_source_component_metadata=tuple(
+            metadata.source_component_metadata
             for metadata in slice_metadata
         ),
         channel_unit_interval_intensity_scales=tuple(
@@ -1224,6 +1288,8 @@ class PatternGroupRuntime:
                 f"Check that input files exist and match the expected naming convention."
             )
 
+        matching_files = self._filter_matching_files_for_group(matching_files)
+
         logger.debug(
             f"Pattern {self.pattern_repr} matched {len(matching_files)} files: {[Path(f).name for f in matching_files]}"
         )
@@ -1269,6 +1335,33 @@ class PatternGroupRuntime:
             ),
             source_binding_context=self._source_binding_context(matching_files),
         )
+
+    def _filter_matching_files_for_group(
+        self,
+        matching_files: list[str],
+    ) -> list[str]:
+        """Constrain grouped executions to files from the current component."""
+        group_component = self.plan.group_by_value
+        component_value = self.request.component_value
+        if group_component is None or component_value is None:
+            return matching_files
+
+        parser = self.context.microscope_handler.parser
+        filtered = [
+            filename
+            for filename in matching_files
+            if (
+                metadata := parser.parse_filename(Path(filename).name)
+            )
+            and str(metadata.get(group_component)) == str(component_value)
+        ]
+        if not filtered:
+            raise ValueError(
+                f"Pattern group {self.pattern_repr} for {group_component}="
+                f"{component_value!r} matched files, but none carried the "
+                f"expected grouped component. Matched files: {matching_files}"
+            )
+        return filtered
 
     def _apply_source_image_loading_semantics(
         self,
@@ -1593,6 +1686,7 @@ class PatternGroupRuntime:
                 artifact_outputs=component_artifacts.outputs,
                 source_binding_context=loaded.source_binding_context,
                 runtime_plane_index=request.component_index,
+                component_value=request.component_value,
             )
         )
 
