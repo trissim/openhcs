@@ -29,7 +29,6 @@ from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.setting_names import (
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,
-    required_setting_value,
     setting_values,
     split_symbol_names,
 )
@@ -384,18 +383,29 @@ def measurement_target_scope(
     default: str,
 ) -> MeasurementTargetScope:
     """Return a typed measurement target scope from a parsed module setting."""
-    return _measurement_target_scope(_scope_setting_value(module, setting, default))
+    return _measurement_target_scope(
+        MeasurementTargetScopeSettingResolution(
+            module=module,
+            setting=setting,
+            default=default,
+        ).value
+    )
 
 
-def _scope_setting_value(
-    module: ModuleBlock,
-    setting: SettingNameFamily,
-    default: str,
-) -> str:
-    try:
-        return required_setting_value(module, setting)
-    except ValueError:
-        return default
+@dataclass(frozen=True, slots=True)
+class MeasurementTargetScopeSettingResolution:
+    """Resolve an optional CP target-scope setting without exception fallback."""
+
+    module: ModuleBlock
+    setting: SettingNameFamily
+    default: str
+
+    @property
+    def value(self) -> str:
+        values = setting_values(self.module, self.setting)
+        if not values:
+            return self.default
+        return values[0]
 
 
 def _required_class_attr(value: RequiredAttrT | None, name: str) -> RequiredAttrT:

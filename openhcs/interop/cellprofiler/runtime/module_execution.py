@@ -125,6 +125,7 @@ from openhcs.core.special_outputs import (
 from openhcs.core.source_bindings import SourceBindingOrigin
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
+    MeasurementScopeSelection,
     FieldSpec,
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
@@ -232,8 +233,7 @@ from openhcs.interop.cellprofiler.worm_measurements import (
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
-    CellProfilerMeasurementTargetScope,
-    coerce_cellprofiler_measurement_target_scope,
+    cellprofiler_measurement_scope_selection,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
@@ -1459,7 +1459,7 @@ class CellProfilerModuleExecutor:
 
         measurement_target_scope = self.pop_measurement_target_scope(
             kwargs,
-            default=CellProfilerMeasurementTargetScope.OBJECT,
+            default=MeasurementScopeSelection.of(MeasurementScope.OBJECT),
         )
         combined_rows: list[Any] = []
         measurement_images_started_at = time.perf_counter()
@@ -2058,11 +2058,11 @@ class CellProfilerModuleExecutor:
         measurement_images: tuple["CellProfilerMeasurementImage", ...],
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         kwargs: Mapping[str, Any],
-        target_scope: CellProfilerMeasurementTargetScope,
-        ) -> list[Any]:
+        target_scope: MeasurementScopeSelection,
+    ) -> list[Any]:
         function_name = CallableContract.from_callable(object_func).function_name
         profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
-        if target_scope is not CellProfilerMeasurementTargetScope.BOTH:
+        if not target_scope.includes_all(MeasurementScope.IMAGE, MeasurementScope.OBJECT):
             return []
         policy = CellProfilerDualScopeMeasurementPolicy.for_module(self.module_name)
         if policy is None:
@@ -2145,7 +2145,7 @@ class CellProfilerModuleExecutor:
 
         self.pop_measurement_target_scope(
             kwargs,
-            default=CellProfilerMeasurementTargetScope.IMAGE,
+            default=MeasurementScopeSelection.of(MeasurementScope.IMAGE),
         )
         combined_rows: list[Any] = []
         measurement_images_started_at = time.perf_counter()
@@ -2293,10 +2293,10 @@ class CellProfilerModuleExecutor:
         self,
         kwargs: dict[str, Any],
         *,
-        default: CellProfilerMeasurementTargetScope,
-    ) -> CellProfilerMeasurementTargetScope:
-        """Consume the generated measurement target-scope kwarg for this run."""
-        return coerce_cellprofiler_measurement_target_scope(
+        default: MeasurementScopeSelection,
+    ) -> MeasurementScopeSelection:
+        """Consume the generated target-scope kwarg as OpenHCS measurement scopes."""
+        return cellprofiler_measurement_scope_selection(
             kwargs.pop(CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG, None),
             default=default,
         )

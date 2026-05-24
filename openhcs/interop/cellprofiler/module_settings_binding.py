@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+import math
+import re
 from typing import Any, ClassVar, TypeAlias, TypeVar, final
 
 from metaclass_registry import AutoRegisterMeta
@@ -1084,18 +1086,50 @@ class LegacyCellProfilerThresholdVersionAuthority(ABC):
 
     @classmethod
     def version_for(cls, module: ModuleBlock) -> int | None:
-        value = optional_setting_value(module, cls.setting_name)
-        if value is None:
-            return None
-        try:
-            return int(float(value))
-        except ValueError:
-            return None
+        return LegacyCellProfilerThresholdVersionResolution(
+            optional_setting_value(module, cls.setting_name),
+        ).version
 
     @classmethod
     def is_legacy_v10_or_older(cls, module: ModuleBlock) -> bool:
         version = cls.version_for(module)
         return version is not None and version <= 10
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyCellProfilerThresholdVersionResolution:
+    """Typed resolution of optional legacy CellProfiler threshold schema version."""
+
+    value: str | None
+
+    @property
+    def version(self) -> int | None:
+        if self.value is None:
+            return None
+        numeric = CellProfilerNumericLiteral(self.value).value
+        return int(numeric) if numeric is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerNumericLiteral:
+    """Finite numeric CellProfiler setting literal."""
+
+    raw_value: str
+
+    _NUMERIC_LITERAL_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
+    )
+
+    @property
+    def value(self) -> float | None:
+        token = self.raw_value.strip()
+        if not self._NUMERIC_LITERAL_RE.match(token):
+            return None
+        try:
+            parsed = float(token)
+        except OverflowError:
+            return None
+        return parsed if math.isfinite(parsed) else None
 
 
 def _parse_cellprofiler_threshold_setting(
@@ -3250,12 +3284,28 @@ def _translate_bound_kwargs(
 
 def _parse_colocalization_run_all_metrics(value: str) -> bool:
     """Parse modern and legacy MeasureColocalization all-metric settings."""
-    try:
-        return parse_cellprofiler_bool(value)
-    except ValueError:
-        # Older pipelines may store legacy accuracy choices such as "Accurate"
-        # in this slot. Those choices do not disable any metric family.
-        return bool(value.strip())
+    return ColocalizationRunAllMetricsSetting(value).enabled
+
+
+@dataclass(frozen=True, slots=True)
+class ColocalizationRunAllMetricsSetting:
+    """Modern boolean and legacy accuracy setting for MeasureColocalization."""
+
+    value: str
+
+    @property
+    def enabled(self) -> bool:
+        normalized = self.value.strip().lower()
+        if normalized in SettingsBinder.BOOL_TRUE:
+            return True
+        if normalized in SettingsBinder.BOOL_FALSE:
+            return False
+        return bool(self.legacy_accuracy_choice)
+
+    @property
+    def legacy_accuracy_choice(self) -> str | None:
+        normalized = self.value.strip()
+        return normalized or None
 
 
 def _parse_colocalization_costes_method(value: str) -> str:

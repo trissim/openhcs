@@ -1263,6 +1263,40 @@ class MeasurementScope(str, Enum):
     projects_runtime_slices = AliasProperty[bool]("_projects_runtime_slices")
 
 
+@dataclass(frozen=True, slots=True)
+class MeasurementScopeSelection:
+    """A closed set of measurement scopes selected for one runtime operation."""
+
+    scopes: frozenset[MeasurementScope]
+
+    def __post_init__(self) -> None:
+        scopes = frozenset(
+            coerce_enum(MeasurementScope, scope, "MeasurementScopeSelection.scopes")
+            for scope in self.scopes
+        )
+        if not scopes:
+            raise ValueError("MeasurementScopeSelection.scopes cannot be empty.")
+        object.__setattr__(self, "scopes", scopes)
+
+    @classmethod
+    def of(cls, *scopes: MeasurementScope | str) -> "MeasurementScopeSelection":
+        """Return a selection for one or more measurement scopes."""
+        return cls(
+            frozenset(
+                coerce_enum(MeasurementScope, scope, "MeasurementScope")
+                for scope in scopes
+            )
+        )
+
+    def includes(self, scope: MeasurementScope | str) -> bool:
+        """Return whether this selection includes one semantic scope."""
+        return coerce_enum(MeasurementScope, scope, "MeasurementScope") in self.scopes
+
+    def includes_all(self, *scopes: MeasurementScope | str) -> bool:
+        """Return whether this selection includes every supplied semantic scope."""
+        return all(self.includes(scope) for scope in scopes)
+
+
 class RuntimeMeasurementFeature(str, Enum):
     """Base for generated runtime measurement feature enums."""
 
@@ -1922,19 +1956,19 @@ class ObjectFeatureArrayDomainStrategy(
         """Return whether the feature array shape is valid for this domain."""
 
 
-class MeasuredObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
-    """Feature arrays indexed by compact measured-object IDs."""
+class OrdinalObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
+    """Feature arrays indexed by an ordered object-ID axis."""
 
-    domain = ObjectFeatureArrayDomain.MEASURED_OBJECT_ID
+    @abstractmethod
+    def ordinal_axis(self, context: ObjectFeatureArrayDomainContext) -> tuple[int, ...]:
+        """Return the object-ID axis that defines feature-array order."""
 
     def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
-        if context.object_id not in context.measured_object_ids:
+        axis = self.ordinal_axis(context)
+        if context.object_id not in axis:
             return None
-        value_index = context.measured_object_ids.index(context.object_id)
+        value_index = axis.index(context.object_id)
         return value_index if value_index < context.value_count else None
-
-    def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
-        return context.value_count == context.measured_object_count
 
     def value_indexes(
         self,
@@ -1942,9 +1976,21 @@ class MeasuredObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy)
     ) -> Mapping[int, int]:
         return {
             object_id: index
-            for index, object_id in enumerate(context.measured_object_ids)
+            for index, object_id in enumerate(self.ordinal_axis(context))
             if index < context.value_count
         }
+
+
+class MeasuredObjectFeatureArrayDomainStrategy(OrdinalObjectFeatureArrayDomainStrategy):
+    """Feature arrays indexed by compact measured-object IDs."""
+
+    domain = ObjectFeatureArrayDomain.MEASURED_OBJECT_ID
+
+    def ordinal_axis(self, context: ObjectFeatureArrayDomainContext) -> tuple[int, ...]:
+        return context.measured_object_ids
+
+    def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
+        return context.value_count == context.measured_object_count
 
 
 class LabelIdFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
@@ -1970,29 +2016,16 @@ class LabelIdFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
         }
 
 
-class RowOrdinalFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
+class RowOrdinalFeatureArrayDomainStrategy(OrdinalObjectFeatureArrayDomainStrategy):
     """Feature arrays indexed by the emitted row ordinal."""
 
     domain = ObjectFeatureArrayDomain.ROW_ORDINAL
 
-    def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
-        if context.object_id not in context.object_domain:
-            return None
-        value_index = context.object_domain.index(context.object_id)
-        return value_index if value_index < context.value_count else None
+    def ordinal_axis(self, context: ObjectFeatureArrayDomainContext) -> tuple[int, ...]:
+        return context.object_domain
 
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
         return context.value_count <= len(context.object_domain)
-
-    def value_indexes(
-        self,
-        context: ObjectFeatureArrayDomainContext,
-    ) -> Mapping[int, int]:
-        return {
-            object_id: index
-            for index, object_id in enumerate(context.object_domain)
-            if index < context.value_count
-        }
 
 
 class ObjectFeatureMissingValueStrategy(
