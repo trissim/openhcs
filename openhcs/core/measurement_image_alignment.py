@@ -271,9 +271,7 @@ class MeasurementDomainAlignmentRequest:
         """Return the source-axis projection contract for this request."""
         if self.plane_projector is None or not self.source_image_names:
             return None
-        if not hasattr(self.plane_projector, "plane_index_for_axis"):
-            return None
-        if not hasattr(self.plane_projector, "source_binding_axis_size"):
+        if not isinstance(self.plane_projector, RuntimePlaneAxisProjector):
             return None
         plane_index = self.plane_projector.plane_index_for_axis(
             RuntimePlaneAxisProjectionRequest(

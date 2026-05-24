@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import InitVar, dataclass, replace
+from enum import Enum
 import logging
 from pathlib import Path
 from types import MappingProxyType
@@ -1127,6 +1128,7 @@ class ObjectLabelValue(
     labels: Any
     unedited_labels: Any | None
     small_removed_labels: Any | None
+    representation: ObjectLabelRepresentation
     plane_axis: RuntimePlaneAxis
     spatial_origin_yx: tuple[int, int] | None
     source_spatial_shape_yx: tuple[int, int] | None
@@ -2813,7 +2815,10 @@ class ObjectLabelContainerPlaneStackContract(
         payload = self.typed_value(value)
         data_count = ObjectLabelDataPlaneStackContract.plane_count(payload.labels)
         if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
-            return self.source_backed_plane_count(payload, data_count)
+            return ObjectLabelSourceBackedPlaneCountResolution(
+                payload,
+                data_count,
+            ).result.count
         declared_count = (
             len(payload.declared_object_id_domains)
             if payload.declared_object_id_domains
@@ -2829,30 +2834,61 @@ class ObjectLabelContainerPlaneStackContract(
                 return data_count
         return declared_count if declared_count is not None else data_count
 
-    @staticmethod
-    def source_backed_plane_count(
-        payload: ObjectLabelValue,
-        data_count: int | None,
-    ) -> int | None:
-        """Return plane count for source-provenanced stacks lacking domain metadata."""
-        if data_count is None or data_count <= 1:
-            return None
-        source_counts = tuple(
+
+class ObjectLabelSourceBackedPlaneCountAbsenceReason(str, Enum):
+    """Reasons source provenance does not establish an object-label plane count."""
+
+    NOT_PLANE_STACK = "not_plane_stack"
+    NO_SOURCE_PROVENANCE = "no_source_provenance"
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelSourceBackedPlaneCountResult:
+    """Typed result for source-provenanced object-label plane counts."""
+
+    count: int | None
+    absence_reason: ObjectLabelSourceBackedPlaneCountAbsenceReason | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelSourceBackedPlaneCountResolution:
+    """Resolve source-provenanced stacks that lack explicit domain metadata."""
+
+    payload: ObjectLabelValue
+    data_count: int | None
+
+    @property
+    def result(self) -> ObjectLabelSourceBackedPlaneCountResult:
+        if self.data_count is None or self.data_count <= 1:
+            return ObjectLabelSourceBackedPlaneCountResult(
+                None,
+                ObjectLabelSourceBackedPlaneCountAbsenceReason.NOT_PLANE_STACK,
+            )
+        if not self.source_counts:
+            return ObjectLabelSourceBackedPlaneCountResult(
+                None,
+                ObjectLabelSourceBackedPlaneCountAbsenceReason.NO_SOURCE_PROVENANCE,
+            )
+        self.validate_source_counts()
+        return ObjectLabelSourceBackedPlaneCountResult(self.data_count)
+
+    @property
+    def source_counts(self) -> tuple[int, ...]:
+        return tuple(
             count
             for count in (
-                len(payload.channel_source_paths),
-                len(payload.channel_source_component_metadata),
+                len(self.payload.channel_source_paths),
+                len(self.payload.channel_source_component_metadata),
             )
             if count > 0
         )
-        if not source_counts:
-            return None
-        if any(count != data_count for count in source_counts):
+
+    def validate_source_counts(self) -> None:
+        if any(count != self.data_count for count in self.source_counts):
             raise ValueError(
-                f"{type(payload).__name__} source provenance declares plane counts "
-                f"{source_counts!r}, but label data carries {data_count} planes."
+                f"{type(self.payload).__name__} source provenance declares plane counts "
+                f"{self.source_counts!r}, but label data carries {self.data_count} planes."
             )
-        return data_count
 
 
 @dataclass(frozen=True, slots=True)
