@@ -129,6 +129,8 @@ from openhcs.core.runtime_semantics import (
     FieldSpec,
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
+    MeasurementRowAxisState,
+    ObjectMeasurementVectorDomain,
     ObjectLocationMeasurementFeature,
     ObjectShapeMeasurementFeature,
     ObjectLabelDomain,
@@ -584,6 +586,36 @@ class CellProfilerDenseLabelArgumentProfileFields:
             ("data_type", type(dense).__name__),
             ("data_shape", tuple(np.shape(dense))),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProfilePayloadInspection:
+    """Typed payload data inspection for runtime profiling fields."""
+
+    value: Any
+
+    @property
+    def data(self) -> Any:
+        return image_payload_data(self.value)
+
+    @property
+    def data_array(self) -> np.ndarray | None:
+        return self.data if isinstance(self.data, np.ndarray) else None
+
+    @property
+    def type_name(self) -> str:
+        return type(self.data).__name__
+
+    @property
+    def shape(self) -> Any | None:
+        data_array = self.data_array
+        return None if data_array is None else data_array.shape
+
+    @property
+    def nbytes(self) -> int | None:
+        data_array = self.data_array
+        return None if data_array is None else int(data_array.nbytes)
+
 
 def _cellprofiler_image_payload(payload: Any) -> Any:
     """Return payload in CellProfiler's float image intensity domain."""
@@ -1179,15 +1211,11 @@ class CellProfilerModuleExecutor:
 
     def profile_payload_fields(self, prefix: str, value: Any) -> dict[str, Any]:
         """Return cheap payload shape/size fields for this module's runtime profile."""
-        try:
-            data = image_payload_data(value)
-        except Exception:
-            data = value
-        data_array = data if isinstance(data, np.ndarray) else None
+        inspection = RuntimeProfilePayloadInspection(value)
         return {
-            f"{prefix}_type": type(data).__name__,
-            f"{prefix}_shape": None if data_array is None else data_array.shape,
-            f"{prefix}_nbytes": None if data_array is None else data_array.nbytes,
+            f"{prefix}_type": inspection.type_name,
+            f"{prefix}_shape": inspection.shape,
+            f"{prefix}_nbytes": inspection.nbytes,
         }
 
     def prepare(self, func: Callable[..., Any]) -> None:
@@ -1986,9 +2014,7 @@ class CellProfilerModuleExecutor:
                         else object_inputs[0].name if len(object_inputs) == 1 else None
                     ),
                     source_image_name=combined_source_image_name,
-                    axis_state=(
-                        CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER
-                    ),
+                    axis_state=MeasurementRowAxisState.IMAGE_NUMBER,
                 )
             )
         if not combined_rows and not columnar_rows:
@@ -2032,9 +2058,7 @@ class CellProfilerModuleExecutor:
                         else None
                     ),
                     source_image_name=combined_source_image_name,
-                    axis_state=(
-                        CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER
-                    ),
+                    axis_state=MeasurementRowAxisState.IMAGE_NUMBER,
                 )
             )
         profile_events.append(
@@ -2279,7 +2303,7 @@ class CellProfilerModuleExecutor:
                         )
                     )
                 ),
-                axis_state=CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER,
+                axis_state=MeasurementRowAxisState.IMAGE_NUMBER,
             ),
         )
         profiler.record(
@@ -4101,43 +4125,6 @@ class CellProfilerMeasurementVector:
         return float(values[0]) if values.size == 1 else values
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerMeasurementVectorDomain:
-    """Bind object-measurement vectors to the current object-label domain."""
-
-    labels: Any
-    value_slices: tuple[Any, ...]
-
-    @property
-    def label_slices(self) -> tuple[Any, ...]:
-        label_array = np.asarray(self.labels)
-        if label_array.ndim <= 2:
-            return (label_array,)
-        return tuple(label_array[index] for index in range(label_array.shape[0]))
-
-    @property
-    def aligned_value_slices(self) -> tuple[np.ndarray, ...]:
-        label_slices = self.label_slices
-        value_slices = tuple(self.value_slices)
-        if len(value_slices) != len(label_slices):
-            return tuple(np.asarray(values) for values in value_slices)
-        return tuple(
-            self.aligned_values(values, label_slice)
-            for values, label_slice in zip(value_slices, label_slices, strict=True)
-        )
-
-    @staticmethod
-    def aligned_values(values: Any, label_slice: Any) -> np.ndarray:
-        value_array = np.asarray(values, dtype=np.float64).reshape(-1)
-        object_ids = dense_object_label_id_domain(label_slice)
-        if value_array.size == len(object_ids):
-            return value_array
-        return ObjectLabelMeasurementValues.from_positional_values(
-            object_ids,
-            value_array,
-        ).values
-
-
 class CellProfilerObjectMeasurementVectorSource(Enum):
     """Source authority for object-measurement vector binding."""
 
@@ -4520,7 +4507,7 @@ class CellProfilerObjectMeasurementVectorBinding:
             current_image=self.request.current_image,
         )
         return CellProfilerMeasurementVector(
-            CellProfilerMeasurementVectorDomain(
+            ObjectMeasurementVectorDomain(
                 labels,
                 value_slices,
             ).aligned_value_slices
@@ -4565,7 +4552,7 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
         )
         return tuple(
             CellProfilerMeasurementVector(
-                CellProfilerMeasurementVectorDomain(
+                ObjectMeasurementVectorDomain(
                     binding.measurement_labels,
                     vectors[binding.object_name],
                 ).aligned_value_slices
@@ -10225,13 +10212,6 @@ class CellProfilerMeasurementProjectionRequest:
     need_row_mappings: bool = False
 
 
-class CellProfilerMeasurementAxisState(Enum):
-    """Declared axis state for rows entering measurement materialization."""
-
-    RUNTIME_AXES = "runtime_axes"
-    CELLPROFILER_IMAGE_NUMBER = "cellprofiler_image_number"
-
-
 class CellProfilerMeasurementAxisStateStrategy(
     ABC,
     metaclass=AutoRegisterMeta,
@@ -10239,12 +10219,12 @@ class CellProfilerMeasurementAxisStateStrategy(
     """Registered materialization policy for measurement row-axis state."""
 
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
-    registry_key: ClassVar[CellProfilerMeasurementAxisState | None] = None
+    registry_key: ClassVar[MeasurementRowAxisState | None] = None
 
     @classmethod
     def for_state(
         cls,
-        state: CellProfilerMeasurementAxisState,
+        state: MeasurementRowAxisState,
     ) -> "CellProfilerMeasurementAxisStateStrategy":
         strategy_type = cls.__registry__.get(state)
         if strategy_type is None:
@@ -10266,33 +10246,31 @@ class CellProfilerMeasurementOutputAxisState:
     def for_rows(
         cls,
         rows: Sequence[Any] | ColumnarRows,
-    ) -> CellProfilerMeasurementAxisState:
+    ) -> MeasurementRowAxisState:
         if isinstance(rows, ColumnarRows):
             return cls.for_columnar_rows(rows)
         return cls.for_row_sequence(rows)
 
     @staticmethod
-    def for_columnar_rows(rows: ColumnarRows) -> CellProfilerMeasurementAxisState:
+    def for_columnar_rows(rows: ColumnarRows) -> MeasurementRowAxisState:
         columns = tuple(str(column) for column in rows.columns)
-        if MeasurementRowAxisField.IMAGE_NUMBER.value in columns:
-            return CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER
-        return CellProfilerMeasurementAxisState.RUNTIME_AXES
+        return MeasurementRowAxisState.for_field_names(columns)
 
     @staticmethod
-    def for_row_sequence(rows: Sequence[Any]) -> CellProfilerMeasurementAxisState:
+    def for_row_sequence(rows: Sequence[Any]) -> MeasurementRowAxisState:
         projection = CellProfilerRowSequenceAxisProjection.from_rows(
             rows,
             need_row_mappings=True,
         )
-        if projection.has_image_number:
-            return CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER
-        return CellProfilerMeasurementAxisState.RUNTIME_AXES
+        return MeasurementRowAxisState.for_image_number_presence(
+            has_image_number=projection.has_image_number,
+        )
 
 
 class RuntimeAxisMeasurementRowsStrategy(CellProfilerMeasurementAxisStateStrategy):
     """Project runtime slice axes into CellProfiler ImageNumber space."""
 
-    registry_key = CellProfilerMeasurementAxisState.RUNTIME_AXES
+    registry_key = MeasurementRowAxisState.RUNTIME_AXES
 
     def rows_for_materialization(
         self,
@@ -10306,7 +10284,7 @@ class CellProfilerImageNumberMeasurementRowsStrategy(
 ):
     """Preserve rows already projected into CellProfiler ImageNumber space."""
 
-    registry_key = CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER
+    registry_key = MeasurementRowAxisState.IMAGE_NUMBER
 
     def rows_for_materialization(
         self,
@@ -10327,9 +10305,7 @@ class CellProfilerMeasurementMaterializationRequest:
 
     name: str
     projection_request: CellProfilerMeasurementProjectionRequest
-    axis_state: CellProfilerMeasurementAxisState = (
-        CellProfilerMeasurementAxisState.RUNTIME_AXES
-    )
+    axis_state: MeasurementRowAxisState = MeasurementRowAxisState.RUNTIME_AXES
     fields: tuple[FieldSpec, ...] = ()
 
     @classmethod
@@ -10344,9 +10320,7 @@ class CellProfilerMeasurementMaterializationRequest:
         source_image_name: str | None = None,
         source_image_payload: Any | None = None,
         current_image: Any | None = None,
-        axis_state: CellProfilerMeasurementAxisState = (
-            CellProfilerMeasurementAxisState.RUNTIME_AXES
-        ),
+        axis_state: MeasurementRowAxisState = MeasurementRowAxisState.RUNTIME_AXES,
     ) -> "CellProfilerMeasurementMaterializationRequest":
         return cls(
             name=name,

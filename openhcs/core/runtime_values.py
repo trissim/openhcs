@@ -1122,9 +1122,6 @@ class ObjectLabelValue(
 ):
     """Nominal object-label carrier with dense labels and domain metadata."""
 
-    __registry_key__ = "__name__"
-    __skip_if_no_key__ = True
-
     labels: Any
     unedited_labels: Any | None
     small_removed_labels: Any | None

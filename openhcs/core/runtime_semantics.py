@@ -989,6 +989,43 @@ class ObjectLabelMeasurementValues:
         return output
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementVectorDomain:
+    """Bind object-measurement vectors to the current object-label domain."""
+
+    labels: Any
+    value_slices: tuple[Any, ...]
+
+    @property
+    def label_slices(self) -> tuple[Any, ...]:
+        label_array = np.asarray(self.labels)
+        if label_array.ndim <= 2:
+            return (label_array,)
+        return tuple(label_array[index] for index in range(label_array.shape[0]))
+
+    @property
+    def aligned_value_slices(self) -> tuple[np.ndarray, ...]:
+        label_slices = self.label_slices
+        value_slices = tuple(self.value_slices)
+        if len(value_slices) != len(label_slices):
+            return tuple(np.asarray(values) for values in value_slices)
+        return tuple(
+            self.aligned_values(values, label_slice)
+            for values, label_slice in zip(value_slices, label_slices, strict=True)
+        )
+
+    @staticmethod
+    def aligned_values(values: Any, label_slice: Any) -> np.ndarray:
+        value_array = np.asarray(values, dtype=np.float64).reshape(-1)
+        object_ids = dense_object_label_id_domain(label_slice)
+        if value_array.size == len(object_ids):
+            return value_array
+        return ObjectLabelMeasurementValues.from_positional_values(
+            object_ids,
+            value_array,
+        ).values
+
+
 class ObjectLabelIdDomainStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -1874,6 +1911,29 @@ class MeasurementRowValueField(str, Enum):
     MEASUREMENT_VALUE = "measurement_value"
     VALUE = "value"
     MEAN_VALUE = "mean_value"
+
+
+class MeasurementRowAxisState(str, Enum):
+    """Whether measurement rows are runtime-axis keyed or image-number keyed."""
+
+    RUNTIME_AXES = "runtime_axes"
+    IMAGE_NUMBER = "image_number"
+
+    @classmethod
+    def for_field_names(cls, field_names: Iterable[str]) -> "MeasurementRowAxisState":
+        """Return row-axis state from declared measurement field names."""
+        if MeasurementRowAxisField.IMAGE_NUMBER.value in frozenset(field_names):
+            return cls.IMAGE_NUMBER
+        return cls.RUNTIME_AXES
+
+    @classmethod
+    def for_image_number_presence(
+        cls,
+        *,
+        has_image_number: bool,
+    ) -> "MeasurementRowAxisState":
+        """Return row-axis state from precomputed ImageNumber presence."""
+        return cls.IMAGE_NUMBER if has_image_number else cls.RUNTIME_AXES
 
 
 class ObjectFeatureArrayDomain(str, Enum):

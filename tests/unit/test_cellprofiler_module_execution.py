@@ -33,7 +33,11 @@ from openhcs.core.source_bindings import (
     SourceBindingOrigin,
     SourceSelector,
 )
-from openhcs.core.runtime_semantics import MeasurementRowAxisField, ObjectLabelRepresentation
+from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
+    MeasurementRowAxisState,
+    ObjectLabelRepresentation,
+)
 from openhcs.core.measurement_image_alignment import (
     MeasurementDomainAlignmentRequest,
     MeasurementLabelSourceAlignmentStrategy,
@@ -85,7 +89,6 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerMeasurementRowsProjection,
     CellProfilerMeasurementProjectionSource,
     CellProfilerMeasurementProjectionRequest,
-    CellProfilerMeasurementAxisState,
     CellProfilerMeasurementOutputAxisState,
     CellProfilerMeasurementMaterializationRequest,
     CellProfilerMeasurementMaterializer,
@@ -1814,7 +1817,7 @@ def test_measurement_materializer_preserves_declared_cellprofiler_image_numbers(
             name="AreaShape",
             rows=rows,
             object_name="Cells",
-            axis_state=CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER,
+            axis_state=MeasurementRowAxisState.IMAGE_NUMBER,
         )
     )
 
@@ -1830,7 +1833,7 @@ def test_cellprofiler_measurement_output_axis_state_preserves_declared_image_num
 
     assert (
         CellProfilerMeasurementOutputAxisState.for_rows(rows)
-        is CellProfilerMeasurementAxisState.CELLPROFILER_IMAGE_NUMBER
+        is MeasurementRowAxisState.IMAGE_NUMBER
     )
 
 
@@ -1842,7 +1845,7 @@ def test_cellprofiler_measurement_output_axis_state_projects_runtime_slice_rows(
 
     assert (
         CellProfilerMeasurementOutputAxisState.for_rows(rows)
-        is CellProfilerMeasurementAxisState.RUNTIME_AXES
+        is MeasurementRowAxisState.RUNTIME_AXES
     )
 
 
