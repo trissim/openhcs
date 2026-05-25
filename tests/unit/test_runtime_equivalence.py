@@ -5141,7 +5141,7 @@ def test_runtime_reference_artifact_equivalence_matches_multi_source_image_measu
     reference_root.mkdir()
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
-        "ImageNumber,Correlation_Correlation_Stain1_Stain2\n"
+        "ImageNumber,Correlation_Correlation_Stain2_Stain1\n"
         "1,0.5\n",
         encoding="utf-8",
     )
@@ -5221,7 +5221,7 @@ def test_runtime_reference_artifact_equivalence_matches_reversed_pair_features(
     assert report.is_equivalent
 
 
-def test_runtime_reference_artifact_equivalence_matches_colocalization_first_second_correlation_and_overlap(
+def test_runtime_reference_artifact_equivalence_matches_colocalization_correlation_and_overlap_orientation(
     tmp_path: Path,
 ) -> None:
     reference_root = tmp_path / "native"
@@ -5229,8 +5229,8 @@ def test_runtime_reference_artifact_equivalence_matches_colocalization_first_sec
     reference_root.mkdir()
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
-        "ImageNumber,Correlation_Correlation_Stain1_Stain2,"
-        "Correlation_Overlap_Stain1_Stain2\n"
+        "ImageNumber,Correlation_Correlation_Stain2_Stain1,"
+        "Correlation_Overlap_Stain2_Stain1\n"
         "1,0.5,0.9\n",
         encoding="utf-8",
     )

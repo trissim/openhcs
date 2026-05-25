@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from types import MappingProxyType
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -16,6 +17,7 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
+from openhcs.core.runtime_values import ColumnarRows
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 from openhcs.interop.cellprofiler.calculate_math_settings import (
@@ -39,6 +41,19 @@ class MathResult:
     operation: str
     object_label: int | None = None
     object_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MathResultColumnarRows(ColumnarRows):
+    """Columnar CalculateMath result rows for object-vector outputs."""
+
+    columns: MappingProxyType[str, Any]
+
+    def __len__(self) -> int:
+        return len(next(iter(self.columns.values()))) if self.columns else 0
+
+    def __iter__(self):
+        yield from self.row_mappings()
 
 
 @dataclass(frozen=True)
@@ -375,7 +390,7 @@ class MathResultRows:
     request: MathCalculationRequest
 
     @property
-    def rows(self) -> MathResult | list[MathResult]:
+    def rows(self) -> MathResult | MathResultColumnarRows:
         result_values = np.asarray(self.result, dtype=float)
         feature_name = f"Math_{self.request.output_name}"
         if result_values.ndim == 0:
@@ -400,21 +415,40 @@ class MathResultRows:
             self.request.operand2.value,
             len(flat_results),
         )
-        return [
-            MathResult(
-                slice_index=0,
-                object_name=object_name,
-                object_label=index + 1,
-                output_name=self.request.output_name,
-                feature_name=feature_name,
-                result_value=float_or_nan(result_value),
-                operand1_value=float_or_nan(operand1_values[index]),
-                operand2_value=float_or_nan(operand2_values[index]),
-                operation=self.request.operation.value,
+        object_count = len(flat_results)
+        row_count = object_count * len(object_names)
+        object_labels = np.tile(np.arange(1, object_count + 1), len(object_names))
+        result_column = np.tile(
+            np.asarray([float_or_nan(value) for value in flat_results], dtype=float),
+            len(object_names),
+        )
+        operand1_column = np.tile(
+            np.asarray([float_or_nan(value) for value in operand1_values], dtype=float),
+            len(object_names),
+        )
+        operand2_column = np.tile(
+            np.asarray([float_or_nan(value) for value in operand2_values], dtype=float),
+            len(object_names),
+        )
+        return MathResultColumnarRows(
+            MappingProxyType(
+                {
+                    "slice_index": np.zeros(row_count, dtype=np.int64),
+                    "object_name": tuple(
+                        object_name
+                        for object_name in object_names
+                        for _index in range(object_count)
+                    ),
+                    "object_label": object_labels,
+                    "output_name": (self.request.output_name,) * row_count,
+                    "feature_name": (feature_name,) * row_count,
+                    "result_value": result_column,
+                    "operand1_value": operand1_column,
+                    "operand2_value": operand2_column,
+                    "operation": (self.request.operation.value,) * row_count,
+                }
             )
-            for object_name in object_names
-            for index, result_value in enumerate(flat_results)
-        ]
+        )
 
 
 @dataclass(frozen=True)
@@ -424,7 +458,7 @@ class CalculateMathExecution:
     request: MathCalculationRequest
 
     @property
-    def result_rows(self) -> MathResult | list[MathResult]:
+    def result_rows(self) -> MathResult | MathResultColumnarRows | list[MathResult]:
         aligned_operands = MathOperandSliceAlignment(self.request).aligned_operands
         if aligned_operands is None:
             return MathResultRows(self.scalar_result(self.request), self.request).rows

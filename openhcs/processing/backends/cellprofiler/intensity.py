@@ -62,6 +62,7 @@ from openhcs.processing.backends.cellprofiler.intensity_object_quantiles_numba i
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from skimage.exposure import rescale_intensity as skimage_rescale
 
 
 class RescaleMethod(Enum):
@@ -273,23 +274,48 @@ class ObjectIntensityMeasurement:
         ]
 
 
-@dataclass(frozen=True, slots=True)
-class ObjectIntensityMeasurementRows(ColumnarRows):
-    """Columnar object-intensity measurements for runtime lookup paths."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ObjectIntensityMeasurementAxisContext:
+    """Runtime row-axis context for one object-intensity measurement plane."""
 
-    arrays: ObjectIntensityArrays
     slice_index: int
     object_domain: tuple[int, ...] | None = None
     row_identity: MeasurementObjectRowIdentity | None = None
+
+    def object_labels_for(self, measured_labels: np.ndarray) -> np.ndarray:
+        return np.asarray(
+            self.object_domain
+            if self.object_domain is not None
+            else tuple(int(label) for label in measured_labels),
+            dtype=np.int32,
+        )
+
+    def axis_columns_for(self, row_count: int) -> dict[str, np.ndarray]:
+        columns: dict[str, np.ndarray] = {
+            "slice_index": np.full(row_count, self.slice_index, dtype=np.int64),
+            "image_number": np.full(row_count, self.slice_index + 1, dtype=np.int64),
+        }
+        if self.row_identity is not None:
+            columns[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = np.full(
+                row_count,
+                self.row_identity.value,
+                dtype=object,
+            )
+        return columns
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityMeasurementRows(
+    ObjectIntensityMeasurementAxisContext,
+    ColumnarRows,
+):
+    """Columnar object-intensity measurements for runtime lookup paths."""
+
+    arrays: ObjectIntensityArrays
     _columns: dict[str, Any] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object_labels = np.asarray(
-            self.object_domain
-            if self.object_domain is not None
-            else tuple(int(label) for label in self.arrays.object_labels),
-            dtype=np.int32,
-        )
+        object_labels = self.object_labels_for(self.arrays.object_labels)
         row_count = int(object_labels.size)
         measured_index_by_label = {
             int(label): index for index, label in enumerate(self.arrays.object_labels)
@@ -304,9 +330,8 @@ class ObjectIntensityMeasurementRows(ColumnarRows):
             dtype=np.int64,
         )
         measured_mask = measured_indexes >= 0
-        columns = {
-            "slice_index": np.full(row_count, self.slice_index, dtype=np.int64),
-            "image_number": np.full(row_count, self.slice_index + 1, dtype=np.int64),
+        columns: dict[str, Any] = {
+            **self.axis_columns_for(row_count),
             "object_label": object_labels,
             "integrated_intensity": _align_intensity_column(
                 self.arrays.integrated_intensity, measured_indexes, measured_mask
@@ -384,12 +409,6 @@ class ObjectIntensityMeasurementRows(ColumnarRows):
                 self.arrays.max_intensity_z, measured_indexes, measured_mask
             ),
         }
-        if self.row_identity is not None:
-            columns[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = np.full(
-                row_count,
-                self.row_identity.value,
-                dtype=object,
-            )
         object.__setattr__(self, "_columns", columns)
 
     columns: ClassVar[AliasProperty[dict[str, Any]]] = AliasProperty("_columns")
@@ -468,15 +487,12 @@ class ObjectIntensityResults:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectIntensityMeasurementRequest:
+class ObjectIntensityMeasurementRequest(ObjectIntensityMeasurementAxisContext):
     """Executable request for one object-intensity image/label plane."""
 
     image: np.ndarray
     labels: ObjectIntensityLabelInput
-    slice_index: int
     backend_provider: CellProfilerBackendProvider | None
-    object_domain: tuple[int, ...] | None = None
-    row_identity: MeasurementObjectRowIdentity | None = None
 
     @property
     def measurement_image(self) -> np.ndarray:
@@ -517,9 +533,11 @@ class ObjectIntensityMeasurementRequest:
         """Return the object-intensity row domain without fabricating sparse IDs."""
         if self.object_domain is not None:
             return self.object_domain
-        if getattr(self.labels, "declared_object_count", None) is not None:
+        if not isinstance(self.labels, ObjectLabelValue):
+            return dense_object_label_id_domain(self.labels)
+        if self.labels.declared_object_count is not None:
             return dense_object_label_extent_id_domain(self.labels)
-        declared_ids = tuple(int(label) for label in getattr(self.labels, "declared_object_ids", ()) or ())
+        declared_ids = self.labels.declared_object_ids
         if declared_ids:
             if len(declared_ids) == 1:
                 return declared_ids
@@ -545,7 +563,7 @@ class ObjectIntensityMeasurementRequest:
         )
         return ObjectIntensityMeasurementRows(
             intensity_arrays,
-            self.slice_index,
+            slice_index=self.slice_index,
             object_domain=self.measurement_object_domain,
             row_identity=self.row_identity,
         )
@@ -903,6 +921,148 @@ def measure_image_intensity_masked(
     return image, measurements
 
 
+@dataclass(frozen=True, slots=True)
+class RescaleIntensityContext:
+    """Normalized settings and image data for one intensity rescale operation."""
+
+    data: np.ndarray
+    automatic_low: AutomaticLow
+    automatic_high: AutomaticHigh
+    source_low: float
+    source_high: float
+    dest_low: float
+    dest_high: float
+    divisor_value: float
+
+    @classmethod
+    def from_settings(
+        cls,
+        image: np.ndarray,
+        *,
+        automatic_low: AutomaticLow,
+        automatic_high: AutomaticHigh,
+        source_low: float,
+        source_high: float,
+        dest_low: float,
+        dest_high: float,
+        divisor_value: float,
+    ) -> "RescaleIntensityContext":
+        return cls(
+            data=image.astype(np.float64),
+            automatic_low=coerce_cellprofiler_enum(AutomaticLow, automatic_low),
+            automatic_high=coerce_cellprofiler_enum(AutomaticHigh, automatic_high),
+            source_low=source_low,
+            source_high=source_high,
+            dest_low=dest_low,
+            dest_high=dest_high,
+            divisor_value=divisor_value,
+        )
+
+    @property
+    def source_range(self) -> tuple[float, float]:
+        return rescale_source_range(
+            self.data,
+            self.automatic_low,
+            self.automatic_high,
+            self.source_low,
+            self.source_high,
+        )
+
+
+class RescaleMethodRunner(ABC, metaclass=AutoRegisterMeta):
+    """Registered implementation for one CellProfiler rescale method."""
+
+    __registry_key__ = "rescale_method"
+    __skip_if_no_key__ = True
+    rescale_method: ClassVar[RescaleMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: RescaleMethod) -> "RescaleMethodRunner":
+        return cls.__registry__[method]()
+
+    @abstractmethod
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        """Return float64 rescaled image data."""
+
+
+class StretchRescaleMethodRunner(RescaleMethodRunner):
+    """Stretch image intensities to the unit interval."""
+
+    rescale_method = RescaleMethod.STRETCH
+
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        in_min = np.min(context.data)
+        in_max = np.max(context.data)
+        if in_min == in_max:
+            return np.zeros_like(context.data)
+        return skimage_rescale(
+            context.data,
+            in_range=(in_min, in_max),
+            out_range=(0.0, 1.0),
+        )
+
+
+class ManualInputRangeRescaleMethodRunner(RescaleMethodRunner):
+    """Rescale from a declared input range to the unit interval."""
+
+    rescale_method = RescaleMethod.MANUAL_INPUT_RANGE
+
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        return skimage_rescale(
+            context.data,
+            in_range=context.source_range,
+            out_range=(0.0, 1.0),
+        )
+
+
+class ManualIoRangeRescaleMethodRunner(RescaleMethodRunner):
+    """Rescale from a declared input range to a declared output range."""
+
+    rescale_method = RescaleMethod.MANUAL_IO_RANGE
+
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        return skimage_rescale(
+            context.data,
+            in_range=context.source_range,
+            out_range=(context.dest_low, context.dest_high),
+        )
+
+
+class DivideByImageMinimumRescaleMethodRunner(RescaleMethodRunner):
+    """Divide image intensities by the image minimum."""
+
+    rescale_method = RescaleMethod.DIVIDE_BY_IMAGE_MINIMUM
+
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        src_min = np.min(context.data)
+        if src_min == 0.0:
+            raise ZeroDivisionError("Cannot divide pixel intensity by 0.")
+        return context.data / src_min
+
+
+class DivideByImageMaximumRescaleMethodRunner(RescaleMethodRunner):
+    """Divide image intensities by the image maximum."""
+
+    rescale_method = RescaleMethod.DIVIDE_BY_IMAGE_MAXIMUM
+
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        src_max = np.max(context.data)
+        if src_max == 0.0:
+            src_max = 1.0
+        return context.data / src_max
+
+
+class DivideByValueRescaleMethodRunner(RescaleMethodRunner):
+    """Divide image intensities by a declared scalar."""
+
+    rescale_method = RescaleMethod.DIVIDE_BY_VALUE
+
+    def run(self, context: RescaleIntensityContext) -> np.ndarray:
+        if context.divisor_value == 0.0:
+            raise ZeroDivisionError("Cannot divide pixel intensity by 0.")
+        return context.data / context.divisor_value
+
+
 @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 def rescale_intensity(
@@ -917,72 +1077,19 @@ def rescale_intensity(
     divisor_value: float = 1.0,
 ) -> np.ndarray:
     """Rescale CellProfiler image intensity using its declared range policy."""
-    from skimage.exposure import rescale_intensity as skimage_rescale
-
     rescale_method = coerce_cellprofiler_enum(RescaleMethod, rescale_method)
-    automatic_low = coerce_cellprofiler_enum(AutomaticLow, automatic_low)
-    automatic_high = coerce_cellprofiler_enum(AutomaticHigh, automatic_high)
-    data = image.astype(np.float64)
-
-    if rescale_method == RescaleMethod.STRETCH:
-        in_min = np.min(data)
-        in_max = np.max(data)
-        if in_min == in_max:
-            return np.zeros_like(data)
-        rescaled = skimage_rescale(
-            data,
-            in_range=(in_min, in_max),
-            out_range=(0.0, 1.0),
+    rescaled = RescaleMethodRunner.for_method(rescale_method).run(
+        RescaleIntensityContext.from_settings(
+            image,
+            automatic_low=automatic_low,
+            automatic_high=automatic_high,
+            source_low=source_low,
+            source_high=source_high,
+            dest_low=dest_low,
+            dest_high=dest_high,
+            divisor_value=divisor_value,
         )
-    elif rescale_method == RescaleMethod.MANUAL_INPUT_RANGE:
-        rescaled = skimage_rescale(
-            data,
-            in_range=rescale_source_range(
-                data,
-                automatic_low,
-                automatic_high,
-                source_low,
-                source_high,
-            ),
-            out_range=(0.0, 1.0),
-        )
-    elif rescale_method == RescaleMethod.MANUAL_IO_RANGE:
-        rescaled = skimage_rescale(
-            data,
-            in_range=rescale_source_range(
-                data,
-                automatic_low,
-                automatic_high,
-                source_low,
-                source_high,
-            ),
-            out_range=(dest_low, dest_high),
-        )
-    elif rescale_method == RescaleMethod.DIVIDE_BY_IMAGE_MINIMUM:
-        src_min = np.min(data)
-        if src_min == 0.0:
-            raise ZeroDivisionError("Cannot divide pixel intensity by 0.")
-        rescaled = data / src_min
-    elif rescale_method == RescaleMethod.DIVIDE_BY_IMAGE_MAXIMUM:
-        src_max = np.max(data)
-        if src_max == 0.0:
-            src_max = 1.0
-        rescaled = data / src_max
-    elif rescale_method == RescaleMethod.DIVIDE_BY_VALUE:
-        if divisor_value == 0.0:
-            raise ZeroDivisionError("Cannot divide pixel intensity by 0.")
-        rescaled = data / divisor_value
-    else:
-        in_min = np.min(data)
-        in_max = np.max(data)
-        if in_min == in_max:
-            return np.zeros_like(data)
-        rescaled = skimage_rescale(
-            data,
-            in_range=(in_min, in_max),
-            out_range=(0.0, 1.0),
-        )
-
+    )
     return rescaled.astype(np.float32)
 
 

@@ -11,9 +11,7 @@ from functools import lru_cache
 from inspect import Parameter, get_annotations, signature, unwrap
 import json
 import logging
-import math
 import os
-import re
 import time
 from types import MappingProxyType
 from typing import Any, ClassVar, TypeVar, get_args, get_origin, get_type_hints
@@ -90,6 +88,7 @@ from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjection,
     RuntimeSliceProjectionStrategy,
 )
+from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
@@ -103,9 +102,17 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     MEASUREMENT_VALUE_FIELDS,
     ConcatenatedColumnarRows,
+    MeasurementColumnarImageNumberProjection,
+    MeasurementColumnarSliceIndexProjection,
     MeasurementFeatureQuery,
+    MeasurementProjectedColumnarRows,
+    MeasurementRowSequenceAxisProjection,
+    MeasurementSparseColumnarRows,
+    MEASUREMENT_SPARSE_CELL,
+    MeasurementSliceIndexImageNumberProjection,
     MeasurementTableAxisQuery,
     MeasurementRowOwnership,
+    ProjectedMeasurementRows,
     annotate_measurement_row_object,
     annotate_measurement_row_source_image,
     columnar_row_values,
@@ -130,6 +137,7 @@ from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
     MeasurementRowAxisState,
+    MeasurementScalarLiteral,
     ObjectMeasurementVectorDomain,
     ObjectLocationMeasurementFeature,
     ObjectShapeMeasurementFeature,
@@ -271,8 +279,6 @@ from openhcs.interop.cellprofiler.runtime.adapter import (
 )
 
 _MODULE_NAME_REGISTRY_KEY = "module_name"
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
-_PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
 _CELLPROFILER_IMAGE_OVERRIDE_KWARG = "_cellprofiler_image_override"
 _CELLPROFILER_EXECUTION_MODE_OVERRIDE_KWARG = "_cellprofiler_execution_mode_override"
 _SLICE_INDEX_PARAMETER = "slice_index"
@@ -291,7 +297,6 @@ ObjectMeasurementIdsByAxisView = Mapping[
     ObjectMeasurementAxisKey,
     ObjectMeasurementIdSet,
 ]
-ProjectedMeasurementRows = Sequence[Mapping[str, Any]] | ColumnarRows
 ObjectLocationFeatureValues = tuple[
     tuple[ObjectLocationMeasurementFeature, float],
     ...,
@@ -514,22 +519,12 @@ class CellProfilerSpecialInputPayloadSemantics(str, Enum):
     dense_label_domain: bool
 
 
-def _runtime_profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
 class CellProfilerRuntimeProfileLogger:
     """Runtime profile sink with one owner for environment-gated logging."""
 
     @staticmethod
     def log_module_profile(label: str, seconds: float, **fields: Any) -> None:
-        if not _runtime_profile_enabled():
-            return
-        field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-        logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
-        if profile_path := os.environ.get(_PROFILE_RUNTIME_PATH_ENV):
-            with open(profile_path, "a", encoding="utf-8") as handle:
-                handle.write(f"RUNTIME_PROFILE {label} {seconds:.6f}s {field_text}\n")
+        RuntimeProfileLogger.log(logger, label, seconds, **fields)
 
 
 @dataclass(frozen=True, slots=True)
@@ -5248,12 +5243,7 @@ class CellProfilerObjectMeasurementRowPolicy(
 
     def measurement_value_is_present(self, value: object) -> bool:
         """Return whether a measurement cell is an observed value, not padding."""
-        if value is None or value == "":
-            return False
-        numeric = FiniteNumericLiteralAuthority.parse(value)
-        if numeric is None:
-            return True
-        return not math.isnan(numeric)
+        return MeasurementScalarLiteral(value).is_present_measurement_value
 
     def retains_unmeasured_compact_row(
         self,
@@ -6000,8 +5990,7 @@ class MeasureTextureMissingValueDomain:
                     normalized_row[field_name] = 0.0
                     none_replacements += 1
                     continue
-                numeric = FiniteNumericLiteralAuthority.parse(value)
-                if numeric is not None and math.isnan(numeric):
+                if MeasurementScalarLiteral(value).is_padding_measurement_value:
                     normalized_row[field_name] = 0.0
                     nan_replacements += 1
             for field_name in field_names:
@@ -6466,18 +6455,6 @@ class FilterObjectsMeasurementVectorPlan:
             return None
         object_spec = plan.object_specs[0]
         feature_name = str(feature_names[0])
-        measurement_tables = request.adapter.measurement_tables_for_object_feature(
-            object_spec.name,
-            feature_name,
-            match_group=False,
-        )
-        value_index = MeasurementFeatureQuery(
-            feature_name,
-            object_name=object_spec.name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        ).optional_value_index(measurement_tables)
-        if value_index is None:
-            return None
         return cls(
             object_spec=object_spec,
             feature_name=feature_name,
@@ -6552,20 +6529,20 @@ class FilterObjectsMeasurementInputBindingPlan:
         plan: FilterObjectsRuntimeInputPlan,
     ) -> "FilterObjectsMeasurementInputBindingPlan":
         scoped_request = request.with_object_inputs(plan.object_specs)
-        table_plan = FilterObjectsMeasurementTablePlan.from_request(
+        vector_plan = FilterObjectsMeasurementVectorPlan.from_request(
             scoped_request,
             plan,
         )
         return cls(
-            vector_plan=(
+            vector_plan=vector_plan,
+            table_plan=(
                 None
-                if table_plan is not None
-                else FilterObjectsMeasurementVectorPlan.from_request(
+                if vector_plan is not None
+                else FilterObjectsMeasurementTablePlan.from_request(
                     scoped_request,
                     plan,
                 )
             ),
-            table_plan=table_plan,
         )
 
     def bind(self, request: ObjectInputBindingRequest) -> dict[str, Any]:
@@ -6777,6 +6754,21 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
         request: ObjectInputBindingRequest,
         feature_name: str,
     ) -> Any:
+        declared_measurement_tables = DeclaredMeasurementInputSelection(request).tables()
+        if declared_measurement_tables:
+            declared_slice_values = MeasurementImageOperandVectorResolution(
+                measurement_tables=declared_measurement_tables,
+                feature_name=feature_name,
+            ).resolve()
+            if declared_slice_values is not None:
+                return CellProfilerMeasurementVector(
+                    declared_slice_values
+                ).slice_aligned_value
+            return MeasurementFeatureQuery(
+                feature_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            ).scalar_value(declared_measurement_tables)
+
         tables_started_at = time.perf_counter()
         measurement_tables = request.adapter.measurement_tables_for_image_feature_axis_scope(
             feature_name,
@@ -6793,19 +6785,6 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             measurement_tables=measurement_tables,
             feature_name=feature_name,
         ).resolve()
-        if slice_values is None:
-            declared_measurement_tables = self.declared_measurement_tables_for_feature(
-                request,
-                feature_name,
-            )
-            if declared_measurement_tables:
-                declared_slice_values = MeasurementImageOperandVectorResolution(
-                    measurement_tables=declared_measurement_tables,
-                    feature_name=feature_name,
-                ).resolve()
-                measurement_tables = declared_measurement_tables
-                if declared_slice_values is not None:
-                    slice_values = declared_slice_values
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "calculate_math_image_operand_slices",
             time.perf_counter() - slice_started_at,
@@ -6826,25 +6805,50 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             return scalar_value
         return CellProfilerMeasurementVector(slice_values).slice_aligned_value
 
-    def declared_measurement_tables_for_feature(
-        self,
-        request: ObjectInputBindingRequest,
-        feature_name: str,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return declared measurement-input tables carrying an image feature."""
-        del feature_name
+
+@dataclass(frozen=True, slots=True)
+class DeclaredMeasurementInputSelection:
+    """Cached declared measurement inputs for one runtime binding request."""
+
+    request: ObjectInputBindingRequest
+
+    @property
+    def measurement_specs(self) -> tuple[ArtifactSpec, ...]:
+        return tuple(
+            spec
+            for spec in self.request.runtime_inputs
+            if spec.kind is ArtifactKind.MEASUREMENTS
+        )
+
+    @property
+    def cache_key(self) -> tuple[object, ...]:
+        adapter = self.request.adapter
+        return (
+            "declared_measurement_inputs",
+            adapter.runtime_value_store.revision,
+            adapter.axis_id,
+            adapter.group_key,
+            tuple((spec.name, spec.kind.value) for spec in self.measurement_specs),
+        )
+
+    def tables(self) -> tuple[MeasurementTable, ...]:
+        if not self.measurement_specs:
+            return ()
+        cached = self.request.adapter._measurement_cache.get(self.cache_key)
+        if cached is not None:
+            return cached
         tables: list[MeasurementTable] = []
-        for spec in request.runtime_inputs:
-            if spec.kind is not ArtifactKind.MEASUREMENTS:
-                continue
-            for record in request.adapter._resolve_runtime_records(
+        for spec in self.measurement_specs:
+            for record in self.request.adapter._resolve_runtime_records(
                 name=spec.name,
                 kind=ArtifactKind.MEASUREMENTS,
                 current_image=None,
             ):
                 table = MeasurementTable.from_runtime_value(record.value)
                 tables.append(table)
-        return tuple(tables)
+        resolved = tuple(tables)
+        self.request.adapter._measurement_cache[self.cache_key] = resolved
+        return resolved
 
 
 @dataclass(frozen=True, slots=True)
@@ -7348,6 +7352,8 @@ class CellProfilerMeasurementOutputProjection:
         columns: dict[str, Sequence[Any]] = {}
         for name, values in rows.columns.items():
             columns[cls.export_field_name(name)] = values
+        if isinstance(rows, MeasurementSparseColumnarRows):
+            return CellProfilerSparseMeasurementColumnarRows(MappingProxyType(columns))
         return CellProfilerProjectedMeasurementColumnarRows(MappingProxyType(columns))
 
     @classmethod
@@ -7461,6 +7467,35 @@ class CellProfilerMeasurementRecord:
         if len(unique_names) == 1:
             return unique_names[0]
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementRowColumnarMaterialization:
+    """Columnar view for mapping rows with sparse per-row feature fields."""
+
+    rows: Sequence[Any]
+
+    @classmethod
+    def from_rows(cls, rows: Sequence[Any]) -> "MeasurementRowColumnarMaterialization":
+        return cls(tuple(rows))
+
+    def table(self) -> tuple[Sequence[Any] | ColumnarRows, tuple[FieldSpec, ...]]:
+        row_mappings = tuple(measurement_row_mapping(row) for row in self.rows)
+        fields = CellProfilerMeasurementFieldSchema.from_row_mappings(row_mappings)
+        if not row_mappings:
+            return list(self.rows), fields
+        field_names = tuple(field.name for field in fields)
+        columns = {
+            field_name: tuple(
+                row[field_name] if field_name in row else MEASUREMENT_SPARSE_CELL
+                for row in row_mappings
+            )
+            for field_name in field_names
+        }
+        return (
+            CellProfilerSparseMeasurementColumnarRows(MappingProxyType(columns)),
+            fields,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -8158,16 +8193,16 @@ class ObjectTopologyMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilde
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        rows = measurement_table_rows(request.value)
+        rows, fields = MeasurementRowColumnarMaterialization.from_rows(
+            measurement_table_rows(request.value),
+        ).table()
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=_measurement_object_name(
                 request.executor.declared_input_specs
             ),
             source_image_name=None,
-            fields=CellProfilerMeasurementFieldSchema.for_record(
-                request.spec, rows, request.func
-            ),
+            fields=fields,
         )
 
 
@@ -8296,13 +8331,14 @@ class RelateObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
             module=self.module_name,
             rows=len(relationship_rows),
         )
+        rows, fields = MeasurementRowColumnarMaterialization.from_rows(
+            [*table_rows, *relationship_rows],
+        ).table()
         return CellProfilerMeasurementRecord(
-            rows=[
-                *table_rows,
-                *relationship_rows,
-            ],
+            rows=rows,
             object_name=None,
             source_image_name=request.source_image_name,
+            fields=fields,
         )
 
 
@@ -8336,13 +8372,17 @@ class ClassifyObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuild
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
         object_name = _measurement_object_name(request.executor.declared_input_specs)
-        return CellProfilerMeasurementRecord(
-            rows=ClassifyObjectsMeasurementRows(
+        rows, fields = MeasurementRowColumnarMaterialization.from_rows(
+            ClassifyObjectsMeasurementRows(
                 request.value,
                 object_name=object_name,
-            ).rows(),
+            ).rows()
+        ).table()
+        return CellProfilerMeasurementRecord(
+            rows=rows,
             object_name=None,
             source_image_name=None,
+            fields=fields,
         )
 
 
@@ -8481,10 +8521,14 @@ class IdentifyTertiaryObjectsMeasurementRecordBuilder(
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
+        rows, fields = MeasurementRowColumnarMaterialization.from_rows(
+            RelationshipMeasurementRows.for_request(request).rows(),
+        ).table()
         return CellProfilerMeasurementRecord(
-            rows=RelationshipMeasurementRows.for_request(request).rows(),
+            rows=rows,
             object_name=None,
             source_image_name=None,
+            fields=fields,
         )
 
 
@@ -10424,215 +10468,12 @@ def _measurement_fields_covering_mappings(
     return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerProjectedMeasurementColumnarRows(ColumnarRows):
-    """Columnar measurement rows with projected CellProfiler ImageNumber values."""
-
-    columns: Mapping[str, Sequence[Any]]
-
-    def __len__(self) -> int:
-        return len(next(iter(self.columns.values()))) if self.columns else 0
-
-    def __iter__(self):
-        columns = self.columns
-        for row_index in range(len(self)):
-            yield {
-                field_name: values[row_index]
-                for field_name, values in columns.items()
-            }
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerColumnarImageNumberProjection:
-    """Projection for columnar rows that already declare ImageNumber."""
-
-    columns: Mapping[str, Sequence[Any]]
-    start: int
-
-    def apply(self) -> ColumnarRows | None:
-        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        image_numbers = [
-            int(value)
-            for value in self.columns[image_number_field]
-            if CellProfilerMeasurementRowsProjection.axis_value_is_present(value)
-        ]
-        if not image_numbers or min(image_numbers) >= self.start:
-            return None
-        offset = self.start - 1
-        projected_columns = dict(self.columns)
-        projected_columns[image_number_field] = tuple(
-            int(value) + offset
-            if CellProfilerMeasurementRowsProjection.axis_value_is_present(value)
-            else value
-            for value in self.columns[image_number_field]
-        )
-        return CellProfilerProjectedMeasurementColumnarRows(
-            MappingProxyType(projected_columns)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerColumnarSliceIndexProjection:
-    """Projection for columnar rows that declare runtime slice_index only."""
-
-    columns: Mapping[str, Sequence[Any]]
-    image_numbers: "CellProfilerSliceIndexImageNumberProjection"
-
-    def apply(self) -> ColumnarRows:
-        projected_columns = dict(self.columns)
-        projected_columns[MeasurementRowAxisField.IMAGE_NUMBER.value] = tuple(
-            self.image_numbers.image_number_for_slice(int(value))
-            if CellProfilerMeasurementRowsProjection.axis_value_is_present(value)
-            else value
-            for value in self.columns[MeasurementRowAxisField.SLICE_INDEX.value]
-        )
-        return CellProfilerProjectedMeasurementColumnarRows(
-            MappingProxyType(projected_columns)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerSliceIndexImageNumberProjection:
-    """Map runtime slice indices onto CellProfiler image-set numbers."""
-
-    start: int
-    image_numbers_by_slice: Mapping[int, int]
-
-    def image_number_for_slice(self, slice_index: int) -> int:
-        mapped = self.image_numbers_by_slice.get(slice_index)
-        if mapped is not None:
-            return mapped
-        return slice_index + self.start
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerRowSequenceAxisProjection:
-    """Projection for row-sequence measurements with runtime axis fields."""
-
-    rows: Sequence[Any]
-    row_mappings: tuple[Mapping[str, Any], ...]
-
-    @classmethod
-    def from_rows(
-        cls,
-        rows: Sequence[Any],
-        *,
-        need_row_mappings: bool,
-    ) -> "CellProfilerRowSequenceAxisProjection":
-        row_mappings: list[Mapping[str, Any]] = []
-        has_axis_field = False
-        for row in rows:
-            row_mapping = measurement_row_mapping(row)
-            if need_row_mappings:
-                row_mappings.append(row_mapping)
-            has_axis_field = has_axis_field or cls.row_has_axis(row_mapping)
-            if has_axis_field and not need_row_mappings:
-                row_mappings = [measurement_row_mapping(candidate) for candidate in rows]
-                break
-        return cls(rows=rows, row_mappings=tuple(row_mappings))
-
-    @staticmethod
-    def row_has_axis(row: Mapping[str, Any]) -> bool:
-        return (
-            MeasurementRowAxisField.IMAGE_NUMBER.value in row
-            or MeasurementRowAxisField.SLICE_INDEX.value in row
-        )
-
-    @property
-    def has_axis(self) -> bool:
-        return any(self.row_has_axis(row) for row in self.row_mappings)
-
-    @property
-    def has_image_number(self) -> bool:
-        return any(
-            MeasurementRowAxisField.IMAGE_NUMBER.value in row
-            for row in self.row_mappings
-        )
-
-    @property
-    def has_slice_index(self) -> bool:
-        return any(
-            MeasurementRowAxisField.SLICE_INDEX.value in row
-            for row in self.row_mappings
-        )
-
-    @property
-    def has_source_qualified_image_rows(self) -> bool:
-        return any(
-            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in row
-            and not measurement_row_has_object_identity(row)
-            for row in self.row_mappings
-        )
-
-    def project_current_image_number(self, start: int) -> Sequence[Mapping[str, Any]]:
-        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        projected_rows = [dict(row) for row in self.row_mappings]
-        for row in projected_rows:
-            row.setdefault(image_number_field, start)
-        return projected_rows
-
-    def present_axis_values(self, field_name: str) -> tuple[int, ...]:
-        """Return present integer axis values for one measurement row field."""
-        return tuple(
-            int(row[field_name])
-            for row in self.row_mappings
-            if CellProfilerMeasurementRowsProjection.axis_value_is_present(
-                row.get(field_name)
-            )
-        )
-
-    def project_axis_values(
-        self,
-        *,
-        source_field_name: str,
-        target_field_name: str,
-        transform: Callable[[int], int],
-    ) -> Sequence[Mapping[str, Any]]:
-        """Return rows with present source-axis values projected into a target."""
-        projected_rows = [dict(row) for row in self.row_mappings]
-        for row in projected_rows:
-            if CellProfilerMeasurementRowsProjection.axis_value_is_present(
-                row.get(source_field_name)
-            ):
-                row[target_field_name] = transform(int(row[source_field_name]))
-        return projected_rows
-
-    def apply(
-        self,
-        image_numbers: CellProfilerSliceIndexImageNumberProjection,
-    ) -> Sequence[Any] | None:
-        if not self.rows or not self.has_axis:
-            return None
-        if self.has_slice_index:
-            return self.project_slice_index(image_numbers)
-        if self.has_image_number:
-            return self.project_image_number(image_numbers.start)
-        return None
-
-    def project_slice_index(
-        self,
-        image_numbers: CellProfilerSliceIndexImageNumberProjection,
-    ) -> Sequence[Mapping[str, Any]]:
-        slice_index_field = MeasurementRowAxisField.SLICE_INDEX.value
-        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        return self.project_axis_values(
-            source_field_name=slice_index_field,
-            target_field_name=image_number_field,
-            transform=image_numbers.image_number_for_slice,
-        )
-
-    def project_image_number(self, start: int) -> Sequence[Mapping[str, Any]] | None:
-        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        image_numbers = self.present_axis_values(image_number_field)
-        if not image_numbers or min(image_numbers) >= start:
-            return None
-
-        offset = start - 1
-        return self.project_axis_values(
-            source_field_name=image_number_field,
-            target_field_name=image_number_field,
-            transform=lambda value: value + offset,
-        )
+CellProfilerProjectedMeasurementColumnarRows = MeasurementProjectedColumnarRows
+CellProfilerSparseMeasurementColumnarRows = MeasurementSparseColumnarRows
+CellProfilerColumnarImageNumberProjection = MeasurementColumnarImageNumberProjection
+CellProfilerColumnarSliceIndexProjection = MeasurementColumnarSliceIndexProjection
+CellProfilerSliceIndexImageNumberProjection = MeasurementSliceIndexImageNumberProjection
+CellProfilerRowSequenceAxisProjection = MeasurementRowSequenceAxisProjection
 
 
 @dataclass(frozen=True, slots=True)
@@ -10767,12 +10608,7 @@ class CellProfilerMeasurementRowsProjection:
     @staticmethod
     def axis_value_is_present(value: Any) -> bool:
         """Return whether an axis value can participate in ImageNumber projection."""
-        if value is None:
-            return False
-        numeric_value = FiniteNumericLiteralAuthority.parse(value)
-        if numeric_value is None:
-            return True
-        return math.isfinite(numeric_value)
+        return MeasurementScalarLiteral(value).is_present_axis_value
 
     def _row_sequence(
         self,
@@ -13168,25 +13004,6 @@ def _single_source_name(source_names: tuple[str, ...]) -> str | None:
     return None
 
 
-class FiniteNumericLiteralAuthority:
-    """Numeric literal interpretation shared by measurement row policies."""
-
-    _NUMERIC_LITERAL_RE = re.compile(
-        r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$|^[+-]?(?:nan|inf|infinity)$",
-        re.IGNORECASE,
-    )
-
-    @classmethod
-    def parse(cls, value: object) -> float | None:
-        if isinstance(value, bool):
-            return float(value)
-        if isinstance(value, (int, float, np.number)):
-            return float(value)
-        if isinstance(value, str) and cls._NUMERIC_LITERAL_RE.match(value.strip()):
-            return float(value)
-        return None
-
-
 def _measurement_source_name_for_specs(
     image_inputs: tuple[ArtifactSpec, ...],
 ) -> str | None:
@@ -14045,7 +13862,7 @@ class Pure2DSliceCountPolicy:
 
     @staticmethod
     def slice_count_from_kwargs(kwargs: Mapping[str, Any]) -> int | None:
-        if _runtime_profile_enabled():
+        if RuntimeProfileLogger.enabled():
             _log_pure_2d_slice_count_candidates(kwargs)
         return RuntimeSliceProjection.slice_count_from_kwargs(
             Pure2DSliceCountPolicy.slice_count_kwargs(kwargs),

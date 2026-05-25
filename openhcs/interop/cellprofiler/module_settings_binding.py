@@ -6,12 +6,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-import math
-import re
 from typing import Any, ClassVar, TypeAlias, TypeVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.runtime_semantics import MeasurementScalarLiteral
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
@@ -1106,30 +1105,7 @@ class LegacyCellProfilerThresholdVersionResolution:
     def version(self) -> int | None:
         if self.value is None:
             return None
-        numeric = CellProfilerNumericLiteral(self.value).value
-        return int(numeric) if numeric is not None else None
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerNumericLiteral:
-    """Finite numeric CellProfiler setting literal."""
-
-    raw_value: str
-
-    _NUMERIC_LITERAL_RE: ClassVar[re.Pattern[str]] = re.compile(
-        r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
-    )
-
-    @property
-    def value(self) -> float | None:
-        token = self.raw_value.strip()
-        if not self._NUMERIC_LITERAL_RE.match(token):
-            return None
-        try:
-            parsed = float(token)
-        except OverflowError:
-            return None
-        return parsed if math.isfinite(parsed) else None
+        return MeasurementScalarLiteral(self.value).integer_value
 
 
 def _parse_cellprofiler_threshold_setting(

@@ -7,6 +7,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
+import math
+import re
 from typing import Any, ClassVar, cast
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
@@ -1911,6 +1913,88 @@ class MeasurementRowValueField(str, Enum):
     MEASUREMENT_VALUE = "measurement_value"
     VALUE = "value"
     MEAN_VALUE = "mean_value"
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementScalarLiteral:
+    """Scalar classification shared by measurement row and setting policies."""
+
+    raw_value: object
+
+    _NUMERIC_LITERAL_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|nan|inf|infinity)$",
+        re.IGNORECASE,
+    )
+
+    @property
+    def token(self) -> str | None:
+        if self.raw_value in (None, ""):
+            return None
+        if isinstance(self.raw_value, bool):
+            return str(int(self.raw_value))
+        if isinstance(self.raw_value, (int, float, np.integer, np.floating)):
+            return str(self.raw_value)
+        if isinstance(self.raw_value, str):
+            stripped = self.raw_value.strip()
+            return stripped or None
+        return None
+
+    @property
+    def is_absent(self) -> bool:
+        return self.token is None
+
+    @property
+    def is_numeric(self) -> bool:
+        token = self.token
+        return token is not None and self._NUMERIC_LITERAL_RE.match(token) is not None
+
+    @property
+    def numeric_value(self) -> float | None:
+        if not self.is_numeric:
+            return None
+        return float(self.token or "")
+
+    @property
+    def is_finite_numeric(self) -> bool:
+        value = self.numeric_value
+        return value is not None and math.isfinite(value)
+
+    @property
+    def is_nonfinite_numeric(self) -> bool:
+        value = self.numeric_value
+        return value is not None and not math.isfinite(value)
+
+    @property
+    def finite_numeric_value(self) -> float | None:
+        value = self.numeric_value
+        return value if value is not None and math.isfinite(value) else None
+
+    @property
+    def integer_value(self) -> int | None:
+        value = self.finite_numeric_value
+        if value is None:
+            return None
+        integer = int(value)
+        return integer if float(integer) == value else None
+
+    @property
+    def is_present_axis_value(self) -> bool:
+        if self.is_absent:
+            return False
+        return self.is_finite_numeric if self.is_numeric else True
+
+    @property
+    def is_present_measurement_value(self) -> bool:
+        if self.is_absent:
+            return False
+        value = self.numeric_value
+        if value is None:
+            return True
+        return not math.isnan(value)
+
+    @property
+    def is_padding_measurement_value(self) -> bool:
+        return not self.is_present_measurement_value
 
 
 class MeasurementRowAxisState(str, Enum):

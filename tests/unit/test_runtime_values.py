@@ -139,6 +139,8 @@ def test_measurement_table_slice_offset_reinfers_projected_row_schema():
         validated_runtime_schema=True,
     )
 
+    assert table.validated_runtime_schema is True
+
     shifted = RuntimeSliceProjection.measurement_table_with_slice_offset(table, 1)
 
     assert tuple(field.name for field in shifted.fields) == (

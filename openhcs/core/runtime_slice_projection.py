@@ -23,9 +23,13 @@ from openhcs.core.runtime_artifact_queries import (
 from openhcs.core.runtime_semantics import (
     FieldSpec,
     MeasurementRowAxisField,
+    MeasurementTableRowLayout,
     ParentChildRelationshipPayload,
     RuntimePlaneAxis,
     RuntimePlaneAxisSliceProjectionPolicy,
+    measurement_table_row_layout,
+    measurement_table_row_layouts,
+    measurement_table_row_layout_from_fields,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
@@ -559,24 +563,30 @@ class RuntimeSliceProjection:
     ) -> MeasurementTable:
         """Return a table with row slice indexes shifted by ``slice_offset``."""
         fields = RuntimeSliceProjection.measurement_table_slice_index_fields(table)
+        rows = [
+            {
+                **dict(measurement_row_mapping(row)),
+                "slice_index": int(
+                    measurement_row_mapping(row).get("slice_index", 0)
+                )
+                + slice_offset,
+            }
+            for row in measurement_rows((table,))
+        ]
+        schema_validated = RuntimeSliceProjection.measurement_table_schema_matches_rows(
+            fields,
+            rows,
+        )
         return MeasurementTable(
             name=table.name,
-            rows=[
-                {
-                    **dict(measurement_row_mapping(row)),
-                    "slice_index": int(
-                        measurement_row_mapping(row).get("slice_index", 0)
-                    )
-                    + slice_offset,
-                }
-                for row in measurement_rows((table,))
-            ],
+            rows=rows,
             object_name=table.object_name,
             fields=fields,
             object_id_field=table.object_id_field,
             source_image_name=table.source_image_name,
             subject=table.subject,
-            validated_runtime_schema=bool(fields),
+            validated_runtime_schema=schema_validated,
+            schema_loss_reasons=frozenset(() if schema_validated else ("row_layout",)),
         )
 
     @staticmethod
@@ -588,22 +598,28 @@ class RuntimeSliceProjection:
         if slice_count <= 1:
             return table
         fields = RuntimeSliceProjection.measurement_table_slice_index_fields(table)
+        rows = [
+            {
+                **dict(measurement_row_mapping(row)),
+                "slice_index": slice_index,
+            }
+            for slice_index in range(slice_count)
+            for row in measurement_rows((table,))
+        ]
+        schema_validated = RuntimeSliceProjection.measurement_table_schema_matches_rows(
+            fields,
+            rows,
+        )
         return MeasurementTable(
             name=table.name,
-            rows=[
-                {
-                    **dict(measurement_row_mapping(row)),
-                    "slice_index": slice_index,
-                }
-                for slice_index in range(slice_count)
-                for row in measurement_rows((table,))
-            ],
+            rows=rows,
             object_name=table.object_name,
             fields=fields,
             object_id_field=table.object_id_field,
             source_image_name=table.source_image_name,
             subject=table.subject,
-            validated_runtime_schema=bool(fields),
+            validated_runtime_schema=schema_validated,
+            schema_loss_reasons=frozenset(() if schema_validated else ("row_layout",)),
         )
 
     @staticmethod
@@ -620,6 +636,24 @@ class RuntimeSliceProjection:
             FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, dtype="int"),
             *existing_fields,
         )
+
+    @staticmethod
+    def measurement_table_schema_matches_rows(
+        fields: tuple[FieldSpec, ...],
+        rows: Sequence[object],
+    ) -> bool:
+        """Return whether declared fields still describe projected row layout."""
+        declared_layout = measurement_table_row_layout_from_fields(fields)
+        if declared_layout is None:
+            return False
+        observed_layouts = measurement_table_row_layouts(rows)
+        if not observed_layouts:
+            observed_layout = MeasurementTableRowLayout.EMPTY
+        elif len(observed_layouts) == 1:
+            observed_layout = next(iter(observed_layouts))
+        else:
+            return False
+        return observed_layout in (declared_layout, MeasurementTableRowLayout.EMPTY)
 
     @staticmethod
     def measurement_tables_with_repeated_scalar_slice_offsets(

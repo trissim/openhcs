@@ -270,7 +270,7 @@ class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
 for _source_pair_feature_spec in (
     GeneratedLeafClassSpec(
         class_name="CellProfilerCorrelationFeature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
+        base_type=SecondFirstCellProfilerSourcePairFeature,
         attributes={
             "source_field": "correlation",
             "feature_family": "Correlation",
@@ -288,7 +288,7 @@ for _source_pair_feature_spec in (
     ),
     GeneratedLeafClassSpec(
         class_name="CellProfilerOverlapFeature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
+        base_type=SecondFirstCellProfilerSourcePairFeature,
         attributes={"source_field": "overlap", "feature_family": "Overlap"},
     ),
     GeneratedLeafClassSpec(

@@ -7,10 +7,15 @@ import pytest
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    ConcatenatedColumnarRows,
     MeasurementTableAxisProjection,
     MeasurementTableAxisQuery,
     MeasurementTableObjectFeatureSemantics,
     MeasurementTableObjectFeatureSemanticsCache,
+    MeasurementProjectedColumnarRows,
+    MeasurementSparseColumnarRows,
+    MEASUREMENT_SPARSE_CELL,
+    MeasurementTableUnion,
     annotate_measurement_row_object,
     matching_measurement_field,
     measurement_feature_candidates,
@@ -25,6 +30,8 @@ from openhcs.core.runtime_semantics import (
     FieldSpec,
     MeasurementRowAxisField,
     MeasurementRowMappingCache,
+    MeasurementScope,
+    MeasurementSubject,
     RelationshipSemantics,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
@@ -113,6 +120,123 @@ def test_measurement_row_mapping_cache_reuses_dataclass_rows() -> None:
     second = measurement_row_mapping(row)
 
     assert first is second
+
+
+def test_projected_columnar_rows_preserve_none_values() -> None:
+    rows = MeasurementProjectedColumnarRows(
+        {
+            "object_label": (1, 2),
+            "nullable_measurement": (None, 4.0),
+        }
+    )
+
+    assert rows.row_mappings() == (
+        {"object_label": 1, "nullable_measurement": None},
+        {"object_label": 2, "nullable_measurement": 4.0},
+    )
+
+
+def test_sparse_columnar_rows_omit_structural_missing_cells_only() -> None:
+    rows = MeasurementSparseColumnarRows(
+        {
+            "object_label": (1, 2),
+            "optional_measurement": (MEASUREMENT_SPARSE_CELL, None),
+        }
+    )
+
+    assert rows.row_mappings() == (
+        {"object_label": 1},
+        {"object_label": 2, "optional_measurement": None},
+    )
+
+
+def test_projected_columnar_rows_omit_structural_missing_cells() -> None:
+    rows = MeasurementProjectedColumnarRows(
+        {
+            "slice_index": (0, 0),
+            "feature_name": ("Classify_Small_NumObjectsPerBin", "Classify_Small"),
+            "result_value": (2, 1),
+            "object_name": (MEASUREMENT_SPARSE_CELL, "Nuclei"),
+            "object_label": (MEASUREMENT_SPARSE_CELL, 1),
+        }
+    )
+
+    assert rows.row_mappings() == (
+        {
+            "slice_index": 0,
+            "feature_name": "Classify_Small_NumObjectsPerBin",
+            "result_value": 2,
+        },
+        {
+            "slice_index": 0,
+            "feature_name": "Classify_Small",
+            "result_value": 1,
+            "object_name": "Nuclei",
+            "object_label": 1,
+        },
+    )
+
+
+def test_axis_projection_returns_original_columnar_table_when_filter_keeps_all_rows() -> None:
+    table = MeasurementTable(
+        name="Measurements",
+        rows=MeasurementProjectedColumnarRows(
+            {
+                "image_number": (1, 1),
+                "object_name": ("Nuclei", "Cells"),
+                "object_label": (1, 1),
+                "Intensity_MeanIntensity_CorrProtein": (4.0, 5.0),
+            }
+        ),
+        object_id_field="object_label",
+    )
+
+    projected = MeasurementTableAxisProjection(
+        table,
+        MeasurementRowAxisField.IMAGE_NUMBER,
+        1,
+    ).apply()
+
+    assert projected is table
+
+
+def test_concatenated_sparse_columnar_rows_do_not_expose_missing_sentinel() -> None:
+    rows = ConcatenatedColumnarRows(
+        (
+            MeasurementSparseColumnarRows(
+                {
+                    "object_label": (1,),
+                    "area": (4.0,),
+                    "mean": (MEASUREMENT_SPARSE_CELL,),
+                }
+            ),
+            MeasurementSparseColumnarRows(
+                {
+                    "object_label": (2,),
+                    "area": (MEASUREMENT_SPARSE_CELL,),
+                    "mean": (8.0,),
+                }
+            ),
+        )
+    )
+
+    assert rows.row_mappings() == (
+        {"object_label": 1, "area": 4.0},
+        {"object_label": 2, "mean": 8.0},
+    )
+    area_values = measurement_values_for_feature(
+        (
+            MeasurementTable(
+                name="SparseMeasurements",
+                rows=rows,
+                object_id_field="object_label",
+            ),
+        ),
+        "area",
+        object_count=1,
+        object_name="Cells",
+    )
+    assert area_values.tolist() == [4.0]
 
 
 def test_measurement_feature_query_uses_table_object_id_field() -> None:
@@ -335,6 +459,65 @@ def test_measurement_table_axis_query_projects_sequence_rows() -> None:
     assert tuple(projected.rows) == (
         {"slice_index": 1, "object_label": 1, "area": 20.0},
     )
+
+
+def test_measurement_table_union_preserves_compatible_schema() -> None:
+    subject = MeasurementSubject(MeasurementScope.OBJECT, "Cells", "cell_id")
+    first = MeasurementTable(
+        name="CellMeasurements",
+        rows=({"cell_id": 1, "area": 10.0},),
+        fields=(FieldSpec("cell_id"), FieldSpec("area")),
+        object_name="Cells",
+        object_id_field="cell_id",
+        subject=subject,
+        validated_runtime_schema=True,
+    )
+    second = MeasurementTable(
+        name="CellMeasurements",
+        rows=({"cell_id": 2, "area": 20.0},),
+        fields=(FieldSpec("cell_id"), FieldSpec("area")),
+        object_name="Cells",
+        object_id_field="cell_id",
+        subject=subject,
+        validated_runtime_schema=True,
+    )
+
+    union = MeasurementTableUnion("CellMeasurements", (first, second)).as_table()
+
+    assert union.fields == (FieldSpec("cell_id"), FieldSpec("area"))
+    assert union.object_name == "Cells"
+    assert union.object_id_field == "cell_id"
+    assert union.subject == subject
+    assert union.validated_runtime_schema is True
+    assert union.schema_loss_reasons == frozenset()
+    assert tuple(union.rows) == (
+        {"cell_id": 1, "area": 10.0},
+        {"cell_id": 2, "area": 20.0},
+    )
+
+
+def test_measurement_table_union_drops_incompatible_schema_facts() -> None:
+    first = MeasurementTable(
+        name="MixedMeasurements",
+        rows=({"object_label": 1, "area": 10.0},),
+        fields=(FieldSpec("object_label"), FieldSpec("area")),
+        object_name="Cells",
+    )
+    second = MeasurementTable(
+        name="MixedMeasurements",
+        rows=({"object_label": 1, "area": 20.0},),
+        fields=(FieldSpec("object_label"), FieldSpec("area")),
+        object_name="Nuclei",
+    )
+
+    union = MeasurementTableUnion("MixedMeasurements", (first, second)).as_table()
+
+    assert union.fields == (FieldSpec("object_label"), FieldSpec("area"))
+    assert union.object_name is None
+    assert union.subject.scope is MeasurementScope.ARTIFACT
+    assert union.validated_runtime_schema is False
+    assert "object_name" in union.schema_loss_reasons
+    assert "subject" in union.schema_loss_reasons
 
 
 def test_measurement_table_axis_query_projects_table_sequences() -> None:

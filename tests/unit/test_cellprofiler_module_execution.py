@@ -4922,7 +4922,7 @@ def test_colocalization_object_row_policy_projects_source_pair_features() -> Non
         {
             "slice_index": 0,
             "object_label": 1,
-            "Correlation_Correlation_DNA_ER": 0.5,
+            "Correlation_Correlation_ER_DNA": 0.5,
             "Correlation_Manders_DNA_ER": 0.7,
             "Correlation_Manders_ER_DNA": 0.8,
         }
@@ -4968,7 +4968,7 @@ def test_colocalization_record_builder_projects_image_source_pair_features() -> 
     assert record.rows == [
         {
             "slice_index": 0,
-            "Correlation_Correlation_DNA_ER": 0.5,
+            "Correlation_Correlation_ER_DNA": 0.5,
             "Correlation_Manders_DNA_ER": 0.7,
         }
     ]

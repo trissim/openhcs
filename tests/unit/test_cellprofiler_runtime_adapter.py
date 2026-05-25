@@ -74,6 +74,7 @@ from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelDomainScope,
+    RelationshipSemantics,
     RuntimePlaneAxis,
     RuntimePlaneProjection,
 )
@@ -81,6 +82,7 @@ from openhcs.core.runtime_values import (
     FieldSpec,
     ImagePayloadMetadata,
     MeasurementTable,
+    ObjectRelationship,
     ObjectLabelPayload,
     ObjectLabelSet,
     ColumnarRows,
@@ -89,6 +91,7 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     image_payload_mask,
     image_payload_with_context,
+    normalize_artifact_value,
     object_label_dense_array,
 )
 from openhcs.constants.constants import AllComponents
@@ -4248,6 +4251,80 @@ def test_adapter_batch_child_count_lookup_uses_parent_row_domain():
     )
 
     np.testing.assert_allclose(values_by_object["PH3"][0], [2.0, 5.0])
+
+
+def test_relationship_plane_records_use_declared_group_order_not_key_spelling():
+    store = RuntimeValueStore()
+    relationship_name = "Nuclei_PH3_relationships"
+    group_paths = {
+        "site_a": "/memory/relationship_site_a.pkl",
+        "site_b": "/memory/relationship_site_b.pkl",
+    }
+    semantics = RelationshipSemantics.parent_child(NUCLEI, "PH3")
+    records = []
+    for group_key, parent_id in (("site_b", 2), ("site_a", 1)):
+        relationship = ObjectRelationship(
+            name=relationship_name,
+            source=semantics.source,
+            target=semantics.target,
+            source_ids=(parent_id,),
+            target_ids=(parent_id,),
+            relationship_type=semantics.relationship_type,
+        )
+        value = normalize_artifact_value(
+            ArtifactOutputPlan(
+                name=relationship_name,
+                path=group_paths[group_key],
+                kind=ArtifactKind.RELATIONSHIPS,
+                group_keys=(group_key,),
+                paths_by_group={group_key: group_paths[group_key]},
+            ),
+            relationship,
+            axis_id=AXIS_ID,
+        )
+        records.append(
+            store.record(value, path=group_paths[group_key], backend="memory")
+        )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_inputs={
+            relationship_name: ArtifactInputPlan(
+                name=relationship_name,
+                path="/memory/relationships.pkl",
+                kind=ArtifactKind.RELATIONSHIPS,
+                group_keys=("site_a", "site_b"),
+                paths_by_group=group_paths,
+            )
+        },
+    )
+
+    plane_resolution = adapter._relationship_plane_projection_resolution(
+        relationship_name,
+        tuple(records),
+        label_plane_count=2,
+    )
+    plane_records = plane_resolution.require_records()
+
+    assert plane_resolution.is_available is True
+    assert [record.plane_index for record in plane_records] == [0, 1]
+    assert [tuple(record.relationship.source_ids) for record in plane_records] == [
+        (1,),
+        (2,),
+    ]
+
+
+def test_relationship_plane_projection_reports_missing_declared_group_order():
+    adapter, _filemanager = _adapter({})
+
+    resolution = adapter._relationship_plane_projection_resolution(
+        "Nuclei_PH3_relationships",
+        (),
+        label_plane_count=2,
+    )
+
+    assert resolution.is_available is False
+    assert resolution.unavailable_reason == "no_records"
 
 
 def test_object_measurement_table_index_uses_unnamed_object_id_feature_tables():

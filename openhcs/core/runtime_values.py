@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import InitVar, dataclass, replace
+from dataclasses import dataclass, replace
 from enum import Enum
 import logging
 from pathlib import Path
@@ -1729,6 +1729,8 @@ class RuntimeValueSchema(SourceImageContext):
     relationship: RelationshipSemantics | None = None
     object_name: str | None = None
     object_id_field: str | None = None
+    measurement_schema_validated: bool = False
+    measurement_schema_loss_reasons: frozenset[str] = frozenset()
     label_variants: tuple[ObjectLabelVariant, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1752,6 +1754,16 @@ class RuntimeValueSchema(SourceImageContext):
             raise ValueError("RuntimeValueSchema.object_name cannot be empty.")
         if self.object_id_field == "":
             raise ValueError("RuntimeValueSchema.object_id_field cannot be empty.")
+        object.__setattr__(
+            self,
+            "measurement_schema_loss_reasons",
+            frozenset(str(reason) for reason in self.measurement_schema_loss_reasons),
+        )
+        if self.measurement_schema_validated and self.measurement_schema_loss_reasons:
+            raise ValueError(
+                "RuntimeValueSchema.measurement_schema_validated cannot be true "
+                "when measurement_schema_loss_reasons is non-empty."
+            )
         object.__setattr__(
             self,
             "label_variants",
@@ -1782,6 +1794,17 @@ class RuntimeValueSchema(SourceImageContext):
         ):
             raise ValueError(
                 "RuntimeValueSchema.measurement_subject requires "
+                "MEASUREMENTS kind."
+            )
+        if (
+            (
+                self.measurement_schema_validated
+                or self.measurement_schema_loss_reasons
+            )
+            and self.kind is not ArtifactKind.MEASUREMENTS
+        ):
+            raise ValueError(
+                "RuntimeValueSchema measurement schema state requires "
                 "MEASUREMENTS kind."
             )
         if (
@@ -5099,7 +5122,8 @@ class MeasurementTable(NativeRuntimeValue):
     object_id_field: str | None = None
     source_image_name: str | None = None
     subject: MeasurementSubject | None = None
-    validated_runtime_schema: InitVar[bool] = False
+    validated_runtime_schema: bool = False
+    schema_loss_reasons: frozenset[str] = frozenset()
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -5117,10 +5141,11 @@ class MeasurementTable(NativeRuntimeValue):
             object_id_field=value.schema.object_id_field,
             source_image_name=value.schema.source_image_name,
             subject=value.schema.measurement_subject,
-            validated_runtime_schema=True,
+            validated_runtime_schema=value.schema.measurement_schema_validated,
+            schema_loss_reasons=value.schema.measurement_schema_loss_reasons,
         )
 
-    def __post_init__(self, validated_runtime_schema: bool) -> None:
+    def __post_init__(self) -> None:
         NativeRuntimeValue.__post_init__(self)
         if self.object_name == "":
             raise ValueError("MeasurementTable.object_name cannot be empty.")
@@ -5136,6 +5161,16 @@ class MeasurementTable(NativeRuntimeValue):
             source_image_name=self.source_image_name,
         )
         object.__setattr__(self, "subject", subject)
+        object.__setattr__(
+            self,
+            "schema_loss_reasons",
+            frozenset(str(reason) for reason in self.schema_loss_reasons),
+        )
+        if self.validated_runtime_schema and self.schema_loss_reasons:
+            raise ValueError(
+                "MeasurementTable.validated_runtime_schema cannot be true when "
+                "schema_loss_reasons is non-empty."
+            )
         if not _is_table_like(self.rows):
             raise TypeError(
                 f"MeasurementTable '{self.name}' requires table-like rows, "
@@ -5166,6 +5201,8 @@ class MeasurementTable(NativeRuntimeValue):
             object_name=subject_resolver.object_name,
             source_image_name=subject_resolver.source_image_name,
             object_id_field=subject_resolver.object_id_field,
+            measurement_schema_validated=self.validated_runtime_schema,
+            measurement_schema_loss_reasons=self.schema_loss_reasons,
         )
 
 
