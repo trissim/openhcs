@@ -53,6 +53,11 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
     MultilinePreviewItemDelegate,
     StyledText,
 )
+from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
+    create_manager_header,
+    create_manager_list_widget,
+)
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from openhcs.config_framework.lazy_factory import PREVIEW_LABEL_REGISTRY
 from openhcs.core.config import ProcessingConfig
@@ -467,15 +472,32 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def setup_ui(self):
         """Create pipeline editor UI with a debug/test-mode toolbar."""
 
-        header = self._create_header()
+        header_parts = create_manager_header(
+            title=self.TITLE,
+            color_scheme=self.color_scheme,
+            enable_status_scrolling=self.ENABLE_STATUS_SCROLLING,
+        )
+        self.status_label = header_parts.status_label
+        self._status_scroll = header_parts.status_scroll
         self.debug_toolbar = DebugToolbarWidget(self)
-        self.item_list = self._create_list_widget()
-        button_panel = self._create_button_panel()
+        self.item_list = create_manager_list_widget(
+            color_scheme=self.color_scheme,
+            style_generator=self.style_generator,
+            delegate_manager=self,
+        )
+        button_panel = ButtonPanel(
+            button_configs=self.BUTTON_CONFIGS,
+            on_action=self.handle_button_action,
+            style_generator=self.style_generator,
+            grid_columns=self.BUTTON_GRID_COLUMNS,
+            parent=self,
+        )
+        self.buttons = button_panel.buttons
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(2)
-        main_layout.addWidget(header)
+        main_layout.addWidget(header_parts.header)
         main_layout.addWidget(self.debug_toolbar)
 
         splitter = QSplitter(Qt.Orientation.Vertical)

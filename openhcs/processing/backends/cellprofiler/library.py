@@ -323,7 +323,7 @@ def coerce_registered_absorbed_processing_contract(
 def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
     if not _CONTRACTS_PATH.exists():
         return MappingProxyType({})
-    raw_registry = json.loads(_CONTRACTS_PATH.read_text())
+    raw_registry = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
     contracts = {
         module_name: AbsorbedFunctionMetadata.from_json(module_name, payload)
         for module_name, payload in raw_registry.items()
@@ -427,7 +427,10 @@ def _register_function_locations(
         if file_path.name == "__init__.py":
             continue
         module_stem = file_path.stem
-        parsed_module = ast.parse(file_path.read_text(), filename=str(file_path))
+        parsed_module = ast.parse(
+            file_path.read_text(encoding="utf-8"),
+            filename=str(file_path),
+        )
         module_exports = AbsorbedFunctionModuleExports(
             declared_function_names=declared_function_names,
             declared_only=declared_only,
