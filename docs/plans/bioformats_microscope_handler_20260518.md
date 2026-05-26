@@ -6,7 +6,7 @@ Drafted 2026-05-18. This plan is intentionally implementation-facing. The paper 
 
 ## Goal
 
-Add a `BioFormatsHandler` to OpenHCS that lets users point OpenHCS at Bio-Formats-readable microscopy datasets and have source dimensions discovered into the same workflow model used by explicit microscope handlers.
+Add a brand-agnostic `BioFormatsHandler` to OpenHCS that lets users point OpenHCS at Bio-Formats-readable microscopy datasets and have OME HCS metadata projected into the same workflow model used by explicit microscope handlers.
 
 The handler should make this claim true:
 
@@ -26,7 +26,7 @@ Concrete current examples:
 - `OperaPhenixHandler` already parses `Index.xml`, remaps field IDs to spatial layout, and fills inferred missing images with black placeholders for autofocus failures.
 - `OMEROHandler` already handles a non-disk plate namespace and exposes OMERO-backed image lists/metadata.
 
-The Bio-Formats handler should provide a broad fallback for datasets where Bio-Formats can discover dimensions, while preserving fail-loud behavior when biological plate semantics are ambiguous.
+The Bio-Formats handler should provide a broad fallback for datasets where Bio-Formats can discover OME Screen/Plate/Well metadata, while preserving fail-loud behavior when biological plate semantics are absent or ambiguous.
 
 ## Current Architecture Facts
 
@@ -112,7 +112,72 @@ Design implication:
 - The cleanest design is a dedicated optional storage backend that can load one plane by a structured reference.
 - Avoid forcing microscope handlers to materialize every Bio-Formats plane to TIFF just to make existing disk loading work. Materialization can be an optional cache/export mode, not the core abstraction.
 
+Dry-run findings against current code:
+
+- `Backend` is duplicated in `openhcs/constants/constants.py` and
+  `external/PolyStore/src/polystore/constants.py`; `BIOFORMATS` must be added to
+  both or backend validation and registry lookup will diverge.
+- `VirtualWorkspaceBackend` currently resolves `workspace_mapping` values as
+  plate-relative strings and delegates to `DiskStorageBackend`. It cannot resolve
+  structured `{source_path, series_index, plane_index, c, z, t}` references
+  without either a new Bio-Formats virtual backend or a generalized reference
+  resolver.
+- `ProcessingContext.__getstate__` / `__setstate__` recreates
+  `VirtualWorkspaceBackend` specially in workers and recreates other stateful
+  backends only if they implement `PicklableBackend`. A Bio-Formats backend that
+  owns JVM/reader state must be worker-recreatable through the picklable backend
+  contract or an equivalent explicit re-registration path.
+- `PipelineCompiler.validate_backend_compatibility(...)` already uses
+  `get_available_backends(...)`, so the older helper bug in
+  `validate_backend_compatibility(...)` is not the compiler blocker. The helper
+  should still be fixed or avoided before adding tests that call it directly.
+
 ## Proposed Architecture
+
+### Load-Bearing Abstraction: OME-SPW Projection
+
+The core abstraction is a generic OME Screen/Plate/Well projector, not a
+microscope-brand adapter.
+
+`BioFormatsHandler` should consume the Bio-Formats/OME metadata model:
+
+```text
+OME Plate -> Well -> WellSample -> Image -> Pixels / Plane
+```
+
+and project it onto the OpenHCS source axes:
+
+```text
+well -> site -> channel -> z_index -> timepoint
+```
+
+Projection rules:
+
+- `Plate` scopes a candidate HCS dataset.
+- `Well.Row` and `Well.Column` define the OpenHCS `well` key.
+- `WellSample.ImageRef` links a field/site to the Bio-Formats image/series.
+- `WellSample.Index` defines the OpenHCS `site` key when present; otherwise use
+  a deterministic per-well sample order only if Bio-Formats exposes stable
+  sample ordering.
+- `Pixels.SizeC`, `Pixels.SizeZ`, `Pixels.SizeT`, and reader plane indexing
+  define `channel`, `z_index`, and `timepoint`.
+- `Plane.TheC`, `Plane.TheZ`, and `Plane.TheT` should be used to validate or
+  override reader-order assumptions when present.
+
+This projector is the only code path that should turn Bio-Formats metadata into
+OpenHCS plate axes. Cellomics/Thermo `.c01`, Yokogawa/CellVoyager, OME-TIFF, or
+any future Bio-Formats HCS reader should all enter through the same projector if
+they populate OME-SPW metadata.
+
+Fail-loud rule:
+
+- If C/Z/T are available but `Plate`/`Well`/`WellSample` metadata is missing,
+  the dataset is readable but not automatically projectable as an HCS plate.
+- If well or site identity is ambiguous, do not infer from filenames in the
+  generic Bio-Formats handler. Hand off to a source schema / explicit mapping
+  path.
+- If an explicit vendor handler exists and captures more acquisition semantics
+  than Bio-Formats exposes, the vendor handler still wins.
 
 ### New Optional Extra
 
@@ -130,11 +195,12 @@ Plan action:
 2. Pick one adapter interface that hides dependency choice from the rest of OpenHCS.
 3. Keep the public OpenHCS handler API stable if the underlying Bio-Formats package changes.
 
-### New Adapter Layer
+### New Adapter And Projector Layer
 
-Add a small Bio-Formats adapter module, for example:
+Add small Bio-Formats adapter/projector modules, for example:
 
 - `openhcs/microscopes/bioformats_adapter.py`
+- `openhcs/microscopes/bioformats_spw_projector.py`
 - `openhcs/microscopes/bioformats.py`
 
 Core records:
@@ -150,8 +216,8 @@ class BioFormatsImageEntry:
     source_path: Path
     series_index: int
     plane_index: int
-    well: str | None
-    site: int | None
+    well: str
+    site: int
     channel: int
     z_index: int
     timepoint: int
@@ -162,15 +228,16 @@ class BioFormatsImageEntry:
 Responsibilities:
 
 - Discover candidate Bio-Formats-readable datasets under a root.
-- Query series and dimension sizes.
+- Query OME-SPW metadata, reader series, and dimension sizes.
+- Project `Plate`/`Well`/`WellSample` onto OpenHCS `well` and `site`.
 - Convert C/Z/T plane coordinates into one `BioFormatsImageEntry` per 2D plane.
 - Extract channel names and pixel sizes where present.
 - Preserve source path, series index, and plane index for loading.
-- Return explicit uncertainty when well/site cannot be inferred.
+- Return explicit uncertainty when OME-SPW metadata is absent or ambiguous.
 
 Fail-loud rules:
 
-- If C/Z/T can be inferred but well/site cannot, the adapter can produce entries only for non-plate datasets or require a user-provided source schema.
+- If C/Z/T can be inferred but OME-SPW well/site identity cannot, the adapter can produce entries only for non-plate datasets or require a user-provided source schema.
 - If multiple series have unclear identity, do not guess a plate layout.
 - If Bio-Formats reports dimensions but no stable plane-to-coordinate mapping, fail with a remediation message.
 
@@ -183,6 +250,9 @@ Required interface:
 - `load(path_or_ref, backend="bioformats")` must load a single plane from a structured reference.
 - `load_batch(...)` must load multiple plane refs efficiently.
 - References should be serializable in virtual workspace metadata.
+- The backend must be safe under multiprocessing. If reader/JVM state cannot be
+  pickled, implement `PicklableBackend` and recreate readers from connection /
+  dependency parameters in workers.
 
 Recommended reference format:
 
@@ -221,9 +291,13 @@ Handler behavior:
 
 - `compatible_backends = [Backend.BIOFORMATS]` if a new backend is added.
 - `root_dir = "."` for folder roots unless a dataset-specific root is discovered.
-- `initialize_workspace(...)` discovers Bio-Formats entries, writes normalized virtual metadata, registers the Bio-Formats backend, and returns a virtual image directory.
+- `initialize_workspace(...)` discovers Bio-Formats entries through the OME-SPW projector, writes normalized virtual metadata, registers the Bio-Formats backend, and returns a virtual image directory.
 - `post_workspace(...)` should avoid base-class file renaming assumptions if the backend is Bio-Formats rather than disk.
 - `auto_detect_patterns(...)` and `path_list_from_pattern(...)` should continue to work through normalized keys. Prefer reusing `PatternDiscoveryEngine` with `SourceSchemaFilenameParser` or a `BioFormatsFilenameParser`.
+- Do not reuse base `MicroscopeHandler.post_workspace(...)` unchanged if
+  `workspace_mapping` values are structured Bio-Formats refs. Base
+  `post_workspace(...)` assumes path-like mappings and will route loads through
+  `VirtualWorkspaceBackend` / disk semantics.
 
 Parser behavior:
 
@@ -233,10 +307,10 @@ Parser behavior:
 Metadata handler behavior:
 
 - `find_metadata_file(...)` should detect Bio-Formats-readable roots late in auto-detection.
-- `get_grid_dimensions(...)` should return `(1, 1)` unless plate/site geometry is reliably present.
+- `get_grid_dimensions(...)` should return `(1, 1)` unless OME-SPW site geometry is reliably present.
 - `get_pixel_size(...)` should return Bio-Formats physical pixel size where present, otherwise fallback.
 - `get_channel_values(...)` should return channel names where present.
-- `get_well_values(...)`, `get_site_values(...)`, and `get_z_index_values(...)` should return values only when inferred.
+- `get_well_values(...)`, `get_site_values(...)`, and `get_z_index_values(...)` should return values from the OME-SPW projector only when the projection is complete.
 - `get_image_files(...)` should return normalized virtual keys.
 
 ### Auto-Detection Policy
@@ -288,7 +362,7 @@ Required GUI surfaces:
 
 - Add `BioFormats` to microscope selection enum/dropdown.
 - For `AUTO`, show detection results clearly: explicit vendor handler vs Bio-Formats fallback.
-- If Bio-Formats cannot infer plate semantics, show a source-schema dialog instead of proceeding silently.
+- If Bio-Formats cannot project OME-SPW plate semantics, show a source-schema dialog instead of proceeding silently.
 - Metadata viewer should display Bio-Formats-discovered dimensions, channel names, pixel size, and warnings.
 
 ## Implementation Sequence
@@ -306,33 +380,56 @@ Verification:
 - Unit test with mocked adapter results.
 - Optional integration smoke guarded by `OPENHCS_ENABLE_BIOFORMATS_TESTS=1`.
 
-### Pass 2: Adapter Records
+Decision gate:
+
+- Pick the concrete reader stack before adding runtime plumbing. The adapter API
+  must hide the choice, but the backend must know whether reader state is cheap
+  to open per batch, cached per process, or JVM-scoped.
+
+### Pass 2: Adapter Records And OME-SPW Projector
 
 Deliverables:
 
 - Add immutable records for dataset discovery and plane entries.
+- Add `BioFormatsSPWProjector` or equivalent nominal projector for OME `Plate`/`Well`/`WellSample` metadata.
 - Add fail-loud result types for ambiguous semantics.
 - Add adapter tests using fake Bio-Formats metadata, not real jars.
 
 Verification:
 
+- Tests for `Plate`/`Well`/`WellSample` projection into `well` and `site`.
 - Tests for C/Z/T projection.
-- Tests for missing well/site behavior.
+- Tests for missing or ambiguous OME-SPW metadata.
 - Tests for channel names and pixel-size extraction.
 
-### Pass 3: Storage Backend
+### Pass 3: Backend Constants And Storage Backend
 
 Deliverables:
 
-- Add `Backend.BIOFORMATS`.
-- Add Bio-Formats backend registration path.
+- Add `Backend.BIOFORMATS` to both OpenHCS and PolyStore backend enums.
+- Add Bio-Formats backend registration path in PolyStore or a clearly owned
+  OpenHCS-local backend module.
 - Load one plane by structured reference.
 - Batch-load planes.
+- Make worker recreation explicit through `PicklableBackend` or another nominal
+  backend lifecycle abstraction.
 
 Verification:
 
 - Unit tests with a fake reader.
 - Integration smoke with a small public or generated supported file if feasible.
+- Multiprocessing smoke that loads at least one Bio-Formats-backed plane inside a worker.
+
+Decision gate:
+
+- Choose one of two virtual workspace strategies before implementing handler
+  plumbing:
+  - add a dedicated `BioFormatsVirtualWorkspaceBackend` whose mapping values are
+    structured Bio-Formats refs; or
+  - generalize `VirtualWorkspaceBackend` to dispatch structured refs to the
+    backend named inside each ref while preserving existing string path mappings.
+  Do not store structured refs in the current `VirtualWorkspaceBackend` schema
+  and rely on disk fallback.
 
 ### Pass 4: Handler
 
@@ -343,6 +440,8 @@ Deliverables:
 - Add `BioFormatsHandler`.
 - Add `Microscope.BIOFORMATS`.
 - Add late auto-detection behavior.
+- Override workspace initialization/listing paths as needed so normalized keys
+  are produced by the OME-SPW projector, not by raw vendor filename parsing.
 
 Verification:
 
@@ -350,6 +449,7 @@ Verification:
 - Unit tests for explicit `create_microscope_handler("bioformats", ...)`.
 - Unit tests that vendor handlers win before Bio-Formats fallback.
 - Unit tests for normalized image-file listing.
+- Unit tests proving the handler does not parse raw vendor filenames to recover missing HCS axes.
 
 ### Pass 5: Runtime Integration
 
@@ -359,19 +459,22 @@ Deliverables:
 - Ensure compiler read-backend validation accepts `Backend.BIOFORMATS`.
 - Ensure `PatternDiscoveryEngine` can discover normalized Bio-Formats virtual keys.
 - Ensure `bulk_preload_step_images(...)` can load Bio-Formats-backed refs.
+- Ensure `ProcessingContext` worker reconstruction preserves the Bio-Formats
+  backend registration and reader configuration.
 
 Verification:
 
 - Minimal pipeline reads a Bio-Formats-backed source and executes a no-op or simple function.
 - Test both explicit `Microscope.BIOFORMATS` and `Microscope.AUTO` fallback.
+- Run the minimal pipeline in both direct and multiprocessing execution modes.
 
 ### Pass 6: GUI And Source Binding
 
 Deliverables:
 
 - Add GUI microscope option.
-- Add warning/metadata display for fallback inference.
-- Add source-binding fallback when well/site cannot be inferred.
+- Add warning/metadata display for incomplete OME-SPW projection.
+- Add source-binding fallback when OME-SPW well/site projection is unavailable.
 
 Verification:
 
@@ -397,6 +500,7 @@ Verification:
 Required tests:
 
 - `tests/unit/test_bioformats_adapter.py`
+- `tests/unit/test_bioformats_spw_projector.py`
 - `tests/unit/test_bioformats_microscope_handler.py`
 - `tests/unit/test_bioformats_storage_backend.py` if backend is local.
 - Integration test with a small fixture dataset.
@@ -407,7 +511,9 @@ Required tests:
 Suggested fixture classes:
 
 - Single multi-plane file with C/Z/T and no plate semantics.
-- Folder with multiple files where filenames expose well/site.
+- OME-SPW fixture with one plate, multiple wells, multiple WellSamples/sites, and C/Z/T planes.
+- Cellomics/Thermo `.c01` fixture if licensing and sample availability allow.
+- Folder with multiple files where filenames expose well/site, used only for explicit source-schema fallback tests.
 - Simulated vendor dataset that Bio-Formats can read but explicit handler should own.
 - Dataset with channel names and physical pixel size.
 
@@ -419,7 +525,7 @@ Bio-Formats is a reader and metadata normalization layer. It does not guarantee 
 
 - readable pixels,
 - available C/Z/T metadata,
-- inferred well/site identities,
+- OME-SPW-projected well/site identities,
 - explicit user-provided source schema.
 
 ### Avoid Silent Misgrouping
@@ -445,6 +551,13 @@ Imported `.cppipe` workflows preserve their encoded loading semantics. The Bio-F
 - Re-open `openhcs/core/orchestrator/orchestrator.py` before changing workspace initialization.
 - Re-open `openhcs/core/pipeline/compiler.py` before adding read backend validation.
 - Re-open `openhcs/core/steps/function_io.py` and `openhcs/core/steps/function_execution.py` before changing load paths or pattern discovery.
+- Re-open `openhcs/core/context/processing_context.py` before adding any backend
+  that must survive multiprocessing.
+- Re-open `external/PolyStore/src/polystore/virtual_workspace.py`,
+  `external/PolyStore/src/polystore/base.py`, and
+  `external/PolyStore/src/polystore/constants.py` before implementing structured
+  Bio-Formats refs.
+- Re-open `openhcs/constants/constants.py` before adding enum values.
 - Re-open `pyproject.toml` before adding optional dependencies.
 - Fix or account for `validate_backend_compatibility(...)` referencing `supported_backends`; the current handler API exposes `compatible_backends`.
 - Run focused microscope/source tests before broader integration tests.
@@ -467,6 +580,6 @@ Implementation-critical gaps:
 
 - Current virtual workspace metadata records path-like mappings. Structured Bio-Formats refs may require extending `VirtualWorkspaceBackend` or adding a dedicated Bio-Formats virtual backend before the handler can avoid materializing all planes.
 - Base `post_workspace(...)` assumes files can be listed, parsed, renamed, and represented as image paths. A Bio-Formats handler should override this path if it uses structured refs.
-- `validate_backend_compatibility(...)` currently checks `handler.supported_backends`, while handlers define `compatible_backends`. Fix this separately or as part of the backend integration pass.
+- `validate_backend_compatibility(...)` currently checks `handler.supported_backends`, while handlers define `compatible_backends`. The active compiler path uses `get_available_backends(...)`, but this helper remains stale and should be fixed or avoided before adding direct tests.
 - Bio-Formats fallback detection needs explicit late priority; relying on registry insertion order is too fragile for a broad reader.
-- The plan should not claim automatic plate semantics for all Bio-Formats-readable datasets. The adapter must surface uncertainty and require explicit source schema input when well/site identity cannot be inferred.
+- The plan should not claim automatic plate semantics for all Bio-Formats-readable datasets. The adapter must surface uncertainty and require explicit source schema input when OME-SPW well/site projection is unavailable.

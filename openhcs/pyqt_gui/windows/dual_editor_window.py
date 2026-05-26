@@ -11,26 +11,28 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any
 
 from PyQt6.QtWidgets import (
-    QDialog,
     QVBoxLayout,
-    QHBoxLayout,
     QPushButton,
     QLabel,
-    QTabWidget,
     QWidget,
-    QStackedWidget,
-    QSizePolicy,
     QMessageBox,
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QFont, QShowEvent
+from PyQt6.QtGui import QShowEvent
 
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.pyqt_gui.windows.dual_editor_session import (
+    DualEditorSession,
+)
+from openhcs.pyqt_gui.windows.dual_editor_tab_builder import (
+    _DualEditorTabBuildContext,
+    _DualEditorTabBuilder,
+)
 from openhcs.constants.constants import GroupBy
 from openhcs.core.config import PipelineConfig
+from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.config_framework import is_global_config_instance
-from openhcs.config_framework.context_manager import config_context
 from openhcs.config_framework.global_config import get_current_global_config
 from openhcs.config_framework.lazy_factory import get_base_type_for_lazy
 from openhcs.ui.shared.pattern_data_manager import PatternDataManager
@@ -39,17 +41,40 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.services.function_navigation import is_function_field_path
-from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
+from pyqt_reactive.services.window_navigation import FieldNavigableWindow
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.widgets.shared import BaseFormDialog, ResponsiveTwoRowWidget
+from pyqt_reactive.widgets.shared import (
+    ActionTabbedWindowBody,
+    BaseFormDialog,
+    DirtyWindowPresentation,
+    DirtyWindowPresenter,
+    FormWindowActionHeader,
+    HeaderAction,
+    HeaderActionGroup,
+)
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.introspection import UnifiedParameterAnalyzer
-from openhcs.pyqt_gui.widgets.artifact_contract_preview import (
-    ArtifactContractPreviewWidget,
-)
-from openhcs.pyqt_gui.widgets.step_parameter_editor import StepParameterEditorWidget
 
 logger = logging.getLogger(__name__)
+
+
+def _nearest_parent_service_adapter(parent_widget):
+    """Resolve the nearest manager-owned service adapter."""
+    from pyqt_reactive.widgets.shared.abstract_manager_widget import (
+        AbstractManagerWidget,
+    )
+
+    current = parent_widget
+    while current is not None:
+        if isinstance(current, AbstractManagerWidget):
+            return current.service_adapter
+        current = current.parent()
+    return None
+
+
+def _resolve_service_adapter(service_adapter, parent_widget):
+    """Resolve the service adapter available to this editor window."""
+    return service_adapter if service_adapter is not None else _nearest_parent_service_adapter(parent_widget)
 
 
 class DualEditorWindow(BaseFormDialog):
@@ -81,6 +106,7 @@ class DualEditorWindow(BaseFormDialog):
         service_adapter=None,
         step_index: Optional[int] = None,
         source_schema: PipelineImageSchema | None = None,
+        source_binding_context: SourceBindingContext | None = None,
         function_invocation_badge_provider: Optional[
             Callable[[str, int, Callable], Optional[str]]
         ] = None,
@@ -104,7 +130,7 @@ class DualEditorWindow(BaseFormDialog):
         # Store step_index for border pattern (used by ScopedBorderMixin.init_scope_border)
         self._step_index = step_index
         self._function_invocation_badge_provider = function_invocation_badge_provider
-        self.service_adapter = service_adapter
+        self.service_adapter = _resolve_service_adapter(service_adapter, parent)
 
         # Make window non-modal (like plate manager and pipeline editor)
         self.setModal(False)
@@ -112,8 +138,10 @@ class DualEditorWindow(BaseFormDialog):
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
+        self._dirty_presenter = DirtyWindowPresenter()
         self.gui_config = gui_config
         self.source_schema = source_schema
+        self.source_binding_context = source_binding_context
 
         # Business logic state (extracted from Textual version)
         self.is_new = is_new
@@ -134,6 +162,7 @@ class DualEditorWindow(BaseFormDialog):
         else:
             self.editing_step = self._create_new_step()
             self.original_step = None
+        self._session = DualEditorSession(editing_step=self.editing_step)
 
         # Change tracking (now uses ObjectState.dirty_fields instead of snapshots)
         self.has_changes = False
@@ -143,7 +172,7 @@ class DualEditorWindow(BaseFormDialog):
         self._dirty_detect_callback = lambda: self.detect_changes()
 
         # UI components
-        self.tab_widget: Optional[QTabWidget] = None
+        self.tab_widget: Optional[ActionTabbedWindowBody] = None
         self.header_label: Optional[QLabel] = None
         self.parameter_editors: Dict[
             str, QWidget
@@ -160,12 +189,7 @@ class DualEditorWindow(BaseFormDialog):
         self._flash_overlay_cleaned = False  # Track if overlay was cleaned up
         self._default_size_applied = False
         self._save_button_base_style = ""
-        self._step_buttons_widget: Optional[QWidget] = (
-            None  # Button widget from step editor
-        )
-        self._func_buttons_widget: Optional[QWidget] = (
-            None  # Button widget from func editor
-        )
+        self._function_pattern_controller = None
         self._time_travel_title_refresh_callback = None
 
         # Setup UI
@@ -178,7 +202,7 @@ class DualEditorWindow(BaseFormDialog):
 
         # Connect automatic change detection (BaseManagedWindow feature)
         # This automatically calls detect_changes() when any parameter changes
-        self._connect_change_detection()
+        self.connect_change_detection()
         self._connect_time_travel_title_refresh()
 
         logger.debug(f"Dual editor window initialized (new={is_new})")
@@ -248,6 +272,12 @@ class DualEditorWindow(BaseFormDialog):
             return self.step_editor.state
         return None
 
+    def form_managers(self):
+        """Return root form managers for BaseFormDialog change detection."""
+        if self.step_editor is None:
+            return ()
+        return (self.step_editor.form_manager,)
+
     def set_original_step_for_change_detection(self):
         """Set the original step for change detection. Must be called within proper context."""
         # Original step is already set in __init__ when working on a copy
@@ -267,44 +297,18 @@ class DualEditorWindow(BaseFormDialog):
         # Get centralized button styles
         button_styles = self.style_generator.generate_config_button_styles()
 
-        # Title row: title on left, buttons on right (responsive - wraps to row 2 when narrow)
-        self._title_header = ResponsiveTwoRowWidget(width_threshold=400, parent=self)
-        self._title_header.setStyleSheet(f"""
-            QWidget {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                border-radius: 3px;
-            }}
-        """)
-
-        # Title label (left side - stays in row 1)
-        self.header_label = QLabel()
-        self.header_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        self.header_label.setStyleSheet(
-            f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; background-color: transparent;"
-        )
-        self._title_header.add_left_widget(self.header_label)
-
-        # Cancel button (right side - wraps to row 2 when narrow)
         cancel_button = QPushButton("Cancel")
         cancel_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         cancel_button.setMinimumWidth(70)
-        cancel_button.setSizePolicy(
-            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
-        )
         cancel_button.clicked.connect(self.cancel_edit)
         cancel_button.setStyleSheet(button_styles["compact"])
-        self._title_header.add_right_widget(cancel_button)
 
-        # Save/Create button (right side - wraps to row 2 when narrow)
         self.save_button = QPushButton()
         self._update_save_button_text()
         self.save_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         self.save_button.setMinimumWidth(70)
-        self.save_button.setSizePolicy(
-            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
-        )
         self.save_button.setEnabled(False)
-        self._setup_save_button(self.save_button, self.save_edit)
+        self.setup_save_button(self.save_button, self.save_edit)
         self._save_button_base_style = (
             button_styles["compact"]
             + f"""
@@ -316,7 +320,30 @@ class DualEditorWindow(BaseFormDialog):
         """
         )
         self.save_button.setStyleSheet(self._save_button_base_style)
-        self._title_header.add_right_widget(self.save_button)
+
+        self._title_header = FormWindowActionHeader(
+            title_text="",
+            title_color=self.color_scheme.to_hex(self.color_scheme.text_accent),
+            action_groups=[
+                HeaderActionGroup(
+                    "group_save",
+                    [
+                        HeaderAction("cancel", cancel_button),
+                        HeaderAction("save", self.save_button),
+                    ],
+                )
+            ],
+            stay_priority=["group_save"],
+            right_aligned_group_ids=["group_save"],
+            parent=self,
+        )
+        self._title_header.setStyleSheet(f"""
+            QWidget {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border-radius: 3px;
+            }}
+        """)
+        self.header_label = self._title_header.header_label
 
         # Connect change detection BEFORE tabs are created.
         # create_step_tab() can call detect_changes() during setup.
@@ -324,45 +351,13 @@ class DualEditorWindow(BaseFormDialog):
 
         layout.addWidget(self._title_header)
 
-        # Tab row: tabs on left, action buttons on right (responsive - buttons wrap when narrow)
-        self._tab_row = ResponsiveTwoRowWidget(width_threshold=600, parent=self)
-
-        # Tab widget (left side - stays in row 1)
-        self.tab_widget = QTabWidget()
-        self.tab_bar = self.tab_widget.tabBar()
-        self.tab_bar.setExpanding(False)
-        self.tab_bar.setUsesScrollButtons(False)
-        self.tab_bar.setFixedHeight(CURRENT_LAYOUT.button_height)
-        self._tab_row.add_left_widget(self.tab_bar)
-
-        # Style the tab bar
-        self.tab_bar.setStyleSheet(f"""
-            QTabBar::tab {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
-                color: white;
-                padding: 0px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-                border: none;
-                height: {CURRENT_LAYOUT.button_height}px;
-            }}
-            QTabBar::tab:selected {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-            }}
-            QTabBar::tab:hover {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
-            }}
-        """)
-
-        # Container to hold the action buttons from all tabs
-        self._active_buttons_container = QWidget()
-        self._active_buttons_layout = QHBoxLayout(self._active_buttons_container)
-        self._active_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        self._active_buttons_layout.setSpacing(0)
-        self._tab_row.add_right_widget(self._active_buttons_container)
-
-        layout.addWidget(self._tab_row)
+        self._tab_body = ActionTabbedWindowBody(
+            color_scheme=self.color_scheme,
+            parent=self,
+        )
+        self.tab_widget = self._tab_body
+        self.tab_bar = self._tab_body.tab_bar
+        layout.addWidget(self._tab_body, 1)
 
         # Scope ID for singleton behavior and border styling.
         # Must be initialized BEFORE creating editors so scope accent color is available.
@@ -381,33 +376,35 @@ class DualEditorWindow(BaseFormDialog):
         )
         self.init_scope_border()
 
-        # Create tabs (this adds content to the tab widget)
-        self.create_step_tab()
-        self.create_function_tab()
-        self.create_artifact_contract_tab()
+        tabs = _DualEditorTabBuilder(
+            _DualEditorTabBuildContext(
+                editing_step=self.editing_step,
+                orchestrator=self.orchestrator,
+                color_scheme=self.color_scheme,
+                scope_id=self.scope_id,
+                step_index=self._step_index,
+                scope_accent_color=self._scope_accent_color,
+                source_schema=self.source_schema,
+                source_binding_context=self.source_binding_context,
+                invocation_badge_provider=self._function_invocation_badge_provider,
+                main_window=self._find_main_window(),
+                session=self._session,
+                on_form_parameter_changed=self.on_form_parameter_changed,
+                update_window_title=self._update_window_title,
+                detect_changes=self.detect_changes,
+                sync_function_editor_from_step=self._sync_function_editor_from_step,
+                refresh_artifact_contract_preview=(
+                    self._refresh_artifact_contract_preview
+                ),
+            )
+        ).build_into(self._tab_body)
+        self.step_editor = tabs.step_editor
+        self.func_editor = tabs.func_editor
+        self.artifact_contract_preview = tabs.artifact_contract_preview
+        self._function_pattern_controller = tabs.function_pattern_controller
 
         # Editors now exist; apply scope styling to their widget trees.
         self.apply_scope_accent_styling()
-
-        # Add the tab widget's content area (stacked widget) below the tab row
-        # The tab bar is already in tab_row, so we only add the content pane here
-        content_container = QWidget()
-        content_layout = QVBoxLayout(content_container)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-
-        # Get the stacked widget from the tab widget and add it
-        stacked_widget = self.tab_widget.findChild(QStackedWidget)
-        if stacked_widget:
-            content_layout.addWidget(stacked_widget)
-
-        layout.addWidget(content_container)
-
-        # Connect tab change to swap buttons
-        self.tab_widget.currentChanged.connect(self._on_tab_changed)
-
-        # Setup tab button containers (extract buttons from editors once)
-        QTimer.singleShot(0, self._setup_tab_button_containers)
 
         # Debounce timer for function editor synchronization (batches rapid updates)
         self._function_sync_timer = QTimer(self)
@@ -418,78 +415,17 @@ class DualEditorWindow(BaseFormDialog):
         # Update title now that header_label exists
         self._update_window_title()
 
-    def _setup_tab_button_containers(self) -> None:
-        """Extract buttons from editors and add to active buttons container.
-
-        This is called ONCE after tabs are created to avoid adding widgets
-        to the layout multiple times.
-        """
-        # Extract step editor buttons widget and add to layout
-        self._step_buttons_widget = self.step_editor.get_action_buttons()
-        if self._step_buttons_widget:
-            self._step_buttons_widget.setVisible(False)
-            self._active_buttons_layout.addWidget(self._step_buttons_widget)
-
-        # Extract function editor buttons widget and add to layout
-        self._func_buttons_widget = self.func_editor.get_action_buttons()
-        if self._func_buttons_widget:
-            self._func_buttons_widget.setVisible(False)
-            self._active_buttons_layout.addWidget(self._func_buttons_widget)
-
-        # Show buttons for the initially selected tab
-        self._show_tab_buttons()
-
-    def _show_tab_buttons(self) -> None:
-        """Show only buttons for the currently active tab.
-
-        Toggles visibility of pre-embedded button widgets based on
-        which tab is currently selected.
-        """
-        current_index = self.tab_widget.currentIndex()
-
-        # Hide all button widgets first
-        if self._step_buttons_widget:
-            self._step_buttons_widget.setVisible(False)
-        if self._func_buttons_widget:
-            self._func_buttons_widget.setVisible(False)
-
-        # Show only the active tab's buttons
-        if current_index == 0 and self._step_buttons_widget:
-            self._step_buttons_widget.setVisible(True)
-        elif current_index == 1 and self._func_buttons_widget:
-            self._func_buttons_widget.setVisible(True)
-
-    def _on_tab_changed(self, index: int) -> None:
-        """Handle tab change - show appropriate action buttons."""
-        self._show_tab_buttons()
-
-    def _update_window_title(self):
-        """Update window title with dirty marker and signature diff underline.
-
-        Two orthogonal visual semantics:
-        - Asterisk (*): unsaved raw edits (parameters != saved_parameters)
-        - Underline: signature diff (raw != signature default)
-
-        Reads step name from ObjectState for live updates when user edits the name field.
-        """
-        # Get step name from ObjectState if available, otherwise fall back to editing_step
+    def _dirty_window_presentation(self) -> DirtyWindowPresentation:
+        """Build dirty/signature-diff presentation from the current step state."""
         step_editor = self.step_editor
         if step_editor and step_editor.state:
-            # Read name from ObjectState (updates live as user types)
             current_values = step_editor.state.get_current_values()
             step_name = current_values.get("name", "Unnamed")
         else:
-            # Fallback to editing_step.name during initial setup
-            step_name = (
-                getattr(self.editing_step, "name", "Unnamed")
-                if self.editing_step
-                else "Unnamed"
-            )
+            step_name = self.editing_step.name if self.editing_step else "Unnamed"
 
         base_title = f"{'New' if self.is_new else 'Edit'} Step: {step_name}"
         self._base_window_title = base_title
-
-        # Check dirty state from ObjectState
         is_dirty = bool(
             step_editor and step_editor.state and step_editor.state.is_raw_dirty
         )
@@ -498,28 +434,31 @@ class DualEditorWindow(BaseFormDialog):
             and step_editor.state
             and step_editor.state.signature_diff_fields
         )
+        return DirtyWindowPresentation(
+            window_title=base_title,
+            header_text=base_title,
+            save_label="Create" if self.is_new else "Save",
+            is_dirty=is_dirty,
+            has_signature_diff=has_sig_diff,
+            mark_save_label_dirty=True,
+        )
 
-        title = f"* {base_title}" if is_dirty else base_title
-        self.setWindowTitle(title)
-        if self.header_label is not None:
-            self.header_label.setText(title)
-            # Apply underline for signature diff (independent of dirty)
-            font = self.header_label.font()
-            font.setUnderline(has_sig_diff)
-            self.header_label.setFont(font)
+    def _apply_dirty_window_presentation(self) -> None:
+        if self.header_label is None:
+            return
+        self._dirty_presenter.apply(
+            window=self,
+            header_label=self.header_label,
+            save_button=self.save_button,
+            presentation=self._dirty_window_presentation(),
+        )
+
+    def _update_window_title(self):
+        """Update window title/header/save markers from ObjectState dirtiness."""
+        self._apply_dirty_window_presentation()
 
     def _update_save_button_text(self):
-        base_text = "Create" if self.is_new else "Save"
-        # Add asterisk if there are unsaved changes
-        has_changes = self.has_changes
-        new_text = f"* {base_text}" if has_changes else base_text
-        logger.debug(
-            "Updating save button text: is_new=%s, has_changes=%s -> %r",
-            self.is_new,
-            has_changes,
-            new_text,
-        )
-        self.save_button.setText(new_text)
+        self._apply_dirty_window_presentation()
         if self._save_button_base_style:
             self.save_button.setStyleSheet(self._save_button_base_style)
 
@@ -633,195 +572,6 @@ class DualEditorWindow(BaseFormDialog):
             self.orchestrator.plate_path, self.editing_step
         )
 
-    def create_step_tab(self):
-        """Create the step settings tab (using dedicated widget)."""
-        # Create step parameter editor widget with proper nested context
-        # Step must be nested: GlobalPipelineConfig -> PipelineConfig -> Step
-        # CRITICAL: Use hierarchical scope_id to isolate this step editor + its function panes
-        scope_id = self._build_step_scope_id()
-
-        with config_context(self.orchestrator.pipeline_config):  # Pipeline level
-            with config_context(self.editing_step):  # Step level
-                self.step_editor = StepParameterEditorWidget(
-                    self.editing_step,
-                    service_adapter=None,
-                    color_scheme=self.color_scheme,
-                    pipeline_config=self.orchestrator.pipeline_config,
-                    scope_id=scope_id,  # Same hierarchical scope_id as step editor
-                    step_index=self._step_index,  # Align scope styling with pipeline order
-                    scope_accent_color=self._scope_accent_color,
-                    render_header=False,  # Don't render header - buttons will be managed externally
-                    button_style="compact",  # Borderless compact style to match function editor
-                    source_schema=self.source_schema,
-                    source_root=self.orchestrator.input_dir,
-                )
-
-        # NOTE: parameter_changed connection is now handled automatically by BaseManagedWindow._connect_change_detection()
-        # which is called at the end of __init__. This automatically calls detect_changes() when any parameter changes.
-        # We still need on_form_parameter_changed() for function editor sync, so connect it here.
-        self.step_editor.form_manager.parameter_changed.connect(
-            self.on_form_parameter_changed
-        )
-
-        # NOTE: context_changed subscription REMOVED - FunctionListEditorWidget now subscribes
-        # directly to ObjectState.on_resolved_changed, which is the proper mechanism for
-        # reacting to resolved value changes from ANY ancestor (PipelineConfig, GlobalPipelineConfig)
-
-        # Subscribe to state changes for window title updates
-        self._dirty_title_callback = self._update_window_title
-        self.step_editor.state.on_state_changed(self._dirty_title_callback)
-        self.step_editor.state.on_state_changed(self._dirty_detect_callback)
-
-        def _update_title_on_resolved_changed(_: set) -> None:
-            self._update_window_title()
-            self.detect_changes()
-
-        self.step_editor.state.on_resolved_changed(_update_title_on_resolved_changed)
-
-        # CRITICAL: Set initial title now that ObjectState is available
-        # This ensures title shows immediately instead of waiting for first state change
-        self._update_window_title()
-        self.detect_changes()
-
-        self.tab_widget.addTab(self.step_editor, "Step Settings")
-
-    def create_function_tab(self):
-        """Create the function pattern tab (using dedicated widget)."""
-        # Convert step func to function list format
-        initial_functions = self._convert_step_func_to_list()
-
-        # Create function list editor widget (mirrors Textual TUI)
-        # CRITICAL: Pass editing_step for context hierarchy (Function → Step → Pipeline → Global)
-        # CRITICAL: Use same hierarchical scope_id as step editor to isolate this step editor + its function panes
-        scope_id = self._build_step_scope_id()
-        step_name = getattr(self.editing_step, "name", "unknown_step")
-
-        self.func_editor = FunctionListEditorWidget(
-            initial_functions=initial_functions,
-            context_identifier=step_name,
-            service_adapter=None,
-            scope_id=scope_id,  # Same hierarchical scope_id as step editor
-            render_header=False,
-            button_style="compact",  # Borderless compact style for tab row
-            scope_index=self._step_index,  # Align scope styling with pipeline order
-            invocation_badge_provider=self._function_invocation_badge_provider,
-        )
-
-        # Store main window reference for orchestrator access (find it through parent chain)
-        main_window = self._find_main_window()
-        if main_window:
-            self.func_editor.main_window = main_window
-
-        # SINGLE SOURCE OF TRUTH: Initialize function editor state from step
-        self._sync_function_editor_from_step()
-
-        # Restore last selected dict-pattern key (persisted in ObjectState.metadata)
-        self.func_editor.apply_selected_pattern_key_from_state()
-
-        # Connect function pattern changes
-        # Use DirectConnection to keep execution synchronous within atomic context
-        self.func_editor.function_pattern_changed.connect(
-            self._on_function_pattern_changed, type=Qt.ConnectionType.DirectConnection
-        )
-
-        self.tab_widget.addTab(self.func_editor, "Function Pattern")
-
-    def create_artifact_contract_tab(self):
-        """Create the read-only artifact contract preview tab."""
-        self.artifact_contract_preview = ArtifactContractPreviewWidget(
-            self._current_function_spec(),
-            source_bindings=self._current_source_bindings(),
-            parent=self,
-        )
-        self.tab_widget.addTab(self.artifact_contract_preview, "Artifacts")
-
-    def _on_function_pattern_changed(self):
-        """Handle function pattern changes from function editor."""
-        # Update step func from function editor - use current_pattern to get full pattern data
-        current_pattern = self.func_editor.current_pattern
-        logger.debug(
-            "[FUNC_PATTERN] current_pattern type=%s value=%r",
-            type(current_pattern).__name__,
-            current_pattern,
-        )
-
-        # CRITICAL FIX: Use fresh imports to avoid unpicklable registry wrappers
-        if callable(current_pattern):
-            try:
-                import importlib
-
-                module = importlib.import_module(current_pattern.__module__)
-                current_pattern = getattr(module, current_pattern.__name__)
-            except Exception:
-                pass  # Use original if refresh fails
-
-        # ATOMIC: Coalesce function parameter change + step func update into single undo
-        # Without this, editing a function parameter creates two undo entries:
-        # one for the function parameter and one for the step's func pattern
-        state = self.step_editor.state if self.step_editor else None
-        state_func = (
-            state.parameters.get("func")
-            if state is not None and "func" in state.parameters
-            else None
-        )
-        step_func = getattr(self.editing_step, "func", None)
-        if state_func == current_pattern and step_func == current_pattern:
-            logger.debug("[FUNC_PATTERN] Ignoring no-op function pattern update")
-            return
-
-        with ObjectStateRegistry.atomic("edit func"):
-            if step_func != current_pattern:
-                self.editing_step.func = current_pattern
-
-            # CRITICAL: Also update ObjectState so list item preview updates in real-time
-            # The step_editor's state tracks 'func' parameter - update it with the new pattern
-            if state is not None:
-                if "func" in state.parameters and state_func != current_pattern:
-                    state.update_parameter("func", current_pattern)
-                    logger.debug(
-                        f"Updated ObjectState 'func' parameter for real-time preview"
-                    )
-                    logger.debug(
-                        "[FUNC_PATTERN] ObjectState dirty_fields after update: %s",
-                        state.dirty_fields,
-                    )
-
-        self.detect_changes()
-        self._refresh_artifact_contract_preview(current_pattern)
-        logger.debug(f"Function pattern changed: {current_pattern}")
-
-    def _get_event_bus(self):
-        """Get the global event bus from the service adapter.
-
-        Returns:
-            GlobalEventBus instance or None if not found
-        """
-        service_adapter = self._resolve_service_adapter()
-        if service_adapter is not None:
-            return service_adapter.get_event_bus()
-
-        logger.warning("Could not find service adapter for event bus")
-        return None
-
-    def _resolve_service_adapter(self):
-        """Resolve the OpenHCS service adapter from explicit ownership or parents."""
-        if self.service_adapter is not None:
-            return self.service_adapter
-
-        try:
-            from pyqt_reactive.widgets.shared.abstract_manager_widget import (
-                AbstractManagerWidget,
-            )
-
-            current = self.parent()
-            while current:
-                if isinstance(current, AbstractManagerWidget):
-                    return current.service_adapter
-                current = current.parent()
-        except Exception as e:
-            logger.error(f"Error resolving service adapter: {e}")
-            return None
-
     def _on_pipeline_changed(self, new_pipeline_steps: list):
         """Handle pipeline_changed signal from global event bus.
 
@@ -855,7 +605,7 @@ class DualEditorWindow(BaseFormDialog):
         updated_step = None
         new_index = None
         for i, step in enumerate(new_pipeline_steps):
-            step_token = getattr(step, "_scope_token", None)
+            step_token = ScopeTokenService.object_token(step)
             if step_token == window_step_token:
                 updated_step = step
                 new_index = i
@@ -946,7 +696,7 @@ class DualEditorWindow(BaseFormDialog):
     def setup_connections(self):
         """Setup signal/slot connections."""
         # Tab change tracking
-        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        self._tab_body.current_changed.connect(self.on_tab_changed)
 
         # CRITICAL: Connect to global event bus for cross-window updates
         # This is the OpenHCS "set and forget" pattern - one connection handles ALL sources
@@ -956,16 +706,6 @@ class DualEditorWindow(BaseFormDialog):
             event_bus.config_changed.connect(self._on_config_changed)
             event_bus.register_window(self)
             logger.debug("Connected to global event bus for cross-window updates")
-
-    def _convert_step_func_to_list(self):
-        """Convert step func to initial pattern format for function list editor."""
-        if not self.editing_step.func:
-            return []
-
-        # Return the step func directly - the function list editor will handle the conversion
-        result = self.editing_step.func
-        logger.debug(f"🔍 DUAL EDITOR _convert_step_func_to_list: returning {result}")
-        return result
 
     def _schedule_function_editor_sync(self):
         """Schedule a batched sync of the function editor."""
@@ -997,48 +737,38 @@ class DualEditorWindow(BaseFormDialog):
         """
         logger.debug("🔄 _sync_function_editor_from_step called")
 
-        # Guard: Only sync if function editor exists
-        if self.func_editor is None:
-            logger.debug("⏭️  Function editor doesn't exist yet, skipping sync")
+        if not self._session.sync_function_editor_from_step():
             return
 
-        # Trigger a refresh from the editor's authoritative ObjectState context.
-        self.func_editor.refresh_from_context()
-        self._refresh_artifact_contract_preview(self._current_function_spec())
+        self._refresh_artifact_contract_preview(self._session.current_function_spec())
 
         logger.debug("✅ Triggered function editor refresh from context")
 
     def _current_function_spec(self) -> Any:
-        """Return the live function spec from ObjectState, falling back to the clone."""
-
-        state = self.state
-        if state is not None and "func" in state.parameters:
-            return state.parameters["func"]
-        return self.editing_step.func
-
-    def _current_source_bindings(self):
-        """Return live source bindings from ObjectState, falling back to the clone."""
-
-        state = self.state
-        if state is not None and "source_bindings" in state.parameters:
-            return state.parameters["source_bindings"]
-        return self.editing_step.source_bindings
+        """Compatibility wrapper for tests; authority lives in DualEditorSession."""
+        return self._session.current_function_spec()
 
     def _refresh_artifact_contract_preview(self, func_spec: Any) -> None:
         if self.artifact_contract_preview is None:
             return
         self.artifact_contract_preview.set_function_spec(
             func_spec,
-            source_bindings=self._current_source_bindings(),
+            source_bindings=self._session.current_source_bindings(),
         )
 
     def _find_main_window(self):
-        """Find the main window through the service-adapter authority."""
-        service_adapter = self._resolve_service_adapter()
-        if service_adapter is None:
+        """Return the main window from the editor service adapter."""
+        if self.service_adapter is None:
             logger.warning("Could not find service adapter for main window")
             return None
-        return service_adapter.main_window
+        return self.service_adapter.main_window
+
+    def _get_event_bus(self):
+        """Return the event bus from the editor service adapter."""
+        if self.service_adapter is None:
+            logger.warning("Could not find service adapter for event bus")
+            return None
+        return self.service_adapter.get_event_bus()
 
     # Old function pane methods removed - now using dedicated FunctionListEditorWidget
 
@@ -1052,9 +782,12 @@ class DualEditorWindow(BaseFormDialog):
         if not self.editing_step.func:
             return "No function assigned"
 
-        func = self.editing_step.func
-        func_name = getattr(func, "__name__", "Unknown Function")
-        func_module = getattr(func, "__module__", "Unknown Module")
+        func = DualEditorSession.callable_from_function_spec(self.editing_step.func)
+        if func is None:
+            return "No callable function assigned"
+
+        func_name = func.__name__
+        func_module = func.__module__
 
         info = f"Function: {func_name}\n"
         info += f"Module: {func_module}\n"
@@ -1166,15 +899,9 @@ class DualEditorWindow(BaseFormDialog):
             # Top-level field (e.g., "name", "func", "processing_config")
             field_name = path_parts[0]
 
-            # CRITICAL FIX: For function parameters, use fresh imports to avoid unpicklable registry wrappers
-            if field_name == "func" and callable(value):
-                try:
-                    import importlib
-
-                    module = importlib.import_module(value.__module__)
-                    value = module.__dict__.get(value.__name__)
-                except Exception:
-                    pass  # Use original if refresh fails
+        # CRITICAL FIX: For function parameters, use fresh imports to avoid unpicklable registry wrappers
+        if field_name == "func" and callable(value):
+            value = self._session.normalize_function_spec(value)
 
             # CRITICAL FIX: For nested dataclass parameters (like processing_config),
             # don't replace the entire lazy dataclass - instead update individual fields
@@ -1196,9 +923,9 @@ class DualEditorWindow(BaseFormDialog):
                         object.__setattr__(existing_config, field.name, raw_value)
                         logger.debug(f"    ✏️  Updated {field.name} to {raw_value}")
                 else:
-                    setattr(self.editing_step, field_name, value)
+                    object.__setattr__(self.editing_step, field_name, value)
             else:
-                setattr(self.editing_step, field_name, value)
+                object.__setattr__(self.editing_step, field_name, value)
         else:
             # Nested field (e.g., ["processing_config", "group_by"])
             # The nested form manager already updated self.editing_step via _mark_parents_modified
@@ -1253,34 +980,13 @@ class DualEditorWindow(BaseFormDialog):
         try:
             # CRITICAL FIX: Sync function pattern from function editor BEFORE collecting form values
             # The function editor doesn't use a form manager, so we need to explicitly sync it
-            if self.func_editor:
-                current_pattern = self.func_editor.current_pattern
-
-            # CRITICAL FIX: Use fresh imports to avoid unpicklable registry wrappers
-            if callable(current_pattern):
-                try:
-                    import importlib
-
-                    module = importlib.import_module(current_pattern.__module__)
-                    current_pattern = module.__dict__.get(current_pattern.__name__)
-                except Exception:
-                    pass  # Use original if refresh fails
-
-                self.editing_step.func = current_pattern
-                logger.debug(f"Synced function pattern before save: {current_pattern}")
+            current_pattern = self._session.current_function_pattern()
+            self.editing_step.func = current_pattern
+            logger.debug("Synced function pattern before save: %r", current_pattern)
 
             # CRITICAL FIX: Collect current values from all tab states before saving
             # This ensures nested dataclass field values are properly saved to the step object
-            for tab_index in range(self.tab_widget.count()):
-                tab_widget = self.tab_widget.widget(tab_index)
-                if tab_widget and hasattr(tab_widget, "state") and tab_widget.state:
-                    # Get current values from this tab's state
-                    current_values = tab_widget.state.get_current_values()
-
-                    # Apply values to editing step
-                    for param_name, value in current_values.items():
-                        setattr(self.editing_step, param_name, value)
-                        logger.debug(f"Applied {param_name}={value} to editing step")
+            self._session.apply_step_state_to_step()
 
             # Validate step
             step_name = self.editing_step.name
@@ -1314,7 +1020,7 @@ class DualEditorWindow(BaseFormDialog):
                 self._update_save_button_text()
 
             # Emit signals and call callback
-            logger.debug("Emitting step_saved signal for: %s", getattr(step_to_save, "name", "Unknown"))
+            logger.debug("Emitting step_saved signal for: %s", step_to_save.name)
             self.step_saved.emit(step_to_save)
 
             if self.on_save_callback:
@@ -1322,14 +1028,14 @@ class DualEditorWindow(BaseFormDialog):
                 self.on_save_callback(step_to_save)
 
             # After a successful save, update original_step and detect changes
-            # ObjectState.mark_saved() is called by accept() or _mark_saved_and_refresh_all()
+            # ObjectState.mark_saved() is called by accept() or mark_saved_and_refresh_all()
             self.original_step = self._clone_step(self.editing_step)
 
             # UNIFIED: Both paths share same logic, differ only in whether to close window
             if close_window:
                 self.accept()  # Marks saved + unregisters + cleans up + closes
             else:
-                self._mark_saved_and_refresh_all()  # Marks saved + refreshes, but stays open
+                self.mark_saved_and_refresh_all()  # Marks saved + refreshes, but stays open
 
             # Detect changes after marking saved (should show no changes now)
             self.detect_changes()
@@ -1385,22 +1091,13 @@ class DualEditorWindow(BaseFormDialog):
         if is_dataclass(self.editing_step):
             # For dataclass steps, copy all field values
             for field in fields(self.editing_step):
-                value = getattr(self.editing_step, field.name)
-                setattr(self.original_step_reference, field.name, value)
+                value = object.__getattribute__(self.editing_step, field.name)
+                object.__setattr__(self.original_step_reference, field.name, value)
         else:
-            # CRITICAL FIX: Use reflection to copy ALL attributes, not just hardcoded list
-            # This ensures optional dataclass attributes like step_materialization_config are copied
-            for attr_name in dir(self.editing_step):
-                # Skip private/magic attributes and methods
-                if not attr_name.startswith("_") and not callable(
-                    getattr(self.editing_step, attr_name, None)
-                ):
-                    try:
-                        value = getattr(self.editing_step, attr_name)
-                        setattr(self.original_step_reference, attr_name, value)
-                        logger.debug(f"Copied attribute {attr_name}: {value}")
-                    except AttributeError:
-                        pass
+            for attr_name, value in vars(self.editing_step).items():
+                if not attr_name.startswith("_"):
+                    object.__setattr__(self.original_step_reference, attr_name, value)
+                    logger.debug("Copied attribute %s: %r", attr_name, value)
 
         logger.debug("Applied changes to original step object")
 
@@ -1460,3 +1157,6 @@ class DualEditorWindow(BaseFormDialog):
 
     # No need to override _get_form_managers() - BaseFormDialog automatically
     # discovers all ParameterFormManager instances recursively in the widget tree
+
+
+FieldNavigableWindow.register(DualEditorWindow)

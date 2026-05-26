@@ -1,12 +1,46 @@
 """Unified clickable help components using consolidated help system."""
 
+import inspect
+from abc import ABC
 from typing import Union, Callable
+from metaclass_registry import AutoRegisterMeta
 from textual.widgets import Static
 from textual.events import Click
 
 
-class ClickableHelpLabel(Static):
+class HelpClickBehavior(ABC, metaclass=AutoRegisterMeta):
+    """Shared click behavior for widgets that expose contextual help."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key: str | None = None
+
+    help_target: Union[Callable, type, None]
+    param_name: str | None
+    param_description: str | None
+    param_type: type | None
+
+    async def on_click(self, event: Click) -> None:
+        """Handle click events to show help window using unified manager."""
+        event.stop()
+
+        from openhcs.textual_tui.windows.help_windows import HelpWindowManager
+
+        if self.help_target:
+            await HelpWindowManager.show_docstring_help(self.app, self.help_target)
+        elif self.param_name:
+            await HelpWindowManager.show_parameter_help(
+                self.app,
+                self.param_name,
+                self.param_description or "No description available",
+                self.param_type,
+            )
+
+
+class ClickableHelpLabel(HelpClickBehavior, Static):
     """A clickable label that shows help information when clicked."""
+
+    registry_key = "help_label"
 
     def __init__(self, text: str, help_target: Union[Callable, type] = None, 
                  param_name: str = None, param_description: str = None, 
@@ -32,29 +66,15 @@ class ClickableHelpLabel(Static):
         # Add CSS classes for styling
         self.add_class("clickable-help")
         
-    async def on_click(self, event: Click) -> None:
-        """Handle click events to show help window using unified manager."""
-        event.stop()  # Prevent event bubbling
-
-        from openhcs.textual_tui.windows.help_windows import HelpWindowManager
-
-        if self.help_target:
-            # Show function/class help using unified manager
-            await HelpWindowManager.show_docstring_help(self.app, self.help_target)
-        elif self.param_name:
-            # Show parameter help using the passed description directly
-            await HelpWindowManager.show_parameter_help(
-                self.app, self.param_name, self.param_description or "No description available", self.param_type
-            )
-
-
-
 class ClickableFunctionTitle(ClickableHelpLabel):
     """Clickable function title that shows function documentation."""
+
+    registry_key = "function_title"
     
     def __init__(self, func: Callable, index: int = None, **kwargs):
-        func_name = getattr(func, '__name__', 'Unknown Function')
-        module_name = getattr(func, '__module__', '').split('.')[-1] if func else ''
+        func_name = func.__name__
+        module = inspect.getmodule(func)
+        module_name = module.__name__.split('.')[-1] if module is not None else ''
         
         # Build title text
         title = f"{index + 1}: {func_name}" if index is not None else func_name
@@ -70,6 +90,8 @@ class ClickableFunctionTitle(ClickableHelpLabel):
 
 class ClickableParameterLabel(ClickableHelpLabel):
     """Clickable parameter label that shows parameter documentation."""
+
+    registry_key = "parameter_label"
     
     def __init__(self, param_name: str, param_description: str = None, 
                  param_type: type = None, **kwargs):
@@ -85,8 +107,10 @@ class ClickableParameterLabel(ClickableHelpLabel):
         )
 
 
-class HelpIndicator(Static):
+class HelpIndicator(HelpClickBehavior, Static):
     """Simple help indicator that can be added next to any widget."""
+
+    registry_key = "help_indicator"
     
     def __init__(self, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
@@ -100,18 +124,3 @@ class HelpIndicator(Static):
         
         self.add_class("help-indicator")
         
-    async def on_click(self, event: Click) -> None:
-        """Handle click events to show help window using unified manager."""
-        event.stop()
-
-        from openhcs.textual_tui.windows.help_windows import HelpWindowManager
-
-        if self.help_target:
-            # Show function/class help using unified manager
-            await HelpWindowManager.show_docstring_help(self.app, self.help_target)
-        elif self.param_name:
-            # Show parameter help using the passed description directly
-            await HelpWindowManager.show_parameter_help(
-                self.app, self.param_name, self.param_description or "No description available", self.param_type
-            )
-

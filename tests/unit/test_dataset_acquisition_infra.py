@@ -15,6 +15,7 @@ from benchmark.datasets.acquire import (
     DatasetSourceHandler,
     DatasetValidationContext,
     DatasetValidationStrategy,
+    acquire_dataset,
     _materialize_nested_archives,
 )
 from benchmark.datasets.manifest import comparison_manifest_payload
@@ -40,6 +41,36 @@ def test_source_handlers_are_registered_by_enum() -> None:
         DatasetSourceHandler.for_source(source).source_kind
         == DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES.value
     )
+
+
+def test_url_file_source_acquires_plain_files(monkeypatch, tmp_path: Path) -> None:
+    def fake_download(url: str, destination: Path, *, tls_verify: bool = True) -> None:
+        destination.write_bytes(b"image")
+
+    monkeypatch.setattr(
+        "benchmark.datasets.acquire.DEFAULT_DATASET_FILE_DOWNLOADER.download",
+        fake_download,
+    )
+    spec = DatasetSpec(
+        id="plain_files",
+        urls=[],
+        size_bytes=5,
+        archive_format=ArchiveFormat.ZIP,
+        microscope_type="bioformats",
+        validation_rule=DatasetValidationRule.IMAGE_COUNT,
+        expected_count=1,
+        source=DatasetSourceSpec(
+            kind=DatasetSourceKind.URL_FILES,
+            urls=("https://example.test/data/Well%20A01.DIB",),
+        ),
+    )
+
+    acquired = acquire_dataset(spec, cache_base=tmp_path)
+
+    assert acquired.image_count == 1
+    assert acquired.metadata["source_kind"] == DatasetSourceKind.URL_FILES.value
+    assert acquired.metadata["source_urls"] == spec.acquisition_source().urls
+    assert (acquired.path / "Well A01.DIB").read_bytes() == b"image"
 
 
 def test_non_empty_validation_counts_registered_image_extensions(tmp_path: Path) -> None:

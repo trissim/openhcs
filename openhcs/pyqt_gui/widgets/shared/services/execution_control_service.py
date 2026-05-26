@@ -34,7 +34,9 @@ class ExecutionControlService:
         self._host = host
         self._client_service = client_service
         self._port = port
-        self._server_kill_service = server_kill_service or ServerKillService()
+        self._server_kill_service = (
+            server_kill_service or ServerKillService.openhcs_default()
+        )
 
     def check_all_completed(self) -> None:
         if self._host.execution_state not in (

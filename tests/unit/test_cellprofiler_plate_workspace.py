@@ -80,6 +80,27 @@ def test_prepare_cellprofiler_plate_workspace_requires_unambiguous_cppipe(
         ).prepare()
 
 
+def test_prepare_cellprofiler_plate_workspace_accepts_explicit_cppipe(
+    tmp_path: Path,
+) -> None:
+    fixture = CellProfilerPlateWorkspaceFixture(tmp_path / "multi")
+    fixture.create_source_file("A01_s1_D.TIF")
+    fixture.write_names_and_types_cppipe("first")
+    selected_cppipe = fixture.write_names_and_types_cppipe("second")
+
+    result = CellProfilerPlateWorkspacePreparer(
+        CellProfilerPlateWorkspaceRequest(
+            fixture.plate_root,
+            cppipe_path=selected_cppipe,
+        )
+    ).prepare()
+
+    assert result.cppipe_path == selected_cppipe
+    assert (
+        fixture.plate_root / ".openhcs_cellprofiler" / "second_openhcs.py"
+    ).exists()
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerPlateWorkspaceFixture:
     """Test authority for a minimal CellProfiler source folder."""

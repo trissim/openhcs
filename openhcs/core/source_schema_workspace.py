@@ -403,6 +403,26 @@ class SourceSchemaCandidateDiscoveryRequest:
             )
 
 
+class SourceSchemaCandidateProvider(ABC, metaclass=AutoRegisterMeta):
+    """Nominal authority for source-schema candidate discovery."""
+
+    __registry_key__ = "provider_key"
+    __skip_if_no_key__ = True
+    provider_key: ClassVar[str | None] = None
+    priority: ClassVar[int]
+
+    @abstractmethod
+    def available(self, request: SourceSchemaCandidateDiscoveryRequest) -> bool:
+        """Return whether this provider owns candidate discovery for the request."""
+
+    @abstractmethod
+    def candidates(
+        self,
+        request: SourceSchemaCandidateDiscoveryRequest,
+    ) -> tuple["SourceSchemaCandidate", ...]:
+        """Return source-schema candidates for the request."""
+
+
 @dataclass(frozen=True, slots=True)
 class SourceSchemaCandidateMetadataRequest:
     """Inputs for deriving one source-schema candidate's metadata."""
@@ -453,14 +473,141 @@ class SourceSchemaCandidateDiscovery:
     request: SourceSchemaCandidateDiscoveryRequest
 
     def candidates(self) -> tuple[SourceSchemaCandidate, ...]:
+        for provider_type in sorted(
+            SourceSchemaCandidateProvider.__registry__.values(),
+            key=lambda registered_type: registered_type.priority,
+        ):
+            provider = provider_type()
+            if provider.available(self.request):
+                return provider.candidates(self.request)
+        raise RuntimeError(
+            f"No source-schema candidate provider available for {self.request.source_root}."
+        )
+
+
+class OpenHCSWorkspaceSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
+    """Discover candidates from existing OpenHCS virtual-workspace metadata."""
+
+    provider_key = "openhcs_workspace"
+    priority = 10
+
+    def available(self, request: SourceSchemaCandidateDiscoveryRequest) -> bool:
+        return self.metadata_path(request).exists()
+
+    def candidates(
+        self,
+        request: SourceSchemaCandidateDiscoveryRequest,
+    ) -> tuple[SourceSchemaCandidate, ...]:
+        payload = json.loads(self.metadata_path(request).read_text(encoding="utf-8"))
+        subdirectories = payload.get(FIELDS.SUBDIRECTORIES)
+        if not isinstance(subdirectories, Mapping):
+            raise ValueError(
+                f"OpenHCS metadata {self.metadata_path(request)} must contain "
+                f"a {FIELDS.SUBDIRECTORIES!r} mapping."
+            )
+        candidates: list[SourceSchemaCandidate] = []
+        for subdirectory_name, metadata in subdirectories.items():
+            if not isinstance(metadata, Mapping):
+                raise ValueError(
+                    f"OpenHCS metadata subdirectory {subdirectory_name!r} must be a mapping."
+                )
+            workspace_mapping = metadata.get(FIELDS.WORKSPACE_MAPPING) or {}
+            source_metadata = metadata.get(FIELDS.SOURCE_METADATA) or {}
+            channels = metadata.get(FIELDS.CHANNELS) or {}
+            if not isinstance(workspace_mapping, Mapping):
+                raise ValueError(
+                    f"OpenHCS metadata subdirectory {subdirectory_name!r} has malformed "
+                    f"{FIELDS.WORKSPACE_MAPPING}."
+                )
+            if not isinstance(source_metadata, Mapping):
+                raise ValueError(
+                    f"OpenHCS metadata subdirectory {subdirectory_name!r} has malformed "
+                    f"{FIELDS.SOURCE_METADATA}."
+                )
+            if not isinstance(channels, Mapping):
+                raise ValueError(
+                    f"OpenHCS metadata subdirectory {subdirectory_name!r} has malformed "
+                    f"{FIELDS.CHANNELS}."
+                )
+            candidates.extend(
+                self.candidate_for_virtual_path(
+                    request,
+                    str(virtual_path),
+                    source_metadata,
+                    channels,
+                )
+                for virtual_path in workspace_mapping
+                if self.schema_admits_path(request.schema, str(virtual_path))
+            )
+        return tuple(candidates)
+
+    @staticmethod
+    def metadata_path(request: SourceSchemaCandidateDiscoveryRequest) -> Path:
+        return request.source_root / "openhcs_metadata.json"
+
+    @staticmethod
+    def schema_admits_path(schema: PipelineImageSchema, relative_path: str) -> bool:
+        images_rule = schema.images_rule
+        if images_rule is None:
+            return True
+        return source_filters_match(relative_path, images_rule.filters)
+
+    def candidate_for_virtual_path(
+        self,
+        request: SourceSchemaCandidateDiscoveryRequest,
+        virtual_path: str,
+        source_metadata: Mapping[str, object],
+        channels: Mapping[str, object],
+    ) -> SourceSchemaCandidate:
+        metadata_for_source = source_metadata.get(virtual_path) or {}
+        if not isinstance(metadata_for_source, Mapping):
+            raise ValueError(
+                f"OpenHCS source_metadata for {virtual_path!r} must be a mapping."
+            )
+        enriched = dict(
+            source_schema_metadata_with_virtual_components(
+                virtual_path,
+                {str(key): str(value) for key, value in metadata_for_source.items()},
+            )
+        )
+        for channel_value in source_component_metadata_values(
+            enriched,
+            AllComponents.CHANNEL,
+        ):
+            channel_label = channels.get(str(channel_value))
+            if channel_label is None:
+                continue
+            enriched.setdefault("channel_name", str(channel_label))
+            enriched.setdefault("channel_label", str(channel_label))
+        return SourceSchemaCandidate(
+            path=request.source_root / virtual_path,
+            relative_path=virtual_path,
+            metadata=enriched,
+        )
+
+
+class LocalFileSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
+    """Discover candidates from local/VFS-visible source files."""
+
+    provider_key = "local_files"
+    priority = 100
+
+    def available(self, request: SourceSchemaCandidateDiscoveryRequest) -> bool:
+        del request
+        return True
+
+    def candidates(
+        self,
+        request: SourceSchemaCandidateDiscoveryRequest,
+    ) -> tuple[SourceSchemaCandidate, ...]:
         imported_metadata = _imported_metadata_rows(
-            self.request.source_root,
-            self.request.schema,
+            request.source_root,
+            request.schema,
         )
         candidates: list[SourceSchemaCandidate] = []
-        for path in self.request.source_files:
-            relative_path = path.relative_to(self.request.source_root).as_posix()
-            if not self._schema_admits_path(relative_path):
+        for path in request.source_files:
+            relative_path = path.relative_to(request.source_root).as_posix()
+            if not self._schema_admits_path(request.schema, relative_path):
                 continue
             candidates.append(
                 SourceSchemaCandidate(
@@ -468,8 +615,8 @@ class SourceSchemaCandidateDiscovery:
                     relative_path=relative_path,
                     metadata=SourceSchemaCandidateMetadataResolver(
                         SourceSchemaCandidateMetadataRequest(
-                            self.request.source_root,
-                            self.request.schema,
+                            request.source_root,
+                            request.schema,
                             path,
                             relative_path,
                             imported_metadata,
@@ -479,8 +626,9 @@ class SourceSchemaCandidateDiscovery:
             )
         return tuple(candidates)
 
-    def _schema_admits_path(self, relative_path: str) -> bool:
-        images_rule = self.request.schema.images_rule
+    @staticmethod
+    def _schema_admits_path(schema: PipelineImageSchema, relative_path: str) -> bool:
+        images_rule = schema.images_rule
         if images_rule is None:
             return True
         return source_filters_match(relative_path, images_rule.filters)

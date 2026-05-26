@@ -201,6 +201,7 @@ class ProcessingContext:
         if self.filemanager is not None:
             # Track virtual_workspace separately for backward compatibility
             state['_has_virtual_workspace'] = Backend.VIRTUAL_WORKSPACE.value in self.filemanager.registry
+            state['_has_bioformats'] = Backend.BIOFORMATS.value in self.filemanager.registry
 
             # Iterate over all registered backends and preserve picklable ones
             for backend_key, backend_instance in self.filemanager.registry.items():
@@ -215,6 +216,7 @@ class ProcessingContext:
                         }
         else:
             state['_has_virtual_workspace'] = False
+            state['_has_bioformats'] = False
 
         # Remove filemanager - will be recreated in worker process
         state.pop('filemanager', None)
@@ -251,6 +253,7 @@ class ProcessingContext:
         zarr_config = state.pop('_zarr_config', None)
         plate_path = state.pop('_plate_path', None)
         has_virtual_workspace = state.pop('_has_virtual_workspace', False)
+        has_bioformats = state.pop('_has_bioformats', False)
         picklable_backends = state.pop('_picklable_backends', {})
 
         # Restore all other attributes
@@ -280,6 +283,16 @@ class ProcessingContext:
                 except Exception as e:
                     # Unexpected: This is a bug
                     logger.error(f"BUG: Unexpected error recreating virtual_workspace backend: {e}", exc_info=True)
+
+        if has_bioformats and plate_path is not None:
+            try:
+                from polystore.bioformats_storage import BioFormatsStorageBackend
+            except ImportError:
+                logger.debug("BioFormatsStorageBackend module not available in worker")
+            else:
+                global_storage_registry[Backend.BIOFORMATS.value] = BioFormatsStorageBackend(
+                    plate_root=Path(plate_path),
+                )
 
         # Self-describing backend recreation: dynamically recreate all picklable backends
         for backend_key, backend_info in picklable_backends.items():

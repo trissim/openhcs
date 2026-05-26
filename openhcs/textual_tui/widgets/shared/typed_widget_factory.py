@@ -2,9 +2,11 @@
 
 import dataclasses
 from enum import Enum
+import inspect
 from typing import get_origin, get_args
-from textual.widgets import Input, Checkbox, Collapsible
+from textual.widgets import Checkbox, Collapsible
 from .enum_radio_set import EnumRadioSet
+from .textual_input_spec import TextualInputSpec
 
 class TypedWidgetFactory:
     """Simple type → widget mapping with universal 'DIFFERENT VALUES' support."""
@@ -17,10 +19,10 @@ class TypedWidgetFactory:
         if param_type == bool:
             widget = Checkbox(value=bool(current_value or False), id=widget_id, compact=True)
         elif param_type == int:
-            widget = Input(value=str(current_value or ""), type="integer", id=widget_id)
+            widget = TextualInputSpec.for_kind("integer", current_value, widget_id).build()
         elif param_type == float:
-            widget = Input(value=str(current_value or ""), type="number", id=widget_id)
-        elif hasattr(param_type, '__bases__') and Enum in param_type.__bases__:
+            widget = TextualInputSpec.for_kind("number", current_value, widget_id).build()
+        elif inspect.isclass(param_type) and issubclass(param_type, Enum):
             widget = EnumRadioSet(param_type, current_value, id=widget_id)
         elif TypedWidgetFactory._is_list_of_enums(param_type):
             # Handle List[Enum] types (like List[VariableComponents])
@@ -29,13 +31,13 @@ class TypedWidgetFactory:
             display_value = None
             if current_value and isinstance(current_value, list) and len(current_value) > 0:
                 first_item = current_value[0]
-                display_value = first_item.value if hasattr(first_item, 'value') else str(first_item)
+                display_value = first_item.value if isinstance(first_item, Enum) else str(first_item)
             widget = EnumRadioSet(enum_type, display_value, id=widget_id)
         elif dataclasses.is_dataclass(param_type):
             widget = TypedWidgetFactory._create_nested_dataclass_widget(param_type, current_value, widget_id)
         else:
             # Everything else is text input
-            widget = Input(value=str(current_value or ""), type="text", id=widget_id)
+            widget = TextualInputSpec.for_kind("text", current_value, widget_id).build()
 
         # If this is a different values field, wrap it with universal functionality
         if is_different_values and default_value is not None:
@@ -72,7 +74,7 @@ class TypedWidgetFactory:
                 if args and len(args) > 0:
                     inner_type = args[0]
                     # Check if the inner type is an enum
-                    return hasattr(inner_type, '__bases__') and Enum in inner_type.__bases__
+                    return inspect.isclass(inner_type) and issubclass(inner_type, Enum)
             return False
         except Exception:
             return False

@@ -70,6 +70,7 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
     ]
 
     DEFAULT_MICROSCOPE = 'auto'
+    detection_priority = "normal"
     _handlers_cache = None
 
     # Optional class attribute for explicit metadata handler registration
@@ -155,12 +156,16 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
         if len(self.compatible_backends) == 1:
             backend_value = self.compatible_backends[0].value
-            # Convert Backend enum value to MaterializationBackend enum
-            try:
-                return MaterializationBackend(backend_value)
-            except ValueError:
-                # Backend not in MaterializationBackend (e.g., MEMORY, VIRTUAL_WORKSPACE)
-                return None
+            materialization_values = {
+                materialization_backend.value
+                for materialization_backend in MaterializationBackend
+            }
+            if backend_value not in materialization_values:
+                raise RuntimeError(
+                    f"{self.microscope_type} declares single backend "
+                    f"{backend_value!r}, but it is not a materialization backend."
+                )
+            return MaterializationBackend(backend_value)
         return None
 
     def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
@@ -209,7 +214,7 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
         logger.info(f"⚠️ Using backend '{available_backends[0].value}' from compatible backends (virtual workspace not registered)")
         return available_backends[0].value
 
-    def _save_virtual_workspace_metadata(self, plate_path: Path, workspace_mapping: dict) -> None:
+    def save_virtual_workspace_metadata(self, plate_path: Path, workspace_mapping: dict) -> None:
         """
         Save virtual workspace mapping and handler metadata to openhcs_metadata.json.
 
@@ -483,7 +488,6 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
             f"Handlers that override initialize_workspace() completely (like OMERO, OpenHCS) don't need this."
         )
 
-
     # Delegate methods to parser
     def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
         """Delegate to parser."""
@@ -543,7 +547,14 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
         return patterns_by_well
 
-    def path_list_from_pattern(self, directory: Union[str, Path], pattern, filemanager: FileManager, backend: str, variable_components: Optional[List[str]] = None):
+    def path_list_from_pattern(
+        self,
+        directory: Union[str, Path],
+        pattern,
+        filemanager: FileManager,
+        backend: str,
+        variable_components: Optional[List[str]] = None,
+    ):
         """
         Delegate to pattern engine.
 
@@ -766,6 +777,7 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
             if name != OPENHCS_DATA_MICROSCOPE_TYPE and name in METADATA_HANDLERS
         ]
         detection_order.extend(filtered_types)
+    detection_order = _fallback_handlers_last(detection_order)
 
     # Try detection in order - only catch expected "not found" exceptions
     for handler_name in detection_order:
@@ -798,3 +810,14 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
 # ============================================================================
 # Auto-created registry from MicroscopeHandler base class
 MICROSCOPE_HANDLERS = MicroscopeHandler.__registry__
+
+
+def _fallback_handlers_last(handler_names: List[str]) -> List[str]:
+    """Order broad fallback handlers after semantic vendor handlers."""
+
+    keyed_handlers = []
+    for index, name in enumerate(handler_names):
+        handler_class = MICROSCOPE_HANDLERS.get(name)
+        priority = handler_class.detection_priority if handler_class is not None else "normal"
+        keyed_handlers.append((priority == "fallback", index, name))
+    return [name for _is_fallback, _index, name in sorted(keyed_handlers)]

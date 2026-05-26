@@ -1544,7 +1544,7 @@ class PatternGroupRuntime:
     def _declares_source_schema_workspace_projection(
         metadata: Mapping[str, Any],
     ) -> bool:
-        from openhcs.microscopes.openhcs import FIELDS
+        from openhcs.microscopes.openhcs import FIELDS, workspace_mapping_source_path
 
         return any(
             bool(subdirectory.get("workspace_mapping"))
@@ -1576,8 +1576,10 @@ class PatternGroupRuntime:
         source_metadata_by_real_path: dict[str, Mapping[str, str] | None] = {}
         for subdirectory in metadata.get(FIELDS.SUBDIRECTORIES, {}).values():
             workspace_mapping = subdirectory.get("workspace_mapping", {})
-            for virtual_relative, real_relative in workspace_mapping.items():
-                real_path = str(Path(self.context.plate_path) / real_relative)
+            for virtual_relative, source_ref in workspace_mapping.items():
+                real_path = str(
+                    workspace_mapping_source_path(self.context.plate_path, source_ref)
+                )
                 virtual_path = str(virtual_relative)
                 workspace_source_paths[virtual_path] = real_path
                 workspace_source_paths[
@@ -1608,9 +1610,11 @@ class PatternGroupRuntime:
                 )
                 source_metadata_by_path[virtual_path] = normalized_metadata
                 source_metadata_by_path[full_virtual_path] = normalized_metadata
-                real_relative = workspace_mapping.get(virtual_path)
-                if real_relative is not None:
-                    real_path = str(Path(self.context.plate_path) / real_relative)
+                source_ref = workspace_mapping.get(virtual_path)
+                if source_ref is not None:
+                    real_path = str(
+                        workspace_mapping_source_path(self.context.plate_path, source_ref)
+                    )
                     existing_metadata = source_metadata_by_real_path.get(real_path)
                     if existing_metadata is None and real_path in source_metadata_by_real_path:
                         continue

@@ -26,8 +26,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from pyqt_reactive.protocols.widget_protocols import (
+from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
+    PyQtWidgetMeta,
     ValueGettable,
     ValueSettable,
 )
@@ -971,7 +972,14 @@ class EditableMatchPlanRow:
         )
 
 
-class SourceBindingsEditorWidget(QWidget):
+class SourceBindingsEditorWidget(
+    QWidget,
+    ValueGettable,
+    ValueSettable,
+    ChangeSignalEmitter,
+    ScopeColorSchemeReceiver,
+    metaclass=PyQtWidgetMeta,
+):
     """Inline form widget for typed source-binding semantics."""
 
     changed = pyqtSignal()
@@ -1141,6 +1149,22 @@ class SourceBindingsEditorWidget(QWidget):
                 bindings=self._bindings,
                 inventory=self._inventory,
             )
+            if preview.diagnostics:
+                self.layout.addWidget(
+                    self._table_group(
+                        "Diagnostics",
+                        ("Severity", "Code", "Alias", "Message"),
+                        tuple(
+                            (
+                                diagnostic.severity.value,
+                                diagnostic.code,
+                                diagnostic.alias or "",
+                                diagnostic.message,
+                            )
+                            for diagnostic in preview.diagnostics
+                        ),
+                    )
+                )
             self.layout.addWidget(
                 self._table_group(
                     "Preview Matches",
@@ -1582,12 +1606,6 @@ class SourceBindingsEditorWidget(QWidget):
     @staticmethod
     def _fit_table_to_rows(table: QTableWidget) -> None:
         EditableTableLayout.fit_to_rows(table)
-
-
-ValueGettable.register(SourceBindingsEditorWidget)
-ValueSettable.register(SourceBindingsEditorWidget)
-ChangeSignalEmitter.register(SourceBindingsEditorWidget)
-ScopeColorSchemeReceiver.register(SourceBindingsEditorWidget)
 
 
 def create_source_bindings_editor_widget(

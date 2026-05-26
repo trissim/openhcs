@@ -176,7 +176,7 @@ class SourceWorkspaceAnchorProjection:
         cls,
         metadata: Mapping[str, Any],
     ) -> "SourceWorkspaceAnchorProjection":
-        from openhcs.microscopes.openhcs import FIELDS
+        from openhcs.microscopes.openhcs import FIELDS, workspace_mapping_source_ref
 
         subdirectories = metadata.get(FIELDS.SUBDIRECTORIES)
         if not isinstance(subdirectories, Mapping):
@@ -192,8 +192,8 @@ class SourceWorkspaceAnchorProjection:
             if isinstance(workspace_mapping, Mapping):
                 paths_by_virtual_path.update(
                     {
-                        str(virtual_path): str(source_path)
-                        for virtual_path, source_path in workspace_mapping.items()
+                        str(virtual_path): workspace_mapping_source_ref(source_ref)
+                        for virtual_path, source_ref in workspace_mapping.items()
                     }
                 )
 

@@ -381,7 +381,7 @@ class BBBC021Handler(BBBCHandlerBase):
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for BBBC021")
 
         # Save virtual workspace mapping
-        self._save_virtual_workspace_metadata(plate_path, workspace_mapping)
+        self.save_virtual_workspace_metadata(plate_path, workspace_mapping)
 
         return plate_path
 
@@ -634,6 +634,6 @@ class BBBC038Handler(MetadataDetectMixin, BBBCHandlerBase):
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for BBBC038")
 
         # Save virtual workspace mapping
-        self._save_virtual_workspace_metadata(plate_path, workspace_mapping)
+        self.save_virtual_workspace_metadata(plate_path, workspace_mapping)
 
         return stage1_path

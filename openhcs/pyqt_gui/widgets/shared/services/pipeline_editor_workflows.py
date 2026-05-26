@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from objectstate import spawn_thread_with_context
+from objectstate import patch_lazy_constructors, spawn_thread_with_context
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import DebugCommandType, DebugSession, FileManagerDebugSnapshotStore
@@ -21,6 +21,13 @@ from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
 from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
 from PyQt6.QtWidgets import QFileDialog
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.widgets.shared.manager_workflows import (
+    ManagerCodeExecutionWorkflow,
+    ManagerDeletionWorkflow,
+)
+from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
+    GuiEventBusBroadcaster,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -360,9 +367,10 @@ class PipelineEditorDebugWorkflow:
 
 
 @dataclass(frozen=True, slots=True)
-class PipelineEditorCodeWorkflow:
+class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
     """Applies edited pipeline-step code to pipeline editor state."""
 
+    workflow_key = "pipeline_editor"
     editor: Any
 
     def migration_namespace(self, code: str, error: Exception) -> dict | None:
@@ -378,7 +386,7 @@ class PipelineEditorCodeWorkflow:
         )
         namespace: dict[str, Any] = {}
         with (
-            self.editor._patch_lazy_constructors(),
+            patch_lazy_constructors(),
             patch_step_constructors_for_migration(),
         ):
             exec(code, namespace)
@@ -417,15 +425,20 @@ class PipelineEditorCodeWorkflow:
         self.editor.status_message.emit(
             f"Pipeline updated with {len(pipeline_steps)} steps"
         )
-        self.editor._broadcast_to_event_bus("pipeline", pipeline_steps)
+        GuiEventBusBroadcaster(self.editor.event_bus).pipeline_changed(pipeline_steps)
         return True
 
 
 @dataclass(frozen=True, slots=True)
-class PipelineEditorDeletionWorkflow:
+class PipelineEditorDeletionWorkflow(ManagerDeletionWorkflow):
     """Deletes pipeline steps and updates backing ObjectState atomically."""
 
+    workflow_key = "pipeline_editor"
     editor: Any
+
+    def validate(self, items: list[Any]) -> bool:
+        del items
+        return True
 
     def delete(self, items: list[Any]) -> None:
         step_names = [step.name for step in items]
@@ -479,7 +492,9 @@ class PipelineEditorListWorkflow:
                 self.editor.pipeline_steps,
             )
         self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
-        self.editor._broadcast_to_event_bus("pipeline", self.editor.pipeline_steps)
+        GuiEventBusBroadcaster(self.editor.event_bus).pipeline_changed(
+            self.editor.pipeline_steps
+        )
         ObjectStateRegistry.record_snapshot(
             "reorder steps",
             scope_id=str(self.editor.current_plate),

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from objectstate import mark_ui_special_fields
+
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_execution import FunctionStepExecutor
@@ -21,10 +23,9 @@ FunctionSpec = (
 )
 
 
+@mark_ui_special_fields("func")
 class FunctionStep(AbstractStep):
     """Pipeline step that delegates compiled pattern execution to FunctionStepExecutor."""
-
-    _ui_special_fields = ("func",)
 
     def __init__(
         self,

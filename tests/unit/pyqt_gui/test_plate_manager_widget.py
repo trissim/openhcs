@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from pyqt_reactive.theming import ColorScheme
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
@@ -26,9 +29,9 @@ class QtApplicationHarness:
 def close_widget(widget) -> None:
     """Drain queued GUI updates from smoke widgets with monkeypatched setup."""
 
-    if getattr(widget, "item_list", None) is None:
+    if widget.item_list is None:
         widget.item_list = QListWidget()
-    if not getattr(widget, "buttons", None):
+    if not widget.buttons:
         widget.buttons = {
             name: QPushButton()
             for name in (
@@ -64,64 +67,74 @@ class PlateManagerServiceStub:
         return self.event_bus
 
 
-def test_plate_manager_constructor_initializes_qobject_before_signal_use(monkeypatch) -> None:
-    QtApplicationHarness.app()
-    monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
-    monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
-    monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
+class PlateManagerWidgetTestHarness:
+    """Nominal owner for headless PlateManager test setup."""
 
-    widget = PlateManagerWidget(PlateManagerServiceStub())
-
-    assert widget.debug_snapshot_available is not None
-    close_widget(widget)
-
-
-def test_plate_manager_loads_cellprofiler_pipeline_into_empty_plate(monkeypatch) -> None:
-    QtApplicationHarness.app()
-    monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
-    monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
-    monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
-    widget = PlateManagerWidget(PlateManagerServiceStub())
-    pipeline_editor = PlatePipelineEditorRecorder()
-    widget.pipeline_editor = pipeline_editor
-    widget.selected_plate_path = "/plate"
-
-    widget._load_cellprofiler_pipeline_for_empty_plate(
-        "/plate",
-        CellProfilerWorkspaceResultFixture.with_steps(
-            (FunctionStep(func=lambda image: image, name="Imported"),)
-        ),
-    )
-
-    assert pipeline_editor.updated_pipeline == ("/plate", pipeline_editor.pipeline_steps)
-    assert len(pipeline_editor.pipeline_steps) == 1
-    assert pipeline_editor.changed_steps == pipeline_editor.pipeline_steps
-    close_widget(widget)
+    @staticmethod
+    def widget(monkeypatch) -> PlateManagerWidget:
+        QtApplicationHarness.app()
+        monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
+        monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
+        monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
+        return PlateManagerWidget(PlateManagerServiceStub())
 
 
-def test_plate_manager_keeps_existing_pipeline_for_cellprofiler_plate(
-    monkeypatch,
-) -> None:
-    QtApplicationHarness.app()
-    monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
-    monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
-    monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
-    widget = PlateManagerWidget(PlateManagerServiceStub())
-    pipeline_editor = PlatePipelineEditorRecorder(
-        existing_steps=(FunctionStep(func=lambda image: image, name="Existing"),)
-    )
-    widget.pipeline_editor = pipeline_editor
+class TestPlateManagerWidget:
+    def test_constructor_initializes_qobject_before_signal_use(self, monkeypatch) -> None:
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
 
-    widget._load_cellprofiler_pipeline_for_empty_plate(
-        "/plate",
-        CellProfilerWorkspaceResultFixture.with_steps(
-            (FunctionStep(func=lambda image: image, name="Imported"),)
-        ),
-    )
+        assert widget.debug_snapshot_available is not None
+        close_widget(widget)
 
-    assert pipeline_editor.updated_pipeline is None
-    assert pipeline_editor.changed_steps is None
-    close_widget(widget)
+    def test_loads_cellprofiler_pipeline_into_empty_plate(self, monkeypatch) -> None:
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        pipeline_editor = PlatePipelineEditorRecorder()
+        widget.pipeline_editor = pipeline_editor
+        widget.selected_plate_path = "/plate"
+
+        widget._load_cellprofiler_pipeline_for_empty_plate(
+            "/plate",
+            CellProfilerWorkspaceResultFixture.with_steps(
+                (FunctionStep(func=lambda image: image, name="Imported"),)
+            ),
+        )
+
+        assert pipeline_editor.updated_pipeline == (
+            "/plate",
+            pipeline_editor.pipeline_steps,
+        )
+        assert len(pipeline_editor.pipeline_steps) == 1
+        assert pipeline_editor.changed_steps == pipeline_editor.pipeline_steps
+        assert pipeline_editor.source_binding_context is not None
+        assert pipeline_editor.source_binding_context.logical_plate_id == "/plate"
+        assert pipeline_editor.source_binding_context.display_plate_root == Path(
+            "/source"
+        )
+        assert pipeline_editor.source_binding_context.execution_plate_path == Path(
+            "/execution"
+        )
+        close_widget(widget)
+
+    def test_keeps_existing_pipeline_for_cellprofiler_plate(
+        self,
+        monkeypatch,
+    ) -> None:
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        pipeline_editor = PlatePipelineEditorRecorder(
+            existing_steps=(FunctionStep(func=lambda image: image, name="Existing"),)
+        )
+        widget.pipeline_editor = pipeline_editor
+
+        widget._load_cellprofiler_pipeline_for_empty_plate(
+            "/plate",
+            CellProfilerWorkspaceResultFixture.with_steps(
+                (FunctionStep(func=lambda image: image, name="Imported"),)
+            ),
+        )
+
+        assert pipeline_editor.updated_pipeline is None
+        assert pipeline_editor.changed_steps is None
+        close_widget(widget)
 
 
 class PlatePipelineChangedSignalRecorder:
@@ -144,6 +157,7 @@ class PlatePipelineEditorRecorder:
         self.updated_pipeline = None
         self.cellprofiler_import_result = None
         self.cellprofiler_import_results_by_plate = {}
+        self.source_binding_context = None
 
     @property
     def changed_steps(self):
@@ -155,6 +169,13 @@ class PlatePipelineEditorRecorder:
     def update_pipeline_for_plate(self, plate_path: str, pipeline_steps) -> None:
         self.updated_pipeline = (plate_path, pipeline_steps)
 
+    def set_source_binding_context_for_plate(
+        self,
+        plate_path: str,
+        context: SourceBindingContext,
+    ) -> None:
+        self.source_binding_context = context
+
     def update_item_list(self) -> None:
         return None
 
@@ -164,6 +185,9 @@ class CellProfilerWorkspaceResultFixture:
     """Minimal CellProfiler workspace result carrying prepared pipeline steps."""
 
     ingestion: object
+    plate_root: Path = Path("/source")
+    cppipe_path: Path | None = Path("/source/pipeline.cppipe")
+    execution_plate_path: Path = Path("/execution")
 
     @classmethod
     def with_steps(cls, steps):
@@ -173,6 +197,7 @@ class CellProfilerWorkspaceResultFixture:
                     pipeline=CellProfilerPipelineFixture(steps=steps),
                     import_result=SimpleNamespace(
                         pipeline=CellProfilerPipelineFixture(steps=steps),
+                        source_schema=PipelineImageSchema.empty(),
                     ),
                 )
             )

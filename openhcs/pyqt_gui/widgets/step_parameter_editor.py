@@ -31,7 +31,8 @@ from openhcs.introspection import SignatureAnalyzer
 from openhcs.core.config import PipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.path_cache import PathCacheKey
-from openhcs.core.source_bindings_view import SourceInventory
+from openhcs.core.source_binding_context import SourceBindingContext
+from openhcs.core.source_bindings_view import SchemaContextSourceInventoryProvider
 from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
 from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import ConfigHierarchyTreeHelper
@@ -68,6 +69,18 @@ class StepSettingsDialogRequest:
     mode: str
     cache_key: PathCacheKey = PathCacheKey.STEP_SETTINGS
     file_filter: str = "Step Files (*.step);;All Files (*)"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class StepEditorGuiConfigRequest:
+    """Explicit GUI-config resolution request for the step editor."""
+
+    gui_config: PyQtGUIConfig | None
+
+    def resolve(self) -> PyQtGUIConfig:
+        if self.gui_config is not None:
+            return self.gui_config
+        return get_default_pyqt_gui_config()
 
 
 class StepSettingsFileController:
@@ -204,13 +217,14 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         render_header: bool = True,
         button_style: Optional[str] = None,
         source_schema: PipelineImageSchema | None = None,
+        source_binding_context: SourceBindingContext | None = None,
         source_root: str | Path | None = None,
     ):
         super().__init__(parent)
 
         # Initialize color scheme and GUI config
         self.color_scheme = color_scheme or ColorScheme()
-        self.gui_config = gui_config or get_default_pyqt_gui_config()
+        self.gui_config = StepEditorGuiConfigRequest(gui_config).resolve()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self._render_header = render_header
         self._button_style = button_style  # Store centralized button style
@@ -225,6 +239,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         self.scope_id = scope_id  # Store scope_id for cross-window update scoping
         self.step_index = step_index  # Step position index for tree registry
         self.source_schema = source_schema
+        self.source_binding_context = source_binding_context
         self.source_root = source_root
 
         self.header_label: Optional[QLabel] = None
@@ -359,16 +374,26 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
     def apply_source_bindings_preview_context(self) -> None:
         """Pass imported pipeline source-schema context to source-binding editors."""
 
-        if self.source_schema is None:
+        schema = (
+            self.source_binding_context.source_schema
+            if self.source_binding_context is not None
+            else self.source_schema
+        )
+        if schema is None:
             return
         for widget in self.findChildren(SourceBindingsEditorWidget):
-            widget.set_preview_context(
-                schema=self.source_schema,
-                inventory=SourceInventory.from_schema_context(
-                    self.source_schema,
+            if self.source_binding_context is not None:
+                inventory = self.source_binding_context.inventory(widget.get_value())
+            else:
+                inventory = SchemaContextSourceInventoryProvider(
+                    self.source_root,
+                ).inventory(
+                    schema=schema,
                     bindings=widget.get_value(),
-                    source_root=self.source_root,
-                ),
+                )
+            widget.set_preview_context(
+                schema=schema,
+                inventory=inventory,
             )
 
     def _is_optional_lazy_dataclass_in_pipeline(self, param_type, param_name):

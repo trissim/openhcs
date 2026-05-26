@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from openhcs.core.source_bindings import StepSourceBindingsConfig
 from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
+from openhcs.pyqt_gui.windows.dual_editor_session import DualEditorSession
 
 
 @dataclass
@@ -55,6 +56,10 @@ def test_artifact_refresh_uses_restored_objectstate_function_spec() -> None:
         )
     )
     window.artifact_contract_preview = ArtifactPreview()
+    window._session = DualEditorSession(
+        editing_step=window.editing_step,
+        step_editor=window.step_editor,
+    )
 
     window._refresh_artifact_contract_preview(window._current_function_spec())
 

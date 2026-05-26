@@ -393,6 +393,79 @@ class PlotWellThroughputPresentationCommand(BenchmarkCliCommand):
         return 0
 
 
+class BioFormatsHcsValidationCommand(BenchmarkCliCommand):
+    """Validate public Bio-Formats HCS sample datasets."""
+
+    command_name = "bioformats-hcs-validate"
+    help_text = "Download and validate public Bio-Formats HCS sample datasets."
+    sort_order = 40
+
+    def configure(self, subparsers: argparse._SubParsersAction) -> None:
+        from benchmark.datasets.bioformats_hcs import BIOFORMATS_HCS_REGISTRY
+
+        parser = self._parser(subparsers)
+        parser.add_argument("--output-dir", type=Path, required=True)
+        parser.add_argument(
+            "--dataset-cache-root",
+            type=Path,
+            help=(
+                "Benchmark dataset cache root. Defaults to "
+                "~/.cache/openhcs/benchmark_datasets."
+            ),
+        )
+        parser.add_argument(
+            "--dataset",
+            action="append",
+            choices=tuple(sorted(BIOFORMATS_HCS_REGISTRY)),
+            help="Dataset id to validate. Repeat to select multiple datasets.",
+        )
+        parser.add_argument(
+            "--max-size-mb",
+            type=float,
+            default=256.0,
+            help="Skip catalog rows larger than this expected size.",
+        )
+        parser.add_argument(
+            "--load-sample-count",
+            type=int,
+            default=1,
+            help="Number of projected virtual planes to load per dataset.",
+        )
+        parser.add_argument("--continue-on-error", action="store_true")
+
+    def run(self, args: argparse.Namespace) -> int:
+        configure_headless_cpu_benchmark_runtime(args.log_level)
+        from benchmark.bioformats_hcs_validation import validate_bioformats_hcs_catalog
+        from benchmark.datasets.bioformats_hcs import (
+            BIOFORMATS_HCS_CATALOG,
+            BIOFORMATS_HCS_REGISTRY,
+        )
+
+        rows = (
+            tuple(BIOFORMATS_HCS_REGISTRY[dataset_id] for dataset_id in args.dataset)
+            if args.dataset
+            else BIOFORMATS_HCS_CATALOG
+        )
+        max_size_bytes = (
+            None
+            if args.max_size_mb is None
+            else int(args.max_size_mb * 1024 * 1024)
+        )
+        outputs = validate_bioformats_hcs_catalog(
+            rows,
+            cache_base=args.dataset_cache_root,
+            output_dir=args.output_dir,
+            load_sample_count=args.load_sample_count,
+            max_size_bytes=max_size_bytes,
+            continue_on_error=args.continue_on_error,
+        )
+        print(f"datasets={len(outputs.results)}")
+        print(f"passed={sum(result.status == 'passed' for result in outputs.results)}")
+        print(f"summary_csv={outputs.summary_csv}")
+        print(f"summary_json={outputs.summary_json}")
+        return 0
+
+
 def _official_cellprofiler3_cppipe_path(
     central_cppipe_path: Path,
     dataset_wrapper_path: Path,

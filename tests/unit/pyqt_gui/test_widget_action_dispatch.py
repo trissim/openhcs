@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum
 
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
+    WidgetActionDispatchError,
     WidgetActionRoute,
     dispatch_widget_action,
 )
@@ -24,9 +25,6 @@ class ActionDispatchHarness:
     async def async_action(self) -> None:
         pass
 
-    def run_async_action(self, action_callable) -> None:
-        self.async_calls.append(action_callable)
-
 
 ROUTES = {
     route.action: route
@@ -40,40 +38,56 @@ ROUTES = {
 def test_dispatch_widget_action_invokes_sync_route() -> None:
     harness = ActionDispatchHarness()
 
-    handled = dispatch_widget_action(
+    dispatch_widget_action(
         widget=harness,
         action_id="sync",
         action_enum=DemoAction,
         routes=ROUTES,
+        async_runner=harness.async_calls.append,
     )
 
-    assert handled is True
     assert harness.sync_calls == 1
 
 
 def test_dispatch_widget_action_routes_async_to_widget_runner() -> None:
     harness = ActionDispatchHarness()
 
-    handled = dispatch_widget_action(
+    dispatch_widget_action(
         widget=harness,
         action_id="async",
         action_enum=DemoAction,
         routes=ROUTES,
+        async_runner=harness.async_calls.append,
     )
 
-    assert handled is True
     assert harness.async_calls == [harness.async_action]
 
 
-def test_dispatch_widget_action_reports_unknown_action() -> None:
+def test_dispatch_widget_action_rejects_unknown_action() -> None:
     harness = ActionDispatchHarness()
 
-    assert (
+    import pytest
+
+    with pytest.raises(WidgetActionDispatchError, match="Unknown DemoAction"):
         dispatch_widget_action(
             widget=harness,
             action_id="missing",
             action_enum=DemoAction,
             routes=ROUTES,
+            async_runner=harness.async_calls.append,
         )
-        is False
-    )
+
+
+def test_dispatch_widget_action_rejects_missing_route() -> None:
+    harness = ActionDispatchHarness()
+
+    import pytest
+
+    with pytest.raises(WidgetActionDispatchError, match="No DemoAction route"):
+        dispatch_widget_action(
+            widget=harness,
+            action_id="sync",
+            action_enum=DemoAction,
+            routes={},
+            async_runner=harness.async_calls.append,
+        )

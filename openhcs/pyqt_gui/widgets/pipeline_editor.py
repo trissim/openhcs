@@ -26,6 +26,8 @@ from openhcs.constants import Backend
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.source_binding_context import SourceBindingContext
+from openhcs.core.source_bindings_view import SchemaContextSourceInventoryProvider
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.pipeline import Pipeline
 from openhcs.interop.cellprofiler import (
@@ -66,7 +68,11 @@ from openhcs.core.debug import (
     DebugCommandType,
     DebugSession,
 )
-from openhcs.pyqt_gui.widgets.shared.services.manager_item_hooks import ManagerItemHooks
+from pyqt_reactive.widgets.shared.manager_item_hooks import (
+    AttributeItemIdProjection,
+    ManagerItemHooks,
+)
+from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorCodeWorkflow,
     PipelineEditorDeletionWorkflow,
@@ -85,6 +91,10 @@ from pyqt_reactive.widgets.shared.abstract_manager_widget import (
     AbstractManagerWidget,
     ListItemFormat,
 )
+from pyqt_reactive.widgets.shared.manager_action_controller import CodeEditorPayload
+from pyqt_reactive.widgets.shared.manager_selection_controller import (
+    ItemSelectionPayloadProjection,
+)
 
 from openhcs.utils.performance_monitor import timer
 
@@ -100,6 +110,27 @@ class PipelineDebugCommandRoute:
 
     command_type: DebugCommandType
     dispatch: Callable[["PipelineEditorWidget"], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ReservedParameterProjection:
+    """Function signature projection for ObjectState parameter exclusion."""
+
+    parameter_name: str | None
+
+    @classmethod
+    def from_callable(cls, func: Callable) -> "ReservedParameterProjection":
+        sig = inspect.signature(func)
+        for param_name, _param in sig.parameters.items():
+            if param_name in ("self", "cls"):
+                continue
+            return cls(parameter_name=param_name)
+        return cls(parameter_name=None)
+
+    def exclude_params(self) -> list[str] | None:
+        if self.parameter_name is None:
+            return None
+        return [self.parameter_name]
 
 
 class StepPreviewConfigField(str, Enum):
@@ -231,6 +262,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     # Declarative UI configuration
     TITLE = "Pipeline Editor"
+    CODE_EDITOR_PAYLOAD = CodeEditorPayload(
+        code_type="pipeline",
+        missing_error_message="No 'pipeline_steps = [...]' assignment found in edited code",
+    )
     BUTTON_GRID_COLUMNS = 0  # Single row (1 x N grid)
     BUTTON_CONFIGS = [
         ("Add", PipelineEditorAction.ADD_STEP.value, "Add new pipeline step"),
@@ -277,20 +312,19 @@ class PipelineEditorWidget(AbstractManagerWidget):
     )
     ITEM_NAME_SINGULAR = "step"
     ITEM_NAME_PLURAL = "steps"
+    SELECTION_PAYLOAD_PROJECTION = ItemSelectionPayloadProjection()
+    SELECTION_CLEARED_PAYLOAD = None
+    SCOPE_ITEM_TYPE = ListItemType.STEP
+    STATE_BINDING = ManagerStateBinding(
+        items_attr="pipeline_steps",
+        selection_attr="selected_step",
+        selection_signal_attr="step_selected",
+    )
 
     ITEM_HOOKS = ManagerItemHooks(
-        id_accessor=("attr", "name"),
-        backing_attr="pipeline_steps",
-        selection_attr="selected_step",
-        selection_signal="step_selected",
-        selection_emit_id=False,
-        selection_clear_value=None,
-        items_changed_signal="pipeline_changed",
+        id_projection=AttributeItemIdProjection("name"),
         preserve_selection_pred=lambda self: bool(self.pipeline_steps),
-        list_item_data="item",
-        scope_item_type=ListItemType.STEP,
-        scope_id_builder=lambda item, idx, widget: widget._build_step_scope_id(item),
-    ).to_legacy_mapping()
+    )
     DEBUG_COMMAND_ROUTES = MappingProxyType(
         {
             route.command_type: route
@@ -380,6 +414,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self.debug_toolbar: DebugToolbarWidget | None = None
         self.cellprofiler_import_result = None
         self.cellprofiler_import_results_by_plate: dict[str, Any] = {}
+        self.source_binding_contexts_by_plate: dict[str, SourceBindingContext] = {}
         self.debug_inspector_window: Any | None = None
         self.debug_session_state: DebugSession | None = None
 
@@ -421,14 +456,13 @@ class PipelineEditorWidget(AbstractManagerWidget):
     # Step-specific customizations via hooks below
 
     def handle_button_action(self, action: str) -> None:
-        if dispatch_widget_action(
+        dispatch_widget_action(
             widget=self,
             action_id=action,
             action_enum=PipelineEditorAction,
             routes=self.ACTION_ROUTES,
-        ):
-            return
-        logger.warning("Unknown action: %s", action)
+            async_runner=self.service_adapter.execute_async_operation,
+        )
 
     def setup_ui(self):
         """Create pipeline editor UI with a debug/test-mode toolbar."""
@@ -455,7 +489,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def setup_connections(self):
         """Setup signal/slot connections (base class + step-specific)."""
         # Call base class connection setup (handles item list selection, double-click, reordering, status)
-        self._setup_connections()
+        self.setup_manager_connections()
 
         # Step-specific signal
         self.pipeline_changed.connect(self.on_pipeline_changed)
@@ -617,7 +651,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             step_name = f"Pause | {step_name}"
 
         # Use declarative format from LIST_ITEM_FORMAT
-        styled = self._build_item_display_from_format(
+        styled = self.build_item_display_from_format(
             item=step,
             item_name=step_name,
         )
@@ -781,6 +815,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             parent=self,
             service_adapter=self.service_adapter,
             source_schema=self._current_source_schema(),
+            source_binding_context=self.current_source_binding_context(),
             function_invocation_badge_provider=(
                 self.function_presentation.badge_provider(new_step)
             ),
@@ -800,8 +835,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
         editor.raise_()
         editor.activateWindow()
 
-    # action_delete_step() REMOVED - now uses ABC's action_delete() template with _perform_delete() hook
-    # action_edit_step() REMOVED - now uses ABC's action_edit() template with _show_item_editor() hook
+    # action_delete_step() REMOVED - now uses ABC's action_delete() template with deletion_workflow
+    # action_edit_step() REMOVED - now uses ABC's action_edit() template with show_item_editor()
 
     def action_auto_load_pipeline(self):
         """Handle Auto button - load basic_pipeline.py automatically."""
@@ -874,12 +909,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 f"Failed to open code editor: {str(e)}"
             )
 
-    def _get_code_missing_error_message(self) -> str:
-        """Error message when pipeline_steps variable is missing."""
-        return "No 'pipeline_steps = [...]' assignment found in edited code"
-
-    # _patch_lazy_constructors() and _post_code_execution() provided by ABC
-
     def load_pipeline_from_file(self, file_path: Path):
         """
         Load pipeline from file with automatic migration for backward compatibility.
@@ -940,6 +969,20 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self.cellprofiler_import_result = import_result
         if self.current_plate:
             self.cellprofiler_import_results_by_plate[self.current_plate] = import_result
+            self.set_source_binding_context_for_plate(
+                self.current_plate,
+                SourceBindingContext(
+                    logical_plate_id=self.current_plate,
+                    display_plate_root=file_path.parent,
+                    execution_plate_path=self._current_execution_plate_path(),
+                    cppipe_path=file_path,
+                    source_schema=import_result.source_schema,
+                    inventory_provider=SchemaContextSourceInventoryProvider(
+                        self._current_source_root(),
+                    ),
+                    import_result=import_result,
+                ),
+            )
         self._normalize_step_scope_tokens(register=False)
 
         if self.current_plate:
@@ -1029,7 +1072,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # CRITICAL: Force cleanup of flash subscriptions when switching plates
         # This ensures FlashElements don't point to stale QListWidgetItems
         # from the previous plate's list widget
-        self._cleanup_flash_subscriptions()
+        self.clear_list_visual_state()
 
         self.update_item_list()
 
@@ -1039,8 +1082,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         self.update_button_states()
         logger.info(f"  → Pipeline editor updated for plate: {plate_path}")
-
-    # _broadcast_to_event_bus() REMOVED - now using ABC's generic _broadcast_to_event_bus(event_type, data)
 
     def on_orchestrator_config_changed(self, plate_path: str, effective_config):
         """
@@ -1068,7 +1109,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             else:
                 logger.debug(f"No orchestrator found for config refresh: {plate_path}")
 
-    # _resolve_config_attr() DELETED - use base class version (uses ObjectState)
+    # Config-attribute preview resolution is owned by the base list-format path.
 
     def _build_step_scope_id(self, step: FunctionStep) -> str:
         """Return the hierarchical scope id for a step: plate::step_N."""
@@ -1140,17 +1181,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
         func_obj, _kwargs = PatternDataManager.extract_func_and_kwargs(func_value)
         return [ScopeTokenService.ensure_token(scope_id, func_obj)] if func_obj else []
 
-    def _get_reserved_param_name(self, func: Callable) -> Optional[str]:
-        try:
-            sig = inspect.signature(func)
-        except (TypeError, ValueError):
-            return None
-        for param_name, _param in sig.parameters.items():
-            if param_name in ("self", "cls"):
-                continue
-            return param_name
-        return None
-
     def _collect_step_registration_states(
         self,
         *,
@@ -1179,8 +1209,9 @@ class PipelineEditorWidget(AbstractManagerWidget):
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
             if ObjectStateRegistry.get_by_scope(func_scope_id):
                 continue
-            reserved_param = self._get_reserved_param_name(func_obj)
-            exclude_params = [reserved_param] if reserved_param else None
+            exclude_params = ReservedParameterProjection.from_callable(
+                func_obj,
+            ).exclude_params()
             func_state = ObjectState(
                 object_instance=func_obj,
                 scope_id=func_scope_id,
@@ -1217,7 +1248,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         logger.debug(f"Registered ObjectState for step (and functions): {scope_id}")
 
-    # _merge_with_live_values() DELETED - use _merge_with_live_values() from base class
+    # Live-value merging is handled by ObjectState-backed form state.
     # _get_step_preview_instance() DELETED - ObjectState provides resolved values directly
 
     def _handle_full_preview_refresh(self) -> None:
@@ -1248,6 +1279,15 @@ class PipelineEditorWidget(AbstractManagerWidget):
         )  # Same as add button - orchestrator init is sufficient
         if self.debug_toolbar is not None:
             self.debug_toolbar.set_controls_enabled(has_plate and is_initialized)
+
+    def _get_item_scope_id(self, item: FunctionStep, index: int) -> str:
+        """Return the ObjectState scope id represented by a pipeline step list item."""
+        del index
+        return self._build_step_scope_id(item)
+
+    def _emit_items_changed(self) -> None:
+        """Emit the current pipeline step list."""
+        self.pipeline_changed.emit(self.pipeline_steps)
 
     # Event handlers (update_status, on_selection_changed, on_item_double_clicked, on_steps_reordered)
     # DELETED - provided by AbstractManagerWidget base class
@@ -1321,10 +1361,53 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def _current_source_schema(self) -> PipelineImageSchema | None:
         """Return the imported pipeline image schema available to step editors."""
 
+        context = self.current_source_binding_context()
+        if context is not None:
+            return context.source_schema
         import_result = self.cellprofiler_import_result_for_current_plate()
         if import_result is None:
             return None
         return import_result.source_schema
+
+    def current_source_binding_context(self) -> SourceBindingContext | None:
+        """Return the source-binding context for the selected plate, if any."""
+
+        if not self.current_plate:
+            return None
+        return self.source_binding_contexts_by_plate.get(self.current_plate)
+
+    def set_source_binding_context_for_plate(
+        self,
+        plate_path: str,
+        context: SourceBindingContext,
+    ) -> None:
+        """Store one coherent source-binding context for a logical plate."""
+
+        self.source_binding_contexts_by_plate[str(plate_path)] = context
+        if str(plate_path) == self.current_plate:
+            self.cellprofiler_import_result = context.import_result
+
+    def _current_execution_plate_path(self) -> Path:
+        """Return the best available execution path for the current plate."""
+
+        orchestrator = self._get_current_orchestrator()
+        if orchestrator is not None and orchestrator.plate_path is not None:
+            return Path(orchestrator.plate_path)
+        if self.current_plate:
+            return Path(self.current_plate)
+        return Path.cwd()
+
+    def _current_source_root(self) -> Path | None:
+        """Return the best available source root for preview inventory."""
+
+        orchestrator = self._get_current_orchestrator()
+        if orchestrator is None:
+            return None
+        if orchestrator.input_dir is not None:
+            return Path(orchestrator.input_dir)
+        if orchestrator.plate_path is not None:
+            return Path(orchestrator.plate_path)
+        return None
 
     def cellprofiler_import_result_for_current_plate(self) -> Any | None:
         """Return the CellProfiler import record for the selected plate."""
@@ -1383,6 +1466,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             service_adapter=self.service_adapter,
             step_index=step_index,  # Pass actual position for border pattern
             source_schema=self._current_source_schema(),
+            source_binding_context=self.current_source_binding_context(),
             function_invocation_badge_provider=(
                 self.function_presentation.badge_provider(step_to_edit)
             ),

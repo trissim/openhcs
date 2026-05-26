@@ -42,6 +42,8 @@ from openhcs.core.source_schema_workspace import (
     ImageSetRecord,
     SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR,
     SourceSchemaImageSetSelection,
+    SourceSchemaCandidateDiscovery,
+    SourceSchemaCandidateDiscoveryRequest,
     expand_source_schema_workspace_wells as expand_A01_schema_workspace_wells,
     materialize_source_schema_workspace as materialize_A01_schema_workspace,
     source_schema_metadata_with_virtual_components,
@@ -100,6 +102,60 @@ def test_source_schema_metadata_with_virtual_components_overlays_canonical_axes(
         "timepoint": "1",
         "extension": ".TIF",
     }
+
+
+def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "openhcs_workspace"
+    source_root.mkdir()
+    virtual_path = "A01_s001_w1_z001_t001.tif"
+    (source_root / "openhcs_metadata.json").write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    "default": {
+                        "workspace_mapping": {
+                            virtual_path: "raw/source.ome.tiff",
+                        },
+                        "source_metadata": {
+                            virtual_path: {
+                                "plate": "Plate1",
+                            },
+                        },
+                        "channels": {
+                            "1": "DAPI",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "DNA": ImageAssignment(
+                alias="DNA",
+                image_type="Grayscale image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+            ),
+        },
+    )
+
+    candidates = SourceSchemaCandidateDiscovery(
+        SourceSchemaCandidateDiscoveryRequest(
+            source_root,
+            source_files=(source_root / "raw_source_that_should_not_win.tif",),
+            schema=schema,
+        )
+    ).candidates()
+
+    assert tuple(candidate.relative_path for candidate in candidates) == (virtual_path,)
+    assert candidates[0].metadata["channel_name"] == "DAPI"
+    assert candidates[0].metadata["plate"] == "Plate1"
 
 
 def test_source_binding_plan_views_are_registered_nominal_family() -> None:

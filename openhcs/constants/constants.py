@@ -26,6 +26,7 @@ class Microscope(Enum):
     BBBC021 = "bbbc021"
     BBBC038 = "bbbc038"
     OMERO = "omero"  # Added for OMERO virtual filesystem backend
+    BIOFORMATS = "bioformats"
 
 class LiteralDtype(Enum):
     """Concrete numpy dtype literals (single source of truth)."""
@@ -437,6 +438,7 @@ class Backend(Enum):
     FIJI_STREAM = "fiji_stream"
     OMERO_LOCAL = "omero_local"
     VIRTUAL_WORKSPACE = "virtual_workspace"
+    BIOFORMATS = "bioformats"
 
 class FileFormat(Enum):
     TIFF = list(DEFAULT_IMAGE_EXTENSIONS)

@@ -7,19 +7,20 @@ from .widget_creation_registry import resolve_optional, is_enum, is_list_of_enum
 def create_textual_widget(param_name: str, param_type: type, current_value, widget_id: str, parameter_info=None):
     """Create Textual TUI widget directly."""
     # Lazy import to avoid requiring textual when only PyQt GUI is used
-    from textual.widgets import Input, Checkbox, Collapsible
+    from textual.widgets import Checkbox, Collapsible
     from openhcs.ui.shared.ui_utils import format_param_name
+    from openhcs.textual_tui.widgets.shared.textual_input_spec import TextualInputSpec
 
     param_type = resolve_optional(param_type)
 
     if param_type == bool:
         return Checkbox(value=bool(current_value), id=widget_id, compact=True)
     elif param_type == int:
-        return Input(value=str(current_value or ""), type="integer", id=widget_id)
+        return TextualInputSpec.for_kind("integer", current_value, widget_id).build()
     elif param_type == float:
-        return Input(value=str(current_value or ""), type="number", id=widget_id)
+        return TextualInputSpec.for_kind("number", current_value, widget_id).build()
     elif param_type == str:
-        return Input(value=str(current_value or ""), type="text", id=widget_id)
+        return TextualInputSpec.for_kind("text", current_value, widget_id).build()
     elif is_enum(param_type):
         from openhcs.textual_tui.widgets.shared.enum_radio_set import EnumRadioSet
         return EnumRadioSet(param_type, current_value, id=widget_id)
@@ -31,7 +32,7 @@ def create_textual_widget(param_name: str, param_type: type, current_value, widg
         display_value = (current_value[0].value if current_value and isinstance(current_value, list) and current_value else None)
         return EnumRadioSet(enum_type, display_value, id=widget_id)
     else:
-        return Input(value=str(current_value or ""), type="text", id=widget_id)
+        return TextualInputSpec.for_kind("text", current_value, widget_id).build()
 
 
 # Simplified different values widget creation

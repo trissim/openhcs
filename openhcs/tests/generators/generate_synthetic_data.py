@@ -41,6 +41,13 @@ from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
 class SyntheticMicroscopyGenerator:
     """Generate synthetic microscopy images for testing."""
 
+    PROMINENT_WAVELENGTH_CELL_INTENSITIES = {
+        1: 25000,
+        2: 10000,
+    }
+    ADDITIONAL_WAVELENGTH_BASE_INTENSITY = 5000
+    ADDITIONAL_WAVELENGTH_INTENSITY_STEP = 1000
+
     def __init__(self,
                  output_dir: str,
                  grid_size: Tuple[int, int] = (3, 3),
@@ -65,6 +72,7 @@ class SyntheticMicroscopyGenerator:
                  openhcs_format: bool = False,  # If True, generate OpenHCS native format with metadata
                  random_seed: Optional[int] = None,
                  include_all_components: bool = False,  # Include all filename components (for OpenHCS)
+                 imagexpress_bioformats_compatible: bool = False,  # Emit MetaXpress names Bio-Formats can discover
                  skip_files: Optional[List[str]] = None):  # List of filenames to skip (for testing missing image handling)
         """
         Initialize the synthetic microscopy generator.
@@ -114,6 +122,8 @@ class SyntheticMicroscopyGenerator:
             openhcs_format: If True, generate OpenHCS native format with openhcs_metadata.json
             random_seed: Random seed for reproducibility
             include_all_components: If True, include all filename components (timepoint, z-index) even for flat plates
+            imagexpress_bioformats_compatible: If True, emit ImageXpress TIFF names with the plate-name
+                prefix and unpadded site/channel axes expected by Bio-Formats' MetaXpress reader.
             skip_files: List of filenames to skip during generation (for testing missing image handling)
         """
         self.output_dir = Path(output_dir)
@@ -123,6 +133,7 @@ class SyntheticMicroscopyGenerator:
         self.overlap_percent = overlap_percent
         self.stage_error_px = stage_error_px
         self.include_all_components = include_all_components
+        self.imagexpress_bioformats_compatible = imagexpress_bioformats_compatible
         self.openhcs_format = openhcs_format
 
         # Create parser instances for filename construction
@@ -313,16 +324,7 @@ class SyntheticMicroscopyGenerator:
                 eccentricity = np.random.uniform(self.cell_eccentricity_range[0], self.cell_eccentricity_range[1])
                 rotation = np.random.uniform(0, 2*np.pi)
 
-                # Set very different intensities for each wavelength to make them easily distinguishable
-                if wavelength_idx == 1:
-                    # First wavelength: very high intensity
-                    intensity = 25000
-                elif wavelength_idx == 2:
-                    # Second wavelength: medium intensity
-                    intensity = 10000
-                else:
-                    # Other wavelengths: lower intensity
-                    intensity = 5000 + (wavelength_idx * 1000)  # Increase slightly for each additional wavelength
+                intensity = self.cell_intensity_for_wavelength(wavelength_idx)
 
                 cells.append({
                     'x': x,
@@ -409,6 +411,18 @@ class SyntheticMicroscopyGenerator:
             image = np.clip(image, 0, 65535).astype(np.uint16)
 
         return image
+
+    def cell_intensity_for_wavelength(self, wavelength_idx: int) -> int:
+        """Return synthetic cell contrast for a one-based wavelength index."""
+        configured_intensity = self.PROMINENT_WAVELENGTH_CELL_INTENSITIES.get(
+            wavelength_idx
+        )
+        if configured_intensity is not None:
+            return configured_intensity
+        return (
+            self.ADDITIONAL_WAVELENGTH_BASE_INTENSITY
+            + wavelength_idx * self.ADDITIONAL_WAVELENGTH_INTENSITY_STEP
+        )
 
     # We've replaced the generate_tiles method with position pre-generation in generate_dataset
 
@@ -870,25 +884,12 @@ class SyntheticMicroscopyGenerator:
 
                                 # Create filename based on format
                                 if self.format == 'ImageXpress':
-                                    # Use parser to construct filename
-                                    if self.include_all_components:
-                                        # Include all components for OpenHCS (use parser defaults for padding)
-                                        filename = self.imagexpress_parser.construct_filename(
-                                            well=well,
-                                            site=site_index,
-                                            channel=wavelength,
-                                            z_index=z_level,
-                                            timepoint=1,
-                                            extension='.tif'
-                                        )
-                                    else:
-                                        # Legacy mode without all components
-                                        filename = self.imagexpress_parser.construct_filename(
-                                            well=well,
-                                            site=site_index,
-                                            channel=wavelength,
-                                            extension='.tif'
-                                        )
+                                    filename = self.imagexpress_filename(
+                                        well=well,
+                                        site=site_index,
+                                        channel=wavelength,
+                                        z_index=z_level,
+                                    )
                                 else:  # OperaPhenix
                                     # Opera Phenix format: rXXcYYfZZZpWW-chVskNfkNflN.tiff
                                     # Extract row and column from well ID (e.g., 'A01' -> row=1, col=1)
@@ -934,25 +935,12 @@ class SyntheticMicroscopyGenerator:
 
                             # Create filename based on format
                             if self.format == 'ImageXpress':
-                                # Use parser to construct filename
-                                if self.include_all_components:
-                                    # Include all components for OpenHCS (use parser defaults for padding)
-                                    filename = self.imagexpress_parser.construct_filename(
-                                        well=well,
-                                        site=site_index,
-                                        channel=wavelength,
-                                        z_index=1,  # Always include z_index, default to 1 for flat plates
-                                        timepoint=1,
-                                        extension='.tif'
-                                    )
-                                else:
-                                    # Legacy mode without all components
-                                    filename = self.imagexpress_parser.construct_filename(
-                                        well=well,
-                                        site=site_index,
-                                        channel=wavelength,
-                                        extension='.tif'
-                                    )
+                                filename = self.imagexpress_filename(
+                                    well=well,
+                                    site=site_index,
+                                    channel=wavelength,
+                                    z_index=1,
+                                )
                             else:  # OperaPhenix
                                 # Opera Phenix format: rXXcYYfZZZpWW-chVskNfkNflN.tiff
                                 # Extract row and column from well ID (e.g., 'A01' -> row=1, col=1)
@@ -985,6 +973,39 @@ class SyntheticMicroscopyGenerator:
                 sub_dir = "Images"
 
             self.generate_openhcs_metadata(sub_dir=sub_dir, pixel_size=0.65)
+
+    def imagexpress_filename(
+        self,
+        *,
+        well: str,
+        site: int,
+        channel: int,
+        z_index: int,
+    ) -> str:
+        """Return an ImageXpress synthetic filename for the configured compatibility mode."""
+        if self.imagexpress_bioformats_compatible:
+            plate_name = self.output_dir.name
+            parts = [f"{plate_name}_{well}"]
+            if self.grid_size[0] * self.grid_size[1] > 1:
+                parts.append(f"_s{site}")
+            if self.wavelengths > 1:
+                parts.append(f"_w{channel}")
+            return "".join(parts) + ".tif"
+        if self.include_all_components:
+            return self.imagexpress_parser.construct_filename(
+                well=well,
+                site=site,
+                channel=channel,
+                z_index=z_index,
+                timepoint=1,
+                extension='.tif',
+            )
+        return self.imagexpress_parser.construct_filename(
+            well=well,
+            site=site,
+            channel=channel,
+            extension='.tif',
+        )
 
     def generate_openhcs_metadata(self, sub_dir: str = "images", pixel_size: float = 0.65):
         """

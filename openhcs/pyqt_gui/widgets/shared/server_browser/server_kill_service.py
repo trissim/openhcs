@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Self
 
 
 @dataclass(frozen=True)
@@ -19,29 +19,28 @@ class ServerKillPlan:
 class ServerKillService:
     """Performs server kill operations with explicit policy."""
 
+    @classmethod
+    def openhcs_default(cls) -> Self:
+        """Build the OpenHCS ZMQ kill service with the runtime dependencies."""
+
+        from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+        from zmqruntime.client import ZMQClient
+        from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
+
+        return cls(
+            kill_server_fn=lambda port, graceful, cfg: ZMQClient.kill_server_on_port(
+                port, graceful=graceful, config=cfg
+            ),
+            queue_tracker_registry_factory=GlobalQueueTrackerRegistry,
+            config=OPENHCS_ZMQ_CONFIG,
+        )
+
     def __init__(
         self,
-        kill_server_fn: Callable[[int, bool, object], bool] | None = None,
-        queue_tracker_registry_factory: Callable[[], object] | None = None,
-        config: object | None = None,
+        kill_server_fn: Callable[[int, bool, object], bool],
+        queue_tracker_registry_factory: Callable[[], object],
+        config: object,
     ) -> None:
-        if kill_server_fn is None:
-            from zmqruntime.client import ZMQClient
-
-            kill_server_fn = (
-                lambda port, graceful, cfg: ZMQClient.kill_server_on_port(
-                    port, graceful=graceful, config=cfg
-                )
-            )
-        if queue_tracker_registry_factory is None:
-            from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
-
-            queue_tracker_registry_factory = GlobalQueueTrackerRegistry
-        if config is None:
-            from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-
-            config = OPENHCS_ZMQ_CONFIG
-
         self._kill_server_fn = kill_server_fn
         self._queue_tracker_registry_factory = queue_tracker_registry_factory
         self._config = config

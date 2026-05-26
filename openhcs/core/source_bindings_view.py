@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Mapping
+from typing import ClassVar
 from urllib.parse import unquote, urlparse
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
@@ -26,6 +31,7 @@ from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     NamedSourceBinding,
     SourceBindingMatchDimension,
+    SourceBindingMatchMethod,
     SourceBindingMatchPlan,
     SourceFilterClause,
     SourceFilterMatchType,
@@ -43,7 +49,9 @@ from openhcs.core.source_matching import (
 from openhcs.core.source_schema_workspace import (
     ImageSetAssembler,
     ImageSetRecord,
+    OpenHCSWorkspaceSourceSchemaCandidateProvider,
     SourceSchemaCandidate,
+    SourceSchemaCandidateDiscoveryRequest,
 )
 
 
@@ -441,6 +449,151 @@ class SourceInventoryBuildRequest:
         )
 
 
+class SourceInventoryProvider(ABC, metaclass=AutoRegisterMeta):
+    """Nominal source-inventory authority for preview and materialization."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key: ClassVar[str | None] = None
+
+    @abstractmethod
+    def inventory(
+        self,
+        *,
+        schema: PipelineImageSchema,
+        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
+    ) -> "SourceInventory":
+        """Return source inventory for the given schema and step bindings."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitImagePlaneSourceInventoryProvider(SourceInventoryProvider):
+    """Inventory provider for explicit pipeline image-plane sources."""
+
+    registry_key = "explicit_image_plane_sources"
+    source_root: str | Path | None = None
+
+    def inventory(
+        self,
+        *,
+        schema: PipelineImageSchema,
+        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
+    ) -> "SourceInventory":
+        if not schema.image_plane_sources:
+            return SourceInventory(candidates=())
+        return SourceInventory.from_schema_sources(
+            schema,
+            bindings=bindings,
+            source_root=self.source_root,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LocalDirectorySourceInventoryProvider(SourceInventoryProvider):
+    """Inventory provider for local source directories."""
+
+    registry_key = "local_directory"
+    source_root: str | Path
+
+    def inventory(
+        self,
+        *,
+        schema: PipelineImageSchema,
+        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
+    ) -> "SourceInventory":
+        return SourceInventory.from_directory(
+            self.source_root,
+            schema=schema,
+            bindings=bindings,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FileManagerSourceInventoryProvider(SourceInventoryProvider):
+    """Inventory provider for OpenHCS VFS/FileManager-backed source roots."""
+
+    registry_key = "filemanager"
+    filemanager: FileManagerLike
+    source_root: str | Path
+    backend: str
+
+    def inventory(
+        self,
+        *,
+        schema: PipelineImageSchema,
+        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
+    ) -> "SourceInventory":
+        return SourceInventory.from_filemanager(
+            filemanager=self.filemanager,
+            source_root=self.source_root,
+            backend=self.backend,
+            schema=schema,
+            bindings=bindings,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSWorkspaceSourceInventoryProvider(SourceInventoryProvider):
+    """Inventory provider backed by OpenHCS virtual-workspace metadata."""
+
+    registry_key = "openhcs_workspace"
+    source_root: str | Path
+
+    def inventory(
+        self,
+        *,
+        schema: PipelineImageSchema,
+        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
+    ) -> "SourceInventory":
+        del bindings
+        root = Path(self.source_root)
+        metadata_path = root / "openhcs_metadata.json"
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"OpenHCS metadata file not found for source inventory: {metadata_path}"
+            )
+        return SourceInventory(
+            candidates=OpenHCSWorkspaceSourceSchemaCandidateProvider().candidates(
+                SourceSchemaCandidateDiscoveryRequest(
+                    source_root=root,
+                    source_files=(),
+                    schema=schema,
+                )
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaContextSourceInventoryProvider(SourceInventoryProvider):
+    """Compatibility provider for the existing schema-context precedence."""
+
+    registry_key = "schema_context"
+    source_root: str | Path | None = None
+
+    def inventory(
+        self,
+        *,
+        schema: PipelineImageSchema,
+        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
+    ) -> "SourceInventory":
+        if schema.image_plane_sources:
+            return ExplicitImagePlaneSourceInventoryProvider(
+                self.source_root,
+            ).inventory(schema=schema, bindings=bindings)
+        if self.source_root is None:
+            return SourceInventory(candidates=())
+        metadata_path = Path(self.source_root) / "openhcs_metadata.json"
+        if metadata_path.exists():
+            return OpenHCSWorkspaceSourceInventoryProvider(self.source_root).inventory(
+                schema=schema,
+                bindings=bindings,
+            )
+        return LocalDirectorySourceInventoryProvider(self.source_root).inventory(
+            schema=schema,
+            bindings=bindings,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class SourceInventory:
     """Resolved source candidates available for source-binding previews."""
@@ -525,30 +678,6 @@ class SourceInventory:
         ).build()
 
     @classmethod
-    def from_schema_context(
-        cls,
-        schema: PipelineImageSchema,
-        *,
-        bindings: StepSourceBindingsConfig = StepSourceBindingsConfig(),
-        source_root: str | Path | None = None,
-    ) -> "SourceInventory":
-        """Build the best available inventory for a schema preview context."""
-
-        if schema.image_plane_sources:
-            return cls.from_schema_sources(
-                schema,
-                bindings=bindings,
-                source_root=source_root,
-            )
-        if source_root is None:
-            return cls(candidates=())
-        return cls.from_directory(
-            source_root,
-            schema=schema,
-            bindings=bindings,
-        )
-
-    @classmethod
     def from_schema_sources(
         cls,
         schema: PipelineImageSchema,
@@ -596,10 +725,7 @@ class SourceInventory:
     def relative_path(path: Path, source_root: Path | None) -> str:
         if source_root is None:
             return str(path)
-        try:
-            return str(path.relative_to(source_root))
-        except ValueError:
-            return str(path)
+        return str(path.relative_to(source_root))
 
 
 @dataclass(frozen=True, slots=True)
@@ -651,12 +777,38 @@ class SourceImageSetPreviewRow:
         )
 
 
+MatchesByBinding = tuple[
+    tuple[SourceBindingView, tuple[SourceSchemaCandidate, ...]],
+    ...,
+]
+
+
+class SourceBindingDiagnosticSeverity(str, Enum):
+    """Closed severity values for source-binding preview diagnostics."""
+
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingDiagnostic:
+    """Pure diagnostic for unresolved or ambiguous source-binding state."""
+
+    severity: SourceBindingDiagnosticSeverity
+    code: str
+    alias: str | None
+    message: str
+    candidate_count: int | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class SourceBindingsPreview:
     """Concrete preview of source bindings against an inventory."""
 
     binding_rows: tuple[SourceBindingPreviewRow, ...]
     image_set_rows: tuple[SourceImageSetPreviewRow, ...]
+    diagnostics: tuple[SourceBindingDiagnostic, ...] = ()
 
     @classmethod
     def from_schema_and_bindings(
@@ -678,27 +830,214 @@ class SourceBindingsPreview:
             )
             for binding in view.all_bindings
         )
-        return cls(
-            binding_rows=tuple(
-                SourceBindingPreviewRow.from_binding(
-                    binding,
-                    candidates,
-                    sample_limit=sample_limit,
-                )
-                for binding, candidates in matches_by_binding
-            ),
-            image_set_rows=SourceBindingsPreview.image_set_preview_rows(
+        binding_rows = tuple(
+            SourceBindingPreviewRow.from_binding(
+                binding,
+                candidates,
+                sample_limit=sample_limit,
+            )
+            for binding, candidates in matches_by_binding
+        )
+        image_set_diagnostics = SourceBindingsPreview.image_set_assembly_diagnostics(
+            schema,
+            matches_by_binding,
+        )
+        image_set_rows = (
+            ()
+            if image_set_diagnostics
+            else SourceBindingsPreview.image_set_preview_rows(
                 schema,
                 matches_by_binding,
-            ),
+            )
         )
+        diagnostics = SourceBindingsPreview.build_diagnostics(
+            schema,
+            matches_by_binding,
+            image_set_rows,
+        ) + image_set_diagnostics
+        return cls(
+            binding_rows=binding_rows,
+            image_set_rows=image_set_rows,
+            diagnostics=diagnostics,
+        )
+
+    @staticmethod
+    def image_set_assembly_diagnostics(
+        schema: PipelineImageSchema,
+        matches_by_binding: MatchesByBinding,
+    ) -> tuple[SourceBindingDiagnostic, ...]:
+        plan = schema.match_plan
+        if plan is None or plan.method is not SourceBindingMatchMethod.METADATA:
+            return ()
+        return SourceBindingsPreview.metadata_image_set_assembly_diagnostics(
+            plan,
+            matches_by_binding,
+        )
+
+    @staticmethod
+    def build_diagnostics(
+        schema: PipelineImageSchema,
+        matches_by_binding: MatchesByBinding,
+        image_set_rows: tuple[SourceImageSetPreviewRow, ...],
+    ) -> tuple[SourceBindingDiagnostic, ...]:
+        diagnostics: list[SourceBindingDiagnostic] = []
+        for binding, candidates in matches_by_binding:
+            if binding.required and not candidates:
+                diagnostics.append(
+                    SourceBindingDiagnostic(
+                        severity=SourceBindingDiagnosticSeverity.ERROR,
+                        code="source_binding.no_match",
+                        alias=binding.alias,
+                        message=f"Required source alias {binding.alias!r} matched no candidates.",
+                        candidate_count=0,
+                    )
+                )
+        pipeline_aliases = set(schema.assignments_by_alias)
+        matched_pipeline_aliases = {
+            binding.alias
+            for binding, candidates in matches_by_binding
+            if binding.alias in pipeline_aliases and candidates
+        }
+        if pipeline_aliases and matched_pipeline_aliases == pipeline_aliases and not image_set_rows:
+            diagnostics.append(
+                SourceBindingDiagnostic(
+                    severity=SourceBindingDiagnosticSeverity.WARNING,
+                    code="source_binding.no_image_sets",
+                    alias=None,
+                    message="Pipeline aliases matched candidates but produced no image sets.",
+                )
+            )
+        diagnostics.extend(
+            SourceBindingsPreview.metadata_match_plan_diagnostics(
+                schema,
+                matches_by_binding,
+            )
+        )
+        return tuple(diagnostics)
+
+    @staticmethod
+    def metadata_match_plan_diagnostics(
+        schema: PipelineImageSchema,
+        matches_by_binding: MatchesByBinding,
+    ) -> tuple[SourceBindingDiagnostic, ...]:
+        plan = schema.match_plan
+        if plan is None or plan.method is not SourceBindingMatchMethod.METADATA:
+            return ()
+        candidates_by_alias = {
+            binding.alias: candidates
+            for binding, candidates in matches_by_binding
+        }
+        diagnostics: list[SourceBindingDiagnostic] = []
+        seen: set[tuple[str, str]] = set()
+        for dimension in plan.dimensions:
+            for field in dimension.fields:
+                alias = field.alias
+                metadata_field = field.metadata_field
+                for candidate in candidates_by_alias.get(alias, ()):
+                    if semantic_source_metadata_value(
+                        candidate.metadata,
+                        metadata_field,
+                    ) is not None:
+                        continue
+                    key = (alias, metadata_field)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    diagnostics.append(
+                        SourceBindingDiagnostic(
+                            severity=SourceBindingDiagnosticSeverity.WARNING,
+                            code="source_binding.match_metadata_missing",
+                            alias=alias,
+                            message=(
+                                f"Alias {alias!r} is matched by metadata field "
+                                f"{metadata_field!r}, but at least one candidate lacks it."
+                            ),
+                        )
+                    )
+        return tuple(diagnostics)
+
+    @staticmethod
+    def metadata_image_set_assembly_diagnostics(
+        plan: SourceBindingMatchPlan,
+        matches_by_binding: MatchesByBinding,
+    ) -> tuple[SourceBindingDiagnostic, ...]:
+        grouped: dict[tuple[str, ...], dict[str, SourceSchemaCandidate]] = {}
+        aliases = tuple(binding.alias for binding, _ in matches_by_binding)
+        diagnostics: list[SourceBindingDiagnostic] = []
+        for binding, candidates in matches_by_binding:
+            alias = binding.alias
+            for candidate in candidates:
+                key_values: list[str] = []
+                for dimension in plan.dimensions:
+                    field = dimension.field_for_alias(alias)
+                    if field is None:
+                        continue
+                    value = semantic_source_metadata_value(candidate.metadata, field)
+                    if value is None:
+                        diagnostics.append(
+                            SourceBindingDiagnostic(
+                                severity=SourceBindingDiagnosticSeverity.ERROR,
+                                code="source_binding.match_metadata_missing",
+                                alias=alias,
+                                message=(
+                                    f"Source candidate {candidate.relative_path!r} "
+                                    f"for alias {alias!r} lacks image-set match "
+                                    f"metadata field {field!r}."
+                                ),
+                            )
+                        )
+                        continue
+                    key_values.append(str(value))
+                key = tuple(key_values)
+                if not key:
+                    diagnostics.append(
+                        SourceBindingDiagnostic(
+                            severity=SourceBindingDiagnosticSeverity.ERROR,
+                            code="source_binding.match_plan_no_dimensions",
+                            alias=alias,
+                            message=(
+                                f"Source alias {alias!r} has no metadata dimensions "
+                                "in the match plan."
+                            ),
+                        )
+                    )
+                    continue
+                alias_group = grouped.setdefault(key, {})
+                if alias in alias_group:
+                    diagnostics.append(
+                        SourceBindingDiagnostic(
+                            severity=SourceBindingDiagnosticSeverity.ERROR,
+                            code="source_binding.duplicate_image_set_alias",
+                            alias=alias,
+                            message=(
+                                f"Multiple source files match alias {alias!r} "
+                                f"for image-set key {key!r}."
+                            ),
+                        )
+                    )
+                    continue
+                alias_group[alias] = candidate
+        for key, candidates in grouped.items():
+            missing_aliases = tuple(alias for alias in aliases if alias not in candidates)
+            if not missing_aliases:
+                continue
+            diagnostics.append(
+                SourceBindingDiagnostic(
+                    severity=SourceBindingDiagnosticSeverity.ERROR,
+                    code="source_binding.incomplete_image_set",
+                    alias=None,
+                    message=(
+                        f"Source image set {key!r} is missing aliases "
+                        f"{missing_aliases!r}."
+                    ),
+                )
+            )
+        return tuple(diagnostics)
 
     @staticmethod
     def image_set_preview_rows(
         schema: PipelineImageSchema,
-        matches_by_binding: tuple[
-            tuple[SourceBindingView, tuple[SourceSchemaCandidate, ...]], ...
-        ],
+        matches_by_binding: MatchesByBinding,
     ) -> tuple[SourceImageSetPreviewRow, ...]:
         pipeline_aliases = set(schema.assignments_by_alias)
         candidates_by_alias = {

@@ -112,7 +112,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             tree_sync_adapter=self._tree_sync_adapter,
             tree_builder=self._progress_tree_builder,
         )
-        self._server_kill_service = ServerKillService()
+        self._server_kill_service = ServerKillService.openhcs_default()
         self._server_row_presenter = ServerRowPresenter(
             create_tree_item=self._create_tree_item,
             update_execution_server_item=self._progress_renderer.update_execution_server_item,

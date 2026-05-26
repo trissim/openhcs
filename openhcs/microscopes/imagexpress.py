@@ -99,7 +99,7 @@ class ImageXpressHandler(MicroscopeHandler):
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for ImageXpress")
 
         # Save virtual workspace mapping and all available metadata
-        self._save_virtual_workspace_metadata(plate_path, workspace_mapping)
+        self.save_virtual_workspace_metadata(plate_path, workspace_mapping)
 
         # Return the image directory
         return plate_path

@@ -6,10 +6,11 @@ import subprocess
 import shutil
 import zipfile
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from metaclass_registry import AutoRegisterMeta
-from nominal_refactor_advisor.record_algebra import product_record
 import requests
 from tqdm import tqdm
 
@@ -22,25 +23,101 @@ from benchmark.contracts.dataset import (
     DatasetValidationRule,
 )
 
-IMAGE_EXTENSIONS = {".bmp", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
+IMAGE_EXTENSIONS = {".bmp", ".dib", ".flex", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
 
 class DatasetAcquisitionError(Exception):
     """Raised when dataset download, extraction, or validation fails."""
 
 
-DatasetAcquisitionContext = product_record(
-    "DatasetAcquisitionContext",
-    "spec: DatasetSpec; cache_root: Path; archive_dir: Path; data_dir: Path",
-    doc="Resolved cache coordinates for one dataset acquisition.",
-    module_name=__name__,
-)
-DatasetValidationContext = product_record(
-    "DatasetValidationContext",
-    "spec: DatasetSpec; data_dir: Path",
-    doc="Validation inputs for an acquired dataset.",
-    module_name=__name__,
-)
+@dataclass(frozen=True)
+class DatasetAcquisitionContext:
+    """Resolved cache coordinates for one dataset acquisition."""
+
+    spec: DatasetSpec
+    cache_root: Path
+    archive_dir: Path
+    data_dir: Path
+
+
+@dataclass(frozen=True)
+class DatasetValidationContext:
+    """Validation inputs for an acquired dataset."""
+
+    spec: DatasetSpec
+    data_dir: Path
+
+
+class DatasetFileDownloader:
+    """Download policy shared by dataset source handlers."""
+
+    def download(self, url: str, destination: Path, *, tls_verify: bool = True) -> None:
+        """Stream a URL to disk with progress display."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = destination.with_suffix(destination.suffix + ".part")
+
+        with requests.get(url, stream=True, timeout=60, verify=tls_verify) as response:
+            try:
+                response.raise_for_status()
+            except Exception as exc:  # pragma: no cover - network failure path
+                raise DatasetAcquisitionError(f"Failed to download {url}: {exc}") from exc
+
+            total = int(response.headers.get("content-length", 0))
+            progress = tqdm(
+                total=total,
+                unit="B",
+                unit_scale=True,
+                desc=destination.name,
+                leave=False,
+            )
+            with tmp_path.open("wb") as file_obj:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        file_obj.write(chunk)
+                        progress.update(len(chunk))
+            progress.close()
+
+        tmp_path.rename(destination)
+
+    def destination_name(self, url: str) -> str:
+        """Resolve the local filename for one plain-file URL."""
+        name = Path(unquote(urlparse(url).path)).name
+        if not name:
+            raise DatasetAcquisitionError(f"URL has no file name: {url}")
+        return name
+
+
+DEFAULT_DATASET_FILE_DOWNLOADER = DatasetFileDownloader()
+
+
+class DatasetArchiveMaterializer:
+    """Archive extraction policy shared by acquisition handlers."""
+
+    def materialize_nested_archives(self, root: Path) -> None:
+        """Expose payload files that upstream repos store inside nested archives."""
+        for archive_path in tuple(sorted(root.rglob("*.zip"))):
+            if not archive_path.is_file():
+                continue
+            self.extract_missing_members(archive_path, archive_path.parent)
+
+    def extract_missing_members(self, zip_path: Path, target_dir: Path) -> None:
+        """Extract missing zip members beside an archive without clobbering checkout files."""
+        try:
+            with zipfile.ZipFile(zip_path, "r") as archive:
+                for member in archive.infolist():
+                    if member.is_dir():
+                        continue
+                    target_path = _safe_archive_member_path(target_dir, member.filename)
+                    if target_path.exists():
+                        continue
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(member, "r") as source, target_path.open("wb") as target:
+                        shutil.copyfileobj(source, target)
+        except zipfile.BadZipFile as exc:
+            raise DatasetAcquisitionError(f"Corrupted zip archive: {zip_path}") from exc
+
+
+DEFAULT_DATASET_ARCHIVE_MATERIALIZER = DatasetArchiveMaterializer()
 
 
 class DatasetValidationStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -100,6 +177,8 @@ class DatasetSourceHandler(ABC, metaclass=AutoRegisterMeta):
 
     __registry_key__ = "source_kind"
     source_kind: str | None = None
+    downloader: DatasetFileDownloader = DEFAULT_DATASET_FILE_DOWNLOADER
+    archive_materializer: DatasetArchiveMaterializer = DEFAULT_DATASET_ARCHIVE_MATERIALIZER
 
     @classmethod
     def for_source(cls, source: DatasetSourceSpec) -> "DatasetSourceHandler":
@@ -112,6 +191,29 @@ class DatasetSourceHandler(ABC, metaclass=AutoRegisterMeta):
     def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
         """Acquire into context.data_dir and return whether cached data was reused."""
 
+    def download_archives(
+        self,
+        context: DatasetAcquisitionContext,
+        source: DatasetSourceSpec,
+    ) -> tuple[tuple[Path, ...], bool]:
+        """Download all archive URLs for a source and report whether all were cached."""
+        if not source.urls:
+            raise DatasetAcquisitionError(
+                f"Dataset {context.spec.id!r} has no archive URLs to acquire."
+            )
+
+        context.archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_paths = tuple(context.archive_dir / Path(url).name for url in source.urls)
+        cached = all(path.exists() for path in archive_paths)
+        for url, archive_path in zip(source.urls, archive_paths, strict=True):
+            if not archive_path.exists():
+                self.downloader.download(
+                    url,
+                    archive_path,
+                    tls_verify=source.tls_verify,
+                )
+        return archive_paths, cached
+
 
 class ArchiveUrlSourceHandler(DatasetSourceHandler):
     """Acquire one or more URL archives into the dataset cache."""
@@ -123,7 +225,7 @@ class ArchiveUrlSourceHandler(DatasetSourceHandler):
         if context.data_dir.exists():
             return True
 
-        archive_paths, _ = _download_archives(context, source)
+        archive_paths, _ = self.download_archives(context, source)
 
         tmp_extract = context.cache_root / ".extract_tmp"
         if tmp_extract.exists():
@@ -144,6 +246,28 @@ class ArchiveUrlSourceHandler(DatasetSourceHandler):
         return False
 
 
+class UrlFilesSourceHandler(DatasetSourceHandler):
+    """Acquire one or more plain files into the dataset cache."""
+
+    source_kind = DatasetSourceKind.URL_FILES.value
+
+    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+        if not source.urls:
+            raise DatasetAcquisitionError(
+                f"Dataset {context.spec.id!r} has no file URLs to acquire."
+            )
+        if context.data_dir.exists():
+            return True
+        context.data_dir.mkdir(parents=True, exist_ok=True)
+        for url in source.urls:
+            self.downloader.download(
+                url,
+                context.data_dir / self.downloader.destination_name(url),
+                tls_verify=source.tls_verify,
+            )
+        return False
+
+
 class GitSparseWithArchiveUrlsSourceHandler(DatasetSourceHandler):
     """Acquire sparse repository files plus companion dataset archives."""
 
@@ -151,11 +275,14 @@ class GitSparseWithArchiveUrlsSourceHandler(DatasetSourceHandler):
 
     def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
         cached_repo = GitSparseSourceHandler().acquire(context, source)
-        archive_paths, cached_archives = _download_archives(context, source)
+        archive_paths, cached_archives = self.download_archives(context, source)
 
         for archive_path in archive_paths:
             if context.spec.archive_format is ArchiveFormat.ZIP:
-                _extract_zip_missing_members(archive_path, context.data_dir)
+                self.archive_materializer.extract_missing_members(
+                    archive_path,
+                    context.data_dir,
+                )
             else:
                 raise DatasetAcquisitionError(
                     f"Unsupported archive format: {context.spec.archive_format.name}"
@@ -224,54 +351,6 @@ class GitSparseSourceHandler(DatasetSourceHandler):
             raise DatasetAcquisitionError(f"git {' '.join(args)} failed: {detail}") from exc
 
 
-def _download_archives(
-    context: DatasetAcquisitionContext,
-    source: DatasetSourceSpec,
-) -> tuple[tuple[Path, ...], bool]:
-    """Download all archive URLs for a source and report whether all were cached."""
-    if not source.urls:
-        raise DatasetAcquisitionError(
-            f"Dataset {context.spec.id!r} has no archive URLs to acquire."
-        )
-
-    context.archive_dir.mkdir(parents=True, exist_ok=True)
-    archive_paths = tuple(context.archive_dir / Path(url).name for url in source.urls)
-    cached = all(path.exists() for path in archive_paths)
-    for url, archive_path in zip(source.urls, archive_paths, strict=True):
-        if not archive_path.exists():
-            _download_file(url, archive_path, tls_verify=source.tls_verify)
-    return archive_paths, cached
-
-
-def _download_file(url: str, destination: Path, *, tls_verify: bool = True) -> None:
-    """Stream a URL to disk with progress display."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = destination.with_suffix(destination.suffix + ".part")
-
-    with requests.get(url, stream=True, timeout=60, verify=tls_verify) as response:
-        try:
-            response.raise_for_status()
-        except Exception as exc:  # pragma: no cover - network failure path
-            raise DatasetAcquisitionError(f"Failed to download {url}: {exc}") from exc
-
-        total = int(response.headers.get("content-length", 0))
-        progress = tqdm(
-            total=total,
-            unit="B",
-            unit_scale=True,
-            desc=destination.name,
-            leave=False,
-        )
-        with tmp_path.open("wb") as file_obj:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    file_obj.write(chunk)
-                    progress.update(len(chunk))
-        progress.close()
-
-    tmp_path.rename(destination)
-
-
 def _extract_zip(zip_path: Path, target_dir: Path) -> None:
     """Extract a zip archive into target_dir."""
     try:
@@ -282,28 +361,7 @@ def _extract_zip(zip_path: Path, target_dir: Path) -> None:
 
 
 def _materialize_nested_archives(root: Path) -> None:
-    """Expose payload files that upstream repos store inside nested archives."""
-    for archive_path in tuple(sorted(root.rglob("*.zip"))):
-        if not archive_path.is_file():
-            continue
-        _extract_zip_missing_members(archive_path, archive_path.parent)
-
-
-def _extract_zip_missing_members(zip_path: Path, target_dir: Path) -> None:
-    """Extract missing zip members beside an archive without clobbering checkout files."""
-    try:
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            for member in archive.infolist():
-                if member.is_dir():
-                    continue
-                target_path = _safe_archive_member_path(target_dir, member.filename)
-                if target_path.exists():
-                    continue
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(member, "r") as source, target_path.open("wb") as target:
-                    shutil.copyfileobj(source, target)
-    except zipfile.BadZipFile as exc:
-        raise DatasetAcquisitionError(f"Corrupted zip archive: {zip_path}") from exc
+    DEFAULT_DATASET_ARCHIVE_MATERIALIZER.materialize_nested_archives(root)
 
 
 def _safe_archive_member_path(target_dir: Path, member_name: str) -> Path:

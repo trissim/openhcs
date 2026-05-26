@@ -19,9 +19,12 @@ class CellProfilerPlateWorkspaceRequest:
     """Request to prepare a selected folder for OpenHCS plate initialization."""
 
     plate_root: Path
+    cppipe_path: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "plate_root", Path(self.plate_root))
+        if self.cppipe_path is not None:
+            object.__setattr__(self, "cppipe_path", Path(self.cppipe_path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,14 @@ class CellProfilerPlateWorkspaceResult:
     @property
     def materialized(self) -> bool:
         return self.ingestion is not None and self.ingestion.materialization is not None
+
+    @property
+    def execution_plate_path(self) -> Path:
+        """Return the plate workspace that should back orchestrator execution."""
+
+        if self.ingestion is None:
+            return self.plate_root
+        return self.ingestion.execution_plate_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +95,18 @@ class CellProfilerPlateWorkspacePreparer:
         return self.request.plate_root / OpenHCSMetadataHandler.METADATA_FILENAME
 
     def cppipe_path(self) -> Path | None:
-        candidates = tuple(sorted(self.request.plate_root.glob("*.cppipe")))
+        candidates = self.cppipe_paths()
+        if self.request.cppipe_path is not None:
+            cppipe_path = self.request.cppipe_path
+            if not cppipe_path.is_absolute():
+                cppipe_path = self.request.plate_root / cppipe_path
+            if cppipe_path.suffix != ".cppipe":
+                raise ValueError(f"Expected a .cppipe file, got {cppipe_path}.")
+            if cppipe_path not in candidates:
+                raise FileNotFoundError(
+                    f"Requested CellProfiler pipeline not found in plate workspace: {cppipe_path}"
+                )
+            return cppipe_path
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -97,6 +119,9 @@ class CellProfilerPlateWorkspacePreparer:
             "CellProfiler plate workspace contains multiple .cppipe files; "
             f"expected one or {preferred.name}. Found: {candidate_names}"
         )
+
+    def cppipe_paths(self) -> tuple[Path, ...]:
+        return tuple(sorted(self.request.plate_root.glob("*.cppipe")))
 
     def generated_pipeline_path(self, cppipe_path: Path) -> Path:
         generated_dir = self.request.plate_root / ".openhcs_cellprofiler"

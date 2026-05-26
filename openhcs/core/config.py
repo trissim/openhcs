@@ -328,8 +328,6 @@ FijiDisplayConfig = create_fiji_display_config(
 # Apply the global pipeline config decorator with ui_hidden=True
 # This config is only inherited by FijiStreamingConfig, so hide it from UI
 FijiDisplayConfig = global_pipeline_config(ui_hidden=True)(FijiDisplayConfig)
-# Mark the class directly as well for UI layer checks
-FijiDisplayConfig._ui_hidden = True
 
 
 @abbreviation("wfc")

@@ -75,8 +75,6 @@ class OperaPhenixHandler(MetadataDetectMixin, MicroscopeHandler):
         """
         return [Backend.DISK]
 
-
-
     # Uses default workspace initialization from base class
 
     def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
@@ -161,7 +159,7 @@ class OperaPhenixHandler(MetadataDetectMixin, MicroscopeHandler):
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for Opera Phenix")
 
         # Save virtual workspace mapping and all available metadata
-        self._save_virtual_workspace_metadata(plate_path, workspace_mapping)
+        self.save_virtual_workspace_metadata(plate_path, workspace_mapping)
 
         return image_dir
 

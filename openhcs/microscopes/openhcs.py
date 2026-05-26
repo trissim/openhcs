@@ -12,7 +12,7 @@ import os
 from abc import ABC
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Type
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union, Type
 
 from openhcs.constants.constants import Backend, GroupBy, AllComponents
 from metaclass_registry import AutoRegisterMeta
@@ -34,6 +34,30 @@ def resolve_subdirectory_path(subdir_name: str, plate_path: Union[str, Path]) ->
     """Resolve an OpenHCS metadata subdirectory key against a plate root."""
     root_path = Path(plate_path)
     return root_path if subdir_name == "." else root_path / subdir_name
+
+
+def workspace_mapping_source_ref(mapping_value: Any) -> str:
+    """Return the source path/ref carried by a workspace_mapping value."""
+    source_ref = (
+        mapping_value.get("source_path")
+        if isinstance(mapping_value, Mapping)
+        else mapping_value
+    )
+    if not isinstance(source_ref, (str, os.PathLike)):
+        raise ValueError(
+            "workspace_mapping values must be path strings or structured refs "
+            "with a source_path field."
+        )
+    return str(source_ref)
+
+
+def workspace_mapping_source_path(
+    plate_root: Union[str, Path],
+    mapping_value: Any,
+) -> Path:
+    """Resolve a workspace_mapping value to the physical source path."""
+    source_path = Path(workspace_mapping_source_ref(mapping_value))
+    return source_path if source_path.is_absolute() else Path(plate_root) / source_path
 
 
 @dataclass(frozen=True)
@@ -543,7 +567,7 @@ class OpenHCSMetadata:
     z_indexes: Optional[Dict[str, str]]
     timepoints: Optional[Dict[str, str]]
     available_backends: Dict[str, bool]
-    workspace_mapping: Optional[Dict[str, str]] = None  # Plate-relative virtual → real path mapping
+    workspace_mapping: Optional[Dict[str, Any]] = None  # Virtual path -> path string or structured backend ref
     source_metadata: Optional[Dict[str, Dict[str, str]]] = None  # Virtual or real path → source metadata fields
     main: Optional[bool] = None  # Indicates if this subdirectory is the primary/input subdirectory
     results_dir: Optional[str] = None  # Sibling directory containing analysis results for this subdirectory

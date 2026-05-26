@@ -29,6 +29,9 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.source_bindings_view import (
+    OpenHCSWorkspaceSourceInventoryProvider,
+    SchemaContextSourceInventoryProvider,
+    SourceBindingDiagnosticSeverity,
     SourceBindingsPreview,
     SourceBindingsViewModel,
     SourceInventory,
@@ -46,6 +49,20 @@ class PipelineImageAssignmentFactory:
             selector=selector,
             origin=SourceBindingOrigin.PIPELINE_START,
         )
+
+
+def source_preview(
+    schema: PipelineImageSchema,
+    inventory: SourceInventory,
+    *,
+    sample_limit: int = 3,
+) -> SourceBindingsPreview:
+    return SourceBindingsPreview.from_schema_and_bindings(
+        schema=schema,
+        bindings=StepSourceBindingsConfig(),
+        inventory=inventory,
+        sample_limit=sample_limit,
+    )
 
 
 class FileManagerInventoryStub:
@@ -234,12 +251,7 @@ def test_source_bindings_preview_reuses_typed_filter_and_order_matching(tmp_path
         source_root=source_root,
     )
 
-    preview = SourceBindingsPreview.from_schema_and_bindings(
-        schema=schema,
-        bindings=StepSourceBindingsConfig(),
-        inventory=inventory,
-        sample_limit=1,
-    )
+    preview = source_preview(schema, inventory, sample_limit=1)
 
     counts_by_alias = {
         row.alias: (row.matched_source_count, row.sample_paths)
@@ -281,11 +293,7 @@ def test_source_inventory_from_schema_sources_decodes_file_uri_and_metadata(tmp_
         schema,
         source_root=source_root,
     )
-    preview = SourceBindingsPreview.from_schema_and_bindings(
-        schema=schema,
-        bindings=StepSourceBindingsConfig(),
-        inventory=inventory,
-    )
+    preview = source_preview(schema, inventory)
 
     assert inventory.candidates[0].path == source_path
     assert inventory.candidates[0].relative_path == "A01_s1_DNA.tif"
@@ -345,18 +353,82 @@ def test_source_inventory_from_schema_context_uses_directory_without_embedded_so
         },
     )
 
-    inventory = SourceInventory.from_schema_context(
-        schema,
-        source_root=source_root,
-    )
-    preview = SourceBindingsPreview.from_schema_and_bindings(
+    inventory = SchemaContextSourceInventoryProvider(source_root).inventory(
         schema=schema,
-        bindings=StepSourceBindingsConfig(),
-        inventory=inventory,
     )
+    preview = source_preview(schema, inventory)
 
     assert inventory.candidates[0].path == source_path
     assert preview.binding_rows[0].matched_source_count == 1
+
+
+def test_openhcs_workspace_inventory_uses_virtual_workspace_metadata(tmp_path):
+    metadata_path = tmp_path / "openhcs_metadata.json"
+    virtual_path = "A01_s001_w1_z001_t001.tif"
+    metadata_path.write_text(
+        """
+{
+  "subdirectories": {
+    "default": {
+      "workspace_mapping": {
+        "A01_s001_w1_z001_t001.tif": "raw/source.ome.tiff"
+      },
+      "source_metadata": {
+        "A01_s001_w1_z001_t001.tif": {}
+      },
+      "channels": {
+        "1": "DAPI"
+      }
+    }
+  }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "DNA": PipelineImageAssignmentFactory.build(
+                "DNA",
+                SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+            ),
+        },
+    )
+
+    inventory = OpenHCSWorkspaceSourceInventoryProvider(tmp_path).inventory(
+        schema=schema,
+    )
+    preview = source_preview(schema, inventory)
+
+    assert inventory.candidates[0].relative_path == virtual_path
+    assert inventory.candidates[0].metadata["channel_name"] == "DAPI"
+    assert preview.binding_rows[0].matched_source_count == 1
+
+
+def test_source_binding_preview_reports_required_alias_without_matches():
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "DNA": PipelineImageAssignmentFactory.build(
+                "DNA",
+                SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "DNA",
+                        ),
+                    ),
+                ),
+            ),
+        },
+    )
+
+    preview = source_preview(schema, SourceInventory(candidates=()))
+
+    assert preview.diagnostics[0].severity is SourceBindingDiagnosticSeverity.ERROR
+    assert preview.diagnostics[0].code == "source_binding.no_match"
+    assert preview.diagnostics[0].alias == "DNA"
 
 
 def test_source_inventory_from_filemanager_uses_vfs_file_listing():

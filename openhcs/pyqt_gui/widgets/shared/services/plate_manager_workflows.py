@@ -9,16 +9,28 @@ from typing import Any
 
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from pyqt_reactive.widgets.shared.manager_workflows import (
+    ManagerCodeExecutionWorkflow,
+    ManagerDeletionWorkflow,
+)
+from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
+    GuiEventBusBroadcaster,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class PlateManagerCodeWorkflow:
+class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
     """Applies edited orchestrator code to plate-manager state."""
 
+    workflow_key = "plate_manager"
     manager: Any
+
+    def migration_namespace(self, code: str, error: Exception) -> dict | None:
+        del code, error
+        return None
 
     def apply_namespace(self, namespace: dict) -> bool:
         if "plate_paths" not in namespace or "pipeline_data" not in namespace:
@@ -89,7 +101,7 @@ class PlateManagerCodeWorkflow:
 
         self.manager.service_adapter.set_global_config(global_config)
         self.manager.global_config_changed.emit()
-        self.manager._broadcast_to_event_bus("config", global_config)
+        GuiEventBusBroadcaster(self.manager.event_bus).config_changed(global_config)
 
     def apply_per_plate_configs(self, per_plate_configs: dict) -> None:
         last_pipeline_config = None
@@ -117,14 +129,16 @@ class PlateManagerCodeWorkflow:
             last_pipeline_config = pipeline_config
 
         if last_pipeline_config:
-            self.manager._broadcast_to_event_bus("config", last_pipeline_config)
+            GuiEventBusBroadcaster(self.manager.event_bus).config_changed(
+                last_pipeline_config
+            )
 
     def apply_legacy_pipeline_config(
         self,
         pipeline_config: Any,
         plate_paths: list,
     ) -> None:
-        self.manager._broadcast_to_event_bus("config", pipeline_config)
+        GuiEventBusBroadcaster(self.manager.event_bus).config_changed(pipeline_config)
         for plate_path in plate_paths:
             orchestrator = ObjectStateRegistry.get_object(plate_path)
             if not orchestrator:
@@ -161,7 +175,9 @@ class PlateManagerCodeWorkflow:
             self.manager.pipeline_editor.pipeline_steps = pipeline_steps
             self.manager.pipeline_editor.update_item_list()
             self.manager.pipeline_editor.pipeline_changed.emit(pipeline_steps)
-            self.manager._broadcast_to_event_bus("pipeline", pipeline_steps)
+            GuiEventBusBroadcaster(self.manager.event_bus).pipeline_changed(
+                pipeline_steps
+            )
             logger.debug(
                 "Triggered UI cascade refresh for current plate: %s",
                 plate_path,
@@ -181,9 +197,10 @@ class PlateManagerCodeWorkflow:
 
 
 @dataclass(frozen=True, slots=True)
-class PlateManagerDeletionWorkflow:
+class PlateManagerDeletionWorkflow(ManagerDeletionWorkflow):
     """Validates and deletes plates plus their registered ObjectState scopes."""
 
+    workflow_key = "plate_manager"
     manager: Any
 
     def validate(self, items: list[Any]) -> bool:
