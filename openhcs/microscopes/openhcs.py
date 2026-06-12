@@ -569,6 +569,7 @@ class OpenHCSMetadata:
     available_backends: Dict[str, bool]
     workspace_mapping: Optional[Dict[str, Any]] = None  # Virtual path -> path string or structured backend ref
     source_metadata: Optional[Dict[str, Dict[str, str]]] = None  # Virtual or real path → source metadata fields
+    source_projection: Optional[List[Dict[str, Any]]] = None  # Typed source-plane projection records
     main: Optional[bool] = None  # Indicates if this subdirectory is the primary/input subdirectory
     results_dir: Optional[str] = None  # Sibling directory containing analysis results for this subdirectory
 

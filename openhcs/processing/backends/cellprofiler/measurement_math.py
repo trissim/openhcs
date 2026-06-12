@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from types import MappingProxyType
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar
 
 import numpy as np
@@ -41,6 +41,26 @@ class MathResult:
     operation: str
     object_label: int | None = None
     object_name: str | None = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        row: Any,
+        *,
+        slice_index: int,
+    ) -> "MathResult":
+        """Project one columnar CalculateMath row into the scalar row record."""
+        return cls(
+            slice_index=slice_index,
+            output_name=str(row["output_name"]),
+            feature_name=str(row["feature_name"]),
+            result_value=float_or_nan(row["result_value"]),
+            operand1_value=float_or_nan(row["operand1_value"]),
+            operand2_value=float_or_nan(row["operand2_value"]),
+            operation=str(row["operation"]),
+            object_label=optional_int(row.get("object_label")),
+            object_name=optional_str(row.get("object_name")),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,20 +493,7 @@ class CalculateMathExecution:
                 self.scalar_result(slice_request),
                 slice_request,
             ).rows
-            for row in as_result_list(slice_rows):
-                rows.append(
-                    MathResult(
-                        slice_index=slice_index,
-                        output_name=row.output_name,
-                        feature_name=row.feature_name,
-                        result_value=row.result_value,
-                        operand1_value=row.operand1_value,
-                        operand2_value=row.operand2_value,
-                        operation=row.operation,
-                        object_label=row.object_label,
-                        object_name=row.object_name,
-                    )
-                )
+            rows.extend(math_results_with_slice_index(slice_rows, slice_index))
         return rows
 
     @staticmethod
@@ -518,6 +525,19 @@ class CalculateMathExecution:
         return result
 
 
+def math_results_with_slice_index(
+    rows: MathResult | MathResultColumnarRows | list[MathResult],
+    slice_index: int,
+) -> list[MathResult]:
+    """Return scalar result rows with the runtime slice index attached."""
+    if isinstance(rows, MathResultColumnarRows):
+        return [
+            MathResult.from_mapping(row, slice_index=slice_index)
+            for row in rows.row_mappings()
+        ]
+    return [replace(row, slice_index=slice_index) for row in as_result_list(rows)]
+
+
 def as_result_list(rows: MathResult | list[MathResult]) -> list[MathResult]:
     return rows if isinstance(rows, list) else [rows]
 
@@ -545,6 +565,18 @@ def float_or_nan(value: Any) -> float:
     return scalar if not np.isnan(scalar) else np.nan
 
 
+def optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    return int(value)
+
+
+def optional_str(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
 __all__ = public_names_from_objects(
     CalculateMathExecution,
     MathBounds,
@@ -561,5 +593,8 @@ __all__ = public_names_from_objects(
     broadcast_operand_values,
     calculate_math,
     float_or_nan,
+    math_results_with_slice_index,
+    optional_int,
+    optional_str,
     scalar_operand_value,
 )

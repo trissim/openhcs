@@ -7,6 +7,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 
 import logging
 from dataclasses import fields, is_dataclass
+from functools import cache
 from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any
 
@@ -34,7 +35,8 @@ from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.config_framework import is_global_config_instance
 from openhcs.config_framework.global_config import get_current_global_config
-from openhcs.config_framework.lazy_factory import get_base_type_for_lazy
+from openhcs.config_framework.lazy_factory import LazyDataclass, get_base_type_for_lazy
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 
 from pyqt_reactive.theming import ColorScheme
@@ -53,7 +55,7 @@ from pyqt_reactive.widgets.shared import (
     HeaderActionGroup,
 )
 from openhcs.config_framework.object_state import ObjectStateRegistry
-from openhcs.introspection import UnifiedParameterAnalyzer
+from openhcs.introspection import SignatureAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,14 @@ def _nearest_parent_service_adapter(parent_widget):
 def _resolve_service_adapter(service_adapter, parent_widget):
     """Resolve the service adapter available to this editor window."""
     return service_adapter if service_adapter is not None else _nearest_parent_service_adapter(parent_widget)
+
+
+@cache
+def _function_step_form_field_names() -> frozenset[str]:
+    """Return editable top-level FunctionStep fields from constructor signatures."""
+    return frozenset(
+        SignatureAnalyzer.analyze(AbstractStep.__init__).keys()
+    ) | frozenset(SignatureAnalyzer.analyze(FunctionStep.__init__).keys())
 
 
 class DualEditorWindow(BaseFormDialog):
@@ -167,9 +177,6 @@ class DualEditorWindow(BaseFormDialog):
         # Change tracking (now uses ObjectState.dirty_fields instead of snapshots)
         self.has_changes = False
         self.current_tab = "step"
-
-        # Change detection callback (ObjectState.on_state_changed expects a no-arg callable)
-        self._dirty_detect_callback = lambda: self.detect_changes()
 
         # UI components
         self.tab_widget: Optional[ActionTabbedWindowBody] = None
@@ -415,25 +422,46 @@ class DualEditorWindow(BaseFormDialog):
         # Update title now that header_label exists
         self._update_window_title()
 
+    def _numbered_step_title_name(self, step_name: str) -> str:
+        """Return the UI title name with pipeline position when available."""
+        if self._step_index is None:
+            return step_name
+        return f"{self._step_index + 1}. {step_name}"
+
+    def _title_step_name(self) -> str:
+        """Resolve the required step name used by the editor title."""
+        step_editor = self.step_editor
+        if step_editor is not None and step_editor.state is not None:
+            current_values = step_editor.state.get_current_values()
+            if "name" not in current_values:
+                raise RuntimeError("DualEditorWindow step state is missing required 'name'")
+            return str(current_values["name"])
+
+        if self.editing_step is None:
+            raise RuntimeError("DualEditorWindow cannot build a title without editing_step")
+
+        return str(self.editing_step.name)
+
     def _dirty_window_presentation(self) -> DirtyWindowPresentation:
         """Build dirty/signature-diff presentation from the current step state."""
         step_editor = self.step_editor
-        if step_editor and step_editor.state:
-            current_values = step_editor.state.get_current_values()
-            step_name = current_values.get("name", "Unnamed")
-        else:
-            step_name = self.editing_step.name if self.editing_step else "Unnamed"
+        step_state = step_editor.state if step_editor is not None else None
 
-        base_title = f"{'New' if self.is_new else 'Edit'} Step: {step_name}"
+        if self.is_new:
+            mode = "New"
+        else:
+            mode = "Edit"
+
+        step_name = self._title_step_name()
+        display_name = self._numbered_step_title_name(step_name)
+        base_title = f"{mode} Step: {display_name}"
         self._base_window_title = base_title
-        is_dirty = bool(
-            step_editor and step_editor.state and step_editor.state.is_raw_dirty
-        )
-        has_sig_diff = bool(
-            step_editor
-            and step_editor.state
-            and step_editor.state.signature_diff_fields
-        )
+        if step_state is not None:
+            is_dirty = bool(step_state.is_raw_dirty)
+            has_sig_diff = bool(step_state.signature_diff_fields)
+        else:
+            is_dirty = False
+            has_sig_diff = False
         return DirtyWindowPresentation(
             window_title=base_title,
             header_text=base_title,
@@ -623,6 +651,7 @@ class DualEditorWindow(BaseFormDialog):
             if self.func_editor:
                 self.func_editor.set_scope_index(new_index)
             self._refresh_scope_border()
+            self._update_window_title()
 
         # Only refresh data if the step OBJECT was replaced in the pipeline
         # (e.g., from code editor saving a new step instance).
@@ -860,6 +889,16 @@ class DualEditorWindow(BaseFormDialog):
         for nested_name, nested_manager in form_manager.nested_managers.items():
             self._update_context_obj_recursively(nested_manager, new_context_obj)
 
+    def _normalized_form_change_path(self, param_name: str) -> tuple[str, ...]:
+        """Return the step-relative form path for a parameter-change signal."""
+        path_parts = tuple(part for part in param_name.split(".") if part)
+        if len(path_parts) <= 1:
+            return path_parts
+
+        if path_parts[0] not in _function_step_form_field_names():
+            return path_parts[1:]
+        return path_parts
+
     def on_form_parameter_changed(self, param_name: str, value):
         """Handle form parameter changes directly from form manager.
 
@@ -885,23 +924,18 @@ class DualEditorWindow(BaseFormDialog):
 
         # param_name is now a full path like "processing_config.group_by" or just "name"
         # Parse the path to determine if it's a nested field
-        path_parts = param_name.split(".")
+        path_parts = self._normalized_form_change_path(param_name)
         logger.debug(f"  path_parts={path_parts}")
 
-        # Skip the first part if it's the form manager's field_id (type name like "FunctionStep")
-        # The path format is: "TypeName.field" or "TypeName.nested.field"
-        if len(path_parts) > 1:
-            # Remove the type name prefix (e.g., "FunctionStep")
-            path_parts = path_parts[1:]
-            logger.debug(f"  path_parts after removing type prefix={path_parts}")
-
-        if len(path_parts) == 1:
+        if not path_parts:
+            logger.warning("Received empty form parameter path; syncing editor only")
+        elif len(path_parts) == 1:
             # Top-level field (e.g., "name", "func", "processing_config")
             field_name = path_parts[0]
 
-        # CRITICAL FIX: For function parameters, use fresh imports to avoid unpicklable registry wrappers
-        if field_name == "func" and callable(value):
-            value = self._session.normalize_function_spec(value)
+            # CRITICAL FIX: For function parameters, use fresh imports to avoid unpicklable registry wrappers
+            if field_name == "func" and callable(value):
+                value = self._session.normalize_function_spec(value)
 
             # CRITICAL FIX: For nested dataclass parameters (like processing_config),
             # don't replace the entire lazy dataclass - instead update individual fields
@@ -910,20 +944,18 @@ class DualEditorWindow(BaseFormDialog):
                 logger.debug(
                     f"📦 {field_name} is a nested dataclass, updating fields individually"
                 )
-                existing_config = self.editing_step
-                try:
-                    existing_config._resolve_field_value
+                existing_config = getattr(self.editing_step, field_name, None)
+                if isinstance(existing_config, LazyDataclass):
                     logger.debug(f"✅ {field_name} is lazy, preserving lazy resolution")
-                except AttributeError:
-                    logger.debug(
-                        f"Config doesn't have _resolve_field_value, updating directly"
-                    )
                     for field in fields(value):
                         raw_value = object.__getattribute__(value, field.name)
                         object.__setattr__(existing_config, field.name, raw_value)
                         logger.debug(f"    ✏️  Updated {field.name} to {raw_value}")
                 else:
                     object.__setattr__(self.editing_step, field_name, value)
+                    logger.debug(
+                        f"{field_name} is concrete; replaced top-level dataclass value"
+                    )
             else:
                 object.__setattr__(self.editing_step, field_name, value)
         else:
@@ -1150,8 +1182,6 @@ class DualEditorWindow(BaseFormDialog):
         # Cleanup tree helper subscriptions to prevent memory leaks
         if self.step_editor is not None:
             self.step_editor.tree_helper.cleanup_subscriptions()
-            self.step_editor.state.off_state_changed(self._dirty_title_callback)
-            self.step_editor.state.off_state_changed(self._dirty_detect_callback)
 
         super().closeEvent(event)  # BaseFormDialog handles unregistration
 

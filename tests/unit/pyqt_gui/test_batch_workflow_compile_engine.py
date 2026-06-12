@@ -13,8 +13,10 @@ from openhcs.core.debug import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     BatchWorkflowService,
-    CompileJob,
     DebugSnapshotAvailableNotification,
+)
+from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
+    CompileBatchWorkflowService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugProgressNotificationService,
@@ -34,10 +36,21 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
     RunSpec,
 )
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    CompileJob,
     CompileWorkflowService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
     ProgressWorkflowService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
+    LiveMeasurementAvailableNotification,
+    LiveMeasurementProgressNotificationService,
+)
+from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress.live_measurements import (
+    LiveMeasurementArtifactAddress,
+    LiveMeasurementProgressPayload,
+    LiveMeasurementTablePreview,
 )
 from pyqt_reactive.services import DefaultServerInfoParser
 from zmqruntime.execution import BatchSubmitWaitEngine
@@ -46,6 +59,8 @@ from zmqruntime.execution import BatchSubmitWaitEngine
 def _job(plate_path: str) -> CompileJob:
     return CompileJob(
         plate_path=plate_path,
+        execution_plate_path=plate_path,
+        selected_pipeline_path=None,
         plate_name=plate_path,
         definition_pipeline=[],
         pipeline_config={"x": 1},
@@ -53,7 +68,7 @@ def _job(plate_path: str) -> CompileJob:
 
 
 def test_compile_policy_with_engine_collects_artifacts_and_callbacks():
-    service = BatchWorkflowService.__new__(BatchWorkflowService)
+    service = CompileBatchWorkflowService.__new__(CompileBatchWorkflowService)
     callback_events: list[tuple[str, str, str]] = []
 
     async def fake_submit_compile_job(*, job: CompileJob, zmq_client, loop) -> str:
@@ -98,6 +113,8 @@ def test_build_compile_job_preserves_debug_config_params():
     ).to_config_params()
     run_spec = RunSpec(
         plate_path="/tmp/plate",
+        execution_plate_path="/tmp/plate",
+        selected_pipeline_path=None,
         definition_pipeline=[],
         global_config=object(),
         pipeline_config={"x": 1},
@@ -109,6 +126,42 @@ def test_build_compile_job_preserves_debug_config_params():
     )
 
     assert job.config_params == debug_config_params
+
+
+def test_compile_submission_uses_execution_plate_path_for_transport():
+    captured = {}
+
+    class FakeClient:
+        def submit_compile(self, submission):
+            captured["plate_id"] = submission.plate_id
+            captured["execution_plate_id"] = submission.execution_plate_id
+            captured["selected_pipeline_path"] = submission.selected_pipeline_path
+            return {"status": "accepted", "execution_id": "compile-1"}
+
+    async def run_blocking(_loop, func):
+        return func()
+
+    service = CompileWorkflowService(
+        global_config_provider=lambda: object(),
+        run_blocking=run_blocking,
+    )
+    job = CompileJob(
+        plate_path="/tmp/source::cppipe::Analysis_Start",
+        execution_plate_path="/tmp/source/.openhcs_cellprofiler/Analysis_Start",
+        selected_pipeline_path="/tmp/source/BBBC022_Analysis_Start.cppipe",
+        plate_name="Analysis_Start",
+        definition_pipeline=[],
+        pipeline_config={"x": 1},
+    )
+
+    execution_id = asyncio.run(
+        service.submit_compile_job(job=job, zmq_client=FakeClient(), loop=object())
+    )
+
+    assert execution_id == "compile-1"
+    assert captured["plate_id"] == "/tmp/source::cppipe::Analysis_Start"
+    assert captured["execution_plate_id"] == "/tmp/source/.openhcs_cellprofiler/Analysis_Start"
+    assert captured["selected_pipeline_path"] == "/tmp/source/BBBC022_Analysis_Start.cppipe"
 
 
 def test_compile_transport_normalizes_cellprofiler_submodule_function_collision():
@@ -163,7 +216,7 @@ def test_compile_transport_rejects_unresolved_module_objects():
 
 
 def test_compile_policy_fail_fast_submit_raises():
-    service = BatchWorkflowService.__new__(BatchWorkflowService)
+    service = CompileBatchWorkflowService.__new__(CompileBatchWorkflowService)
 
     async def fake_submit_compile_job(*, job: CompileJob, zmq_client, loop) -> str:
         if job.plate_path == "/tmp/b":
@@ -193,7 +246,7 @@ def test_compile_policy_fail_fast_submit_raises():
         )
 
 def test_compile_policy_non_fail_fast_wait_tracks_error_and_finally():
-    service = BatchWorkflowService.__new__(BatchWorkflowService)
+    service = CompileBatchWorkflowService.__new__(CompileBatchWorkflowService)
     callbacks = {"start": [], "success": [], "error": [], "finally": []}
 
     async def fake_submit_compile_job(*, job: CompileJob, zmq_client, loop) -> str:
@@ -296,7 +349,7 @@ class ClientServiceHarness:
 
 def test_execution_control_notifies_when_batch_terminal() -> None:
     host = ExecutionControlHostHarness()
-    service = ExecutionControlService(
+    service = ExecutionControlService.openhcs_default(
         host=host,
         client_service=ClientServiceHarness(),
         port=7777,
@@ -309,7 +362,7 @@ def test_execution_control_notifies_when_batch_terminal() -> None:
 
 def test_execution_control_emits_cancelled_for_cancellable_plates() -> None:
     host = ExecutionControlHostHarness()
-    service = ExecutionControlService(
+    service = ExecutionControlService.openhcs_default(
         host=host,
         client_service=ClientServiceHarness(),
         port=7777,
@@ -325,7 +378,7 @@ def test_execution_control_emits_cancelled_for_cancellable_plates() -> None:
 
 def test_execution_control_disconnect_uses_client_service() -> None:
     client_service = ClientServiceHarness()
-    service = ExecutionControlService(
+    service = ExecutionControlService.openhcs_default(
         host=ExecutionControlHostHarness(),
         client_service=client_service,
         port=7777,
@@ -349,6 +402,8 @@ def test_compile_submit_rejects_missing_zmq_client() -> None:
                 zmq_client=None,
                 loop=object(),
                 plate_path="/tmp/plate",
+                execution_plate_path="/tmp/plate",
+                selected_pipeline_path=None,
                 definition_pipeline=[],
                 pipeline_config=object(),
             )
@@ -374,6 +429,7 @@ def _progress_service(
     host: BatchWorkflowHostHarness,
     client_service,
     on_dirty,
+    live_measurements=None,
 ) -> tuple[ProgressWorkflowService, DebugProgressNotificationService]:
     debug_notifications = DebugProgressNotificationService()
     service = ProgressWorkflowService(
@@ -382,6 +438,7 @@ def _progress_service(
         server_info_parser=DefaultServerInfoParser(),
         debug_notifications=debug_notifications,
         status_presenter=ExecutionServerStatusPresenter(),
+        live_measurements=live_measurements,
         on_dirty=on_dirty,
         start_timer=False,
     )
@@ -443,6 +500,59 @@ def test_on_progress_notifies_debug_snapshot_listeners() -> None:
     assert len(notifications) == 1
     assert notifications[0].debug_context.snapshot_id == "snapshot-1"
     assert notifications[0].debug_context.snapshot_store_ref == "/tmp/debug"
+
+
+def test_on_progress_notifies_live_measurement_listeners() -> None:
+    host = BatchWorkflowHostHarness()
+    client_service = SimpleNamespace(zmq_client=None)
+    notifications: list[LiveMeasurementAvailableNotification] = []
+    live_measurements = LiveMeasurementProgressNotificationService()
+    live_measurements.add_listener(notifications.append)
+    service, _debug_notifications = _progress_service(
+        host=host,
+        client_service=client_service,
+        on_dirty=lambda: None,
+        live_measurements=live_measurements,
+    )
+    payload = LiveMeasurementProgressPayload(
+        previews=(
+            LiveMeasurementTablePreview(
+                address=LiveMeasurementArtifactAddress(
+                    name="Measure",
+                    kind="measurements",
+                    axis_id="A01",
+                    path="/memory/measure.pkl",
+                    backend="memory",
+                ),
+                columns=("mean",),
+                rows=({"mean": 3.0},),
+                row_count=1,
+                truncated_rows=False,
+                truncated_columns=False,
+            ),
+        ),
+        preview_count=1,
+        truncated_previews=False,
+    )
+    event = ProgressEvent(
+        execution_id="exec-1",
+        plate_id="plate-1",
+        axis_id="A01",
+        step_name="Measure",
+        phase=ProgressPhase.STEP_COMPLETED,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+        completed=1,
+        total=1,
+        timestamp=1.0,
+        pid=1234,
+        context=payload.to_context(),
+    )
+
+    service.on_progress(event.to_dict())
+
+    assert len(notifications) == 1
+    assert notifications[0].payload.previews[0].rows == ({"mean": 3.0},)
 
 
 def test_on_progress_ignores_debug_events_without_snapshot_id() -> None:

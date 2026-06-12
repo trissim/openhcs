@@ -8,7 +8,8 @@ from typing import Callable, Dict, Iterable, List
 
 from PyQt6.QtWidgets import QTreeWidgetItem
 
-from openhcs.core.progress import ProgressChannel, ProgressEvent, phase_channel
+from openhcs.core.progress import ProgressEvent, phase_channel
+from openhcs.core.progress.types import ProgressChannelRole
 from pyqt_reactive.services import (
     BaseServerInfo,
     ExecutionServerInfo,
@@ -57,7 +58,7 @@ class ProgressTopologyState:
 
         event_channel = phase_channel(event.phase)
         if (
-            event_channel in {ProgressChannel.PIPELINE, ProgressChannel.STEP}
+            event_channel.role is ProgressChannelRole.EXECUTION
             and event.axis_id
             and topology_key not in self.worker_assignments
         ):

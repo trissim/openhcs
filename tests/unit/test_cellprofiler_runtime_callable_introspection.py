@@ -7,6 +7,9 @@ from typing import get_args
 import pytest
 from python_introspect import SignatureAnalyzer, is_enableable
 
+from openhcs.constants.constants import VariableComponents
+from openhcs.constants.input_source import InputSource
+from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.source_bindings import (
@@ -90,6 +93,51 @@ def test_cellprofiler_runtime_callable_tuple_stays_clean_in_object_state():
     )
 
     assert "func" not in state._compute_dirty_fields()
+
+
+def test_imported_function_step_values_remain_signature_diffs_in_object_state():
+    """Loaded pipeline values must not become ObjectState reset defaults."""
+    state = ObjectState(
+        FunctionStep(
+            name="Loaded CP Step",
+            enabled=False,
+            debug_pause=True,
+            processing_config=LazyProcessingConfig(
+                variable_components=[VariableComponents.SITE],
+                input_source=InputSource.PIPELINE_START,
+            ),
+        ),
+        scope_id="plate::functionstep_0",
+    )
+
+    assert state.parameters["name"] == "Loaded CP Step"
+    assert state._signature_defaults["name"] is None
+    assert state.parameters["enabled"] is False
+    assert state._signature_defaults["enabled"] is True
+    assert state.parameters["debug_pause"] is True
+    assert state._signature_defaults["debug_pause"] is False
+    assert state.parameters["processing_config.variable_components"] == [
+        VariableComponents.SITE
+    ]
+    assert state._signature_defaults["processing_config.variable_components"] is None
+    assert (
+        state.parameters["processing_config.input_source"]
+        is InputSource.PIPELINE_START
+    )
+    assert state._signature_defaults["processing_config.input_source"] is None
+    assert {
+        "name",
+        "enabled",
+        "debug_pause",
+        "processing_config.variable_components",
+        "processing_config.input_source",
+    } <= state.signature_diff_fields
+
+    state.reset_parameter("enabled")
+    state.reset_parameter("processing_config.input_source")
+
+    assert state.parameters["enabled"] is True
+    assert state.parameters["processing_config.input_source"] is None
 
 
 def test_generated_runtime_binding_rejects_source_binding_contract_drift():

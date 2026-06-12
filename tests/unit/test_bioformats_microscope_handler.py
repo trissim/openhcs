@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from openhcs.constants.constants import Backend
 from openhcs.core.steps.function_execution import SourceWorkspaceAnchorProjection
+from openhcs.core.steps.function_runtime import PatternGroupRuntime
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.bioformats import BioFormatsHandler, BioFormatsMetadataHandler
 from openhcs.microscopes.bioformats_spw_projector import BioFormatsProjectionError
@@ -53,6 +55,37 @@ def test_bioformats_structured_refs_project_to_source_paths(tmp_path: Path) -> N
 
     assert projection.paths_by_virtual_path["A01_s001_w1_z001_t001.tif"] == "stack.npy"
     assert workspace_mapping_source_path(tmp_path, source_ref) == tmp_path / "stack.npy"
+
+
+def test_bioformats_structured_refs_project_inside_pattern_runtime(
+    tmp_path: Path,
+) -> None:
+    class _RuntimeContext:
+        __slots__ = ("plate_path", "__weakref__")
+
+        def __init__(self, plate_path: Path) -> None:
+            self.plate_path = plate_path
+
+    write_bioformats_manifest_fixture(tmp_path)
+    BioFormatsHandler(bioformats_filemanager()).initialize_workspace(
+        tmp_path,
+        bioformats_filemanager(),
+    )
+    metadata = json.loads((tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8"))
+    runtime = PatternGroupRuntime(
+        SimpleNamespace(
+            context=_RuntimeContext(tmp_path),
+            execution_plan=None,
+            pattern_group_info="bioformats structured-ref projection",
+        )
+    )
+
+    projection = runtime._virtual_workspace_source_projection_from_metadata(metadata)
+
+    assert (
+        projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
+        == str(tmp_path / "stack.npy")
+    )
 
 
 def test_bioformats_metadata_handler_reports_component_values(tmp_path: Path) -> None:

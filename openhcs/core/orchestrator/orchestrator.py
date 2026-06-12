@@ -33,6 +33,10 @@ from openhcs.config_framework.lazy_factory import LazyDataclass
 from openhcs.core.metadata_cache import get_metadata_cache, MetadataCache
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.input_workspace import (
+    InputWorkspacePreparationRequest,
+    InputWorkspacePreparationResult,
+)
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.components.validation import convert_enum_by_value
@@ -50,6 +54,11 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
     create_event,
+    ProgressEventPayload,
+    ProgressIdentity,
+)
+from openhcs.core.progress.live_measurements import (
+    live_measurement_context_for_records,
 )
 from openhcs.core.debug import (
     DebugExecutionPolicy,
@@ -561,14 +570,18 @@ class ExecutionVisualizerBootstrap:
         port_info = f" on port {viewer_port}" if viewer_port else ""
         self._progress_queue.put(
             create_event(
-                execution_id=self._execution_id,
-                plate_id=self._plate_id,
-                axis_id="",
-                step_name="",
-                phase=ProgressPhase.INIT,
-                status=ProgressStatus.STARTED,
-                percent=0.0,
-                message=f"Launching {viewer_name} viewer{port_info}",
+                ProgressEventPayload(
+                    identity=ProgressIdentity(
+                        execution_id=self._execution_id,
+                        plate_id=self._plate_id,
+                        axis_id="",
+                        step_name="",
+                    ),
+                    phase=ProgressPhase.INIT,
+                    status=ProgressStatus.STARTED,
+                    percent=0.0,
+                    message=f"Launching {viewer_name} viewer{port_info}",
+                )
             ).to_dict()
         )
 
@@ -585,14 +598,18 @@ class ExecutionVisualizerBootstrap:
             if all(v.is_running for v in visualizers):
                 self._progress_queue.put(
                     create_event(
-                        execution_id=self._execution_id,
-                        plate_id=self._plate_id,
-                        axis_id="",
-                        step_name="",
-                        phase=ProgressPhase.INIT,
-                        status=ProgressStatus.RUNNING,
-                        percent=0.0,
-                        message="All streaming viewers ready",
+                        ProgressEventPayload(
+                            identity=ProgressIdentity(
+                                execution_id=self._execution_id,
+                                plate_id=self._plate_id,
+                                axis_id="",
+                                step_name="",
+                            ),
+                            phase=ProgressPhase.INIT,
+                            status=ProgressStatus.RUNNING,
+                            percent=0.0,
+                            message="All streaming viewers ready",
+                        )
                     ).to_dict()
                 )
                 return
@@ -604,14 +621,18 @@ class ExecutionVisualizerBootstrap:
         )
         self._progress_queue.put(
             create_event(
-                execution_id=self._execution_id,
-                plate_id=self._plate_id,
-                axis_id="",
-                step_name="",
-                phase=ProgressPhase.INIT,
-                status=ProgressStatus.RUNNING,
-                percent=0.0,
-                message=f"Timeout waiting for streaming viewers. Not ready: {not_ready}",
+                ProgressEventPayload(
+                    identity=ProgressIdentity(
+                        execution_id=self._execution_id,
+                        plate_id=self._plate_id,
+                        axis_id="",
+                        step_name="",
+                    ),
+                    phase=ProgressPhase.INIT,
+                    status=ProgressStatus.RUNNING,
+                    percent=0.0,
+                    message=f"Timeout waiting for streaming viewers. Not ready: {not_ready}",
+                )
             ).to_dict()
         )
 
@@ -1306,6 +1327,10 @@ def _execute_single_axis_static(
     object.__setattr__(frozen_context, "worker_slot", lane_context.worker_slot)
     object.__setattr__(frozen_context, "owned_wells", list(lane_context.owned_wells))
     lane_context.install_debug_sink(frozen_context)
+    runtime_value_store = require_runtime_value_store(
+        frozen_context,
+        owner_name=f"execution context for axis {axis_id!r}",
+    )
 
     # Execute each step in the pipeline
     for step_index, step in enumerate(pipeline_definition):
@@ -1313,12 +1338,16 @@ def _execute_single_axis_static(
         step_name = step_plan.step_name
         if not lane_context.identity.debug_execution_policy.should_execute_step(step_index):
             if lane_context.identity.debug_execution_policy.should_reuse_step_outputs(step_index):
+                observation_cursor = runtime_value_store.observation_cursor()
                 lane_context.identity.debug_execution_policy.prepare_reused_step_outputs(
                     step_index=step_index,
                     step_name=step_name,
                     step_scope_id=step_plan.step_scope_id,
                     context=frozen_context,
                     artifact_outputs=step_plan.artifact_outputs,
+                )
+                live_measurement_context = live_measurement_context_for_records(
+                    runtime_value_store.observed_values_after(observation_cursor)
                 )
                 emit(
                     execution_id=lane_context.identity.execution_id,
@@ -1333,6 +1362,7 @@ def _execute_single_axis_static(
                     worker_slot=lane_context.worker_slot,
                     owned_wells=list(lane_context.owned_wells),
                     message="Reused warm debug artifacts",
+                    context=live_measurement_context,
                 )
             continue
 
@@ -1351,7 +1381,11 @@ def _execute_single_axis_static(
         )
 
         # Call process method on step instance
+        observation_cursor = runtime_value_store.observation_cursor()
         step.process(frozen_context, step_index)
+        live_measurement_context = live_measurement_context_for_records(
+            runtime_value_store.observed_values_after(observation_cursor)
+        )
 
         emit(
             execution_id=lane_context.identity.execution_id,
@@ -1365,6 +1399,7 @@ def _execute_single_axis_static(
             percent=((step_index + 1) / total_steps) * 100.0,
             worker_slot=lane_context.worker_slot,
             owned_wells=list(lane_context.owned_wells),
+            context=live_measurement_context,
         )
         if lane_context.identity.debug_execution_policy.step_stop_strategy().should_stop_after_step(
             step_index=step_index,
@@ -1595,6 +1630,7 @@ class PipelineOrchestrator:
         *,
         pipeline_config: Optional["PipelineConfig"] = None,
         storage_registry: Optional[Any] = None,
+        input_workspace_preparation: InputWorkspacePreparationRequest | None = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         # Lock removed - was orphaned code never used
@@ -1666,6 +1702,9 @@ class PipelineOrchestrator:
 
         self.plate_path = plate_path
         self.workspace_path = workspace_path
+        self.source_plate_path = plate_path
+        self.input_workspace_preparation = input_workspace_preparation
+        self.input_workspace_preparation_result: InputWorkspacePreparationResult | None = None
 
         if self.plate_path is None and self.workspace_path is None:
             raise ValueError(
@@ -1840,6 +1879,60 @@ class PipelineOrchestrator:
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
 
+    def set_input_workspace_preparation(
+        self,
+        request: InputWorkspacePreparationRequest | None,
+    ) -> None:
+        """Set the external input preparation request before initialization."""
+
+        if self._initialized or self.state is not OrchestratorState.CREATED:
+            raise RuntimeError(
+                "Input workspace preparation can only be set before initialization."
+            )
+        self.input_workspace_preparation = request
+
+    def _prepare_input_workspace_if_needed(self) -> None:
+        """Prepare external input semantics before microscope detection."""
+
+        request = self.input_workspace_preparation
+        if request is None:
+            return
+        pipeline_path = request.selected_pipeline_path
+        if pipeline_path is None:
+            return
+        if pipeline_path.suffix != ".cppipe":
+            raise ValueError(
+                "Unsupported input workspace pipeline dialect: "
+                f"{pipeline_path.suffix or pipeline_path.name}"
+            )
+
+        from openhcs.interop.cellprofiler.plate_workspace import (
+            prepare_cellprofiler_input_workspace,
+        )
+
+        result = prepare_cellprofiler_input_workspace(request)
+        self.input_workspace_preparation_result = result
+        if Path(result.execution_plate_path) == Path(self.plate_path):
+            return
+        self._rebind_plate_path_for_prepared_workspace(result.execution_plate_path)
+
+    def _rebind_plate_path_for_prepared_workspace(
+        self,
+        execution_plate_path: Path,
+    ) -> None:
+        """Bind CREATED orchestrator execution to its prepared input workspace."""
+
+        if self._initialized or self.state is not OrchestratorState.CREATED:
+            raise RuntimeError(
+                "Prepared input workspace can only rebind a CREATED orchestrator."
+            )
+        object.__setattr__(self, "plate_path", Path(execution_plate_path))
+        self.execution_id = f"local::{self.plate_path}"
+        logger.info(
+            "Prepared input workspace rebound orchestrator execution path to %s",
+            self.plate_path,
+        )
+
     def initialize(
         self, workspace_path: Optional[Union[str, Path]] = None
     ) -> "PipelineOrchestrator":
@@ -1853,6 +1946,7 @@ class PipelineOrchestrator:
             return self
 
         try:
+            self._prepare_input_workspace_if_needed()
             self.initialize_microscope_handler()
 
             # Delegate workspace initialization to microscope handler

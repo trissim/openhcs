@@ -272,6 +272,8 @@ class ZMQExecutionServer(ExecutionServer):
         from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 
         plate_id = request_payload.plate_id
+        execution_plate_id = request_payload.execution_plate_id
+        selected_pipeline_path = request_payload.selected_pipeline_path
         pipeline_code = request_payload.pipeline_code
         config_params = request_payload.config_params
         config_code = request_payload.config_code
@@ -316,7 +318,8 @@ class ZMQExecutionServer(ExecutionServer):
         if not pipeline_steps:
             raise ValueError("Code must define 'pipeline_steps'")
         pipeline_steps = self._rebind_cellprofiler_pipeline_if_available(
-            plate_id,
+            execution_plate_id or plate_id,
+            selected_pipeline_path,
             pipeline_steps,
         )
         logger.info(
@@ -360,6 +363,7 @@ class ZMQExecutionServer(ExecutionServer):
             return self._execute_with_orchestrator(
                 execution_id,
                 plate_id,
+                execution_plate_id,
                 pipeline_steps,
                 global_config,
                 pipeline_config,
@@ -371,12 +375,13 @@ class ZMQExecutionServer(ExecutionServer):
             )
         except Exception as e:
             if compile_only:
-                self._set_compile_status("compiled failed", str(e))
+                self._set_compile_status("compile failed", str(e))
             raise
 
     def _rebind_cellprofiler_pipeline_if_available(
         self,
-        plate_id: str,
+        execution_plate_id: str,
+        selected_pipeline_path: str | None,
         pipeline_steps: list[Any],
     ) -> list[Any]:
         """Re-derive CellProfiler runtime contracts from plate-local `.cppipe`."""
@@ -391,7 +396,14 @@ class ZMQExecutionServer(ExecutionServer):
         )
 
         workspace = CellProfilerPlateWorkspacePreparer(
-            CellProfilerPlateWorkspaceRequest(Path(plate_id))
+            CellProfilerPlateWorkspaceRequest(
+                Path(execution_plate_id),
+                cppipe_path=(
+                    None
+                    if selected_pipeline_path is None
+                    else Path(selected_pipeline_path)
+                ),
+            )
         ).prepare()
         if workspace.ingestion is None:
             return pipeline_steps
@@ -432,6 +444,7 @@ class ZMQExecutionServer(ExecutionServer):
         self,
         execution_id,
         plate_id,
+        execution_plate_id,
         pipeline_steps,
         global_config,
         pipeline_config,
@@ -452,6 +465,7 @@ class ZMQExecutionServer(ExecutionServer):
         environment = ZMQOrchestratorEnvironmentRequest(
             execution_id=execution_id,
             plate_id=plate_id,
+            execution_plate_id=execution_plate_id,
             global_config=global_config,
             config_params=config_params,
         ).prepare()
@@ -472,6 +486,8 @@ class ZMQExecutionServer(ExecutionServer):
             plate_id,
         )
 
+        wells: list[str] | None = None
+        compilation_resolved = False
         try:
             if compile_artifact_id is None:
                 progress_emitter.compile_started(len(pipeline_steps))
@@ -534,6 +550,7 @@ class ZMQExecutionServer(ExecutionServer):
                     flush=self._flush_progress_only,
                 ),
             ).resolve()
+            compilation_resolved = True
             compiled_contexts = compilation.compiled_contexts
             execution_bundle = compilation.execution_bundle
             worker_assignments = compilation.worker_assignments
@@ -595,6 +612,14 @@ class ZMQExecutionServer(ExecutionServer):
                 active_execution_record=self.active_executions[execution_id],
                 forward_worker_progress=self._forward_worker_progress,
             ).execute()
+        except Exception as error:
+            if compile_artifact_id is None and not compilation_resolved:
+                progress_emitter.compile_failed(
+                    axis_ids=wells or [],
+                    error=str(error),
+                )
+                self._flush_progress_only()
+            raise
         finally:
             if (
                 debug_execution_config is not None

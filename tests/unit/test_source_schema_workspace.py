@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import tifffile
 from PIL import Image
 
 from openhcs.constants import AllComponents
@@ -61,6 +62,14 @@ def _source_pattern_context() -> SourcePatternResolutionContext:
         parser=SourceSchemaFilenameParser(),
         source_paths_by_virtual_path={},
     )
+
+
+def _write_tiff_stack(path: Path, values: tuple[int, ...]) -> None:
+    stack = np.stack(
+        [np.full((4, 4), value, dtype=np.uint16) for value in values],
+        axis=0,
+    )
+    tifffile.imwrite(path, stack, metadata={"axes": "ZYX"})
 
 
 def test_A01_schema_filename_parser_handles_artifact_suffixes() -> None:
@@ -1040,6 +1049,227 @@ def test_materialize_A01_schema_workspace_projects_frame_metadata_to_timepoints(
     assert primary["timepoints"] == {"0": None, "1": None}
 
 
+def test_materialize_A01_schema_workspace_projects_z_metadata_to_z_axis(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "nuclei_z001.tif", value=1)
+    _write_image(source_root / "nuclei_z002.tif", value=2)
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^nuclei_z(?P<ZIndex>[0-9]+)",
+                ),
+            ),
+            assignments_by_alias={
+                "Nuclei": ImageAssignment(
+                    alias="Nuclei",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w1_z002_t001.tif",
+    }
+    assert primary["sites"] == {"1": None}
+    assert primary["z_indexes"] == {"1": None, "2": None}
+
+
+def test_materialize_A01_schema_workspace_projects_tiff_stack_pages_to_z_axis(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_tiff_stack(source_root / "nuclei_stack.tif", (10, 20, 30))
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "Nuclei": ImageAssignment(
+                    alias="Nuclei",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w1_z002_t001.tif",
+        "A01_s001_w1_z003_t001.tif",
+    }
+    assert primary["sites"] == {"1": None}
+    assert primary["z_indexes"] == {"1": None, "2": None, "3": None}
+    assert primary["workspace_mapping"]["A01_s001_w1_z002_t001.tif"] == {
+        "backend": "disk",
+        "source_path": "../source/nuclei_stack.tif",
+        "plane_index": 1,
+        "z": 2,
+    }
+    assert (
+        "source_plane_group_key"
+        not in primary["source_metadata"]["A01_s001_w1_z002_t001.tif"]
+    )
+
+
+def test_virtual_workspace_structured_disk_ref_loads_tiff_plane(
+    tmp_path: Path,
+) -> None:
+    from polystore.virtual_workspace import VirtualWorkspaceBackend
+
+    plate_root = tmp_path / "workspace"
+    source_root = tmp_path / "source"
+    plate_root.mkdir()
+    source_root.mkdir()
+    _write_tiff_stack(source_root / "stack.tif", (10, 20, 30))
+    (plate_root / "openhcs_metadata.json").write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    ".": {
+                        "workspace_mapping": {
+                            "A01_s001_w1_z002_t001.tif": {
+                                "backend": "disk",
+                                "source_path": "../source/stack.tif",
+                                "plane_index": 1,
+                                "z": 2,
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = VirtualWorkspaceBackend(plate_root).load(
+        plate_root / "A01_s001_w1_z002_t001.tif"
+    )
+
+    assert loaded.shape == (4, 4)
+    assert np.all(loaded == 20)
+
+
+def test_expand_A01_schema_workspace_wells_preserves_structured_tiff_refs(
+    tmp_path: Path,
+) -> None:
+    from polystore.virtual_workspace import VirtualWorkspaceBackend
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_tiff_stack(source_root / "nuclei_stack.tif", (10, 20, 30))
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "Nuclei": ImageAssignment(
+                    alias="Nuclei",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    expand_A01_schema_workspace_wells(result.metadata_path, ("B01",))
+    primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
+    source_ref = primary["workspace_mapping"]["B01_s001_w1_z002_t001.tif"]
+
+    assert source_ref == {
+        "backend": "disk",
+        "source_path": "../source/nuclei_stack.tif",
+        "plane_index": 1,
+        "z": 2,
+    }
+    loaded = VirtualWorkspaceBackend(result.workspace_root).load(
+        result.workspace_root / "B01_s001_w1_z002_t001.tif"
+    )
+    assert loaded.shape == (4, 4)
+    assert np.all(loaded == 20)
+
+
+def test_materialize_A01_schema_workspace_rejects_unsupported_tiff_axes(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    tifffile.imwrite(
+        source_root / "channel_stack.tif",
+        np.stack(
+            [np.full((4, 4), value, dtype=np.uint16) for value in (10, 20)],
+            axis=0,
+        ),
+        metadata={"axes": "CYX"},
+    )
+
+    with pytest.raises(ValueError, match="supports only YX/YXS images and Z-first Z-stacks"):
+        materialize_A01_schema_workspace(
+            source_root,
+            tmp_path / "workspace",
+            PipelineImageSchema(
+                assignments_by_alias={
+                    "Nuclei": ImageAssignment(
+                        alias="Nuclei",
+                        image_type="Grayscale image",
+                        selector=SourceSelector(),
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                    ),
+                },
+                match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+            ),
+        )
+
+
+def test_materialize_A01_schema_workspace_rejects_unreadable_tiff_axes(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "broken.tif").write_bytes(b"not a tiff")
+
+    with pytest.raises(ValueError, match="Could not inspect TIFF source-plane axes"):
+        materialize_A01_schema_workspace(
+            source_root,
+            tmp_path / "workspace",
+            PipelineImageSchema(
+                assignments_by_alias={
+                    "Nuclei": ImageAssignment(
+                        alias="Nuclei",
+                        image_type="Grayscale image",
+                        selector=SourceSelector(),
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                    ),
+                },
+                match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+            ),
+        )
+
+
 def test_materialize_A01_schema_workspace_uses_complete_ordered_image_sets(
     tmp_path: Path,
 ) -> None:
@@ -1586,7 +1816,7 @@ def test_materialize_A01_schema_workspace_projects_groups_to_well_axis(
     )
 
 
-def test_materialize_A01_schema_workspace_recovers_plate_well_tokens_without_metadata_rules(
+def test_materialize_A01_schema_workspace_does_not_infer_axes_from_source_names(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1623,13 +1853,13 @@ def test_materialize_A01_schema_workspace_recovers_plate_well_tokens_without_met
     metadata = json.loads(result.metadata_path.read_text())
     primary = metadata["subdirectories"]["."]
 
-    assert primary["wells"] == {"O01": None, "O02": None}
-    assert primary["sites"] == {"1": None, "2": None}
+    assert primary["wells"] == {"A01": None}
+    assert primary["sites"] == {"1": None, "2": None, "3": None, "4": None}
     assert set(primary["workspace_mapping"]) == {
-        "O01_s001_w1_z001_t001.TIF",
-        "O01_s002_w1_z001_t001.TIF",
-        "O02_s001_w1_z001_t001.TIF",
-        "O02_s002_w1_z001_t001.TIF",
+        "A01_s001_w1_z001_t001.TIF",
+        "A01_s002_w1_z001_t001.TIF",
+        "A01_s003_w1_z001_t001.TIF",
+        "A01_s004_w1_z001_t001.TIF",
     }
 
 

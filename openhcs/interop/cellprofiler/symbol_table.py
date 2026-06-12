@@ -624,6 +624,13 @@ class _SymbolTableBuilder:
                     module,
                 )
                 return self.external_image(normalized_name)
+            if kind is CellProfilerSymbolKind.OBJECTS:
+                self._raise_if_name_is_known_as_other_kind(
+                    normalized_name,
+                    kind,
+                    module,
+                )
+                return self.external_source_artifact(normalized_name, kind)
             raise ValueError(
                 f"Module {module.name}({module.module_num}) references unknown "
                 f"{kind.value} symbol '{normalized_name}'. No prior module "

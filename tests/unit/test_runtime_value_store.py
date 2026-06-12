@@ -75,6 +75,35 @@ def test_runtime_value_store_replace_updates_current_binding_and_keeps_locations
     ) == (replacement,)
 
 
+def test_runtime_value_store_observation_cursor_returns_delta_only():
+    store = RuntimeValueStore()
+    first_value = _runtime_value(name="first", path="/memory/first.pkl")
+    first_record = store.record(
+        first_value,
+        path="/memory/first.pkl",
+        backend="memory",
+    )
+    cursor = store.observation_cursor()
+    second_value = _runtime_value(name="second", path="/memory/second.pkl")
+    second_record = store.record(
+        second_value,
+        path="/memory/second.pkl",
+        backend="memory",
+    )
+
+    assert store.observed_values_after(cursor) == (second_record,)
+    assert store.observed_values == (first_record, second_record)
+
+
+def test_runtime_value_store_observation_cursor_rejects_invalid_index():
+    store = RuntimeValueStore()
+
+    with pytest.raises(ValueError, match="beyond the current observation stream"):
+        store.observed_values_after(
+            store.observation_cursor().__class__(index=1, revision=0)
+        )
+
+
 def test_runtime_value_store_preserves_same_artifact_measurement_subjects():
     store = RuntimeValueStore()
     output_plan = ArtifactOutputPlan(

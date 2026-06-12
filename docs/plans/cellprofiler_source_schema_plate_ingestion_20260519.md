@@ -2,18 +2,27 @@
 
 ## Problem
 
-The PyQt Plate Manager currently initializes a selected folder by creating a
-`PipelineOrchestrator` and calling `orchestrator.initialize()`. That path calls
-`create_microscope_handler(..., microscope_type="auto")`, which only
-auto-detects registered microscope metadata handlers such as OpenHCS metadata,
-ImageXpress, OMERO, and Opera Phenix.
+The PyQt Plate Manager currently has to prepare CellProfiler folders before it
+can initialize an orchestrator. That is the architectural problem. The GUI
+should pass the selected source and optional `.cppipe` choice to an
+orchestrator-owned input preparation boundary, then call
+`orchestrator.initialize()`.
 
-Official CellProfiler examples such as `ExampleFly` are not microscope plates in
-that sense. They are flat image datasets plus a `.cppipe` file whose `Images`,
-`Metadata`, `NamesAndTypes`, and `Groups` modules define source selection,
-metadata extraction, image aliases, and image-set grouping. Loading the
-`.cppipe` through Pipeline Editor works, but adding the image/example folder as
-a plate fails before CellProfiler source-schema semantics are used.
+CellProfiler example folders should enter OpenHCS as native source workspaces.
+A `.cppipe` file is a source metadata dialect: its `Images`, `Metadata`,
+`NamesAndTypes`, and `Groups` modules define source selection, metadata
+extraction, image aliases, and image-set grouping. Those semantics should be
+normalized into native OpenHCS metadata before ordinary orchestrator
+initialization continues.
+
+The current implementation crosses the wrong boundary. Plate initialization
+uses `CellProfilerPlateWorkspacePreparer`, which calls full generated-pipeline
+preparation before the workspace exists. Full preparation compiles processing
+artifact contracts, so an intentionally incomplete tutorial pipeline such as
+`BBBC022_Analysis_Start.cppipe` fails during plate init when `MaskImage`
+references an object artifact (`Nuclei`) that no prior processing module
+produces. That diagnostic is correct, but it belongs to pipeline import/compile,
+not source workspace initialization.
 
 ## Verified Existing Seams
 
@@ -68,6 +77,10 @@ a plate fails before CellProfiler source-schema semantics are used.
     `PipelineImageSchema`.
   - `Images`, `Metadata`, `NamesAndTypes`, and `Groups` are already represented
     as generic OpenHCS source-schema/source-binding concepts.
+  - Verified against `BBBC022_Analysis_Start.cppipe`: source schema compilation
+    succeeds and produces native image assignments/source artifacts even though
+    full generated-pipeline preparation fails later on the missing `Nuclei`
+    object dependency.
 
 - `openhcs/core/source_schema_workspace.py`
   - `materialize_source_schema_workspace(...)` already converts a
@@ -83,6 +96,22 @@ a plate fails before CellProfiler source-schema semantics are used.
     determines the main subdirectory, and registers the virtual-workspace backend
     when `workspace_mapping` is present.
 
+- `openhcs/core/orchestrator/orchestrator.py`
+  - `PipelineOrchestrator.initialize()` already owns microscope handler
+    creation, workspace initialization, component-key caching, and OpenHCS
+    metadata completion.
+  - The missing seam is before microscope handler creation: an input dialect
+    resolver that can normalize selected source folders into native OpenHCS
+    workspaces. That seam should live under the orchestrator/session boundary,
+    not in PyQt.
+
+- `openhcs/pyqt_gui/widgets/plate_manager.py`
+  - The current direct calls to `CellProfilerPlateWorkspacePreparer` are a
+    boundary violation. Plate Manager is choosing a CellProfiler preparation
+    strategy and may rebind the orchestrator to a different execution path.
+    That should move behind an orchestrator-owned source initialization
+    contract.
+
 - `tests/integration/test_cellprofiler_generated_pipeline.py`
   - Existing tests already execute converted CellProfiler pipelines by manually
     calling `materialize_source_schema_workspace(...)`, then creating a
@@ -92,10 +121,15 @@ a plate fails before CellProfiler source-schema semantics are used.
 
 ## Target Architecture
 
-Treat `.cppipe` as source-schema metadata for flat image datasets, not as a
-native microscope metadata format. The bridge should translate CellProfiler
-source semantics into an OpenHCS source-schema workspace, then hand normal
-OpenHCS metadata to the existing microscope/orchestrator path.
+Treat `.cppipe` setup modules as a native OpenHCS input metadata dialect. The
+bridge translates CellProfiler source semantics into an OpenHCS source-schema
+workspace, then hands normal OpenHCS metadata to the existing
+microscope/orchestrator path.
+
+After ingestion, there should be no "CellProfiler folder" special case from the
+orchestrator's perspective. There is a native OpenHCS workspace with canonical
+axis metadata, source bindings, workspace mapping/projection, and provenance
+that records CellProfiler as the source-schema provider.
 
 The benchmark CLI already implements this bridge inside
 `OpenHCSAdapter._run_converted_cppipe_pipeline(...)`, but that is the wrong
@@ -110,13 +144,17 @@ The intended ownership split is:
 
 - `openhcs.interop.cellprofiler`
   - Owns `.cppipe` parsing/import, CellProfiler setup-module source schema
-    compilation, generated pipeline preparation, and CP-specific source
-    resolution policy.
+    compilation, processing pipeline import, and CP-specific source resolution
+    policy.
+  - Must expose source-schema-only preparation separately from full
+    generated-pipeline preparation.
 
 - `openhcs.core`
   - Owns `PipelineImageSchema`, `StepSourceBindingsConfig`,
     `materialize_source_schema_workspace(...)`, image-set selection, and generic
     source-schema workspace materialization semantics.
+  - Owns the generic input dialect preparation interface used by the
+    orchestrator, if that interface is broader than CellProfiler.
 
 - `openhcs.microscopes`
   - Owns OpenHCS metadata detection and virtual-workspace initialization after a
@@ -134,24 +172,30 @@ The desired user flow is:
 
 1. User selects a `.cppipe`, a folder containing a `.cppipe`, or a flat image
    folder with an associated `.cppipe`.
-2. OpenHCS resolves the source dataset into a typed ingestion request.
-3. OpenHCS compiles the `.cppipe` source schema.
-4. OpenHCS materializes an `openhcs_metadata.json` source-schema workspace.
-5. Plate Manager adds the materialized workspace root as the plate.
-6. Pipeline Editor loads the converted `FunctionStep` declarations from the
-   same import result.
-7. From this point onward, orchestrator initialization, compilation, debug, and
-   execution use the existing OpenHCS path.
+2. The GUI records that selection as orchestrator initialization intent. It does
+   not parse or prepare CellProfiler semantics.
+3. `PipelineOrchestrator.initialize()` asks an input dialect preparer to
+   normalize the selected source.
+4. The CellProfiler preparer compiles setup modules only and materializes an
+   `openhcs_metadata.json` source-schema workspace.
+5. The orchestrator initializes on the returned native workspace through the
+   normal `OpenHCSMicroscopeHandler` path.
+6. Pipeline import/compile can then load converted `FunctionStep` declarations
+   and validate processing artifact dependencies strictly.
+7. From this point onward, compilation, debug, execution, and viewer streaming
+   use the existing OpenHCS path.
 
 ## Proposed New Product Contract
 
-Add a small product-level ingestion service, not a PyQt-only helper and not a
-benchmark-only adapter method:
+Add a product-level input dialect preparation service, not a PyQt-only helper
+and not a benchmark-only adapter method. The service should have one
+orchestrator-facing contract and one CellProfiler-specific implementation.
 
 ```python
 @dataclass(frozen=True, slots=True)
-class SourceSchemaPlateIngestionRequest:
+class InputWorkspacePreparationRequest:
     selected_path: Path
+    selected_pipeline_path: Path | None = None
     workspace_root: Path | None = None
     filemanager: FileManagerLike | None = None
     source_backend: Backend = Backend.DISK
@@ -160,12 +204,25 @@ class SourceSchemaPlateIngestionRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceSchemaPlateIngestionResult:
+class InputWorkspacePreparationResult:
+    original_source_root: Path
+    execution_plate_path: Path
+    source_schema: PipelineImageSchema
+    materialization: SourceSchemaWorkspaceMaterialization | None
+    provenance: InputWorkspacePreparationProvenance
+    pipeline_import: CellProfilerPipelineImportResult | None = None
+    pipeline_import_error: CellProfilerPipelineImportDiagnostic | None = None
+```
+
+CellProfiler then implements this generic input workspace contract:
+
+```python
+@dataclass(frozen=True, slots=True)
+class CellProfilerSourceSchemaPreparationResult:
     source_root: Path
     workspace_root: Path
     cppipe_path: Path
-    generated_pipeline_path: Path
-    import_result: CellProfilerPipelineImportResult
+    source_schema: PipelineImageSchema
     materialization: SourceSchemaWorkspaceMaterialization
 ```
 
@@ -173,10 +230,18 @@ The service should live outside PyQt and outside `benchmark`. Split it across
 the real OpenHCS layers:
 
 - `openhcs/interop/cellprofiler/source_schema_ingestion.py`
-  - CP-specific request resolution and `.cppipe` import/preparation.
+  - CP-specific request resolution and source-schema-only preparation.
+  - Full `.cppipe` processing import remains available here or in
+    `runtime_pipeline.py`, but it is not a prerequisite for source workspace
+    initialization.
 
 - `openhcs/core/source_schema_workspace.py`
   - Existing generic workspace materialization remains here.
+
+- `openhcs/core/orchestrator` or a small adjacent module
+  - Orchestrator-owned input workspace preparation boundary. It selects the
+    appropriate preparer before microscope handler initialization and updates
+    the orchestrator's execution path from the result.
 
 - `openhcs/microscopes/openhcs.py`
   - Existing OpenHCS metadata/virtual-workspace initialization remains here.
@@ -185,13 +250,25 @@ The interop ingestion service responsibilities are:
 
 - Resolve `selected_path` into `cppipe_path` and `source_root`, productizing the
   local-source subset of `benchmark.adapters.cppipe_source`.
-- Compile the `.cppipe` once using the existing CellProfiler dialect compiler.
+- Parse the `.cppipe` once and compile the setup/source schema through
+  `compile_image_schema(...)`.
 - Choose a deterministic default `workspace_root`, for example:
   - sibling: `<selected_root>_openhcs_source_schema`
   - cache: configured OpenHCS GUI workspace/cache root
   - explicit request override for tests and CLI.
 - Call `materialize_source_schema_workspace(...)`.
-- Return both the generated pipeline/import result and materialized workspace.
+- Return the materialized native workspace and source-schema provenance.
+
+Full processing import responsibilities are separate:
+
+- call `prepare_generated_pipeline(...)`;
+- compile the `CellProfilerSymbolTable`;
+- generate/import `FunctionStep` declarations;
+- fail if processing artifacts are missing or type-conflicting.
+
+An incomplete tutorial `.cppipe` should therefore allow source workspace
+initialization but report a pipeline import diagnostic such as
+`MaskImage(7) references unknown objects symbol 'Nuclei'`.
 
 The interop service should also expose a lower-level request shape matching the
 benchmark path:
@@ -298,30 +375,32 @@ it is useful for GUI reload, debugging, and reproducibility.
 
 ## PyQt Integration
 
-Add a user-visible action that represents the real operation:
+PyQt should become thinner than the current implementation.
+
+Required direction:
+
+- Plate Manager records selected source path and optional `.cppipe` choice as
+  orchestrator/source initialization intent.
+- Plate Manager calls `orchestrator.initialize()` and observes the resulting
+  state.
+- It does not call `prepare_generated_pipeline(...)`.
+- It does not call `prepare_cellprofiler_source_schema_workspace(...)`.
+- It does not decide whether a CellProfiler source root should be materialized
+  in place, as a sibling, or in a cache.
+- It does not rebind orchestrators by interpreting CellProfiler execution paths.
+
+Pipeline Editor can still request pipeline import for the selected `.cppipe`,
+but that is compiler/import behavior. If import fails, the UI should attach the
+diagnostic to the pipeline/editor state while keeping the initialized native
+workspace visible.
+
+The visible UX can still offer a targeted action such as:
 
 - `Import CellProfiler Pipeline + Images...`
 
-This should not be hidden inside normal `Add Plate` without explanation. The
-normal `Add Plate` path can optionally detect a `.cppipe` folder and offer to
-run the import action, but source-schema ingestion is conceptually different
-from adding a native microscope plate.
-
-Implementation sketch:
-
-- Add `MainWindowCellProfilerImportActions` or extend
-  `MainWindowPipelineActions` only if the method remains thin.
-- The action calls the product ingestion service.
-- It then calls `plate_manager.add_plate_callback([result.workspace_root])`.
-- It updates Pipeline Editor with `result.import_result.pipeline.steps` and
-  `result.import_result.source_schema`.
-- It associates the imported pipeline with the materialized workspace plate key
-  so `PlateManagerWidget._get_current_pipeline_definition(...)` returns the
-  converted steps.
-
-Avoid making `PlateManagerWidget.add_plate_callback(...)` parse `.cppipe`
-directly. Plate Manager should continue to add orchestrator scopes; the import
-workflow should prepare a valid scope first.
+but the action should only build source selection intent and delegate to the
+orchestrator-owned input workspace preparation boundary. It should not be the
+owner of CellProfiler semantics.
 
 ## Benchmark Integration Refactor
 
@@ -362,8 +441,9 @@ The exact return type should avoid leaking benchmark terminology. It may expose
 `prepared_pipeline` instead of only `import_result` because the benchmark adapter
 needs `prepared.pipeline`, `prepared.source_schema`, and validation expectations.
 
-Completion goal: benchmark CLI behavior stays unchanged, but the GUI imports and
-benchmark runtime execution call the same source-schema ingestion authority.
+Completion goal: benchmark CLI behavior stays unchanged, while orchestrator
+initialization and benchmark runtime execution use the same source-schema
+ingestion authority through different request front doors.
 
 The final benchmark adapter should read like:
 
@@ -404,7 +484,8 @@ Extend existing CellProfiler generated-pipeline integration coverage:
 - Use official `ExampleFly` when available.
 - Run ingestion service instead of manually calling
   `materialize_source_schema_workspace(...)`.
-- Initialize `PipelineOrchestrator(result.workspace_root)`.
+- Initialize through the orchestrator input preparation boundary and assert the
+  resulting execution path is the materialized native workspace.
 - Execute at least one selected well/image set.
 
 ### PyQt Tests
@@ -413,18 +494,21 @@ Add a GUI workflow test that does not require manual interaction:
 
 - Create/acquire ExampleFly-like folder.
 - Invoke the import action with a selected path override.
-- Assert Plate Manager receives `result.workspace_root`, not the raw flat image
-  folder.
-- Assert Pipeline Editor has converted steps and source schema.
+- Assert Plate Manager passes source selection intent to the orchestrator rather
+  than calling CellProfiler preparation directly.
+- Assert Pipeline Editor receives either converted steps or a compiler/import
+  diagnostic, and always receives source schema for initialized workspaces.
 - Assert initializing the added plate reaches `READY`.
 
 ## Implementation Phases
 
-### Phase 1: Product Ingestion Service
+### Phase 1: Product Source-Schema Preparation
 
-- Add typed resolver/result classes.
-- Compile `.cppipe` through the existing dialect compiler.
-- Materialize source-schema workspace.
+- Add typed CellProfiler source resolver/result classes.
+- Parse `.cppipe` and compile setup modules through `compile_image_schema(...)`.
+- Materialize source-schema workspace without full generated-pipeline
+  preparation.
+- Preserve strict full generated-pipeline preparation for compile/import.
 - Cover with unit tests.
 - Add a direct lower-level API for the benchmark path where `source_root` and
   `cppipe_path` are already known.
@@ -438,10 +522,16 @@ Completion gate:
 
 ### Phase 2: Runtime Integration
 
+- Add an orchestrator-owned input workspace preparation boundary.
+- Teach `PipelineOrchestrator.initialize()` to call it before microscope handler
+  creation.
+- Ensure the boundary returns a native OpenHCS workspace path and provenance,
+  not GUI state.
 - Add ingestion-based integration test for ExampleFly or a small synthetic CP
   dataset.
-- Ensure `PipelineOrchestrator(result.workspace_root).initialize()` uses
-  `OpenHCSMicroscopeHandler` through existing auto-detection.
+- Ensure orchestrator initialization uses `OpenHCSMicroscopeHandler` through
+  existing auto-detection after input preparation returns the materialized
+  workspace.
 - Confirm no CP-specific condition is added to microscope auto-detection.
 - Refactor `benchmark/adapters/openhcs.py` to call the product ingestion service
   for converted `.cppipe` source workspace preparation.
@@ -462,11 +552,12 @@ Completion gate:
 .venv/bin/python -m pytest tests/integration/test_benchmark_openhcs_adapter_cppipe.py -q
 ```
 
-### Phase 3: PyQt Import Workflow
+### Phase 3: PyQt Simplification
 
-- Add GUI action for `Import CellProfiler Pipeline + Images...`.
-- Keep the action as orchestration over the product ingestion service.
-- Associate the converted pipeline with the materialized workspace plate.
+- Remove direct CellProfiler preparation from Plate Manager.
+- Pass selected `.cppipe` intent into orchestrator initialization.
+- Associate pipeline import diagnostics with Pipeline Editor state without
+  making plate init fail for processing-only contract errors.
 - Add a noninteractive PyQt workflow test.
 
 Completion gate:

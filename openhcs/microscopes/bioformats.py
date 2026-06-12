@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Union
 
 from openhcs.constants.constants import Backend
+from openhcs.core.source_projection import (
+    OpenHCSPlaneAddress,
+    SourcePixelRef,
+    SourcePlaneProjection,
+    SourceProjectionSet,
+)
 from openhcs.microscopes.bioformats_adapter import (
     BioFormatsAdapterUnavailableError,
     BioFormatsCompositeAdapter,
@@ -27,7 +32,6 @@ from openhcs.microscopes.microscope_interfaces import MetadataHandler
 from openhcs.microscopes.openhcs import (
     AtomicMetadataWriter,
     FIELDS,
-    OpenHCSMetadata,
     get_metadata_path,
 )
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -221,47 +225,59 @@ class BioFormatsWorkspaceMetadataWriter:
 
     def write(self, plate_root: Path, dataset: BioFormatsDataset) -> None:
         entries = tuple(sorted(dataset.entries, key=_entry_sort_key))
-        workspace_mapping = {
-            self.virtual_path(entry): self.ref_payload(plate_root, entry)
-            for entry in entries
-        }
-        metadata = OpenHCSMetadata(
+        projection_set = SourceProjectionSet(
+            tuple(self.projection(plate_root, entry) for entry in entries)
+        )
+        metadata = projection_set.metadata_dict(
+            parser=self.parser,
             microscope_handler_name=BioFormatsHandler._microscope_type,
             source_filename_parser_name="BioFormatsFilenameParser",
             grid_dimensions=[1, 1],
             pixel_size=_metadata_pixel_size(entries),
-            image_files=list(workspace_mapping),
-            channels=_component_values(
-                (str(entry.channel), entry.channel_name or f"Channel {entry.channel}")
-                for entry in entries
-            ),
-            wells=_component_values((entry.well, entry.well) for entry in entries),
-            sites=_component_values(
-                (str(entry.site), f"Site {entry.site}") for entry in entries
-            ),
-            z_indexes=_component_values(
-                (str(entry.z_index), f"Z{entry.z_index}") for entry in entries
-            ),
-            timepoints=_component_values(
-                (str(entry.timepoint), f"T{entry.timepoint}") for entry in entries
-            ),
             available_backends={
                 Backend.BIOFORMATS.value: True,
-            },
-            workspace_mapping=workspace_mapping,
-            source_metadata={
-                path: {
-                    "source_path": str(payload["source_path"]),
-                    "series_index": str(payload["series_index"]),
-                    "plane_index": str(payload["plane_index"]),
-                }
-                for path, payload in workspace_mapping.items()
             },
             main=True,
         )
         AtomicMetadataWriter().merge_subdirectory_metadata(
             get_metadata_path(plate_root),
-            {FIELDS.DEFAULT_SUBDIRECTORY: asdict(metadata)},
+            {FIELDS.DEFAULT_SUBDIRECTORY: metadata},
+        )
+
+    def projection(
+        self,
+        plate_root: Path,
+        entry: BioFormatsImageEntry,
+    ) -> SourcePlaneProjection:
+        try:
+            source_path = entry.source_path.relative_to(plate_root).as_posix()
+        except ValueError:
+            source_path = str(entry.source_path)
+        return SourcePlaneProjection(
+            address=OpenHCSPlaneAddress(
+                well=str(entry.well),
+                site=str(entry.site),
+                channel=str(entry.channel),
+                z_index=str(entry.z_index),
+                timepoint=str(entry.timepoint),
+            ),
+            ref=SourcePixelRef(
+                backend=Backend.BIOFORMATS.value,
+                reader=entry.reader,
+                source_path=source_path,
+                series_index=entry.series_index,
+                plane_index=entry.plane_index,
+                source_channel=entry.source_channel,
+                source_z_index=entry.source_z_index,
+                source_timepoint=entry.source_timepoint,
+            ),
+            component_labels={
+                "channel": entry.channel_name or f"Channel {entry.channel}",
+                "well": entry.well,
+                "site": f"Site {entry.site}",
+                "z_index": f"Z{entry.z_index}",
+                "timepoint": f"T{entry.timepoint}",
+            },
         )
 
     def virtual_path(self, entry: BioFormatsImageEntry) -> str:

@@ -70,6 +70,16 @@ def test_debug_toolbar_enables_controls_together() -> None:
     assert all(not button.isEnabled() for button in toolbar.buttons.values())
 
 
+def test_debug_toolbar_uses_shared_button_panel_styling() -> None:
+    QtApplicationHarness.app()
+    style_generator = SimpleNamespace(generate_button_style=lambda: "QPushButton { color: red; }")
+
+    toolbar = DebugToolbarWidget(style_generator=style_generator)
+
+    assert toolbar.button_panel is not None
+    assert "color: red" in toolbar.buttons[DebugCommandType.STEP].styleSheet()
+
+
 class StatusSignalRecorder:
     """Signal-like recorder for command routing tests."""
 

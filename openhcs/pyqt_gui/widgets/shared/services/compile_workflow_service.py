@@ -20,6 +20,8 @@ class PlatePipelineRequest:
     """Shared plate/pipeline/config identity for compile and run requests."""
 
     plate_path: str
+    execution_plate_path: str
+    selected_pipeline_path: str | None
     definition_pipeline: List
     pipeline_config: Any
 
@@ -101,6 +103,9 @@ class CompileWorkflowService:
             zmq_client=zmq_client,
             loop=loop,
             plate_path=job.plate_path,
+            execution_plate_path=job.execution_plate_path,
+            selected_pipeline_path=job.selected_pipeline_path,
+            display_plate_path=job.plate_path,
             definition_pipeline=job.definition_pipeline,
             pipeline_config=job.pipeline_config,
             config_params=job.config_params,
@@ -128,26 +133,33 @@ class CompileWorkflowService:
         zmq_client,
         loop,
         plate_path: str,
+        execution_plate_path: str | None,
+        selected_pipeline_path: str | None,
         definition_pipeline: List,
         pipeline_config,
         config_params: dict[str, Any] | None = None,
+        display_plate_path: str | None = None,
     ) -> CompileRequestResult:
         if zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
         definition_pipeline = self.normalize_pipeline_for_transport(
             definition_pipeline
         )
+        display_plate_path = display_plate_path or plate_path
 
         def submit_compile() -> Dict[str, Any]:
             logger.info(
-                "Submit compile: plate=%s steps=%d fingerprint=%s",
-                plate_path,
+                "Submit compile: plate=%s execution_plate=%s steps=%d fingerprint=%s",
+                display_plate_path,
+                execution_plate_path or plate_path,
                 len(definition_pipeline),
                 self.pipeline_fingerprint(definition_pipeline),
             )
             return zmq_client.submit_compile(
                 OpenHCSExecutionSubmission(
                     plate_id=plate_path,
+                    execution_plate_id=execution_plate_path,
+                    selected_pipeline_path=selected_pipeline_path,
                     pipeline_steps=definition_pipeline,
                     global_config=self._global_config_provider(),
                     pipeline_config=pipeline_config,
@@ -158,13 +170,13 @@ class CompileWorkflowService:
         response = await self._run_blocking(loop, submit_compile)
         if response.get("status") != "accepted":
             raise RuntimeError(
-                f"Compile submission failed for {plate_path}: "
+                f"Compile submission failed for {display_plate_path}: "
                 f"{response.get('message', 'Unknown error')}"
             )
         execution_id = response.get("execution_id")
         if not execution_id:
             raise RuntimeError(
-                f"Compile submission missing execution_id for {plate_path}"
+                f"Compile submission missing execution_id for {display_plate_path}"
             )
         return CompileRequestResult(
             execution_id=str(execution_id),

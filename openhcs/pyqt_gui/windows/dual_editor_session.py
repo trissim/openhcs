@@ -122,7 +122,7 @@ class DualEditorSession:
         return None
 
 
-@dataclass(slots=True)
+@dataclass
 class DualEditorFunctionPatternController:
     """Qt-slot target for function pattern changes."""
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from openhcs.core.config import (
     FijiStreamingConfig,
@@ -9,6 +10,7 @@ from openhcs.core.config import (
 )
 from openhcs.ui.shared.streaming_service import (
     ImageStreamingRequest,
+    RoiStreamingRequest,
     StreamingService,
     ViewerStreamingContext,
 )
@@ -94,3 +96,85 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     assert metadata["display_config"] is config
     assert metadata["host"] == config.host
     assert metadata["transport_mode"] is config.transport_mode
+
+
+def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "openhcs.ui.shared.streaming_service.spawn_thread_with_context",
+        lambda worker, name: worker(),
+    )
+    monkeypatch.setattr(
+        "polystore.roi.load_rois_from_zip",
+        lambda _path: [object()],
+    )
+    filemanager = FakeFileManager()
+    config = FijiStreamingConfig(enabled=True)
+    roi_filename = "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"
+    microscope_handler = SimpleNamespace(
+        parser=SimpleNamespace(
+            parse_filename=lambda filename: {
+                "well": "A01",
+                "site": 1,
+                "channel": 1,
+                "z_index": 1,
+                "timepoint": 1,
+            }
+            if filename == "A01_s001_w1_z001_t001.tif"
+            else None
+        )
+    )
+
+    service = StreamingService(
+        filemanager=filemanager,
+        microscope_handler=microscope_handler,
+        plate_path=Path("/plate"),
+    )
+    service.stream_rois_async(
+        RoiStreamingRequest(
+            context=ViewerStreamingContext(
+                viewer=FakeViewer(),
+                plate_path=Path("/plate"),
+                config=config,
+                viewer_type=config.viewer_type,
+                status_callback=lambda _status: None,
+                error_callback=lambda error: (_ for _ in ()).throw(AssertionError(error)),
+            ),
+            roi_filenames=(roi_filename,),
+        )
+    )
+
+    assert filemanager.saved_batches
+    _data, _paths, _backend, metadata = filemanager.saved_batches[0]
+    assert metadata["component_metadata_by_path"][roi_filename] == {
+        "well": "A01",
+        "site": 1,
+        "channel": 1,
+        "z_index": 1,
+        "timepoint": 1,
+    }
+
+
+def test_stream_rois_falls_back_to_single_plane_metadata_for_unparsed_roi() -> None:
+    service = StreamingService(
+        filemanager=FakeFileManager(),
+        microscope_handler=SimpleNamespace(
+            parser=SimpleNamespace(parse_filename=lambda _filename: None)
+        ),
+        plate_path=Path("/plate"),
+    )
+    metadata_by_path = service._roi_component_metadata_by_path(
+        ["nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"],
+        FijiStreamingConfig(enabled=True),
+    )
+
+    assert metadata_by_path[
+        "nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"
+    ] == {
+        "well": "nuclei1_out_c00_dr90_image_Watershed_step3_rois",
+        "site": 1,
+        "channel": 1,
+        "z_index": 1,
+        "timepoint": 1,
+    }

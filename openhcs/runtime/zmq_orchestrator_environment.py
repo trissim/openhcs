@@ -26,6 +26,7 @@ class ZMQOrchestratorEnvironmentRequest:
 
     execution_id: str
     plate_id: str
+    execution_plate_id: str | None
     global_config: Any
     config_params: dict | None
 
@@ -88,7 +89,7 @@ class ZMQOrchestratorEnvironmentRequest:
             )
 
     def prepared_plate_path(self, storage_registry) -> str:
-        plate_path_str = str(self.plate_id)
+        plate_path_str = str(self.execution_plate_id or self.plate_id)
         is_omero_plate_id = False
         try:
             int(plate_path_str)
@@ -114,4 +115,3 @@ class ZMQOrchestratorEnvironmentRequest:
         if plate_path_str.startswith("/omero/"):
             return plate_path_str
         return f"/omero/plate_{plate_path_str}"
-

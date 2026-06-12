@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import json
 import os
-import re
 import shutil
 import urllib.request
 from abc import ABC, abstractmethod
@@ -15,7 +14,7 @@ from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import ClassVar, TypeAlias
+from typing import Any, ClassVar, TypeAlias
 from urllib.parse import unquote, urlparse
 
 from metaclass_registry import AutoRegisterMeta
@@ -49,7 +48,12 @@ from openhcs.core.source_matching import (
     source_metadata_value,
     with_source_component_metadata,
 )
-from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadata
+from openhcs.core.source_projection import SourcePixelRef
+from openhcs.microscopes.openhcs import (
+    FIELDS,
+    OpenHCSMetadata,
+    workspace_mapping_source_ref,
+)
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
@@ -60,11 +64,15 @@ SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE = "A01"
 SOURCE_SCHEMA_IMAGE_TYPE_METADATA_FIELD = SOURCE_IMAGE_TYPE_METADATA_FIELD
 _AUXILIARY_PAYLOAD_CACHE_LIMIT = 64
 _AUXILIARY_PAYLOAD_CACHE: OrderedDict[str, object] = OrderedDict()
-_PLATE_WELL_TOKEN_PATTERN = re.compile(
-    r"(?:^|[_-])(?P<well>[A-P][0-9]{2})(?=(?:f[0-9])|[_\-.]|$)",
-    re.IGNORECASE,
+_Z_INDEX_METADATA_KEYS = (
+    "zindex",
+    "z",
+    "zplane",
+    "zslice",
+    "plane",
+    "slice",
 )
-_SITE_TOKEN_PATTERN = re.compile(r"(?:^|[_-])f(?P<site>[0-9]+)(?=[A-Za-z_\-.]|$)")
+_SOURCE_PLANE_GROUP_KEY = "source_plane_group_key"
 
 WorkspaceComponentValues: TypeAlias = Mapping[
     AllComponents,
@@ -88,7 +96,7 @@ ImageSetMetadataByGroup: TypeAlias = Mapping[
     Mapping[str, str],
 ]
 WorkspaceMappingResult: TypeAlias = tuple[
-    Mapping[str, str],
+    Mapping[str, Any],
     WorkspaceSourceMetadata,
     WorkspaceComponentValues,
 ]
@@ -264,8 +272,8 @@ class SourceSchemaWorkspaceMaterialization:
     source_root: Path
     workspace_root: Path
     metadata_path: Path
-    primary_mappings: Mapping[str, str]
-    auxiliary_mappings: Mapping[str, str]
+    primary_mappings: Mapping[str, Any]
+    auxiliary_mappings: Mapping[str, Any]
     source_metadata: Mapping[str, Mapping[str, str]] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -335,9 +343,15 @@ class SourceSchemaWorkspaceMaterialization:
                     f"Cannot parse source-schema virtual filename {virtual_path!r}."
                 )
             if str(parsed["well"]) in selected_wells:
-                paths.append((self.workspace_root / real_path).resolve())
+                paths.append(
+                    (
+                        self.workspace_root / workspace_mapping_source_ref(real_path)
+                    ).resolve()
+                )
         paths.extend(
-            (self.workspace_root / real_path).resolve()
+            (
+                self.workspace_root / workspace_mapping_source_ref(real_path)
+            ).resolve()
             for real_path in self.auxiliary_mappings.values()
         )
         paths.extend(
@@ -354,11 +368,17 @@ class SourceSchemaCandidate:
     path: Path
     relative_path: str
     metadata: Mapping[str, str]
+    source_plane_index: int | None = None
+    source_plane_count: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
         object.__setattr__(self, "relative_path", self.relative_path.replace(os.sep, "/"))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        if self.source_plane_index is not None:
+            object.__setattr__(self, "source_plane_index", int(self.source_plane_index))
+        if self.source_plane_count is not None:
+            object.__setattr__(self, "source_plane_count", int(self.source_plane_count))
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +388,7 @@ class SourceSchemaCandidateIdentity:
     path: str
     relative_path: str
     metadata_items: tuple[tuple[str, str], ...]
+    source_plane_index: int | None
 
     @classmethod
     def from_candidate(
@@ -378,6 +399,7 @@ class SourceSchemaCandidateIdentity:
             path=str(candidate.path),
             relative_path=candidate.relative_path,
             metadata_items=tuple(sorted(candidate.metadata.items())),
+            source_plane_index=candidate.source_plane_index,
         )
 
 
@@ -409,7 +431,22 @@ class SourceSchemaCandidateProvider(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "provider_key"
     __skip_if_no_key__ = True
     provider_key: ClassVar[str | None] = None
-    priority: ClassVar[int]
+
+    @classmethod
+    def provider_types_by_mro(cls) -> tuple[type["SourceSchemaCandidateProvider"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[SourceSchemaCandidateProvider]] = []
+        seen: set[type[SourceSchemaCandidateProvider]] = set()
+
+        def visit(owner: type[SourceSchemaCandidateProvider]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
 
     @abstractmethod
     def available(self, request: SourceSchemaCandidateDiscoveryRequest) -> bool:
@@ -461,9 +498,7 @@ class SourceSchemaCandidateMetadataResolver:
             self.request.imported_metadata,
             path=self.request.relative_path,
         )
-        return SourceSchemaFilenameComponentFallbackPolicy.for_schema(
-            self.request.schema
-        ).metadata(self.request.path.name, metadata)
+        return MappingProxyType(metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,10 +508,7 @@ class SourceSchemaCandidateDiscovery:
     request: SourceSchemaCandidateDiscoveryRequest
 
     def candidates(self) -> tuple[SourceSchemaCandidate, ...]:
-        for provider_type in sorted(
-            SourceSchemaCandidateProvider.__registry__.values(),
-            key=lambda registered_type: registered_type.priority,
-        ):
+        for provider_type in SourceSchemaCandidateProvider.provider_types_by_mro():
             provider = provider_type()
             if provider.available(self.request):
                 return provider.candidates(self.request)
@@ -489,7 +521,6 @@ class OpenHCSWorkspaceSourceSchemaCandidateProvider(SourceSchemaCandidateProvide
     """Discover candidates from existing OpenHCS virtual-workspace metadata."""
 
     provider_key = "openhcs_workspace"
-    priority = 10
 
     def available(self, request: SourceSchemaCandidateDiscoveryRequest) -> bool:
         return self.metadata_path(request).exists()
@@ -590,7 +621,6 @@ class LocalFileSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
     """Discover candidates from local/VFS-visible source files."""
 
     provider_key = "local_files"
-    priority = 100
 
     def available(self, request: SourceSchemaCandidateDiscoveryRequest) -> bool:
         del request
@@ -609,20 +639,21 @@ class LocalFileSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
             relative_path = path.relative_to(request.source_root).as_posix()
             if not self._schema_admits_path(request.schema, relative_path):
                 continue
-            candidates.append(
-                SourceSchemaCandidate(
-                    path=path,
-                    relative_path=relative_path,
-                    metadata=SourceSchemaCandidateMetadataResolver(
-                        SourceSchemaCandidateMetadataRequest(
-                            request.source_root,
-                            request.schema,
-                            path,
-                            relative_path,
-                            imported_metadata,
-                        )
-                    ).metadata(),
-                )
+            candidate = SourceSchemaCandidate(
+                path=path,
+                relative_path=relative_path,
+                metadata=SourceSchemaCandidateMetadataResolver(
+                    SourceSchemaCandidateMetadataRequest(
+                        request.source_root,
+                        request.schema,
+                        path,
+                        relative_path,
+                        imported_metadata,
+                    )
+                ).metadata(),
+            )
+            candidates.extend(
+                SourceSchemaSourcePlaneInventory.for_path(path).candidates(candidate)
             )
         return tuple(candidates)
 
@@ -632,6 +663,103 @@ class LocalFileSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
         if images_rule is None:
             return True
         return source_filters_match(relative_path, images_rule.filters)
+
+
+class SourceSchemaSourcePlaneInventory(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for exposing source files as OpenHCS-addressable planes."""
+
+    __registry_key__ = "inventory_key"
+    __skip_if_no_key__ = True
+    inventory_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_path(cls, path: Path) -> "SourceSchemaSourcePlaneInventory":
+        for inventory_type in cls.inventory_types_by_mro():
+            inventory = inventory_type()
+            if inventory.accepts_path(path):
+                return inventory
+        raise ValueError(f"No source-plane inventory accepted source path: {path}")
+
+    @classmethod
+    def inventory_types_by_mro(
+        cls,
+    ) -> tuple[type["SourceSchemaSourcePlaneInventory"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[SourceSchemaSourcePlaneInventory]] = []
+        seen: set[type[SourceSchemaSourcePlaneInventory]] = set()
+
+        def visit(owner: type[SourceSchemaSourcePlaneInventory]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
+
+    @abstractmethod
+    def accepts_path(self, path: Path) -> bool:
+        """Return whether this inventory can inspect the source path."""
+
+    @abstractmethod
+    def candidates(
+        self,
+        candidate: SourceSchemaCandidate,
+    ) -> tuple[SourceSchemaCandidate, ...]:
+        """Return one or more plane-addressable candidates for a source file."""
+
+
+class TiffPageSourcePlaneInventory(SourceSchemaSourcePlaneInventory):
+    """Expose multi-page TIFF sources as individual source-plane candidates."""
+
+    inventory_key = "tiff_pages"
+
+    def accepts_path(self, path: Path) -> bool:
+        name = path.name.lower()
+        return path.suffix.lower() in {".tif", ".tiff"} or name.endswith(
+            (".ome.tif", ".ome.tiff")
+        )
+
+    def candidates(
+        self,
+        candidate: SourceSchemaCandidate,
+    ) -> tuple[SourceSchemaCandidate, ...]:
+        inventory = TiffSourcePlaneInventory.from_path(candidate.path)
+        if inventory.plane_count <= 1:
+            return (candidate,)
+        return tuple(
+            SourceSchemaCandidate(
+                path=candidate.path,
+                relative_path=candidate.relative_path,
+                metadata={
+                    **dict(candidate.metadata),
+                    AllComponents.Z_INDEX.value: str(plane_index + 1),
+                    _SOURCE_PLANE_GROUP_KEY: candidate.relative_path,
+                    "source_plane_index": str(plane_index),
+                    "source_plane_count": str(inventory.plane_count),
+                },
+                source_plane_index=plane_index,
+                source_plane_count=inventory.plane_count,
+            )
+            for plane_index in range(inventory.plane_count)
+        )
+
+
+class SinglePlaneSourcePlaneInventory(SourceSchemaSourcePlaneInventory):
+    """Default inventory for source files that are already one logical plane."""
+
+    inventory_key = "single_plane"
+
+    def accepts_path(self, path: Path) -> bool:
+        del path
+        return True
+
+    def candidates(
+        self,
+        candidate: SourceSchemaCandidate,
+    ) -> tuple[SourceSchemaCandidate, ...]:
+        return (candidate,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -948,16 +1076,16 @@ class SourceSchemaFilenameProjection:
 class WorkspaceMappingSink:
     """Conflict-aware accumulator for virtual workspace mappings."""
 
-    mappings: dict[str, str]
+    mappings: dict[str, Any]
 
-    def add(self, virtual_path: str, real_path: str) -> None:
+    def add(self, virtual_path: str, source_ref: Any) -> None:
         existing = self.mappings.get(virtual_path)
-        if existing is not None and existing != real_path:
+        if existing is not None and existing != source_ref:
             raise ValueError(
                 f"Conflicting source workspace mapping for {virtual_path!r}: "
-                f"{existing!r} != {real_path!r}."
+                f"{existing!r} != {source_ref!r}."
             )
-        self.mappings[virtual_path] = real_path
+        self.mappings[virtual_path] = source_ref
 
 
 @dataclass(frozen=True, slots=True)
@@ -987,7 +1115,9 @@ class SourceVirtualPathMetadata:
 
     def metadata(self) -> Mapping[str, str]:
         metadata = dict(self.image_set_metadata)
+        metadata.pop(_SOURCE_PLANE_GROUP_KEY, None)
         merge_source_metadata(metadata, self.candidate_metadata, path="source_metadata")
+        metadata.pop(_SOURCE_PLANE_GROUP_KEY, None)
         if self.virtual_path is not None:
             metadata = dict(source_schema_metadata_with_virtual_components(
                 self.virtual_path,
@@ -1001,6 +1131,27 @@ class SourceVirtualPathMetadata:
                 path="source_metadata",
             )
         return MappingProxyType(metadata)
+
+
+@dataclass(slots=True)
+class SourcePlaneGroupSiteAllocator:
+    """Assign stable OpenHCS sites to source-plane stack groups."""
+
+    sites_by_group: dict[str, int] = field(default_factory=dict)
+
+    def site_component(
+        self,
+        metadata: Mapping[str, str],
+        fallback_site: int | str,
+    ) -> int | str:
+        group_key = metadata.get(_SOURCE_PLANE_GROUP_KEY)
+        if group_key is None:
+            return fallback_site
+        site_index = self.sites_by_group.setdefault(
+            group_key,
+            len(self.sites_by_group) + 1,
+        )
+        return site_index
 
 
 def source_schema_metadata_with_virtual_components(
@@ -1354,6 +1505,36 @@ class FrameNumberSingletonSiteProjection(ComponentProjection):
         return "1"
 
 
+class ZIndexSingletonSiteProjection(ComponentProjection):
+    """Keep Z-series planes on one site when no explicit site metadata exists."""
+
+    component = AllComponents.SITE
+
+    def value(
+        self,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+    ) -> str | None:
+        del image_set_index
+        if self.first_metadata_value(metadata, _Z_INDEX_METADATA_KEYS) is None:
+            return None
+        return "1"
+
+
+class MetadataZIndexProjection(ComponentProjection):
+    """Project explicit Z/slice/plane metadata onto the OpenHCS Z component."""
+
+    component = AllComponents.Z_INDEX
+
+    def value(
+        self,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+    ) -> str | None:
+        del image_set_index
+        return self.first_metadata_value(metadata, _Z_INDEX_METADATA_KEYS)
+
+
 class FrameNumberTimepointProjection(ComponentProjection):
     """Project frame metadata onto the OpenHCS timepoint component."""
 
@@ -1378,6 +1559,19 @@ class FrameNumberTimepointProjection(ComponentProjection):
 
 class SourceSchemaSingletonTimepointProjection(ComponentProjection):
     component = AllComponents.TIMEPOINT
+    metadata_derived = False
+
+    def value(
+        self,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+    ) -> str | None:
+        del metadata, image_set_index
+        return "1"
+
+
+class SourceSchemaSingletonZIndexProjection(ComponentProjection):
+    component = AllComponents.Z_INDEX
     metadata_derived = False
 
     def value(
@@ -1659,7 +1853,7 @@ def expand_source_schema_workspace_wells(
         )
 
     parser = SourceSchemaFilenameParser()
-    expanded_mapping: dict[str, str] = {}
+    expanded_mapping: dict[str, Any] = {}
     expanded_source_metadata: dict[str, dict[str, str]] = {}
     original_source_metadata = main_metadata.get(FIELDS.SOURCE_METADATA) or {}
     if not isinstance(original_source_metadata, dict):
@@ -1695,7 +1889,7 @@ def expand_source_schema_workspace_wells(
                 well_id,
                 used_paths=used_expanded_paths,
             )
-            expanded_mapping_sink.add(expanded_path, str(real_path))
+            expanded_mapping_sink.add(expanded_path, real_path)
             expanded_source_metadata[expanded_path] = dict(
                 source_schema_metadata_with_virtual_components(
                     expanded_path,
@@ -1831,52 +2025,63 @@ def _source_files(
 
 
 @dataclass(frozen=True, slots=True)
-class SourceSchemaFilenameComponentFallbackPolicy:
-    """Recover missing component tokens from common source filename conventions."""
+class TiffSourcePlaneInventory:
+    """TIFF source-plane inventory derived from explicit TIFF series axes."""
 
-    enabled: bool
+    axes: str
+    shape: tuple[int, ...]
+    plane_count: int
 
     @classmethod
-    def for_schema(
+    def from_path(cls, path: Path) -> "TiffSourcePlaneInventory":
+        try:
+            import tifffile
+        except ImportError as exc:
+            raise RuntimeError(
+                "TIFF source-plane inventory requires tifffile to preserve "
+                f"axis semantics for {path}."
+            ) from exc
+        try:
+            with tifffile.TiffFile(path) as tif:
+                if not tif.series:
+                    raise ValueError(f"TIFF source {path} has no image series.")
+                series = tif.series[0]
+                axes = str(series.axes)
+                shape = tuple(int(value) for value in series.shape)
+        except Exception as exc:
+            raise ValueError(f"Could not inspect TIFF source-plane axes for {path}.") from exc
+        return cls.from_axes(path, axes, shape)
+
+    @classmethod
+    def from_axes(
         cls,
-        schema: PipelineImageSchema,
-    ) -> "SourceSchemaFilenameComponentFallbackPolicy":
-        del schema
-        return cls(enabled=True)
-
-    def metadata(
-        self,
-        filename: str,
-        metadata: Mapping[str, str],
-    ) -> Mapping[str, str]:
-        if not self.enabled:
-            return MappingProxyType(dict(metadata))
-        return _metadata_with_filename_component_fallbacks(filename, metadata)
-
-
-def _metadata_with_filename_component_fallbacks(
-    filename: str,
-    metadata: Mapping[str, str],
-) -> Mapping[str, str]:
-    """Recover common plate well/site tokens when a pipeline lacks usable metadata."""
-    enriched = dict(metadata)
-    if source_metadata_value(enriched, AllComponents.WELL.value) is None:
-        well_match = _PLATE_WELL_TOKEN_PATTERN.search(filename)
-        if well_match is not None:
-            merge_source_metadata(
-                enriched,
-                {AllComponents.WELL.value: well_match.group("well").upper()},
-                path=filename,
+        path: Path,
+        axes: str,
+        shape: tuple[int, ...],
+    ) -> "TiffSourcePlaneInventory":
+        if len(axes) != len(shape):
+            raise ValueError(
+                f"TIFF source {path} has inconsistent axes {axes!r} and shape {shape!r}."
             )
-    if source_metadata_value(enriched, AllComponents.SITE.value) is None:
-        site_match = _SITE_TOKEN_PATTERN.search(filename)
-        if site_match is not None:
-            merge_source_metadata(
-                enriched,
-                {AllComponents.SITE.value: str(int(site_match.group("site")) + 1)},
-                path=filename,
+        source_plane_axes = tuple(axis for axis in axes if axis not in {"Y", "X", "S"})
+        if not source_plane_axes:
+            return cls(axes=axes, shape=shape, plane_count=1)
+        if source_plane_axes == ("Z",) and axes[0] == "Z":
+            return cls(
+                axes=axes,
+                shape=shape,
+                plane_count=int(shape[axes.index("Z")]),
             )
-    return MappingProxyType(enriched)
+        raise ValueError(
+            f"TIFF source {path} has axes {axes!r}; source-schema TIFF "
+            "projection currently supports only YX/YXS images and Z-first Z-stacks. "
+            "Use an explicit Bio-Formats/source-projection path for C/T/series axes."
+        )
+
+
+def _tiff_page_count(path: Path) -> int:
+    """Return the supported TIFF Z-plane count."""
+    return TiffSourcePlaneInventory.from_path(path).plane_count
 
 
 def _image_plane_source_candidates(
@@ -2280,12 +2485,17 @@ def _primary_workspace_mappings(
     }
     wells: dict[str, None] = {}
     sites: dict[str, None] = {}
+    z_indexes: dict[str, None] = {}
     timepoints: dict[str, None] = {}
-    primary_mappings: dict[str, str] = {}
+    primary_mappings: dict[str, Any] = {}
     primary_mapping_sink = WorkspaceMappingSink(primary_mappings)
     source_metadata: dict[str, Mapping[str, str]] = {}
     site_indexes_by_well: dict[str, int] = {}
-    used_paths_by_well_channel_timepoint: dict[tuple[str, int, int | str], set[str]] = {}
+    source_plane_group_sites = SourcePlaneGroupSiteAllocator()
+    used_paths_by_well_channel_z_timepoint: dict[
+        tuple[str, int, int | str, int | str],
+        set[str],
+    ] = {}
     for image_set in image_sets:
         well = SourceSchemaImageSetIdentity(schema, image_set).well
         site_index = site_indexes_by_well.get(well, 0)
@@ -2299,11 +2509,21 @@ def _primary_workspace_mappings(
             image_set.metadata,
             site_index,
         )
+        z_index = ComponentProjection.resolve(
+            AllComponents.Z_INDEX,
+            image_set.metadata,
+            site_index,
+        )
         site_indexes_by_well[well] = site_index + 1
-        preferred_site_component = _component_ordinal_or_label(site)
+        preferred_site_component = source_plane_group_sites.site_component(
+            image_set.metadata,
+            _component_ordinal_or_label(site),
+        )
         timepoint_component = _component_ordinal_or_label(timepoint)
+        z_component = _component_ordinal_or_label(z_index)
         wells[well] = None
         sites[str(preferred_site_component)] = None
+        z_indexes[str(z_component)] = None
         timepoints[str(timepoint_component)] = None
         for channel_index, assignment in enumerate(stack_assignments, start=1):
             candidate = image_set.candidates_by_alias[assignment.alias]
@@ -2313,10 +2533,11 @@ def _primary_workspace_mappings(
                 preferred_site_component=preferred_site_component,
                 ordinal_site_component=site_index + 1,
                 channel_index=channel_index,
+                z_index=z_component,
                 timepoint=timepoint_component,
                 extension=candidate.path.suffix,
-                used_paths=used_paths_by_well_channel_timepoint.setdefault(
-                    (well, channel_index, timepoint_component),
+                used_paths=used_paths_by_well_channel_z_timepoint.setdefault(
+                    (well, channel_index, z_component, timepoint_component),
                     set(),
                 ),
             )
@@ -2326,14 +2547,14 @@ def _primary_workspace_mappings(
                     well,
                     site_component,
                     channel_index,
-                    1,
+                    z_component,
                     timepoint_component,
                     candidate.path.suffix,
                 )
             )
             primary_mapping_sink.add(
                 virtual_path,
-                _workspace_relative_path(workspace_root, candidate.path),
+                _source_schema_workspace_mapping_value(workspace_root, candidate),
             )
             source_metadata[virtual_path] = SourceVirtualPathMetadata(
                 image_set.metadata,
@@ -2346,7 +2567,7 @@ def _primary_workspace_mappings(
             AllComponents.CHANNEL: MappingProxyType(channel_values),
             AllComponents.WELL: MappingProxyType(wells),
             AllComponents.SITE: MappingProxyType(sites),
-            AllComponents.Z_INDEX: MappingProxyType({"1": None}),
+            AllComponents.Z_INDEX: MappingProxyType(z_indexes),
             AllComponents.TIMEPOINT: MappingProxyType(timepoints),
         }
     )
@@ -2426,6 +2647,7 @@ def _collision_free_site_component(
     preferred_site_component: int | str,
     ordinal_site_component: int,
     channel_index: int,
+    z_index: int | str,
     timepoint: int | str,
     extension: str,
     used_paths: set[str],
@@ -2435,7 +2657,7 @@ def _collision_free_site_component(
             well,
             preferred_site_component,
             channel_index,
-            1,
+            z_index,
             timepoint,
             extension,
         )
@@ -2451,7 +2673,7 @@ def _collision_free_site_component(
                 well,
                 ordinal_component,
                 channel_index,
-                1,
+                z_index,
                 timepoint,
                 extension,
             )
@@ -2615,8 +2837,8 @@ def _materialized_auxiliary_source_path(
 
 def _write_workspace_metadata(
     metadata_path: Path,
-    primary_mappings: Mapping[str, str],
-    auxiliary_mappings: Mapping[str, str],
+    primary_mappings: Mapping[str, Any],
+    auxiliary_mappings: Mapping[str, Any],
     component_values: WorkspaceComponentValues,
     primary_source_metadata: WorkspaceSourceMetadata,
     auxiliary_source_metadata: WorkspaceSourceMetadata,
@@ -2652,12 +2874,12 @@ def _write_workspace_metadata(
 def _metadata_dict(
     *,
     image_files: tuple[str, ...],
-    workspace_mapping: Mapping[str, str],
+    workspace_mapping: Mapping[str, Any],
     component_values: WorkspaceComponentValues,
     source_metadata: WorkspaceSourceMetadata,
     main: bool,
 ) -> dict[str, object]:
-    return asdict(
+    metadata = asdict(
         OpenHCSMetadata(
             microscope_handler_name=FIELDS.MICROSCOPE_TYPE,
             source_filename_parser_name="SourceSchemaFilenameParser",
@@ -2681,10 +2903,30 @@ def _metadata_dict(
             main=main,
         )
     )
+    return {key: value for key, value in metadata.items() if value is not None}
 
 
 def _workspace_relative_path(workspace_root: Path, path: Path) -> str:
     return os.path.relpath(path, workspace_root).replace(os.sep, "/")
+
+
+def _source_schema_workspace_mapping_value(
+    workspace_root: Path,
+    candidate: SourceSchemaCandidate,
+) -> str | dict[str, object]:
+    source_path = _workspace_relative_path(workspace_root, candidate.path)
+    if candidate.source_plane_index is None:
+        return source_path
+    source_z_index = None
+    z_value = source_metadata_value(candidate.metadata, AllComponents.Z_INDEX.value)
+    if z_value is not None and z_value.isdecimal():
+        source_z_index = int(z_value)
+    return SourcePixelRef(
+        backend=Backend.DISK.value,
+        source_path=source_path,
+        plane_index=candidate.source_plane_index,
+        source_z_index=source_z_index,
+    ).to_legacy_workspace_mapping()
 
 
 def _image_set_match_value(

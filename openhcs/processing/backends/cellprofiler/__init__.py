@@ -25,6 +25,9 @@ from openhcs.processing.backends.cellprofiler.library import (
     get_contract,
     list_modules,
 )
+from openhcs.processing.backends.cellprofiler.function_documentation import (
+    enrich_cellprofiler_function_documentation,
+)
 from openhcs.core.callable_contract import (
     CallableContract,
     attach_callable_contract_metadata,
@@ -258,6 +261,11 @@ def _make_processing_wrapper(
         wrapper,
         raw_processing_function=func,
         runtime_image_execution_mode=callable_contract.runtime_image_execution_mode,
+    )
+    enrich_cellprofiler_function_documentation(
+        wrapper,
+        module_name=module_name,
+        source_function=func,
     )
     return wrapper
 

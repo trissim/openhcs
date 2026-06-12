@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import logging
 
+from dataclasses import dataclass
+from typing import Any, Mapping
+
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.image_shapes import is_image_stack
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
-from openhcs.core.runtime_values import image_payload_data
+from openhcs.core.runtime_values import image_payload_data, image_payload_metadata
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
@@ -111,6 +115,73 @@ def _materialize_images_if_needed(
 class StreamOutputsAuthority:
     """Streams step image outputs through viewer backends."""
 
+    @dataclass(frozen=True, slots=True)
+    class StreamItem:
+        """One semantically identified image payload sent to a viewer backend."""
+
+        data: Any
+        path: str
+        component_metadata: Mapping[str, Any] | None
+
+    @classmethod
+    def _stream_items_for_payload(
+        cls,
+        payload: Any,
+        path: str,
+    ) -> tuple["StreamOutputsAuthority.StreamItem", ...]:
+        data = image_payload_data(payload)
+        metadata = image_payload_metadata(payload)
+
+        if not is_image_stack(data):
+            return (
+                cls.StreamItem(
+                    data=data,
+                    path=path,
+                    component_metadata=metadata.source_component_metadata,
+                ),
+            )
+
+        channel_metadata = metadata.channel_source_component_metadata
+        if not channel_metadata or any(item is None for item in channel_metadata):
+            raise ValueError(
+                "Streaming an OpenHCS image stack requires per-slice "
+                f"component metadata; got stack shape {getattr(data, 'shape', None)!r} "
+                f"for {path!r}."
+            )
+
+        if len(channel_metadata) != data.shape[0]:
+            raise ValueError(
+                "Streaming image stack metadata cardinality mismatch: "
+                f"{len(channel_metadata)} metadata entries for stack shape "
+                f"{getattr(data, 'shape', None)!r} at {path!r}."
+            )
+
+        return tuple(
+            cls.StreamItem(
+                data=data[index],
+                path=path,
+                component_metadata=metadata.for_channel(index).source_component_metadata,
+            )
+            for index in range(data.shape[0])
+        )
+
+    @classmethod
+    def _stream_items(
+        cls,
+        payloads: list[Any],
+        paths: list[str],
+    ) -> tuple["StreamOutputsAuthority.StreamItem", ...]:
+        if len(payloads) != len(paths):
+            raise ValueError(
+                "Streaming payload/path cardinality mismatch: "
+                f"{len(payloads)} payloads for {len(paths)} paths."
+            )
+        return tuple(
+            item
+            for payload, path in zip(payloads, paths)
+            for item in cls._stream_items_for_payload(payload, path)
+        )
+
     @staticmethod
     def stream_outputs(
         context: ProcessingContext,
@@ -130,16 +201,22 @@ class StreamOutputsAuthority:
             else:
                 streaming_paths = memory_paths
 
-            streaming_data = context.filemanager.load_batch(
+            streaming_payloads = context.filemanager.load_batch(
                 memory_paths,
                 Backend.MEMORY.value,
             )
-            streaming_data = [image_payload_data(item) for item in streaming_data]
+            stream_items = StreamOutputsAuthority._stream_items(
+                list(streaming_payloads),
+                list(streaming_paths),
+            )
             kwargs = config_instance.get_streaming_kwargs(context)
             kwargs["source"] = plan.step_name
+            kwargs["component_metadata_by_path"] = tuple(
+                item.component_metadata for item in stream_items
+            )
             context.filemanager.save_batch(
-                streaming_data,
-                streaming_paths,
+                [item.data for item in stream_items],
+                [item.path for item in stream_items],
                 config_instance.backend.value,
                 **kwargs,
             )

@@ -156,6 +156,25 @@ def test_compile_tree_marks_failed_compilation(monkeypatch):
     assert plate.children[0].status == "❌ Failed"
 
 
+def test_compile_tree_marks_pipeline_level_compile_failure(monkeypatch):
+    projection = _projection()
+
+    compile_failed = _event(
+        phase=ProgressPhase.COMPILE,
+        status=ProgressStatus.FAILED,
+        percent=0.0,
+        axis_id="pipeline",
+        step_name="compilation",
+    )
+
+    nodes = projection.build_progress_tree({"exec-1": [compile_failed]})
+
+    assert len(nodes) == 1
+    plate = nodes[0]
+    assert plate.status == "❌ Compile Failed"
+    assert plate.children[0].status == "❌ Failed"
+
+
 def test_worker_tree_marks_failed_well_and_plate_status(monkeypatch):
     projection = _projection(
         worker_assignments={("exec-1", "/tmp/plate"): {"worker_0": ["A01"]}},

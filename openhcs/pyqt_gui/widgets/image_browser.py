@@ -483,6 +483,57 @@ class ImageBrowserFilterController:
         return " ".join(str(field) for field in searchable_fields)
 
 
+class ImageBrowserFileFocusController:
+    """Own semantic file focusing for ImageBrowserWidget."""
+
+    def __init__(self, browser: "ImageBrowserWidget"):
+        self.browser = browser
+
+    def focus_path(self, file_path: str | Path) -> bool:
+        browser = self.browser
+        if not browser.all_files and browser.orchestrator:
+            browser.load_images()
+
+        for key in self._candidate_keys(file_path):
+            if key in browser.all_files:
+                return self._focus_key(key)
+        unique_basename_key = self._unique_basename_key(file_path)
+        if unique_basename_key is not None:
+            return self._focus_key(unique_basename_key)
+        return False
+
+    def _candidate_keys(self, file_path: str | Path) -> tuple[str, ...]:
+        browser = self.browser
+        path = Path(file_path)
+        candidates = [str(file_path)]
+        if browser.orchestrator and path.is_absolute():
+            try:
+                candidates.append(str(path.relative_to(browser.orchestrator.plate_path)))
+            except ValueError:
+                pass
+        candidates.append(path.name)
+        return tuple(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+    def _focus_key(self, key: str) -> bool:
+        browser = self.browser
+        if key not in browser.filtered_files:
+            browser.filtered_files = {key: browser.all_files[key]}
+            browser._update_table_with_filtered_items(browser.filtered_files)
+        return browser.image_table_browser.select_key(key)
+
+    def _unique_basename_key(self, file_path: str | Path) -> str | None:
+        basename = Path(file_path).name
+        if not basename:
+            return None
+        matches = [
+            key for key in self.browser.all_files
+            if Path(key).name == basename
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+
 class ImageBrowserWidget(QWidget):
     """
     Image browser widget that displays all image files from plate metadata.
@@ -554,6 +605,7 @@ class ImageBrowserWidget(QWidget):
             lambda: self.orchestrator
         )
         self.filter_controller = ImageBrowserFilterController(self)
+        self.file_focus_controller = ImageBrowserFileFocusController(self)
 
         # Plate view widget (will be created in init_ui)
         self.plate_view_widget = None
@@ -848,6 +900,10 @@ class ImageBrowserWidget(QWidget):
                     form._refresh_all_placeholders()
 
         self.load_images()
+
+    def focus_file_by_path(self, file_path: str | Path) -> bool:
+        """Focus a loaded image/result file by semantic artifact path."""
+        return self.file_focus_controller.focus_path(file_path)
 
     def _restore_folder_selection(self, folder_path: str, folder_items: Dict):
         """Restore folder selection after tree rebuild."""
@@ -1167,45 +1223,30 @@ class ImageBrowserWidget(QWidget):
             if not self.orchestrator:
                 raise RuntimeError("No orchestrator set")
 
-            from openhcs.pyqt_gui.utils.threading_utils import spawn_thread_with_context
+            from objectstate import spawn_thread_with_context
 
-            # For each enabled viewer, resolve config + viewer on UI thread, then spawn worker
             for viewer_field_name in enabled_viewers:
-                # Get fully resolved streaming config from ObjectState (includes inheritance)
-                config = self.state.get_resolved_value(viewer_field_name)
-                backend_enum = config.backend
+                def _stream_to_viewer(field_name=viewer_field_name):
+                    try:
+                        plate_path = Path(self.orchestrator.plate_path)
+                        self._stream_rois_to_viewer([str(roi_zip_path)], plate_path, field_name)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to start ROI streaming to {field_name}: {e}",
+                            exc_info=True,
+                        )
+                        QTimer.singleShot(
+                            0,
+                            lambda field_name=field_name, e=e: QMessageBox.warning(
+                                self,
+                                "Error",
+                                f"Failed to stream ROI to {field_name}: {e}",
+                            ),
+                        )
 
-                # Create closure to capture viewer_config
-                def _make_acquire_and_stream(cfg, field_name, backend):
-                    def _acquire_and_stream():
-                        try:
-                            viewer = self.orchestrator.get_or_create_visualizer(cfg)
-                            # _stream_single_roi_async itself starts a worker thread,
-                            # so we call it here to kick off the streaming flow.
-                            self._stream_single_roi_async(
-                                viewer, roi_zip_path, cfg, backend, cfg.viewer_type
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to acquire {field_name} viewer or start streaming: {e}"
-                            )
-                            from PyQt6.QtCore import QTimer
-
-                            QTimer.singleShot(
-                                0,
-                                lambda field_name=field_name, e=e: QMessageBox.warning(
-                                    self,
-                                    "Error",
-                                    f"Failed to stream ROI to {field_name}: {e}",
-                                ),
-                            )
-
-                    return _acquire_and_stream
-
-                # Spawn the thread with captured config
                 spawn_thread_with_context(
-                    _make_acquire_and_stream(config, viewer_field_name, backend_enum),
-                    name=f"acquire_{viewer_field_name}",
+                    _stream_to_viewer,
+                    name=f"stream_roi_{viewer_field_name}",
                 )
 
             logger.info(f"Started async streaming of ROI file {roi_zip_path.name}")
@@ -1213,99 +1254,6 @@ class ImageBrowserWidget(QWidget):
         except Exception as e:
             logger.error(f"Failed to start ROI streaming: {e}")
             QMessageBox.warning(self, "Error", f"Failed to stream ROI file: {e}")
-
-    def _stream_single_roi_async(
-        self, viewer, roi_zip_path: Path, config, backend_enum, viewer_type: str
-    ):
-        """Worker: load a single ROI file and stream to a viewer in a background thread.
-
-        Heavy operations only:
-        - load_rois_from_zip
-        - viewer.wait_for_ready (long timeout)
-        - filemanager.save
-        """
-        from objectstate import spawn_thread_with_context
-
-        def _worker():
-            try:
-                from pathlib import Path as _Path
-                from PyQt6.QtCore import QTimer
-                from polystore.roi import load_rois_from_zip
-
-                # Load ROIs from disk
-                self._status_update_signal.emit(
-                    f"Loading ROIs from {roi_zip_path.name}..."
-                )
-                rois = load_rois_from_zip(roi_zip_path)
-
-                if not rois:
-                    msg = f"No ROIs found in {roi_zip_path.name}"
-                    self._status_update_signal.emit(msg)
-
-                    # Show info dialog on UI thread
-                    QTimer.singleShot(
-                        0, lambda: QMessageBox.information(self, "No ROIs", msg)
-                    )
-                    return
-
-                # Wait for viewer to be ready (never on UI thread)
-                is_already_running = viewer.wait_for_ready(timeout=0.1)
-                if not is_already_running:
-                    logger.info(
-                        f"Waiting for {viewer_type.capitalize()} viewer on port {viewer.port} to be ready..."
-                    )
-                    if not viewer.wait_for_ready(timeout=15.0):
-                        raise RuntimeError(
-                            f"{viewer_type.capitalize()} viewer on port {viewer.port} failed to become ready"
-                        )
-
-                # Prepare metadata for streaming
-                source = _Path(roi_zip_path).parent.name
-                metadata = {
-                    "port": viewer.port,
-                    "display_config": config,
-                    "microscope_handler": self.orchestrator.microscope_handler,
-                    "plate_path": self.orchestrator.plate_path,
-                    "source": source,
-                }
-
-                # Stream ROIs to viewer backend
-                self._status_update_signal.emit(
-                    f"Streaming ROIs from {roi_zip_path.name} to {viewer_type.capitalize()}..."
-                )
-                self.filemanager.save(
-                    rois,
-                    roi_zip_path,
-                    backend_enum.value,
-                    **metadata,
-                )
-
-                msg = (
-                    f"Streamed {len(rois)} ROIs from {roi_zip_path.name} "
-                    f"to {viewer_type.capitalize()} on port {viewer.port}"
-                )
-                logger.info(msg)
-                self._status_update_signal.emit(msg)
-
-            except Exception as e:  # noqa: BLE001
-                logger.error(
-                    f"Failed to load/stream ROI file {roi_zip_path.name} "
-                    f"to {viewer_type.capitalize()}: {e}"
-                )
-                self._status_update_signal.emit(f"Error: {e}")
-
-                from PyQt6.QtCore import QTimer
-                from openhcs.ui.shared.streaming_service import StreamingService
-
-                # Route to appropriate error dialog on UI thread
-                if StreamingService.is_napari_viewer_type(viewer_type):
-                    QTimer.singleShot(0, lambda: self._show_streaming_error(str(e)))
-                else:
-                    QTimer.singleShot(
-                        0, lambda: self._show_fiji_streaming_error(str(e))
-                    )
-
-        spawn_thread_with_context(_worker, name="stream_roi")
 
     def _populate_table(self, files_dict: Dict[str, Dict]):
         """Populate table with files (images + results) using ImageTableBrowser."""

@@ -479,7 +479,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
         )
         self.status_label = header_parts.status_label
         self._status_scroll = header_parts.status_scroll
-        self.debug_toolbar = DebugToolbarWidget(self)
+        self.debug_toolbar = DebugToolbarWidget(
+            self,
+            style_generator=self.style_generator,
+        )
         self.item_list = create_manager_list_widget(
             color_scheme=self.color_scheme,
             style_generator=self.style_generator,
@@ -652,8 +655,23 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     # ========== Business Logic Methods (Extracted from Textual) ==========
 
+    def _numbered_step_display_name(
+        self, step: FunctionStep, step_index: Optional[int]
+    ) -> tuple[str, str]:
+        """Return UI display name and semantic step name without mutating the step."""
+        step_name: str = step.name or "Unknown Step"
+        if step.debug_pause:
+            step_name = f"Pause | {step_name}"
+
+        if step_index is None:
+            return step_name, step_name
+        return f"{step_index + 1}. {step_name}", step_name
+
     def format_item_for_display(
-        self, step: FunctionStep, live_context_snapshot=None
+        self,
+        step: FunctionStep,
+        live_context_snapshot=None,
+        step_index: Optional[int] = None,
     ) -> Tuple[str, str]:
         """
         Format step for display in the list with constructor value preview.
@@ -664,18 +682,17 @@ class PipelineEditorWidget(AbstractManagerWidget):
         Args:
             step: FunctionStep to format
             live_context_snapshot: IGNORED - kept for API compatibility
+            step_index: Zero-based rendered row index used for UI numbering
 
         Returns:
-            Tuple of (StyledText with segments, step_name)
+            Tuple of (StyledText with segments, semantic step_name)
         """
-        step_name: str = step.name or "Unknown Step"
-        if step.debug_pause:
-            step_name = f"Pause | {step_name}"
+        display_name, step_name = self._numbered_step_display_name(step, step_index)
 
         # Use declarative format from LIST_ITEM_FORMAT
         styled = self.build_item_display_from_format(
             item=step,
-            item_name=step_name,
+            item_name=display_name,
         )
         return styled, step_name
 
@@ -1511,7 +1528,11 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     def _format_item_content(self, item: Any, index: int, context: Any) -> str:
         """Format step for list display (dirty marker added by ABC)."""
-        display_text, _ = self.format_item_for_display(item, context)
+        display_text, _ = self.format_item_for_display(
+            item,
+            context,
+            step_index=index,
+        )
         return display_text
 
     def _get_list_item_tooltip(self, item: Any) -> str:

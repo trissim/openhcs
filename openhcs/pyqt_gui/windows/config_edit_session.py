@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import copy
 import logging
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
 from typing import Any, Type
 
 from openhcs.config_framework import is_global_config_type
@@ -27,6 +27,7 @@ class ConfigEditSession:
     original_config: Any
     global_context_dirty: bool = False
     saving: bool = False
+    _original_global_config_snapshot: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._original_global_config_snapshot = (

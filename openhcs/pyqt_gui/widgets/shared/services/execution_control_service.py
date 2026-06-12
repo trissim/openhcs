@@ -29,13 +29,26 @@ class ExecutionControlService:
         host,
         client_service: ZMQClientService,
         port: int,
-        server_kill_service: ServerKillService | None = None,
+        server_kill_service: ServerKillService,
     ) -> None:
         self._host = host
         self._client_service = client_service
         self._port = port
-        self._server_kill_service = (
-            server_kill_service or ServerKillService.openhcs_default()
+        self._server_kill_service = server_kill_service
+
+    @classmethod
+    def openhcs_default(
+        cls,
+        *,
+        host,
+        client_service: ZMQClientService,
+        port: int,
+    ) -> "ExecutionControlService":
+        return cls(
+            host=host,
+            client_service=client_service,
+            port=port,
+            server_kill_service=ServerKillService.openhcs_default(),
         )
 
     def check_all_completed(self) -> None:

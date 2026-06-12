@@ -19,6 +19,10 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.input_workspace import (
+    InputWorkspacePreparationRequest,
+    InputWorkspacePreparationResult,
+)
 from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.source_bindings_view import SchemaContextSourceInventoryProvider
 from openhcs.core.orchestrator.orchestrator import (
@@ -51,6 +55,10 @@ from openhcs.processing.backends.analysis.consolidate_analysis_results import (
 from pyqt_reactive.theming import ColorScheme
 from openhcs.pyqt_gui.windows.config_window import ConfigWindow
 from openhcs.pyqt_gui.windows.plate_viewer_window import PlateViewerWindow
+from openhcs.pyqt_gui.windows.live_measurements_window import (
+    LiveMeasurementTableModel,
+    LiveMeasurementsWindow,
+)
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.widgets.shared.abstract_manager_widget import (
     AbstractManagerWidget,
@@ -63,6 +71,9 @@ from pyqt_reactive.forms import ParameterFormManager
 from pyqt_reactive.services import ExecutionServerInfo
 from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     BatchWorkflowService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
+    LiveMeasurementAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
     PlateStatusPresenter,
@@ -106,7 +117,6 @@ from openhcs.core.debug import (
 from openhcs.interop.cellprofiler.plate_workspace import (
     CellProfilerPlateWorkspacePreparer,
     CellProfilerPlateWorkspaceRequest,
-    CellProfilerPlateWorkspaceResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,6 +150,7 @@ class PlateManagerAction(str, Enum):
     COMPILE_PLATE = "compile_plate"
     RUN_PLATE = "run_plate"
     CODE_PLATE = "code_plate"
+    VIEW_RESULTS = "view_results"
     VIEW_METADATA = "view_metadata"
 
 
@@ -167,6 +178,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         ("Compile", PlateManagerAction.COMPILE_PLATE.value, "Compile plate pipelines"),
         ("Run", PlateManagerAction.RUN_PLATE.value, "Run/Stop plate execution"),
         ("Code", PlateManagerAction.CODE_PLATE.value, "Generate Python code"),
+        ("Results", PlateManagerAction.VIEW_RESULTS.value, "View live measurement results"),
         ("Viewer", PlateManagerAction.VIEW_METADATA.value, "View plate metadata"),
     ]
     ACTION_REGISTRY = {}
@@ -208,6 +220,10 @@ class PlateManagerWidget(AbstractManagerWidget):
                     lambda widget: widget.action_code_plate,
                 ),
                 WidgetActionRoute(
+                    PlateManagerAction.VIEW_RESULTS,
+                    lambda widget: widget.action_view_live_results,
+                ),
+                WidgetActionRoute(
                     PlateManagerAction.VIEW_METADATA,
                     lambda widget: widget.action_view_metadata,
                 ),
@@ -240,6 +256,7 @@ class PlateManagerWidget(AbstractManagerWidget):
     progress_updated = pyqtSignal(int)
     progress_finished = pyqtSignal()
     debug_snapshot_available = pyqtSignal(object)
+    live_measurement_available = pyqtSignal(object)
     compilation_error = pyqtSignal(str, str)
     initialization_error = pyqtSignal(str, str)
     execution_error = pyqtSignal(str)
@@ -279,6 +296,8 @@ class PlateManagerWidget(AbstractManagerWidget):
         )
         self.execution_state = ManagerExecutionState.IDLE
         self._active_debug_sessions: Dict[str, DebugSession] = {}
+        self.live_measurement_model = LiveMeasurementTableModel()
+        self.live_measurements_window: LiveMeasurementsWindow | None = None
 
         # Track per-plate execution state
         self.plate_execution_ids: Dict[str, str] = {}  # plate_path -> execution_id
@@ -305,6 +324,9 @@ class PlateManagerWidget(AbstractManagerWidget):
         self._batch_workflow_service.add_debug_snapshot_listener(
             self.debug_snapshot_available.emit
         )
+        self._batch_workflow_service.add_live_measurement_listener(
+            self.live_measurement_available.emit
+        )
         self.code_execution_workflow = PlateManagerCodeWorkflow(self)
         self.deletion_workflow = PlateManagerDeletionWorkflow(self)
 
@@ -319,6 +341,8 @@ class PlateManagerWidget(AbstractManagerWidget):
         self._all_plates_completed_signal.connect(
             self._finalize_all_plates_completed_ui
         )
+        self.live_measurement_available.connect(self._on_live_measurement_available)
+        self.plate_selected.connect(self._load_cellprofiler_pipeline_from_orchestrator)
 
         logger.debug("Plate manager widget initialized")
 
@@ -687,6 +711,7 @@ class PlateManagerWidget(AbstractManagerWidget):
 
         added_plates = []
         last_added_path = None
+        preferred_added_path = None
 
         # Get current plate paths from root ObjectState
         root_state = self._ensure_root_state()
@@ -708,12 +733,15 @@ class PlateManagerWidget(AbstractManagerWidget):
                 self._create_orchestrator_for_plate(
                     plate_path,
                     plate_root=registration.plate_root,
+                    cppipe_path=registration.cppipe_path,
                 )
 
                 # Add plate path to root ObjectState
                 new_paths.append(plate_path)
                 added_plates.append(registration.display_name)
                 last_added_path = plate_path
+                if preferred_added_path is None and registration.cppipe_path is not None:
+                    preferred_added_path = plate_path
 
         # Update root ObjectState if any plates were added
         if added_plates:
@@ -722,11 +750,12 @@ class PlateManagerWidget(AbstractManagerWidget):
                 root_state.update_parameter("orchestrator_scope_ids", new_paths)
 
             self.update_item_list()
-            # Select the last added plate to ensure pipeline assignment works correctly
-            if last_added_path:
-                self.selected_plate_path = last_added_path
-                logger.info(f"🔔 EMITTING plate_selected signal for: {last_added_path}")
-                self.plate_selected.emit(last_added_path)
+            # Prefer the first CellProfiler pipeline row in a multi-.cppipe folder.
+            selection_path = preferred_added_path or last_added_path
+            if selection_path:
+                self.selected_plate_path = selection_path
+                logger.info(f"🔔 EMITTING plate_selected signal for: {selection_path}")
+                self.plate_selected.emit(selection_path)
             self.status_message.emit(
                 f"Added {len(added_plates)} plate(s): {', '.join(added_plates)}"
             )
@@ -738,6 +767,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         plate_path: str,
         *,
         plate_root: Path | str | None = None,
+        cppipe_path: Path | str | None = None,
     ) -> ObjectState:
         """
         Create an orchestrator for a plate (in CREATED state, not initialized).
@@ -766,6 +796,14 @@ class PlateManagerWidget(AbstractManagerWidget):
         orchestrator = PipelineOrchestrator(
             plate_path=physical_plate_root,
             storage_registry=plate_registry,
+            input_workspace_preparation=(
+                InputWorkspacePreparationRequest(
+                    selected_path=physical_plate_root,
+                    selected_pipeline_path=Path(cppipe_path),
+                )
+                if cppipe_path is not None
+                else None
+            ),
         )
 
         # Apply any saved config (e.g., from code loading)
@@ -789,42 +827,6 @@ class PlateManagerWidget(AbstractManagerWidget):
         logger.info(f"Created orchestrator for plate (CREATED state): {plate_path}")
 
         return orchestrator_state
-
-    def _orchestrator_for_execution_path(
-        self,
-        plate_path: str,
-        execution_plate_path: Path,
-        orchestrator: PipelineOrchestrator,
-    ) -> PipelineOrchestrator:
-        """Return an orchestrator bound to the prepared execution workspace."""
-
-        current_path = Path(orchestrator.plate_path)
-        execution_path = Path(execution_plate_path)
-        if current_path == execution_path:
-            return orchestrator
-        if orchestrator.state is not OrchestratorState.CREATED:
-            raise RuntimeError(
-                f"Cannot rebind initialized orchestrator {plate_path} from "
-                f"{current_path} to {execution_path}."
-            )
-        replacement = PipelineOrchestrator(
-            plate_path=execution_path,
-            pipeline_config=orchestrator.pipeline_config,
-            storage_registry=_create_storage_registry(),
-        )
-        state = ObjectStateRegistry.get_by_scope(plate_path)
-        if state is None:
-            raise RuntimeError(
-                f"ObjectState not found for orchestrator scope {plate_path!r}."
-            )
-        state.update_object_instance(replacement)
-        logger.info(
-            "Rebound orchestrator scope %s from display plate %s to execution workspace %s",
-            plate_path,
-            current_path,
-            execution_path,
-        )
-        return replacement
 
     # action_delete_plate() REMOVED - now uses ABC's action_delete() template with deletion_workflow
 
@@ -903,6 +905,7 @@ class PlateManagerWidget(AbstractManagerWidget):
                 self._create_orchestrator_for_plate(
                     plate_path,
                     plate_root=plate_root,
+                    cppipe_path=cppipe_path,
                 )
                 orchestrator = ObjectStateRegistry.get_object(plate_path)
 
@@ -910,6 +913,7 @@ class PlateManagerWidget(AbstractManagerWidget):
                 logger.info(
                     f"Orchestrator already initialized for {plate_path}, skipping"
                 )
+                self._load_cellprofiler_pipeline_from_orchestrator(plate_path)
                 self.progress_updated.emit(i + 1)
                 return
 
@@ -918,28 +922,24 @@ class PlateManagerWidget(AbstractManagerWidget):
 
             def do_init():
                 self._ensure_context()
-                cellprofiler_workspace = CellProfilerPlateWorkspacePreparer(
-                    CellProfilerPlateWorkspaceRequest(
-                        plate_root,
-                        cppipe_path=cppipe_path,
+                if cppipe_path is not None:
+                    orchestrator.set_input_workspace_preparation(
+                        InputWorkspacePreparationRequest(
+                            selected_path=plate_root,
+                            selected_pipeline_path=cppipe_path,
+                        )
                     )
-                ).prepare()
-                execution_orchestrator = self._orchestrator_for_execution_path(
-                    plate_path,
-                    cellprofiler_workspace.execution_plate_path,
-                    orchestrator,
-                )
-                execution_orchestrator.initialize()
-                return cellprofiler_workspace
+                orchestrator.initialize()
+                return orchestrator.input_workspace_preparation_result
 
             try:
-                cellprofiler_workspace = await asyncio.get_event_loop().run_in_executor(
+                input_workspace = await asyncio.get_event_loop().run_in_executor(
                     None,
                     do_init,
                 )
                 self._load_cellprofiler_pipeline_for_empty_plate(
                     plate_path,
-                    cellprofiler_workspace,
+                    input_workspace,
                 )
                 self.plate_init_pending.remove(plate_path)
                 self.update_item_list()
@@ -1613,6 +1613,54 @@ class PlateManagerWidget(AbstractManagerWidget):
                     f"Failed to open plate viewer: {str(e)}"
                 )
 
+    def action_view_live_results(self):
+        """Open the live measurement results window."""
+        orchestrator = self._live_results_viewer_orchestrator_for_selection()
+        if self.live_measurements_window is None:
+            self.live_measurements_window = LiveMeasurementsWindow(
+                self.live_measurement_model,
+                orchestrator=orchestrator,
+                color_scheme=self.color_scheme,
+                parent=self,
+            )
+        else:
+            self.live_measurements_window.set_orchestrator(orchestrator)
+        self.live_measurements_window.refresh(select_latest=True)
+        self.live_measurements_window.show()
+        self.live_measurements_window.raise_()
+        self.live_measurements_window.activateWindow()
+
+    def _on_live_measurement_available(
+        self,
+        notification: LiveMeasurementAvailableNotification,
+    ) -> None:
+        self.live_measurement_model.add_notification(notification)
+        if self.live_measurements_window is not None:
+            self.live_measurements_window.set_orchestrator(
+                self._live_results_viewer_orchestrator_for_plate(
+                    notification.event.plate_id
+                )
+            )
+            self.live_measurements_window.refresh(select_latest=True)
+
+    def reset_live_measurements(self) -> None:
+        """Clear retained live measurement previews for a new execution batch."""
+        self.live_measurement_model.clear()
+        if self.live_measurements_window is not None:
+            self.live_measurements_window.refresh()
+
+    def _live_results_viewer_orchestrator_for_selection(self):
+        orchestrator = self.get_selected_orchestrator()
+        if orchestrator is not None and orchestrator.state is OrchestratorState.CREATED:
+            return None
+        return orchestrator
+
+    def _live_results_viewer_orchestrator_for_plate(self, plate_id: str):
+        orchestrator = ObjectStateRegistry.get_object(plate_id)
+        if orchestrator is not None and orchestrator.state is not OrchestratorState.CREATED:
+            return orchestrator
+        return self._live_results_viewer_orchestrator_for_selection()
+
     # ========== UI Helper Methods ==========
 
     # update_item_list() REMOVED - uses ABC template with list update hooks
@@ -1781,43 +1829,68 @@ class PlateManagerWidget(AbstractManagerWidget):
         self.pipeline_editor = pipeline_editor
         self.debug_snapshot_available.connect(pipeline_editor.show_debug_snapshot)
         logger.debug("Pipeline editor reference set in plate manager")
+        for plate in self.plates:
+            self._load_cellprofiler_pipeline_from_orchestrator(str(plate["path"]))
 
     # _find_main_window() moved to AbstractManagerWidget
+
+    def _load_cellprofiler_pipeline_from_orchestrator(self, plate_path: str) -> None:
+        """Seed pipeline editor state from an initialized orchestrator input workspace."""
+
+        orchestrator = ObjectStateRegistry.get_object(plate_path)
+        if not isinstance(orchestrator, PipelineOrchestrator):
+            return
+        self._load_cellprofiler_pipeline_for_empty_plate(
+            plate_path,
+            orchestrator.input_workspace_preparation_result,
+        )
 
     def _load_cellprofiler_pipeline_for_empty_plate(
         self,
         plate_path: str,
-        cellprofiler_workspace: CellProfilerPlateWorkspaceResult,
+        input_workspace: InputWorkspacePreparationResult | None,
     ) -> None:
         """Assign converted CellProfiler steps unless the plate already has a pipeline."""
         if self.pipeline_editor is None:
             return
-        if cellprofiler_workspace.ingestion is None:
+        if input_workspace is None:
+            return
+        if input_workspace.pipeline_import_error is not None:
+            self.status_message.emit(
+                "CellProfiler source workspace initialized; pipeline import failed: "
+                f"{input_workspace.pipeline_import_error.message}"
+            )
+        if input_workspace.source_schema is not None:
+            self.pipeline_editor.set_source_binding_context_for_plate(
+                plate_path,
+                SourceBindingContext(
+                    logical_plate_id=plate_path,
+                    display_plate_root=input_workspace.original_source_root,
+                    execution_plate_path=input_workspace.execution_plate_path,
+                    cppipe_path=input_workspace.pipeline_path,
+                    source_schema=input_workspace.source_schema,
+                    inventory_provider=SchemaContextSourceInventoryProvider(
+                        input_workspace.execution_plate_path,
+                    ),
+                    import_result=(
+                        input_workspace.prepared_pipeline.import_result
+                        if input_workspace.prepared_pipeline is not None
+                        else None
+                    ),
+                ),
+            )
+        if input_workspace.prepared_pipeline is None:
             return
         pipeline_steps = list(
-            cellprofiler_workspace.ingestion.prepared_pipeline.pipeline.steps
+            input_workspace.prepared_pipeline.pipeline.steps
         )
         if not pipeline_steps:
             raise RuntimeError(
                 f"CellProfiler pipeline import produced no steps for {plate_path}."
             )
-        import_result = cellprofiler_workspace.ingestion.prepared_pipeline.import_result
+        import_result = input_workspace.prepared_pipeline.import_result
         self.pipeline_editor.cellprofiler_import_results_by_plate[plate_path] = (
             import_result
-        )
-        self.pipeline_editor.set_source_binding_context_for_plate(
-            plate_path,
-            SourceBindingContext(
-                logical_plate_id=plate_path,
-                display_plate_root=cellprofiler_workspace.plate_root,
-                execution_plate_path=cellprofiler_workspace.execution_plate_path,
-                cppipe_path=cellprofiler_workspace.cppipe_path,
-                source_schema=import_result.source_schema,
-                inventory_provider=SchemaContextSourceInventoryProvider(
-                    cellprofiler_workspace.execution_plate_path,
-                ),
-                import_result=import_result,
-            ),
         )
         if self.pipeline_editor.get_pipeline_for_plate(plate_path):
             return

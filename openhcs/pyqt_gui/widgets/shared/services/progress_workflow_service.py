@@ -10,11 +10,15 @@ from PyQt6.QtCore import QTimer
 from openhcs.core.progress import ProgressEvent
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
-    build_execution_runtime_projection_from_registry,
+    build_execution_runtime_projection,
 )
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugProgressNotificationService,
+)
+from openhcs.core.progress.live_measurements import LiveMeasurementPayloadError
+from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
+    LiveMeasurementProgressNotificationService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
@@ -44,6 +48,7 @@ class ProgressWorkflowService:
         server_info_parser: ServerInfoParserABC,
         debug_notifications: DebugProgressNotificationService,
         status_presenter: ExecutionServerStatusPresenter,
+        live_measurements: LiveMeasurementProgressNotificationService | None = None,
         on_dirty: Callable[[], None] | None = None,
         start_timer: bool = True,
     ) -> None:
@@ -51,6 +56,9 @@ class ProgressWorkflowService:
         self._client_service = client_service
         self._server_info_parser = server_info_parser
         self._debug_notifications = debug_notifications
+        self._live_measurements = (
+            live_measurements or LiveMeasurementProgressNotificationService()
+        )
         self._status_presenter = status_presenter
         self._runtime_projection = ExecutionRuntimeProjection()
         self._progress_dirty = False
@@ -93,8 +101,13 @@ class ProgressWorkflowService:
         if not self._progress_dirty:
             return
         self._progress_dirty = False
-        self._runtime_projection = build_execution_runtime_projection_from_registry(
-            self._host._progress_tracker
+        progress_tracker = self._host._progress_tracker
+        events_by_execution = {
+            execution_id: progress_tracker.get_events(execution_id)
+            for execution_id in progress_tracker.get_execution_ids()
+        }
+        self._runtime_projection = build_execution_runtime_projection(
+            events_by_execution
         )
         self._host.runtime_progress_projection = self._runtime_projection
         self._host.execution_server_info = self.server_info_snapshot()
@@ -109,6 +122,17 @@ class ProgressWorkflowService:
                 event,
                 zmq_client=self._client_service.zmq_client,
             )
+            try:
+                self._live_measurements.notify_from_progress_event(event)
+            except LiveMeasurementPayloadError as error:
+                logger.warning(
+                    "Malformed live measurement progress context for "
+                    "execution_id=%s axis_id=%s step_name=%s: %s",
+                    event.execution_id,
+                    event.axis_id,
+                    event.step_name,
+                    error,
+                )
         except Exception as error:
             logger.warning("Failed to parse/register progress event: %s", error)
         finally:

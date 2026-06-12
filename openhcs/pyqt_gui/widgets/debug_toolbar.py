@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PyQt6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
 from openhcs.core.debug import DebugCommand, DebugCommandType
+from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,24 +56,36 @@ class DebugToolbarWidget(QWidget):
         DebugToolbarButtonSpec("Stop", DebugCommandType.STOP, "Stop debug mode"),
     )
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        style_generator=None,
+    ) -> None:
         super().__init__(parent)
+        self.button_panel: ButtonPanel | None = None
         self.buttons: dict[DebugCommandType, QPushButton] = {}
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 0, 2, 0)
-        layout.setSpacing(4)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        for spec in self.BUTTON_SPECS:
-            button = QPushButton(spec.label)
-            button.setToolTip(spec.tooltip)
-            button.clicked.connect(
-                lambda _checked=False, command_type=spec.command_type: (
-                    self.command_requested.emit(DebugCommand(command_type))
-                )
-            )
-            self.buttons[spec.command_type] = button
-            layout.addWidget(button)
-        layout.addStretch(1)
+        self.button_panel = ButtonPanel(
+            button_configs=[
+                (spec.label, spec.command_type.value, spec.tooltip)
+                for spec in self.BUTTON_SPECS
+            ],
+            on_action=self._emit_command,
+            style_generator=style_generator,
+            parent=self,
+        )
+        self.buttons = {
+            DebugCommandType(action_id): button
+            for action_id, button in self.button_panel.buttons.items()
+        }
+        layout.addWidget(self.button_panel)
+
+    def _emit_command(self, action_id: str) -> None:
+        self.command_requested.emit(DebugCommand(DebugCommandType(action_id)))
 
     def set_controls_enabled(self, enabled: bool) -> None:
         """Enable or disable all debug controls together."""

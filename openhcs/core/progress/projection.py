@@ -184,11 +184,3 @@ def build_execution_runtime_projection(
         adapter=_PROJECTION_ADAPTER,
     )
     return _from_generic_projection(generic_projection)
-
-
-def build_execution_runtime_projection_from_registry(progress_registry) -> ExecutionRuntimeProjection:
-    events_by_execution = {
-        execution_id: progress_registry.get_events(execution_id)
-        for execution_id in progress_registry.get_execution_ids()
-    }
-    return build_execution_runtime_projection(events_by_execution)

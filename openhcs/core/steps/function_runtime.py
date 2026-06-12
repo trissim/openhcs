@@ -1544,7 +1544,7 @@ class PatternGroupRuntime:
     def _declares_source_schema_workspace_projection(
         metadata: Mapping[str, Any],
     ) -> bool:
-        from openhcs.microscopes.openhcs import FIELDS, workspace_mapping_source_path
+        from openhcs.microscopes.openhcs import FIELDS
 
         return any(
             bool(subdirectory.get("workspace_mapping"))
@@ -1569,7 +1569,7 @@ class PatternGroupRuntime:
         if projection is not None:
             return projection
 
-        from openhcs.microscopes.openhcs import FIELDS
+        from openhcs.microscopes.openhcs import FIELDS, workspace_mapping_source_path
 
         workspace_source_paths: dict[str, str] = {}
         source_metadata_by_path: dict[str, Mapping[str, str]] = {}

@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from openhcs.config_framework.object_state import ObjectStateRegistry
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileWorkflowService,
@@ -36,6 +38,8 @@ class PlatePipelineRequestBuilder:
         plate_data: Dict[str, Any],
     ) -> CompileJob:
         plate_path = str(plate_data["path"])
+        execution_plate_path = self._execution_plate_path_for_scope(plate_path)
+        selected_pipeline_path = self._selected_pipeline_path_for_scope(plate_path)
         definition_pipeline = self._definition_pipeline_for_plate(
             plate_path=plate_path,
             display_name=str(plate_data["name"]),
@@ -50,6 +54,8 @@ class PlatePipelineRequestBuilder:
         )
         return CompileJob(
             plate_path=plate_path,
+            execution_plate_path=execution_plate_path,
+            selected_pipeline_path=selected_pipeline_path,
             plate_name=str(plate_data["name"]),
             definition_pipeline=definition_pipeline,
             pipeline_config=pipeline_config,
@@ -57,6 +63,12 @@ class PlatePipelineRequestBuilder:
 
     def build_run_spec(self, plate_path: str) -> RunSpec:
         resolved_plate_path = str(plate_path)
+        execution_plate_path = self._execution_plate_path_for_scope(
+            resolved_plate_path
+        )
+        selected_pipeline_path = self._selected_pipeline_path_for_scope(
+            resolved_plate_path
+        )
         definition_pipeline = self._definition_pipeline_for_plate(
             plate_path=resolved_plate_path,
             display_name=resolved_plate_path,
@@ -67,6 +79,8 @@ class PlatePipelineRequestBuilder:
         )
         return RunSpec(
             plate_path=resolved_plate_path,
+            execution_plate_path=execution_plate_path,
+            selected_pipeline_path=selected_pipeline_path,
             definition_pipeline=definition_pipeline,
             global_config=self._host.global_config,
             pipeline_config=pipeline_config,
@@ -89,11 +103,44 @@ class PlatePipelineRequestBuilder:
         )
         return CompileJob(
             plate_path=plate_path,
+            execution_plate_path=run_spec.execution_plate_path,
+            selected_pipeline_path=run_spec.selected_pipeline_path,
             plate_name=plate_path,
             definition_pipeline=definition_pipeline,
             pipeline_config=run_spec.pipeline_config,
             config_params=config_params,
         )
+
+    @staticmethod
+    def _execution_plate_path_for_scope(plate_path: str) -> str:
+        orchestrator = ObjectStateRegistry.get_object(plate_path)
+        if not isinstance(orchestrator, PipelineOrchestrator):
+            raise RuntimeError(
+                f"No PipelineOrchestrator registered for plate scope {plate_path!r}."
+            )
+        input_workspace = orchestrator.input_workspace_preparation_result
+        if input_workspace is not None:
+            return str(input_workspace.execution_plate_path)
+        if orchestrator.plate_path is None:
+            raise RuntimeError(
+                f"PipelineOrchestrator for plate scope {plate_path!r} has no execution plate path."
+            )
+        return str(orchestrator.plate_path)
+
+    @staticmethod
+    def _selected_pipeline_path_for_scope(plate_path: str) -> str | None:
+        orchestrator = ObjectStateRegistry.get_object(plate_path)
+        if not isinstance(orchestrator, PipelineOrchestrator):
+            raise RuntimeError(
+                f"No PipelineOrchestrator registered for plate scope {plate_path!r}."
+            )
+        input_workspace = orchestrator.input_workspace_preparation_result
+        if input_workspace is not None and input_workspace.pipeline_path is not None:
+            return str(input_workspace.pipeline_path)
+        request = orchestrator.input_workspace_preparation
+        if request is not None and request.selected_pipeline_path is not None:
+            return str(request.selected_pipeline_path)
+        return None
 
     def _definition_pipeline_for_plate(
         self,

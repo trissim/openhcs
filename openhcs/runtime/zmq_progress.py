@@ -127,6 +127,21 @@ class ZMQProgressEmitter:
             percent=100.0,
         )
 
+    def compile_failed(self, *, axis_ids: list[str], error: str) -> None:
+        failed_axis_ids = sorted(axis_ids) if axis_ids else ["pipeline"]
+        for axis_id in failed_axis_ids:
+            self.emit(
+                axis_id=axis_id,
+                step_name="compilation",
+                phase=ProgressPhase.COMPILE,
+                status=ProgressStatus.FAILED,
+                completed=0,
+                total=1,
+                percent=0.0,
+                error=error,
+                message=error,
+            )
+
     def emit(self, **kwargs) -> None:
         event = ProgressEvent(
             timestamp=time.time(),

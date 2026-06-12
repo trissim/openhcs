@@ -14,6 +14,8 @@ class ZMQExecutionRequestPayload:
     """Normalized execution request fields used by server execution phases."""
 
     plate_id: str
+    execution_plate_id: str | None
+    selected_pipeline_path: str | None
     pipeline_code: str
     config_params: dict | None
     config_code: str | None
@@ -29,6 +31,8 @@ class ZMQExecutionRequestPayload:
     ) -> "ZMQExecutionRequestPayload":
         return cls(
             plate_id=request.plate_id,
+            execution_plate_id=request.execution_plate_id,
+            selected_pipeline_path=request.selected_pipeline_path,
             pipeline_code=request.pipeline_code,
             config_params=request.config_params,
             config_code=request.config_code,
@@ -57,6 +61,8 @@ class ZMQExecutionRequestPayload:
     def signature_for_config_params(self, config_params: dict | None) -> str:
         payload = {
             MessageFields.PLATE_ID: self.plate_id,
+            MessageFields.EXECUTION_PLATE_ID: self.execution_plate_id,
+            MessageFields.SELECTED_PIPELINE_PATH: self.selected_pipeline_path,
             MessageFields.PIPELINE_CODE: self.pipeline_code,
             MessageFields.CONFIG_PARAMS: config_params,
             MessageFields.CONFIG_CODE: self.config_code,
@@ -64,4 +70,3 @@ class ZMQExecutionRequestPayload:
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-

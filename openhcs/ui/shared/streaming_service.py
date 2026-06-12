@@ -7,10 +7,11 @@ on viewer_type. All heavy operations run in background threads.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
 
 from objectstate import spawn_thread_with_context
 
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 # Chunk size to prevent file descriptor exhaustion
 # Each image creates a shared memory segment (file descriptor on Linux)
 CHUNK_SIZE = 50
+ROI_ARCHIVE_SUFFIX = ".roi.zip"
+SINGLE_PLANE_COMPONENT_DEFAULTS: Mapping[str, object] = {
+    "site": 1,
+    "channel": 1,
+    "z_index": 1,
+    "timepoint": 1,
+}
+SOURCE_FILENAME_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
 ViewerType = str
 NAPARI_VIEWER_TOKEN = "napari"
@@ -140,6 +149,103 @@ class StreamingService:
 
     _get_display_name = display_name_for_viewer_type
 
+    @staticmethod
+    def _source_for_stream_paths(paths: list[str], fallback: str) -> str:
+        if not paths:
+            return fallback
+        parent_name = Path(paths[0]).parent.name
+        return parent_name or fallback
+
+    @staticmethod
+    def _roi_artifact_stem(filename: str) -> str:
+        name = Path(filename).name
+        if name.lower().endswith(ROI_ARCHIVE_SUFFIX):
+            return name[: -len(ROI_ARCHIVE_SUFFIX)]
+        return Path(name).stem
+
+    @classmethod
+    def _source_filename_candidates_for_roi(cls, filename: str) -> tuple[str, ...]:
+        """Return plausible source-image names for an analysis ROI artifact."""
+        candidates: list[str] = []
+
+        def add(value: str) -> None:
+            if value and value not in candidates:
+                candidates.append(value)
+
+        name = Path(filename).name
+        stem = cls._roi_artifact_stem(name)
+        add(name)
+        add(stem)
+
+        bases = [stem]
+        for pattern in (
+            r"^(?P<base>.+)_step\d+_rois$",
+            r"^(?P<base>.+)_step\d+$",
+            r"^(?P<base>.+)_rois$",
+        ):
+            match = re.match(pattern, stem)
+            if match:
+                bases.append(match.group("base"))
+
+        parts = stem.split("_")
+        for end in range(len(parts) - 1, 0, -1):
+            bases.append("_".join(parts[:end]))
+
+        for base in bases:
+            add(base)
+            if not Path(base).suffix:
+                for extension in SOURCE_FILENAME_EXTENSIONS:
+                    add(f"{base}{extension}")
+
+        return tuple(candidates)
+
+    @staticmethod
+    def _complete_stream_component_metadata(
+        metadata: Mapping[str, Any] | None,
+        *,
+        filename: str,
+        config: object,
+    ) -> dict[str, Any]:
+        """Fill missing display axes so viewer review can place a standalone ROI."""
+        complete = dict(metadata or {})
+        component_order = set(getattr(config, "COMPONENT_ORDER", ()))
+        expected_components = component_order or {
+            "well",
+            *SINGLE_PLANE_COMPONENT_DEFAULTS,
+        }
+
+        if "well" in expected_components and complete.get("well") is None:
+            complete["well"] = StreamingService._roi_artifact_stem(filename)
+
+        for component, default in SINGLE_PLANE_COMPONENT_DEFAULTS.items():
+            if component in expected_components and complete.get(component) is None:
+                complete[component] = default
+
+        return complete
+
+    def _roi_component_metadata_by_path(
+        self,
+        paths: list[str],
+        config: object,
+    ) -> dict[str, dict[str, Any]]:
+        parser = self.microscope_handler.parser
+        metadata_by_path: dict[str, dict[str, Any]] = {}
+
+        for path in paths:
+            parsed: Mapping[str, Any] | None = None
+            for candidate in self._source_filename_candidates_for_roi(path):
+                parsed = parser.parse_filename(candidate)
+                if parsed is not None:
+                    break
+
+            metadata_by_path[path] = self._complete_stream_component_metadata(
+                parsed,
+                filename=path,
+                config=config,
+            )
+
+        return metadata_by_path
+
     @classmethod
     def supported_viewer_types(cls):
         """Return supported streaming config field keys.
@@ -241,10 +347,9 @@ class StreamingService:
                         f"Loaded chunk {chunk_idx + 1}/{num_chunks}: {len(image_data_list)} images"
                     )
 
-                    source = (
-                        Path(file_paths[0]).parent.name
-                        if file_paths
-                        else "unknown_source"
+                    source = self._source_for_stream_paths(
+                        file_paths,
+                        "selected_images",
                     )
                     metadata = StreamingMetadata.from_viewer_context(
                         viewer=context.viewer,
@@ -331,7 +436,7 @@ class StreamingService:
                     len(paths),
                 )
 
-                source = Path(paths[0]).parent.name if paths else "unknown_source"
+                source = self._source_for_stream_paths(paths, "selected_rois")
                 metadata = StreamingMetadata.from_viewer_context(
                     viewer=context.viewer,
                     config=context.config,
@@ -339,6 +444,9 @@ class StreamingService:
                     plate_path=context.plate_path,
                     source=source,
                 ).to_backend_kwargs()
+                metadata["component_metadata_by_path"] = (
+                    self._roi_component_metadata_by_path(paths, context.config)
+                )
 
                 context.status_callback(
                     f"Streaming {len(paths)} ROI file(s) to {display_name}..."

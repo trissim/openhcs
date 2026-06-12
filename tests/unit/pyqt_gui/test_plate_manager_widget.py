@@ -8,9 +8,13 @@ from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from pyqt_reactive.theming import ColorScheme
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.input_workspace import InputWorkspacePreparationResult
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
@@ -136,6 +140,47 @@ class TestPlateManagerWidget:
         assert pipeline_editor.changed_steps is None
         close_widget(widget)
 
+    def test_plate_selection_seeds_cellprofiler_pipeline_before_editor_signal(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        pipeline_editor = PlatePipelineEditorRecorder()
+        widget.pipeline_editor = pipeline_editor
+        service_adapter = PlateManagerServiceStub()
+        ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = f"{plate_root}::cppipe::second"
+        orchestrator = PipelineOrchestrator(plate_path=plate_root)
+        orchestrator.input_workspace_preparation_result = (
+            CellProfilerWorkspaceResultFixture.with_steps(
+                (FunctionStep(func=lambda image: image, name="Second"),)
+            )
+        )
+        ObjectStateRegistry.register(
+            ObjectState(object_instance=orchestrator, scope_id=plate_scope),
+            _skip_snapshot=True,
+        )
+        signal_observations = []
+        widget.plate_selected.connect(
+            lambda _plate_path: signal_observations.append(
+                pipeline_editor.updated_pipeline
+            )
+        )
+
+        widget.selected_plate_path = plate_scope
+        widget.plate_selected.emit(plate_scope)
+
+        assert signal_observations == [
+            (plate_scope, pipeline_editor.pipeline_steps)
+        ]
+        assert len(pipeline_editor.pipeline_steps) == 1
+        close_widget(widget)
+        ObjectStateRegistry.clear()
+
 
 class PlatePipelineChangedSignalRecorder:
     """Signal-like recorder for pipeline_changed emissions."""
@@ -184,29 +229,21 @@ class PlatePipelineEditorRecorder:
 class CellProfilerWorkspaceResultFixture:
     """Minimal CellProfiler workspace result carrying prepared pipeline steps."""
 
-    ingestion: object
-    plate_root: Path = Path("/source")
-    cppipe_path: Path | None = Path("/source/pipeline.cppipe")
-    execution_plate_path: Path = Path("/execution")
-
     @classmethod
     def with_steps(cls, steps):
-        return cls(
-            ingestion=CellProfilerIngestionFixture(
-                prepared_pipeline=CellProfilerPreparedPipelineFixture(
+        return InputWorkspacePreparationResult(
+            original_source_root=Path("/source"),
+            execution_plate_path=Path("/execution"),
+            pipeline_path=Path("/source/pipeline.cppipe"),
+            source_schema=PipelineImageSchema.empty(),
+            prepared_pipeline=CellProfilerPreparedPipelineFixture(
+                pipeline=CellProfilerPipelineFixture(steps=steps),
+                import_result=SimpleNamespace(
                     pipeline=CellProfilerPipelineFixture(steps=steps),
-                    import_result=SimpleNamespace(
-                        pipeline=CellProfilerPipelineFixture(steps=steps),
-                        source_schema=PipelineImageSchema.empty(),
-                    ),
-                )
-            )
+                    source_schema=PipelineImageSchema.empty(),
+                ),
+            ),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerIngestionFixture:
-    prepared_pipeline: object
 
 
 @dataclass(frozen=True, slots=True)

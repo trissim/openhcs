@@ -497,13 +497,27 @@ class OpenHCSMainWindow(QMainWindow):
         """Setup application status bar."""
         self.status_bar = self.statusBar()
 
-        # Add time-travel widget to LEFT side of status bar
+        # Add time-travel and pipeline debug controls to LEFT side of status bar.
         # Note: Don't use showMessage() as it hides addWidget() widgets
         from openhcs.pyqt_gui.widgets.shared.time_travel_widget import TimeTravelWidget
 
         color_scheme = self.service_adapter.get_current_color_scheme()
+        self.bottom_control_panel = QWidget(self)
+        bottom_control_layout = QVBoxLayout(self.bottom_control_panel)
+        bottom_control_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_control_layout.setSpacing(1)
+
         self.time_travel_widget = TimeTravelWidget(color_scheme=color_scheme)
-        self.status_bar.addWidget(self.time_travel_widget)
+        bottom_control_layout.addWidget(self.time_travel_widget)
+
+        debug_toolbar = getattr(self.pipeline_editor_widget, "debug_toolbar", None)
+        if debug_toolbar is not None:
+            pipeline_layout = self.pipeline_editor_widget.layout()
+            if pipeline_layout is not None:
+                pipeline_layout.removeWidget(debug_toolbar)
+            bottom_control_layout.addWidget(debug_toolbar)
+
+        self.status_bar.addWidget(self.bottom_control_panel, 1)
 
         self._status_progress_bar = QProgressBar()
         self._status_progress_bar.setVisible(False)

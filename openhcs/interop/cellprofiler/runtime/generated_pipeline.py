@@ -686,17 +686,53 @@ class CellProfilerPipelineRuntimeRebinder:
 
     def rebind(self, pipeline_steps: Sequence[Any]) -> list[Any]:
         """Return steps with raw CellProfiler functions rebound to runtime callables."""
+        pipeline_steps = list(pipeline_steps)
+        if self._already_runtime_bound(pipeline_steps):
+            return pipeline_steps
         CellProfilerModuleContractRegistry.register(
             self.generated_module_name,
             self.contracts_by_module_num,
         )
         module = ModuleType(self.generated_module_name)
-        module.pipeline_steps = list(pipeline_steps)
+        module.pipeline_steps = pipeline_steps
         GeneratedPipelineRuntimeBindings(
             module,
             self.contracts_by_module_num,
         ).apply()
         return list(module.pipeline_steps)
+
+    def _already_runtime_bound(self, pipeline_steps: Sequence[Any]) -> bool:
+        from openhcs.interop.cellprofiler.runtime.module_execution import (
+            CellProfilerRuntimeCallable,
+        )
+
+        expected_module_names = tuple(
+            contract.contract.module_name
+            for contract in CellProfilerGeneratedStepContracts(
+                self.contracts_by_module_num
+            ).ordered()
+        )
+        actual_module_names: list[str] = []
+        for step in pipeline_steps:
+            if not isinstance(step, FunctionStep):
+                continue
+            for func in self._function_spec_callables(step.func):
+                if isinstance(func, CellProfilerRuntimeCallable):
+                    actual_module_names.append(func.contract.module_name)
+        return tuple(actual_module_names) == expected_module_names
+
+    def _function_spec_callables(self, func_spec: Any) -> Iterator[Callable[..., Any]]:
+        if callable(func_spec):
+            yield func_spec
+            return
+        if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
+            func = func_spec[0]
+            if callable(func):
+                yield func
+            return
+        if isinstance(func_spec, list):
+            for item in func_spec:
+                yield from self._function_spec_callables(item)
 
 
 @dataclass(frozen=True, slots=True)

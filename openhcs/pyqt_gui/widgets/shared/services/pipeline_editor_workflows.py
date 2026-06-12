@@ -511,6 +511,10 @@ class PipelineEditorListWorkflow:
         self.editor._normalize_step_scope_tokens(register=False)
         self.editor.update_item_list()
         self.editor.update_button_states()
+        self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
+        GuiEventBusBroadcaster(self.editor.event_bus).pipeline_changed(
+            self.editor.pipeline_steps
+        )
 
 
 @dataclass(frozen=True, slots=True)

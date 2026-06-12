@@ -50,6 +50,8 @@ __version__ = "1.0.0"
 # Public API - Types
 from .types import (
     ProgressEvent,
+    ProgressEventPayload,
+    ProgressIdentity,
     ProgressPhase,
     ProgressStatus,
     ProgressChannel,

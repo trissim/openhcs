@@ -151,10 +151,12 @@ class DebugWorkflowService:
         if self._client_service.zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
         plate_path = run_spec.plate_path
+        execution_plate_path = run_spec.execution_plate_path
         definition_pipeline = run_spec.definition_pipeline
         logger.info(
-            "Submit debug run: plate=%s artifact_id=%s steps=%d fingerprint=%s",
+            "Submit debug run: plate=%s execution_plate=%s artifact_id=%s steps=%d fingerprint=%s",
             plate_path,
+            execution_plate_path,
             compile_artifact_id,
             len(definition_pipeline),
             CompileWorkflowService.pipeline_fingerprint(definition_pipeline),
@@ -164,6 +166,8 @@ class DebugWorkflowService:
             return self._client_service.zmq_client.submit_debug_pipeline(
                 OpenHCSExecutionSubmission(
                     plate_id=plate_path,
+                    execution_plate_id=execution_plate_path,
+                    selected_pipeline_path=run_spec.selected_pipeline_path,
                     pipeline_steps=definition_pipeline,
                     global_config=run_spec.global_config,
                     pipeline_config=run_spec.pipeline_config,

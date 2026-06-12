@@ -28,6 +28,8 @@ class OpenHCSExecutionSubmission:
     plate_id: Any
     pipeline_steps: Any
     global_config: Any
+    execution_plate_id: Any = None
+    selected_pipeline_path: Any = None
     pipeline_config: Any = None
     config_params: Any = None
     compile_artifact_id: Any = None
@@ -36,6 +38,8 @@ class OpenHCSExecutionSubmission:
     def to_task(self) -> dict[str, Any]:
         task = {
             "plate_id": self.plate_id,
+            "execution_plate_id": self.execution_plate_id,
+            "selected_pipeline_path": self.selected_pipeline_path,
             "pipeline_steps": self.pipeline_steps,
             "global_config": self.global_config,
             "pipeline_config": self.pipeline_config,
@@ -52,6 +56,8 @@ class OpenHCSExecutionSubmission:
             plate_id=self.plate_id,
             pipeline_steps=self.pipeline_steps,
             global_config=self.global_config,
+            execution_plate_id=self.execution_plate_id,
+            selected_pipeline_path=self.selected_pipeline_path,
             pipeline_config=self.pipeline_config,
             config_params=config_params,
             compile_artifact_id=self.compile_artifact_id,
@@ -63,6 +69,8 @@ class OpenHCSExecutionSubmission:
             plate_id=self.plate_id,
             pipeline_steps=self.pipeline_steps,
             global_config=self.global_config,
+            execution_plate_id=self.execution_plate_id,
+            selected_pipeline_path=self.selected_pipeline_path,
             pipeline_config=self.pipeline_config,
             config_params=self.config_params,
             compile_artifact_id=self.compile_artifact_id,
@@ -97,6 +105,8 @@ class ZMQExecutionClient(ExecutionClient):
 
         plate_id = task.get("plate_id")
         pipeline_steps = task.get("pipeline_steps")
+        execution_plate_id = task.get("execution_plate_id")
+        selected_pipeline_path = task.get("selected_pipeline_path")
         global_config = task.get("global_config")
         pipeline_config = task.get("pipeline_config")
         config_params = task.get("config_params")
@@ -119,6 +129,10 @@ class ZMQExecutionClient(ExecutionClient):
             "plate_id": str(plate_id),
             "pipeline_code": pipeline_code,
         }
+        if execution_plate_id is not None:
+            request["execution_plate_id"] = str(execution_plate_id)
+        if selected_pipeline_path is not None:
+            request["selected_pipeline_path"] = str(selected_pipeline_path)
         pipeline_sha = hashlib.sha256(pipeline_code.encode("utf-8")).hexdigest()[:12]
         if compile_only:
             request["compile_only"] = True

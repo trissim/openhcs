@@ -42,6 +42,22 @@ class RuntimeArtifactLocation:
             raise ValueError("RuntimeArtifactLocation.backend cannot be empty.")
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeStoreObservationCursor:
+    """Cursor into the append-only runtime artifact observation stream."""
+
+    index: int
+    revision: int
+
+    def __post_init__(self) -> None:
+        if self.index < 0:
+            raise ValueError("RuntimeStoreObservationCursor.index cannot be negative.")
+        if self.revision < 0:
+            raise ValueError(
+                "RuntimeStoreObservationCursor.revision cannot be negative."
+            )
+
+
 class RuntimeArtifactQueryTarget:
     """Nominal runtime-artifact address matched after semantic key fields."""
 
@@ -301,6 +317,26 @@ class RuntimeValueStore:
     def observed_values(self) -> tuple[StoredRuntimeValue, ...]:
         """Return every runtime artifact write in insertion order."""
         return tuple(self._observation_records)
+
+    def observation_cursor(self) -> RuntimeStoreObservationCursor:
+        """Return a cursor for future observation-delta queries."""
+        return RuntimeStoreObservationCursor(
+            index=len(self._observation_records),
+            revision=self._revision,
+        )
+
+    def observed_values_after(
+        self,
+        cursor: RuntimeStoreObservationCursor,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        """Return runtime artifact writes recorded after ``cursor``."""
+        if cursor.index > len(self._observation_records):
+            raise ValueError(
+                "RuntimeStoreObservationCursor.index is beyond the current "
+                f"observation stream length: {cursor.index} > "
+                f"{len(self._observation_records)}."
+            )
+        return tuple(self._observation_records[cursor.index :])
 
     def clear(self) -> None:
         """Release every runtime artifact record owned by this execution context."""
