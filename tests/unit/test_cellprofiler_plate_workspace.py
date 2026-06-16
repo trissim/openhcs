@@ -168,6 +168,31 @@ def test_prepare_cellprofiler_input_workspace_preserves_external_object_inputs(
     )
 
 
+def test_prepare_cellprofiler_input_workspace_refreshes_stale_root_metadata(
+    tmp_path: Path,
+) -> None:
+    fixture = CellProfilerPlateWorkspaceFixture(tmp_path / "AdvancedSegmentation")
+    image_dir = fixture.plate_root / "BBBC022_20585_AE"
+    image_dir.mkdir(parents=True)
+    tifffile.imwrite(
+        image_dir / "A01_s1_D.TIF",
+        np.full((4, 4), 1, dtype=np.uint16),
+    )
+    fixture.write_names_and_types_cppipe("BBBC022_Analysis_Final")
+    (fixture.plate_root / "openhcs_metadata.json").write_text("{}", encoding="utf-8")
+
+    result = CellProfilerPlateWorkspacePreparer(
+        CellProfilerPlateWorkspaceRequest.from_paths(fixture.plate_root)
+    ).prepare_input_workspace()
+
+    assert result.original_source_root == image_dir
+    assert result.execution_plate_path == fixture.plate_root
+    assert result.materialization is not None
+    assert set(result.materialization.primary_mappings) == {
+        "A01_s001_w1_z001_t001.TIF",
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerPlateWorkspaceFixture:
     """Test authority for a minimal CellProfiler source folder."""

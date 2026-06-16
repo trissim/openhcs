@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
-from openhcs.core.source_bindings import MetadataSource
 from openhcs.core.source_matching import is_image_path, source_filters_match
 from openhcs.core.source_schema_workspace import (
     SourceSchemaImageSetSelection,
@@ -29,6 +29,10 @@ from openhcs.interop.cellprofiler.source_schema import compile_image_schema
 
 CellProfilerSourcePathExclusionTypes: TypeAlias = tuple[
     type["CellProfilerSourcePathExclusion"], ...
+]
+CellProfilerSourceSchemaMaterializerCallable: TypeAlias = Callable[
+    [Path, Path, PipelineImageSchema],
+    SourceSchemaWorkspaceMaterialization,
 ]
 
 
@@ -52,24 +56,72 @@ class CellProfilerSourceSchemaWorkspaceRequest:
     materialize_skipped_save_images: bool = True
     materialize_terminal_images: bool = True
 
+    @classmethod
+    def from_paths(
+        cls,
+        *,
+        source_root: Path | str,
+        cppipe_path: Path | str,
+        workspace_root: Path | str,
+        generated_pipeline_path: Path | str,
+        filemanager: FileManagerLike | None = None,
+        cppipe_filemanager: FileManagerLike | None = None,
+        generated_pipeline_filemanager: FileManagerLike | None = None,
+        source_backend: Backend = Backend.DISK,
+        workspace_backend: Backend = Backend.DISK,
+        cppipe_backend: Backend = Backend.DISK,
+        generated_pipeline_backend: Backend = Backend.DISK,
+        image_set_selection: SourceSchemaImageSetSelection | None = None,
+        prune_dead_unmaterialized_artifact_steps: bool = False,
+        materialize_skipped_save_images: bool = True,
+        materialize_terminal_images: bool = True,
+    ) -> "CellProfilerSourceSchemaWorkspaceRequest":
+        normalized_cppipe_path = Path(cppipe_path)
+        normalized_generated_pipeline_path = Path(generated_pipeline_path)
+        cls._validate_pipeline_paths(
+            normalized_cppipe_path,
+            normalized_generated_pipeline_path,
+        )
+        return cls(
+            source_root=Path(source_root),
+            cppipe_path=normalized_cppipe_path,
+            workspace_root=Path(workspace_root),
+            generated_pipeline_path=normalized_generated_pipeline_path,
+            filemanager=filemanager,
+            cppipe_filemanager=cppipe_filemanager,
+            generated_pipeline_filemanager=generated_pipeline_filemanager,
+            source_backend=source_backend,
+            workspace_backend=workspace_backend,
+            cppipe_backend=cppipe_backend,
+            generated_pipeline_backend=generated_pipeline_backend,
+            image_set_selection=image_set_selection,
+            prune_dead_unmaterialized_artifact_steps=(
+                prune_dead_unmaterialized_artifact_steps
+            ),
+            materialize_skipped_save_images=materialize_skipped_save_images,
+            materialize_terminal_images=materialize_terminal_images,
+        )
+
     def __post_init__(self) -> None:
-        object.__setattr__(self, "source_root", Path(self.source_root))
-        object.__setattr__(self, "cppipe_path", Path(self.cppipe_path))
-        object.__setattr__(self, "workspace_root", Path(self.workspace_root))
-        object.__setattr__(
-            self,
-            "generated_pipeline_path",
+        self._validate_pipeline_paths(
+            Path(self.cppipe_path),
             Path(self.generated_pipeline_path),
         )
-        if self.cppipe_path.suffix != ".cppipe":
+
+    @staticmethod
+    def _validate_pipeline_paths(
+        cppipe_path: Path,
+        generated_pipeline_path: Path,
+    ) -> None:
+        if cppipe_path.suffix != ".cppipe":
             raise ValueError(
                 "CellProfiler source-schema ingestion requires a .cppipe file, "
-                f"got {self.cppipe_path}."
+                f"got {cppipe_path}."
             )
-        if self.generated_pipeline_path.suffix != ".py":
+        if generated_pipeline_path.suffix != ".py":
             raise ValueError(
                 "generated_pipeline_path must point to a Python module, "
-                f"got {self.generated_pipeline_path}."
+                f"got {generated_pipeline_path}."
             )
 
 
@@ -228,14 +280,14 @@ class CellProfilerSourceSchemaMaterializer:
         ).source_root()
 
         try:
-            materialization = materialize_source_schema_workspace(
-                source_root,
-                self.request.workspace_root,
-                self.source_schema,
-                filemanager=self.request.filemanager,
-                source_backend=self.request.source_backend,
-                workspace_backend=self.request.workspace_backend,
-                image_set_selection=self.request.image_set_selection,
+            materialization = (
+                CellProfilerSourceSchemaMaterializationScope.from_request(
+                    self.request
+                ).materialize(
+                    source_root=source_root,
+                    workspace_root=self.request.workspace_root,
+                    source_schema=self.source_schema,
+                )
             )
         except Exception as exc:
             raise CellProfilerSourceWorkspaceMaterializationError(
@@ -243,6 +295,46 @@ class CellProfilerSourceSchemaMaterializer:
                 f"{self.request.cppipe_path.name}: {exc}"
             ) from exc
         return source_root, materialization
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerSourceSchemaMaterializationScope:
+    """Nominal source-scope carrier for source-schema workspace materialization."""
+
+    filemanager: FileManagerLike | None
+    source_backend: Backend
+    workspace_backend: Backend
+    image_set_selection: SourceSchemaImageSetSelection | None
+
+    @classmethod
+    def from_request(
+        cls,
+        request: CellProfilerSourceSchemaWorkspaceRequest,
+    ) -> "CellProfilerSourceSchemaMaterializationScope":
+        return cls(
+            filemanager=request.filemanager,
+            source_backend=request.source_backend,
+            workspace_backend=request.workspace_backend,
+            image_set_selection=request.image_set_selection,
+        )
+
+    def materialize(
+        self,
+        *,
+        source_root: Path,
+        workspace_root: Path,
+        source_schema: PipelineImageSchema,
+    ) -> SourceSchemaWorkspaceMaterialization:
+        return self.bound_materializer()(source_root, workspace_root, source_schema)
+
+    def bound_materializer(self) -> CellProfilerSourceSchemaMaterializerCallable:
+        return partial(
+            materialize_source_schema_workspace,
+            filemanager=self.filemanager,
+            source_backend=self.source_backend,
+            workspace_backend=self.workspace_backend,
+            image_set_selection=self.image_set_selection,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,7 +347,7 @@ class CellProfilerSourceRootResolver:
     def source_root(self) -> Path:
         """Return a child image folder only when the source universe is unambiguous."""
         selected_root = Path(self.selected_root)
-        if self._uses_folder_metadata() or not selected_root.exists():
+        if not selected_root.exists():
             return selected_root
         buckets = self._admitted_image_buckets(selected_root)
         if selected_root in buckets:
@@ -263,12 +355,6 @@ class CellProfilerSourceRootResolver:
         if len(buckets) == 1:
             return next(iter(buckets))
         return selected_root
-
-    def _uses_folder_metadata(self) -> bool:
-        return any(
-            rule.source is MetadataSource.FOLDER_NAME
-            for rule in self.schema.metadata_rules
-        )
 
     def _admitted_image_buckets(self, selected_root: Path) -> dict[Path, None]:
         buckets: dict[Path, None] = {}

@@ -9,6 +9,8 @@ import tifffile
 
 from openhcs.core.pipeline_image_schema import ImagesRule, PipelineImageSchema
 from openhcs.core.source_bindings import (
+    MetadataExtractionRule,
+    MetadataSource,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -155,6 +157,37 @@ def test_cellprofiler_source_root_resolver_ignores_nested_pipeline_copies(
     ).source_root()
 
     assert resolved == input_dir
+
+
+def test_cellprofiler_source_root_resolver_uses_single_child_with_folder_metadata(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "AdvancedSegmentation"
+    image_dir = source_root / "BBBC022_20585_AE"
+    image_dir.mkdir(parents=True)
+    (image_dir / "A01_s1_w1.tif").write_bytes(b"")
+
+    resolved = CellProfilerSourceRootResolver(
+        source_root,
+        PipelineImageSchema(
+            images_rule=ImagesRule(
+                filters=(
+                    SourceFilterClause(
+                        SourceFilterSubject.EXTENSION,
+                        SourceFilterMatchType.IS_IMAGE,
+                    ),
+                ),
+            ),
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FOLDER_NAME,
+                    pattern=r"(?P<Plate>[0-9]{5})",
+                ),
+            ),
+        ),
+    ).source_root()
+
+    assert resolved == image_dir
 
 
 @dataclass(frozen=True, slots=True)

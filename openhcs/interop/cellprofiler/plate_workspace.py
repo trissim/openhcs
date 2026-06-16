@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import ClassVar
 
 from openhcs.core.input_workspace import (
     InputWorkspacePreparationRequest,
@@ -15,7 +16,6 @@ from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipe
 from openhcs.interop.cellprofiler.source_schema_ingestion import (
     CellProfilerSourceSchemaWorkspace,
     CellProfilerSourceSchemaWorkspaceRequest,
-    compile_cellprofiler_source_schema,
     prepare_cellprofiler_source_schema_only_workspace,
     prepare_cellprofiler_source_schema_workspace,
 )
@@ -29,10 +29,22 @@ class CellProfilerPlateWorkspaceRequest:
     plate_root: Path
     cppipe_path: Path | None = None
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "plate_root", Path(self.plate_root))
-        if self.cppipe_path is not None:
-            object.__setattr__(self, "cppipe_path", Path(self.cppipe_path))
+    @classmethod
+    def from_paths(
+        cls,
+        plate_root: Path | str,
+        cppipe_path: Path | str | None = None,
+    ) -> "CellProfilerPlateWorkspaceRequest":
+        return cls(
+            plate_root=Path(plate_root),
+            cppipe_path=cls._optional_cppipe_path(cppipe_path),
+        )
+
+    @staticmethod
+    def _optional_cppipe_path(cppipe_path: Path | str | None) -> Path | None:
+        if cppipe_path is None:
+            return None
+        return Path(cppipe_path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +83,32 @@ class CellProfilerPipelineStage(Enum):
         return cls.UNLABELED
 
 
+class CellProfilerPipelineFileKind(Enum):
+    """Nominal file categories considered during `.cppipe` discovery."""
+
+    PIPELINE = "pipeline"
+    APPLEDOUBLE_SIDECAR = "appledouble_sidecar"
+    OTHER = "other"
+
+    @classmethod
+    def from_path(cls, path: Path) -> "CellProfilerPipelineFileKind":
+        if path.suffix != ".cppipe":
+            return cls.OTHER
+        if AppleDoubleResourceForkFilename.matches(path.name):
+            return cls.APPLEDOUBLE_SIDECAR
+        return cls.PIPELINE
+
+
+class AppleDoubleResourceForkFilename:
+    """Filename convention for macOS AppleDouble resource-fork sidecars."""
+
+    PREFIX: ClassVar[str] = "._"
+
+    @classmethod
+    def matches(cls, filename: str) -> bool:
+        return filename[: len(cls.PREFIX)] == cls.PREFIX
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerPipelineFile:
     """Visible `.cppipe` file with ordering semantics for one source folder."""
@@ -91,7 +129,10 @@ class CellProfilerPipelineFile:
 
     @staticmethod
     def is_visible_cppipe(cppipe_path: Path) -> bool:
-        return cppipe_path.suffix == ".cppipe" and not cppipe_path.name.startswith("._")
+        return (
+            CellProfilerPipelineFileKind.from_path(cppipe_path)
+            is CellProfilerPipelineFileKind.PIPELINE
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +165,7 @@ class CellProfilerPlateWorkspacePreparer:
                 ),
             )
         ingestion = prepare_cellprofiler_source_schema_workspace(
-            CellProfilerSourceSchemaWorkspaceRequest(
+            CellProfilerSourceSchemaWorkspaceRequest.from_paths(
                 source_root=plate_root,
                 cppipe_path=cppipe_path,
                 workspace_root=plate_root,
@@ -235,7 +276,7 @@ def prepare_cellprofiler_input_workspace(
 
     plate_root = request.selected_path
     preparer = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(
+        CellProfilerPlateWorkspaceRequest.from_paths(
             plate_root,
             cppipe_path=request.selected_pipeline_path,
         )
@@ -253,23 +294,18 @@ def prepare_cellprofiler_input_workspace(
         else preparer.generated_pipeline_path(cppipe_path)
     )
     workspace_root = request.workspace_root or plate_root
-    source_schema_request = CellProfilerSourceSchemaWorkspaceRequest(
+    source_schema_request = CellProfilerSourceSchemaWorkspaceRequest.from_paths(
         source_root=plate_root,
         cppipe_path=cppipe_path,
         workspace_root=workspace_root,
         generated_pipeline_path=generated_pipeline_path,
     )
 
-    source_preparation = None
-    if preparer.openhcs_metadata_path().exists():
-        source_schema = compile_cellprofiler_source_schema(source_schema_request)
-        execution_plate_path = plate_root
-    else:
-        source_preparation = prepare_cellprofiler_source_schema_only_workspace(
-            source_schema_request
-        )
-        source_schema = source_preparation.source_schema
-        execution_plate_path = source_preparation.execution_plate_path
+    source_preparation = prepare_cellprofiler_source_schema_only_workspace(
+        source_schema_request
+    )
+    source_schema = source_preparation.source_schema
+    execution_plate_path = source_preparation.execution_plate_path
 
     prepared_pipeline = None
     import_error = None
@@ -287,19 +323,11 @@ def prepare_cellprofiler_input_workspace(
         )
 
     return InputWorkspacePreparationResult(
-        original_source_root=(
-            source_preparation.source_root
-            if source_preparation is not None
-            else plate_root
-        ),
+        original_source_root=source_preparation.source_root,
         execution_plate_path=execution_plate_path,
         pipeline_path=cppipe_path,
         source_schema=source_schema,
-        materialization=(
-            source_preparation.materialization
-            if source_preparation is not None
-            else None
-        ),
+        materialization=source_preparation.materialization,
         prepared_pipeline=prepared_pipeline,
         pipeline_import_error=import_error,
     )

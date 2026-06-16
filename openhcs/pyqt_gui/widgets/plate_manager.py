@@ -802,7 +802,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     ) -> tuple[PlateOrchestratorRegistration, ...]:
         plate_root = Path(selected_path)
         preparer = CellProfilerPlateWorkspacePreparer(
-            CellProfilerPlateWorkspaceRequest(plate_root)
+            CellProfilerPlateWorkspaceRequest.from_paths(plate_root)
         )
         cppipe_paths = preparer.cppipe_paths()
         if len(cppipe_paths) <= 1:

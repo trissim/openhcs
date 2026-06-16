@@ -396,7 +396,7 @@ class ZMQExecutionServer(ExecutionServer):
         )
 
         workspace = CellProfilerPlateWorkspacePreparer(
-            CellProfilerPlateWorkspaceRequest(
+            CellProfilerPlateWorkspaceRequest.from_paths(
                 Path(execution_plate_id),
                 cppipe_path=(
                     None
