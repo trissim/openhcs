@@ -19,6 +19,7 @@ from openhcs.core.runtime_artifact_queries import (
     annotate_measurement_row_object,
     matching_measurement_field,
     measurement_feature_candidates,
+    measurement_table_axis_values,
     ordered_measurement_feature_candidates,
     measurement_row_mapping,
     measurement_values_for_feature,
@@ -175,6 +176,24 @@ def test_projected_columnar_rows_omit_structural_missing_cells() -> None:
             "object_label": 1,
         },
     )
+
+
+def test_measurement_table_axis_values_omit_sparse_columnar_axis_cells() -> None:
+    table = MeasurementTable(
+        name="SparseAxisMeasurements",
+        rows=MeasurementProjectedColumnarRows(
+            {
+                "slice_index": (0, MEASUREMENT_SPARSE_CELL, 1, None),
+                "feature_name": ("first", "missing", "second", "absent"),
+                "result_value": (2.0, MEASUREMENT_SPARSE_CELL, 4.0, 6.0),
+            }
+        ),
+    )
+
+    assert measurement_table_axis_values(
+        table,
+        MeasurementRowAxisField.SLICE_INDEX,
+    ) == {0, 1}
 
 
 def test_axis_projection_returns_original_columnar_table_when_filter_keeps_all_rows() -> None:

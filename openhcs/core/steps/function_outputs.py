@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
+
+from polystore.streaming.identity import StreamProducerIdentity
 
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
@@ -128,6 +131,7 @@ class StreamOutputsAuthority:
         cls,
         payload: Any,
         path: str,
+        context: ProcessingContext,
     ) -> tuple["StreamOutputsAuthority.StreamItem", ...]:
         data = image_payload_data(payload)
         metadata = image_payload_metadata(payload)
@@ -137,7 +141,11 @@ class StreamOutputsAuthority:
                 cls.StreamItem(
                     data=data,
                     path=path,
-                    component_metadata=metadata.source_component_metadata,
+                    component_metadata=cls._component_metadata_for_payload(
+                        metadata.source_component_metadata,
+                        path,
+                        context,
+                    ),
                 ),
             )
 
@@ -165,11 +173,22 @@ class StreamOutputsAuthority:
             for index in range(data.shape[0])
         )
 
+    @staticmethod
+    def _component_metadata_for_payload(
+        payload_metadata: Mapping[str, Any] | None,
+        path: str,
+        context: ProcessingContext,
+    ) -> Mapping[str, Any] | None:
+        if payload_metadata is not None:
+            return payload_metadata
+        return context.microscope_handler.parser.parse_filename(Path(path).name)
+
     @classmethod
     def _stream_items(
         cls,
         payloads: list[Any],
         paths: list[str],
+        context: ProcessingContext,
     ) -> tuple["StreamOutputsAuthority.StreamItem", ...]:
         if len(payloads) != len(paths):
             raise ValueError(
@@ -179,7 +198,17 @@ class StreamOutputsAuthority:
         return tuple(
             item
             for payload, path in zip(payloads, paths)
-            for item in cls._stream_items_for_payload(payload, path)
+            for item in cls._stream_items_for_payload(payload, path, context)
+        )
+
+    @staticmethod
+    def _producer_identity(plan: FunctionStepExecutionPlan) -> StreamProducerIdentity:
+        return StreamProducerIdentity.pipeline_output(
+            output_kind="main",
+            output_key="main",
+            step_name=plan.step_name,
+            pipeline_position=plan.pipeline_position,
+            step_scope_id=plan.step_scope_id,
         )
 
     @staticmethod
@@ -208,9 +237,10 @@ class StreamOutputsAuthority:
             stream_items = StreamOutputsAuthority._stream_items(
                 list(streaming_payloads),
                 list(streaming_paths),
+                context,
             )
             kwargs = config_instance.get_streaming_kwargs(context)
-            kwargs["source"] = plan.step_name
+            kwargs["producer_identity"] = StreamOutputsAuthority._producer_identity(plan)
             kwargs["component_metadata_by_path"] = tuple(
                 item.component_metadata for item in stream_items
             )

@@ -807,7 +807,7 @@ class OpenHCSMainWindow(QMainWindow):
                 )
             else:
                 # Create new window
-                from pyqt_reactive.services import WindowFactory
+                from pyqt_reactive.services.scope_window_factory import WindowFactory
 
                 window = WindowFactory.create_window_for_scope(
                     request.scope_id,
@@ -950,7 +950,7 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Get the plate manager widget from ServiceRegistry
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-        from pyqt_reactive.services import ServiceRegistry
+        from pyqt_reactive.services.service_registry import ServiceRegistry
 
         plate_manager = ServiceRegistry.get(PlateManagerWidget)
 
@@ -978,7 +978,7 @@ class OpenHCSMainWindow(QMainWindow):
 
             # Get the pipeline editor widget from ServiceRegistry
             from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-            from pyqt_reactive.services import ServiceRegistry
+            from pyqt_reactive.services.service_registry import ServiceRegistry
 
             pipeline_editor = ServiceRegistry.get(PipelineEditorWidget)
 

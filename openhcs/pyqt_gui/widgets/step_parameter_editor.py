@@ -34,7 +34,7 @@ from openhcs.core.path_cache import PathCacheKey
 from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.source_bindings_view import SchemaContextSourceInventoryProvider
 from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
-from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import ConfigHierarchyTreeHelper
 from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
@@ -47,7 +47,7 @@ from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
 
 # REMOVED: LazyDataclassFactory import - no longer needed since step editor
 # uses existing lazy dataclass instances from the step
-from pyqt_reactive.forms import ParameterTypeUtils
+from pyqt_reactive.forms.parameter_type_utils import ParameterTypeUtils
 from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from pycodify import Assignment, generate_python_source
@@ -312,11 +312,13 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         # Context hierarchy: GlobalPipelineConfig (thread-local) -> PipelineConfig (context_obj) -> Step (overlay)
         # Look up ObjectState from registry using scope_id
         # ObjectState MUST be registered by PipelineEditorWidget when step was added
-        logger.info(
+        logger.debug(
             f"🔍 STEP_EDITOR: Looking up ObjectState for scope_id={self.scope_id}"
         )
-        logger.info(
-            f"🔍 STEP_EDITOR: Registry has scopes: {[s.scope_id for s in ObjectStateRegistry.get_all()]}"
+        registered_states = ObjectStateRegistry.get_all()
+        logger.debug(
+            "🔍 STEP_EDITOR: Registry has %d scopes",
+            len(registered_states),
         )
         self.state = (
             ObjectStateRegistry.get_by_scope(self.scope_id) if self.scope_id else None
@@ -330,7 +332,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
                 f"Registry has: {[s.scope_id for s in ObjectStateRegistry.get_all()]}"
             )
 
-        logger.info(
+        logger.debug(
             f"🔍 STEP_EDITOR: Using REGISTERED ObjectState, params={list(self.state.parameters.keys())}"
         )
 

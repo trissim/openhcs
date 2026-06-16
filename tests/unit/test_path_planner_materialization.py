@@ -12,6 +12,8 @@ from openhcs.core.compiled_step_plan import (
     MaterializedOutputPlan,
 )
 from openhcs.core.invocation_artifacts import InvocationArtifactDeclarations
+from openhcs.core.pipeline.artifact_planning import extract_artifact_declarations
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.pipeline.path_planner import (
     PathPlanner,
     PathPlannerArtifactStage,
@@ -21,6 +23,7 @@ from openhcs.core.pipeline.path_planner import (
     PathPlannerStepAssemblyStage,
     PathPlannerValidationStage,
 )
+from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 from openhcs.core.step_dependencies import StepInputDependencyKind
 
@@ -116,6 +119,59 @@ def test_artifact_output_plans_preserve_declared_kind():
 
     assert outputs["nuclei"].kind is ArtifactKind.OBJECT_LABELS
     assert planner.declared["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+
+
+def test_group_by_namespaces_compiler_owned_outputs():
+    @artifact_outputs(ArtifactSpec("nuclei", ArtifactKind.OBJECT_LABELS))
+    def identify(image):
+        return image
+
+    planner = _artifact_planner_stub()
+    declarations = extract_artifact_declarations(identify)
+
+    namespaced = planner.artifacts.namespace_grouped_outputs_for_runtime_consumers(
+        identify,
+        declarations,
+        ["1", "2"],
+    )
+
+    assert namespaced.output_groups["nuclei"] == {"1", "2"}
+
+
+def test_group_by_preserves_runtime_adapter_artifact_output_scope():
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_inputs=True,
+    )
+    def correct_illumination(image, *, runtime):
+        return image
+
+    def declarations_for_invocation(invocation, step_context):
+        del invocation, step_context
+        return InvocationArtifactDeclarations(
+            outputs=(
+                (
+                    "Hoechst",
+                    ArtifactSpec("Hoechst", ArtifactKind.IMAGE),
+                ),
+            ),
+        )
+
+    planner = _artifact_planner_stub()
+    declarations = extract_artifact_declarations(
+        correct_illumination,
+        declaration_provider=declarations_for_invocation,
+    )
+
+    namespaced = planner.artifacts.namespace_grouped_outputs_for_runtime_consumers(
+        correct_illumination,
+        declarations,
+        ["1", "2"],
+    )
+
+    assert declarations.output_groups["Hoechst"] == {None}
+    assert namespaced.output_groups["Hoechst"] == {None}
 
 
 def test_planner_uses_invocation_aware_artifact_declaration_provider():

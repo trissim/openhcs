@@ -73,19 +73,6 @@ def _add_numpy_dtype_property():
 _add_numpy_dtype_property()
 
 
-class VirtualComponents(Enum):
-    """
-    Components that don't come from filename parsing but from execution/location context.
-
-    SOURCE represents:
-    - During pipeline execution: step_name (distinguishes pipeline steps)
-    - When loading from disk: subdirectory name (distinguishes image sources)
-
-    This unifies the step/source concept across Napari and Fiji viewers.
-    """
-    SOURCE = "source"  # Unified step/source component
-
-
 def get_openhcs_config():
     """Get the OpenHCS configuration, initializing it if needed."""
     from openhcs.components.framework import ComponentConfigurationFactory
@@ -269,20 +256,14 @@ def _create_enums():
 
 @lru_cache(maxsize=1)
 def _create_streaming_components():
-    """Create StreamingComponents enum combining AllComponents + VirtualComponents.
-
-    This enum includes both filename components (from parser) and virtual components
-    (from execution/location context) for streaming visualization.
-    """
+    """Create StreamingComponents enum from real filename components."""
     import os
     logger.debug("_create_streaming_components() called in process %s", os.getpid())
 
     # Import AllComponents (triggers lazy creation if needed)
     from openhcs.constants import AllComponents
 
-    # Combine all component types
     components_dict = {c.name: c.value for c in AllComponents}
-    components_dict.update({c.name: c.value for c in VirtualComponents})
 
     streaming_components = Enum('StreamingComponents', components_dict)
     streaming_components.__module__ = __name__

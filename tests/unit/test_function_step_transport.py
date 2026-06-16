@@ -8,6 +8,8 @@ import openhcs.processing.backends.cellprofiler as cellprofiler_backend
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from pycodify import Assignment, generate_python_source
 
+from openhcs.constants.constants import GroupBy, VariableComponents
+from openhcs.constants.input_source import InputSource
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.artifact_materialization_policy import (
     NO_ARTIFACT_MATERIALIZATION,
@@ -20,6 +22,7 @@ from openhcs.core.function_patterns import (
     CompiledFunctionPattern,
     FunctionInvocationKey,
 )
+from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.compiler import FunctionReference
@@ -141,6 +144,41 @@ def test_function_step_source_emits_source_bindings_once():
 
     compile(pipeline_source, "<pipeline>", "exec")
     assert pipeline_source.count("source_bindings=") == 1
+
+
+def test_zmq_pipeline_transport_preserves_explicit_lazy_processing_defaults():
+    pipeline = [
+        FunctionStep(
+            func=cellprofiler_backend.identify_primary_objects,
+            name="IdentifyPrimaryObjects",
+            processing_config=LazyProcessingConfig(
+                variable_components=[VariableComponents.SITE],
+                group_by=GroupBy.NONE,
+                input_source=InputSource.PREVIOUS_STEP,
+            ),
+        )
+    ]
+    pipeline_source = generate_python_source(
+        Assignment("pipeline_steps", pipeline),
+        clean_mode=True,
+    )
+
+    source = ZMQPipelineCodeTransport.from_pipeline_source(
+        source=pipeline_source,
+        pipeline_steps=pipeline,
+    ).source
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+    restored_processing_config = vars(restored[0])["processing_config"]
+
+    assert "group_by=GroupBy.NONE" in source
+    assert "input_source=InputSource.PREVIOUS_STEP" in source
+    assert object.__getattribute__(restored_processing_config, "group_by") is GroupBy.NONE
+    assert (
+        object.__getattribute__(restored_processing_config, "input_source")
+        is InputSource.PREVIOUS_STEP
+    )
 
 
 def test_function_step_parameter_order_uses_abstract_step_declaration_order():

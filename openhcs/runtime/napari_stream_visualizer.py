@@ -25,6 +25,7 @@ from qtpy.QtCore import QTimer
 
 from polystore.backend_registry import register_cleanup_callback
 from polystore.filemanager import FileManager
+from polystore.streaming.identity import StreamProducerIdentity
 from openhcs.utils.import_utils import optional_import
 from openhcs.core.config import (
     TransportMode as OpenHCSTransportMode,
@@ -37,6 +38,7 @@ from openhcs.runtime.viewer_protocol import (
     NAPARI_HEARTBEAT,
     NapariDetachedProcessRequest,
     NapariViewerServerRequest,
+    ViewerComponentValueOrdering,
     ViewerControlPingMode,
     ViewerControlPingRequest,
     ViewerQtEnvironmentPolicy,
@@ -50,7 +52,11 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariShapeLabelRasterizer,
     build_napari_streaming_data_type_handlers,
 )
-from openhcs.runtime.napari_viewer_server import NapariViewerServer
+from openhcs.runtime.napari_viewer_server import (
+    ComponentLayout,
+    NapariLayerTitleAuthority,
+    NapariViewerServer,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import TransportMode as ZMQTransportMode
 from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessManager
@@ -138,7 +144,10 @@ def _build_nd_shapes(layer_items, stack_components):
     # Build component value to index mapping (same as _build_nd_image_array)
     component_values = {}
     for comp in stack_components:
-        values = sorted(set(item["components"].get(comp, 0) for item in layer_items))
+        values = sorted(
+            set(item["components"].get(comp, 0) for item in layer_items),
+            key=ViewerComponentValueOrdering.key,
+        )
         component_values[comp] = values
 
     for item in layer_items:
@@ -193,7 +202,8 @@ def _build_nd_points(layer_items, stack_components, component_values=None):
         component_values = {}
         for comp in stack_components:
             values = sorted(
-                set(item["components"].get(comp, 0) for item in layer_items)
+                set(item["components"].get(comp, 0) for item in layer_items),
+                key=ViewerComponentValueOrdering.key,
             )
             component_values[comp] = values
 
@@ -274,7 +284,10 @@ def _build_nd_image_array(layer_items, stack_components, component_values=None):
         # Derive from layer items (old behavior when no global tracker)
         component_values = {}
         for comp in stack_components:
-            values = sorted(set(img["components"].get(comp, 0) for img in layer_items))
+            values = sorted(
+                set(img["components"].get(comp, 0) for img in layer_items),
+                key=ViewerComponentValueOrdering.key,
+            )
             component_values[comp] = values
 
     # Log component values for debugging
@@ -309,12 +322,13 @@ def _build_nd_image_array(layer_items, stack_components, component_values=None):
 
 
 def _create_or_update_image_layer(
-    viewer, layers, layer_name, image_data, colormap, axis_labels=None
+    viewer, layers, route_key, layer_name, image_data, colormap, axis_labels=None
 ):
     """Create or update a Napari image layer."""
     return _NAPARI_LAYER_UPDATES.create_or_update_image(
         viewer,
         layers,
+        route_key,
         layer_name,
         image_data,
         colormap,
@@ -323,12 +337,13 @@ def _create_or_update_image_layer(
 
 
 def _create_or_update_shapes_layer(
-    viewer, layers, layer_name, shapes_data, shape_types, properties
+    viewer, layers, route_key, layer_name, shapes_data, shape_types, properties
 ):
     """Create or update a Napari shapes layer."""
     return _NAPARI_LAYER_UPDATES.create_or_update_shapes(
         viewer,
         layers,
+        route_key,
         layer_name,
         shapes_data,
         shape_types,
@@ -336,11 +351,14 @@ def _create_or_update_shapes_layer(
     )
 
 
-def _create_or_update_points_layer(viewer, layers, layer_name, points_data, properties):
+def _create_or_update_points_layer(
+    viewer, layers, route_key, layer_name, points_data, properties
+):
     """Create or update a Napari points layer."""
     return _NAPARI_LAYER_UPDATES.create_or_update_points(
         viewer,
         layers,
+        route_key,
         layer_name,
         points_data,
         properties,
@@ -350,8 +368,7 @@ def _create_or_update_points_layer(viewer, layers, layer_name, points_data, prop
 # Populate registry now that helper functions are defined
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.receivers.napari import (
-    normalize_component_layout,
-    build_layer_key,
+    build_route_key,
 )
 
 _DATA_TYPE_HANDLERS = build_napari_streaming_data_type_handlers(
@@ -374,6 +391,7 @@ def _handle_component_aware_display(
     display_config,
     replace_layers,
     component_metadata=None,
+    producer_identity=None,
     data_type="image",
     server=None,
 ):
@@ -388,22 +406,41 @@ def _handle_component_aware_display(
         server: NapariViewerServer instance (needed for debounced updates)
     """
     try:
-        # Convert data_type to enum if needed (for backwards compatibility)
+        if server is None:
+            raise ValueError("Server instance required for debounced updates")
+
+        # Normalize wire data type to enum.
         if isinstance(data_type, str):
             data_type = StreamingDataType(data_type)
+        producer = StreamProducerIdentity.from_payload(producer_identity)
 
         # Use component metadata from ZMQ message - fail loud if not available
         if not component_metadata:
             raise ValueError(f"No component metadata available for path: {path}")
         component_info = component_metadata
 
-        component_modes, component_order = normalize_component_layout(display_config)
-        layer_key = build_layer_key(
+        component_layout = ComponentLayout.from_display_config(display_config)
+        component_modes = component_layout.component_modes
+        component_order = component_layout.component_order
+        layer_key = build_route_key(
+            producer_identity=producer,
             component_info=component_info,
             component_modes=component_modes,
             component_order=component_order,
             data_type=data_type,
         )
+        layer_title = NapariLayerTitleAuthority.disambiguate(
+            title=NapariLayerTitleAuthority.title(
+                producer=producer,
+                data_type=data_type,
+                component_info=component_info,
+                component_layout=component_layout,
+            ),
+            producer=producer,
+            route_key=layer_key,
+            layer_state=server.layer_state,
+        )
+        server.layer_state.set_title(layer_key, layer_title)
 
         # Log component modes for debugging
         logger.info(
@@ -419,12 +456,11 @@ def _handle_component_aware_display(
         # CRITICAL: Only purge if the layer WAS in our cache but is now missing from viewer
         # (user manually deleted it). Do NOT purge if layer was never created yet (debounced update pending).
         try:
-            current_layer_names = {l.name for l in viewer.layers}
-            if layer_key not in current_layer_names and layer_key in layers:
+            if layer_key in layers and layers[layer_key] not in viewer.layers:
                 # Layer was in our cache but is now missing from viewer - user deleted it
                 # Drop stale references so we will recreate the layer
                 num_items = len(component_groups.get(layer_key, []))
-                layers.pop(layer_key, None)
+                server.layer_state.purge_route(layer_key)
                 component_groups.pop(layer_key, None)
                 logger.info(
                     f"🔬 NAPARI PROCESS: Reconciling state — '{layer_key}' was deleted from viewer; purged stale caches (had {num_items} items in component_groups)"
@@ -482,8 +518,6 @@ def _handle_component_aware_display(
 
         # Schedule debounced layer update instead of immediate update
         # This prevents race conditions when multiple items arrive rapidly
-        if server is None:
-            raise ValueError("Server instance required for debounced updates")
         logger.info(
             f"🔬 NAPARI PROCESS: Scheduling debounced update for {layer_key} (data_type={data_type})"
         )

@@ -10,8 +10,8 @@ from textual.containers import Vertical, Horizontal
 from textual.widgets import Button, Checkbox, Input, RadioSet
 from textual.app import ComposeResult
 
-from pyqt_reactive.forms import ParameterFormService
-from pyqt_reactive.forms import ParameterTypeUtils
+from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+from pyqt_reactive.forms.parameter_type_utils import ParameterTypeUtils
 from pyqt_reactive.forms.parameter_form_service import ParameterAnalysisInput
 from openhcs.ui.shared.parameter_form_config_factory import textual_config
 from openhcs.ui.shared.parameter_form_constants import CONSTANTS
@@ -203,7 +203,11 @@ class ParameterFormManager:
             
             # Iterate through analyzed parameter structure
             # Type-safe dispatch using discriminated unions
-            from pyqt_reactive.forms import OptionalDataclassInfo, DirectDataclassInfo, GenericInfo
+            from pyqt_reactive.forms.parameter_info_types import (
+                OptionalDataclassInfo,
+                DirectDataclassInfo,
+                GenericInfo,
+            )
 
             for param_info in self.form_structure.parameters:
                 if isinstance(param_info, OptionalDataclassInfo):
@@ -464,6 +468,6 @@ class ParameterFormManager:
             Converted value
         """
         # Delegate to shared service layer
-        from pyqt_reactive.forms import ParameterFormService
+        from pyqt_reactive.forms.parameter_form_service import ParameterFormService
         service = ParameterFormService()
         return service.convert_value_to_type(string_value, param_type, "convert_string_to_type")

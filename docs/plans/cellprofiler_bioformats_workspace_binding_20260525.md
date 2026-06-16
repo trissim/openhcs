@@ -126,16 +126,17 @@ The current UI already has the right high-level separation:
 When a user adds a folder, `PlateManagerWidget` asks
 `CellProfilerPlateWorkspacePreparer.cppipe_paths()` for direct `.cppipe` files.
 If there is one `.cppipe`, the folder remains one plate row. If there are
-multiple `.cppipe` files, the UI creates one logical plate row per pipeline
-using a scoped id of:
+multiple `.cppipe` files, the UI creates one logical plate row per pipeline.
+CellProfiler pipeline identity is encoded inside the plate scope segment using:
 
 ```text
-<physical plate root>::cppipe::<cppipe stem>
+<physical plate root>#openhcs-cppipe=<encoded cppipe file name>
 ```
 
 The logical scope id is used for ObjectState and per-plate UI state; the
-physical `plate_root` remains the selected folder. During initialization, the
-plate manager runs:
+physical `plate_root` remains the selected folder. `::` remains reserved for
+real ObjectState nesting such as `<plate scope>::functionstep_0`. During
+initialization, the plate manager runs:
 
 ```python
 CellProfilerPlateWorkspacePreparer(

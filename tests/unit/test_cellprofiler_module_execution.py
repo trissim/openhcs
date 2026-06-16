@@ -25,6 +25,7 @@ from openhcs.core.runtime_artifact_queries import (
 )
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
+    MetadataSelector,
     NamedSourceBinding,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
@@ -60,6 +61,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     AlignMeasurementFeature,
     CalculateMathInputPolicy,
     CellProfilerFunctionContractExecutor,
+    CellProfilerPrimaryImageInputPolicy,
     CellProfilerInvocationExecutionModePolicy,
     CellProfilerMeasurementFieldSchema,
     CellProfilerMeasurementOutputProjection,
@@ -75,6 +77,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerObjectMeasurementRowPolicy,
     CompactMeasuredObjectMeasurementRowPolicy,
     DefaultObjectMeasurementRowPolicy,
+    DefaultPrimaryImageInputPolicy,
     ObjectInputBindingRequest,
     ObjectLocationMeasurementRows,
     RelationshipMeasurementRows,
@@ -103,6 +106,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     _measurement_labels_for_measurement_image,
     measurement_table_rows,
     OBJECT_ONLY_REFERENCE_IMAGE,
+    MaskImagePrimaryImageInputPolicy,
     _output_values_by_kind,
     _execute_pure_2d_slice,
     _unstack_cellprofiler_image_slices,
@@ -211,6 +215,7 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
+    SourceImageObjectLabelBuildRequest,
     SpatialGrid,
     image_payload_data,
     image_payload_mask,
@@ -285,6 +290,17 @@ def _source_candidate(alias: str, site: str) -> ParsedSourceCandidate:
     )
 
 
+def test_primary_image_policy_registry_keeps_maskimage_specific_policy() -> None:
+    assert isinstance(
+        CellProfilerPrimaryImageInputPolicy.for_module("IdentifyPrimaryObjects"),
+        DefaultPrimaryImageInputPolicy,
+    )
+    assert isinstance(
+        CellProfilerPrimaryImageInputPolicy.for_module("MaskImage"),
+        MaskImagePrimaryImageInputPolicy,
+    )
+
+
 def test_source_candidate_matcher_allows_grouped_metadata_values() -> None:
     step_input_candidates = (
         _source_candidate("OrigActin", "1"),
@@ -341,6 +357,53 @@ def test_source_candidate_matcher_allows_grouped_metadata_values() -> None:
     )
 
     assert tuple(candidate.metadata["Site"] for candidate in matched) == ("1", "2")
+
+
+def test_source_candidate_matcher_metadata_selector_overrides_semantic_inherited_scope() -> None:
+    candidates = (
+        ParsedSourceCandidate(
+            path="A01_s001_w1_z001_t001.tif",
+            resolved_path="/plate/A01_s001_w1_z001_t001.tif",
+            filename="A01_s001_w1_z001_t001.tif",
+            metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "ChannelNumber": "1",
+            },
+        ),
+        ParsedSourceCandidate(
+            path="A01_s001_w3_z001_t001.tif",
+            resolved_path="/plate/A01_s001_w3_z001_t001.tif",
+            filename="A01_s001_w3_z001_t001.tif",
+            metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "3",
+                "ChannelNumber": "3",
+            },
+        ),
+    )
+    binding = NamedSourceBinding(
+        "OrigSyto",
+        selector=SourceSelector(
+            metadata=(MetadataSelector("ChannelNumber", "3"),),
+        ),
+    )
+
+    matched = SourceCandidateMatcher.match_candidates(
+        candidates=candidates,
+        binding=binding,
+        inherit_components={
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+        },
+    )
+
+    assert tuple(candidate.path for candidate in matched) == (
+        "A01_s001_w3_z001_t001.tif",
+    )
 
 
 def test_special_object_label_input_preserves_runtime_slice_domain() -> None:
@@ -3047,6 +3110,57 @@ def test_cellprofiler_contract_executor_aggregates_object_label_payload_auxiliar
         result_payload.small_removed_labels,
         result_payload.labels + 20,
     )
+
+
+def test_cellprofiler_contract_executor_preserves_site_metadata_for_object_label_auxiliary():
+    def segment(image: object):
+        labels = np.full(
+            image_payload_data(image).shape,
+            int(image_payload_metadata(image).source_component_metadata["site"]),
+            dtype=np.int32,
+        )
+        return (
+            image,
+            SourceImageObjectLabelBuildRequest(
+                image=image,
+                labels=labels,
+            ).payload(),
+        )
+
+    segment.__processing_contract__ = ProcessingContract.PURE_2D
+    image = image_payload_with_context(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s002_w1_z001_t001.TIF",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+                {"well": "A01", "site": "2", "channel": "1"},
+            ),
+        ),
+    )
+
+    result_image, result_payload = CellProfilerFunctionContractExecutor().execute(
+        segment,
+        image,
+        {},
+    )
+
+    assert image_payload_data(result_image).shape == (2, 4, 5)
+    assert isinstance(result_payload, ObjectLabelPayload)
+    assert result_payload.plane_axis is RuntimePlaneAxis.SOURCE_BINDING
+    assert result_payload.channel_source_paths == (
+        "/input/A01_s001_w1_z001_t001.TIF",
+        "/input/A01_s002_w1_z001_t001.TIF",
+    )
+    assert tuple(dict(item) for item in result_payload.channel_source_component_metadata) == (
+        {"well": "A01", "site": "1", "channel": "1"},
+        {"well": "A01", "site": "2", "channel": "1"},
+    )
+    np.testing.assert_array_equal(result_payload.labels[0], np.full((4, 5), 1))
+    np.testing.assert_array_equal(result_payload.labels[1], np.full((4, 5), 2))
 
 
 def test_cellprofiler_contract_executor_projects_batch_relationship_auxiliary():
@@ -5976,6 +6090,40 @@ def test_current_runtime_plane_projection_collapses_singleton_object_label_stack
     np.testing.assert_array_equal(projected_labels.labels, label_plane)
 
 
+def test_special_input_preserves_object_label_stack_when_group_index_is_out_of_domain() -> None:
+    label_planes = np.stack(
+        (
+            np.full((5, 5), 3, dtype=np.int32),
+            np.full((5, 5), 7, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=label_planes,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        declared_object_id_domains=((3,), (7,)),
+    )
+    spec = ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS)
+    request = SpecialInputBindingRequest(
+        module_name="MaskImage",
+        adapter=_RuntimeSliceObjectAdapter(labels, slice_index=2),
+        kwargs={},
+        current_image=np.zeros((5, 5), dtype=np.float32),
+        external_object_names=frozenset(),
+        parameter_names=("mask",),
+        special_input_specs=(spec,),
+        runtime_inputs=(spec,),
+        external_image_names=frozenset(),
+        runtime_image_names=frozenset(),
+    )
+
+    projected = request.current_plane_object_label_runtime_value(spec)
+
+    assert projected.shape == label_planes.shape
+    np.testing.assert_array_equal(projected, label_planes)
+
+
 def test_grid_input_module_unwraps_singleton_runtime_aligned_grid_for_2d_carrier() -> None:
     image = np.zeros((20, 20), dtype=np.float32)
     runtime = _FakeCellProfilerRuntime({"DNA": _FakeRuntimeImage(image)})
@@ -8209,6 +8357,45 @@ def test_measurement_labels_project_runtime_slice_stack_for_single_plane_source(
 
     assert measurement_labels.shape == label_planes[1].shape
     np.testing.assert_array_equal(measurement_labels, label_planes[1])
+
+
+def test_measurement_labels_preserve_runtime_stack_when_group_index_is_out_of_domain() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return 2
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return None
+
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 10, dtype=np.int32),
+            np.full((4, 5), 20, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=label_planes,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="OrigMito",
+        source_image_names=("OrigMito",),
+        payload=np.ones((4, 5), dtype=np.float32),
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_planes.shape
+    np.testing.assert_array_equal(measurement_labels, label_planes)
 
 
 def test_measurement_labels_preserve_runtime_slice_stack_for_object_domain() -> None:

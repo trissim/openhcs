@@ -43,7 +43,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelSet,
     ObjectLabelValue,
     RuntimeSliceStackRequest,
-    compose_image_payload_metadata,
+    ImagePayloadMetadataCompositionRequest,
     image_payload_metadata,
     image_payload_data,
     image_payload_mask,
@@ -802,9 +802,13 @@ class ImagePayloadBundleContext:
         composed = self.compose_unmasked(
             tuple(image_payload_data(payload) for payload in self.image_payloads)
         )
-        return compose_image_payload_metadata(self.image_payloads).payload_with(
-            composed,
-            self.compose_mask(composed),
+        return (
+            ImagePayloadMetadataCompositionRequest(self.image_payloads)
+            .metadata()
+            .payload_with(
+                composed,
+                self.compose_mask(composed),
+            )
         )
 
     def compose_mask(self, composed: Any) -> Any | None:

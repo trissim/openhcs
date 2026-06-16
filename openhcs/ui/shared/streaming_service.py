@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
 
 from objectstate import spawn_thread_with_context
+from polystore.streaming.identity import StreamProducerIdentity
 
 if TYPE_CHECKING:
     from polystore.filemanager import FileManager
@@ -24,12 +25,6 @@ logger = logging.getLogger(__name__)
 # Each image creates a shared memory segment (file descriptor on Linux)
 CHUNK_SIZE = 50
 ROI_ARCHIVE_SUFFIX = ".roi.zip"
-SINGLE_PLANE_COMPONENT_DEFAULTS: Mapping[str, object] = {
-    "site": 1,
-    "channel": 1,
-    "z_index": 1,
-    "timepoint": 1,
-}
 SOURCE_FILENAME_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
 ViewerType = str
@@ -46,7 +41,7 @@ class StreamingMetadata:
     display_config: object
     microscope_handler: object
     plate_path: Path
-    source: str
+    producer_identity: StreamProducerIdentity
 
     @classmethod
     def from_viewer_context(
@@ -56,7 +51,7 @@ class StreamingMetadata:
         config,
         microscope_handler,
         plate_path: Path,
-        source: str,
+        producer_identity: StreamProducerIdentity,
     ) -> "StreamingMetadata":
         return cls(
             port=viewer.port,
@@ -65,7 +60,7 @@ class StreamingMetadata:
             display_config=config,
             microscope_handler=microscope_handler,
             plate_path=plate_path,
-            source=source,
+            producer_identity=producer_identity,
         )
 
     def to_backend_kwargs(self) -> dict[str, object]:
@@ -78,7 +73,7 @@ class StreamingMetadata:
             "display_config": self.display_config,
             "microscope_handler": self.microscope_handler,
             "plate_path": self.plate_path,
-            "source": self.source,
+            "producer_identity": self.producer_identity,
         }
 
 
@@ -150,13 +145,6 @@ class StreamingService:
     _get_display_name = display_name_for_viewer_type
 
     @staticmethod
-    def _source_for_stream_paths(paths: list[str], fallback: str) -> str:
-        if not paths:
-            return fallback
-        parent_name = Path(paths[0]).parent.name
-        return parent_name or fallback
-
-    @staticmethod
     def _roi_artifact_stem(filename: str) -> str:
         name = Path(filename).name
         if name.lower().endswith(ROI_ARCHIVE_SUFFIX):
@@ -199,34 +187,9 @@ class StreamingService:
 
         return tuple(candidates)
 
-    @staticmethod
-    def _complete_stream_component_metadata(
-        metadata: Mapping[str, Any] | None,
-        *,
-        filename: str,
-        config: object,
-    ) -> dict[str, Any]:
-        """Fill missing display axes so viewer review can place a standalone ROI."""
-        complete = dict(metadata or {})
-        component_order = set(getattr(config, "COMPONENT_ORDER", ()))
-        expected_components = component_order or {
-            "well",
-            *SINGLE_PLANE_COMPONENT_DEFAULTS,
-        }
-
-        if "well" in expected_components and complete.get("well") is None:
-            complete["well"] = StreamingService._roi_artifact_stem(filename)
-
-        for component, default in SINGLE_PLANE_COMPONENT_DEFAULTS.items():
-            if component in expected_components and complete.get(component) is None:
-                complete[component] = default
-
-        return complete
-
     def _roi_component_metadata_by_path(
         self,
         paths: list[str],
-        config: object,
     ) -> dict[str, dict[str, Any]]:
         parser = self.microscope_handler.parser
         metadata_by_path: dict[str, dict[str, Any]] = {}
@@ -238,11 +201,13 @@ class StreamingService:
                 if parsed is not None:
                     break
 
-            metadata_by_path[path] = self._complete_stream_component_metadata(
-                parsed,
-                filename=path,
-                config=config,
-            )
+            if parsed is None:
+                raise ValueError(
+                    "Could not resolve source-plane metadata for ROI artifact "
+                    f"{path!r}; manual ROI streaming requires a parser-readable "
+                    "source image name or explicit metadata."
+                )
+            metadata_by_path[path] = dict(parsed)
 
         return metadata_by_path
 
@@ -347,16 +312,14 @@ class StreamingService:
                         f"Loaded chunk {chunk_idx + 1}/{num_chunks}: {len(image_data_list)} images"
                     )
 
-                    source = self._source_for_stream_paths(
-                        file_paths,
-                        "selected_images",
-                    )
                     metadata = StreamingMetadata.from_viewer_context(
                         viewer=context.viewer,
                         config=context.config,
                         microscope_handler=self.microscope_handler,
                         plate_path=context.plate_path,
-                        source=source,
+                        producer_identity=StreamProducerIdentity.manual(
+                            "selected_images"
+                        ),
                     ).to_backend_kwargs()
 
                     self.filemanager.save_batch(
@@ -436,16 +399,15 @@ class StreamingService:
                     len(paths),
                 )
 
-                source = self._source_for_stream_paths(paths, "selected_rois")
                 metadata = StreamingMetadata.from_viewer_context(
                     viewer=context.viewer,
                     config=context.config,
                     microscope_handler=self.microscope_handler,
                     plate_path=context.plate_path,
-                    source=source,
+                    producer_identity=StreamProducerIdentity.manual("selected_rois"),
                 ).to_backend_kwargs()
                 metadata["component_metadata_by_path"] = (
-                    self._roi_component_metadata_by_path(paths, context.config)
+                    self._roi_component_metadata_by_path(paths)
                 )
 
                 context.status_callback(

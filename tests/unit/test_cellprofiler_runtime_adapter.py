@@ -47,7 +47,7 @@ from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
-from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
+from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -553,6 +553,74 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
     assert saved_payload.source_image_names == (DNA_IMAGE,)
 
 
+def test_cellprofiler_adapter_contextualizes_source_aligned_object_label_stack():
+    adapter, filemanager = _adapter(
+        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    )
+    source_image = image_payload_with_context(
+        np.zeros((2, 5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/src/A01_s001_w1_z001_t001.tif",
+                "/src/A01_s002_w1_z001_t001.tif",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+                {"well": "A01", "site": "2", "channel": "1"},
+            ),
+        ),
+    )
+    labels = ObjectLabelPayload(
+        labels=np.ones((2, 5, 6), dtype=np.int32),
+    )
+
+    record = adapter.add_objects(
+        NUCLEI,
+        labels,
+        source_image_name=DNA_IMAGE,
+        source_image_payload=source_image,
+    )
+
+    assert isinstance(record.value.data, ObjectLabelPayload)
+    assert record.value.data.channel_source_paths == (
+        "/src/A01_s001_w1_z001_t001.tif",
+        "/src/A01_s002_w1_z001_t001.tif",
+    )
+    assert tuple(
+        dict(metadata)
+        for metadata in record.value.data.channel_source_component_metadata
+        if metadata is not None
+    ) == (
+        {"well": "A01", "site": "1", "channel": "1"},
+        {"well": "A01", "site": "2", "channel": "1"},
+    )
+    saved_payload = filemanager.saved[("memory", "/memory/Nuclei.pkl")]
+    assert saved_payload.channel_source_paths == record.value.data.channel_source_paths
+
+
+def test_cellprofiler_adapter_rejects_unaddressable_source_aligned_label_stack():
+    adapter, _filemanager = _adapter(
+        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    )
+    source_image = image_payload_with_context(
+        np.zeros((2, 5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(None, None),
+        ),
+    )
+    labels = ObjectLabelPayload(
+        labels=np.ones((2, 5, 6), dtype=np.int32),
+    )
+
+    with pytest.raises(ValueError, match="neither source_path"):
+        adapter.add_objects(
+            NUCLEI,
+            labels,
+            source_image_name=DNA_IMAGE,
+            source_image_payload=source_image,
+        )
+
+
 def test_cellprofiler_adapter_does_not_cache_current_image_object_selection():
     store = RuntimeValueStore()
     outputs = {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
@@ -659,6 +727,240 @@ def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
     )
 
     image = consumer.get_image(DNA_IMAGE, current_image=current_image)
+
+    assert image.data.shape == (2, 2, 2)
+    np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
+    np.testing.assert_array_equal(image.data[1], np.full((2, 2), 2.0))
+
+
+def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    context = ContextStub(filemanager)
+    image_name = "Hoechst"
+    image_path = "/memory/Hoechst.pkl"
+    source_paths = (
+        "/plate/Images/A01_s001_w1_z001_t001.tif",
+        "/plate/Images/A01_s002_w1_z001_t001.tif",
+    )
+    output_plan = ArtifactOutputPlan(
+        name=image_name,
+        path=image_path,
+        kind=ArtifactKind.IMAGE,
+        group_keys=(None,),
+    )
+
+    for group_key, source_path, value in (
+        ("1", source_paths[0], 1.0),
+        ("2", source_paths[1], 2.0),
+    ):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            group_key=group_key,
+            artifact_outputs={image_name: output_plan},
+            filemanager=filemanager,
+        )
+        producer.add_image(
+            image_name,
+            image_payload_with_context(
+                np.full((2, 2), value, dtype=np.float32),
+                metadata=ImagePayloadMetadata(
+                    source_path=source_path,
+                    source_component_metadata={"site": group_key},
+                ),
+            ),
+        )
+
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=source_paths,
+        current_step_input_files=source_paths,
+        pipeline_input_files=source_paths,
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+            )
+        },
+        source_binding_context=source_binding_context,
+        processing_context=context,
+        filemanager=filemanager,
+    )
+    current_image = image_payload_with_context(
+        np.zeros((2, 2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=source_paths,
+            channel_source_component_metadata=(
+                {"site": "1"},
+                {"site": "2"},
+            ),
+        ),
+    )
+
+    image = consumer.get_image(image_name, current_image=current_image)
+
+    assert image.data.shape == (2, 2, 2)
+    np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
+    np.testing.assert_array_equal(image.data[1], np.full((2, 2), 2.0))
+
+
+def test_cellprofiler_adapter_keeps_multisource_current_image_grouped_when_files_are_narrow():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    context = ContextStub(filemanager)
+    image_name = "Hoechst"
+    image_path = "/memory/Hoechst.pkl"
+    source_paths = (
+        "/plate/Images/A01_s1_w1.tif",
+        "/plate/Images/A01_s2_w1.tif",
+    )
+    source_metadata_by_path = {
+        source_paths[0]: {"Site": "1", "ChannelNumber": "1"},
+        source_paths[1]: {"Site": "2", "ChannelNumber": "1"},
+    }
+    output_plan = ArtifactOutputPlan(
+        name=image_name,
+        path=image_path,
+        kind=ArtifactKind.IMAGE,
+        group_keys=(None,),
+    )
+
+    for group_key, source_path, value in (
+        ("1", source_paths[0], 1.0),
+        ("2", source_paths[1], 2.0),
+    ):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            group_key=group_key,
+            artifact_outputs={image_name: output_plan},
+            filemanager=filemanager,
+        )
+        producer.add_image(
+            image_name,
+            image_payload_with_context(
+                np.full((2, 2), value, dtype=np.float32),
+                metadata=ImagePayloadMetadata(
+                    source_path=source_path,
+                    source_component_metadata=source_metadata_by_path[source_path],
+                ),
+            ),
+        )
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+            )
+        },
+        source_binding_context=SourceBindingRuntimeContext(
+            step_input_files=source_paths,
+            current_step_input_files=(source_paths[0],),
+            pipeline_input_files=source_paths,
+            source_metadata_by_path=source_metadata_by_path,
+        ),
+        processing_context=context,
+        filemanager=filemanager,
+    )
+    current_image = image_payload_with_context(
+        np.zeros((2, 2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(channel_source_paths=source_paths),
+    )
+
+    image = consumer.get_image(image_name, current_image=current_image)
+    metadata = image_payload_metadata(image.data)
+
+    assert image.data.shape == (2, 2, 2)
+    np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
+    np.testing.assert_array_equal(image.data[1], np.full((2, 2), 2.0))
+    assert metadata.channel_source_paths == source_paths
+
+
+def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    context = ContextStub(filemanager)
+    image_name = "Hoechst"
+    image_path = "/memory/Hoechst.pkl"
+    source_paths = (
+        "/plate/Images/A01_s001_w1_z001_t001.tif",
+        "/plate/Images/A01_s002_w1_z001_t001.tif",
+    )
+    output_plan = ArtifactOutputPlan(
+        name=image_name,
+        path=image_path,
+        kind=ArtifactKind.IMAGE,
+        group_keys=(None,),
+    )
+
+    for group_key, source_path, value in (
+        ("1", source_paths[0], 1.0),
+        ("2", source_paths[1], 2.0),
+    ):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            group_key=group_key,
+            artifact_outputs={image_name: output_plan},
+            filemanager=filemanager,
+        )
+        producer.add_image(
+            image_name,
+            image_payload_with_context(
+                np.full((2, 2), value, dtype=np.float32),
+                metadata=ImagePayloadMetadata(
+                    source_path=source_path,
+                    source_component_metadata={"site": group_key},
+                ),
+            ),
+        )
+
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=source_paths,
+        current_step_input_files=source_paths,
+        pipeline_input_files=source_paths,
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="A01_s{iii}_w1_z001_t001.tif",
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+            )
+        },
+        source_binding_context=source_binding_context,
+        processing_context=context,
+        filemanager=filemanager,
+    )
+    current_image = image_payload_with_context(
+        np.zeros((2, 2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=source_paths,
+            channel_source_component_metadata=(
+                {"site": "1"},
+                {"site": "2"},
+            ),
+        ),
+    )
+
+    image = consumer.get_image(image_name, current_image=current_image)
 
     assert image.data.shape == (2, 2, 2)
     np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
@@ -822,6 +1124,94 @@ def test_cellprofiler_adapter_trusts_nominal_object_label_domain_over_source_fal
     transformed_objects = adapter.get_objects(CELLS)
     assert transformed_objects.spatial_origin_yx is None
     assert transformed_objects.source_spatial_shape_yx is None
+
+
+def test_cellprofiler_adapter_requires_declared_source_image_coordinate_for_labels():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    source_plan = ArtifactOutputPlan(
+        name=DNA_IMAGE,
+        path="/memory/DNA.pkl",
+        kind=ArtifactKind.IMAGE,
+    )
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={DNA_IMAGE: source_plan},
+        filemanager=filemanager,
+    )
+    producer.add_image(DNA_IMAGE, np.zeros((2, 2), dtype=np.float32))
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_inputs={
+            DNA_IMAGE: ArtifactInputPlan(
+                name=DNA_IMAGE,
+                path=source_plan.path,
+                kind=ArtifactKind.IMAGE,
+            ),
+        },
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        filemanager=filemanager,
+    )
+
+    with pytest.raises(RuntimeError, match="require source coordinate metadata"):
+        consumer.add_objects(
+            NUCLEI,
+            np.ones((2, 2), dtype=np.int32),
+            source_image_name=DNA_IMAGE,
+        )
+
+
+def test_cellprofiler_adapter_inherits_declared_source_image_coordinate_for_labels():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    source_plan = ArtifactOutputPlan(
+        name=DNA_IMAGE,
+        path="/memory/DNA.pkl",
+        kind=ArtifactKind.IMAGE,
+    )
+    source_image = image_payload_with_context(
+        np.zeros((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/A01_s001_w1_z001_t001.tif",
+            source_component_metadata={"well": "A01", "site": "001", "channel": "1"},
+        ),
+    )
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={DNA_IMAGE: source_plan},
+        filemanager=filemanager,
+    )
+    producer.add_image(DNA_IMAGE, source_image)
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_inputs={
+            DNA_IMAGE: ArtifactInputPlan(
+                name=DNA_IMAGE,
+                path=source_plan.path,
+                kind=ArtifactKind.IMAGE,
+            ),
+        },
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        filemanager=filemanager,
+    )
+
+    consumer.add_objects(
+        NUCLEI,
+        np.ones((2, 2), dtype=np.int32),
+        source_image_name=DNA_IMAGE,
+    )
+    objects = consumer.get_objects(NUCLEI)
+
+    assert objects.source_path == "/plate/A01_s001_w1_z001_t001.tif"
+    assert objects.source_component_metadata == {
+        "well": "A01",
+        "site": "001",
+        "channel": "1",
+    }
 
 
 def test_cellprofiler_adapter_records_dense_object_label_slice_lists_as_stacks():
@@ -3712,11 +4102,10 @@ def test_cellprofiler_adapter_converts_declared_grayscale_rgb_sources():
 def test_cellprofiler_source_image_semantics_materializes_full_validity_mask():
     payload = np.arange(2 * 5 * 6, dtype=np.float32).reshape(2, 5, 6)
 
-    resolved = apply_source_image_loading_semantics(
-        payload,
-        source_metadata={SOURCE_IMAGE_TYPE_METADATA_FIELD: "Grayscale image"},
-        source_path="/workspace/source.tif",
-    )
+    resolved = SourceImagePayloadSemantics.from_source_metadata(
+        {SOURCE_IMAGE_TYPE_METADATA_FIELD: "Grayscale image"},
+        "/workspace/source.tif",
+    ).apply(payload)
 
     np.testing.assert_array_equal(resolved, payload)
     np.testing.assert_array_equal(

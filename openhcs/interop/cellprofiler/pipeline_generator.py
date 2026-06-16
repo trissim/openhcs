@@ -18,10 +18,11 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Iterable, List, Mapping, Optional
+from typing import ClassVar, List, Optional, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
@@ -83,6 +84,42 @@ from openhcs.interop.cellprofiler.symbol_table import (
 logger = logging.getLogger(__name__)
 
 
+RegistryMetadataValue: TypeAlias = str | int | float | bool | None
+GeneratedLiteralScalar: TypeAlias = str | int | float | bool | None | Enum
+GeneratedLiteralValue: TypeAlias = (
+    "GeneratedLiteralScalar | tuple[GeneratedLiteralValue, ...] | "
+    "list[GeneratedLiteralValue] | "
+    "dict[GeneratedLiteralValue, GeneratedLiteralValue]"
+)
+AbsorbedRegistryRecord: TypeAlias = Mapping[str, RegistryMetadataValue]
+GeneratedParameterName = str | list[str] | None
+
+
+@dataclass(frozen=True, slots=True)
+class AbsorbedRegistryRecordView:
+    """Typed reader for absorbed-library registry metadata records."""
+
+    record: AbsorbedRegistryRecord
+
+    def required_string(self, field_name: str) -> str:
+        return str(self.record[field_name])
+
+    def optional_string(self, field_name: str, default: str) -> str:
+        if field_name not in self.record:
+            return default
+        return str(self.record[field_name])
+
+    def optional_float(self, field_name: str, default: float) -> float:
+        if field_name not in self.record:
+            return default
+        return float(self.record[field_name])
+
+    def optional_bool(self, field_name: str, default: bool) -> bool:
+        if field_name not in self.record:
+            return default
+        return bool(self.record[field_name])
+
+
 @dataclass(frozen=True)
 class ArtifactSpecKey:
     """Scope-free artifact identity used while pruning generated CP steps."""
@@ -110,13 +147,14 @@ class AbsorbedModuleMetadata:
     @classmethod
     def from_registry_record(
         cls,
-        info: Mapping[str, Any],
+        info: AbsorbedRegistryRecord,
     ) -> AbsorbedModuleMetadata:
+        record = AbsorbedRegistryRecordView(info)
         return cls(
-            function_name=str(info["function_name"]),
-            contract=str(info.get("contract", "pure_2d")),
-            category=str(info.get("category", "image_operation")),
-            confidence=float(info.get("confidence", 0.5)),
+            function_name=record.required_string("function_name"),
+            contract=record.optional_string("contract", "pure_2d"),
+            category=record.optional_string("category", "image_operation"),
+            confidence=record.optional_float("confidence", 0.5),
         )
 
 
@@ -135,28 +173,156 @@ class ModuleProcessingComponents:
     """Generated OpenHCS processing-component literals for one module."""
 
     variable_components: tuple[str, ...]
-    group_by_literal: str | None = None
+    group_by_literal: str
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactLineageScope:
+    """Source-derived runtime lineage available to a generated module."""
+
+    contract: ModuleArtifactContracts
+    variable_components: tuple[str, ...] = ()
+    requires_pairwise_object_domain_scope: bool = False
+
+    def with_variable_components(
+        self,
+        variable_components: tuple[str, ...],
+    ) -> "RuntimeArtifactLineageScope":
+        return RuntimeArtifactLineageScope(
+            self.contract,
+            variable_components,
+            self.requires_pairwise_object_domain_scope,
+        )
+
+    def variable_components_without_channel(self) -> tuple[str, ...]:
+        """Named CellProfiler artifacts already carry their source-image channel."""
+        return tuple(
+            component
+            for component in self.variable_components
+            if component != "VariableComponents.CHANNEL"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedStepSettings:
+    """Generated function kwargs with CellProfiler setting-value literal semantics."""
+
+    entries: tuple[tuple[str, GeneratedLiteralValue], ...] = ()
+
+    @classmethod
+    def from_mapping(
+        cls,
+        values: Mapping[str, GeneratedLiteralValue],
+    ) -> "GeneratedStepSettings":
+        return cls(tuple(values.items()))
+
+    def __bool__(self) -> bool:
+        return bool(self.entries)
+
+    def items(self) -> Iterable[tuple[str, GeneratedLiteralValue]]:
+        return self.entries
+
+    def value(
+        self,
+        name: str,
+        default: GeneratedLiteralValue,
+    ) -> GeneratedLiteralValue:
+        for setting_name, value in self.entries:
+            if setting_name == name:
+                return value
+        return default
+
+    def without_dead_output_settings(
+        self,
+        *,
+        dead_settings: Iterable[str],
+        param_mapping: Mapping[str, GeneratedParameterName],
+    ) -> "GeneratedStepSettings":
+        pruned_values = dict(self.entries)
+        for setting_name in dead_settings:
+            parameter_target = GeneratedParameterTarget.from_setting(
+                setting_name,
+                param_mapping,
+            )
+            parameter_target.prune(pruned_values)
+        return GeneratedStepSettings.from_mapping(pruned_values)
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedParameterTarget:
+    """Generated Python parameter name(s) controlled by one CP setting row."""
+
+    parameter_names: tuple[str, ...]
+
+    @classmethod
+    def from_setting(
+        cls,
+        setting_name: str,
+        param_mapping: Mapping[str, GeneratedParameterName],
+    ) -> "GeneratedParameterTarget":
+        if setting_name not in param_mapping:
+            return cls((setting_name,))
+        mapped_parameter = param_mapping[setting_name]
+        if mapped_parameter is None:
+            return cls(())
+        if isinstance(mapped_parameter, list):
+            return cls(tuple(mapped_parameter))
+        return cls((mapped_parameter,))
+
+    def prune(self, values: dict[str, GeneratedLiteralValue]) -> None:
+        for parameter_name in self.parameter_names:
+            values.pop(parameter_name, None)
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleProcessingComponentRequest:
+    """Typed request for lowering CellProfiler module semantics to OpenHCS axes."""
+
+    category: str
+    runtime_lineage: RuntimeArtifactLineageScope
+    bound_settings: GeneratedStepSettings
+    category_defaults: Mapping[str, tuple[str, ...]]
+
+    def category_default_components(self) -> tuple[str, ...]:
+        if self.category in self.category_defaults:
+            return self.category_defaults[self.category]
+        return ("VariableComponents.SITE",)
+
+    def runtime_artifact_scope(
+        self,
+        *,
+        module_requires_pairwise_object_domain_scope: bool,
+    ) -> "RuntimeArtifactProcessingScope":
+        lineage_components = self.runtime_lineage.variable_components
+        source_bindings = self.runtime_lineage.contract.source_bindings
+        if not source_bindings.is_empty:
+            lineage_components = _unique_component_literals(
+                lineage_components,
+                source_binding_variable_component_literals(source_bindings),
+            )
+        return RuntimeArtifactProcessingScope(
+            self.runtime_lineage.with_variable_components(lineage_components),
+            module_requires_pairwise_object_domain_scope,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeArtifactProcessingScope:
     """OpenHCS execution scope for modules driven only by runtime artifacts."""
 
-    contract: ModuleArtifactContracts
-    lineage_variable_components: tuple[str, ...] = ()
-    lineage_requires_pairwise_object_domain_scope: bool = False
+    lineage: RuntimeArtifactLineageScope
     module_requires_pairwise_object_domain_scope: bool = False
 
     def components(self) -> ModuleProcessingComponents:
-        variable_components = self.lineage_variable_components
+        variable_components = self.lineage.variable_components_without_channel()
         if self.module_requires_pairwise_object_domain_scope or (
-            self.lineage_requires_pairwise_object_domain_scope
+            self.lineage.requires_pairwise_object_domain_scope
             and self.uses_measurement_only_runtime_inputs()
         ):
             return ModuleProcessingComponents((), "GroupBy.SITE")
         if any(
             spec.kind.participates_in_object_domain_scope
-            for spec in self.contract.outputs
+            for spec in self.lineage.contract.outputs
         ):
             if variable_components:
                 return ModuleProcessingComponents(variable_components, "GroupBy.NONE")
@@ -169,20 +335,61 @@ class RuntimeArtifactProcessingScope:
     def requires_pairwise_object_domain_scope(self) -> bool:
         object_domain_inputs = tuple(
             spec
-            for spec in self.contract.runtime_artifact_inputs
+            for spec in self.lineage.contract.runtime_artifact_inputs
             if spec.kind.participates_in_pairwise_object_domain_input
         )
         object_domain_outputs = tuple(
             spec
-            for spec in self.contract.outputs
+            for spec in self.lineage.contract.outputs
             if spec.kind.participates_in_object_domain_scope
         )
         return len(object_domain_inputs) > 1 and bool(object_domain_outputs)
 
     def uses_measurement_only_runtime_inputs(self) -> bool:
-        return bool(self.contract.runtime_artifact_inputs) and all(
+        return bool(self.lineage.contract.runtime_artifact_inputs) and all(
             spec.kind is ArtifactKind.MEASUREMENTS
-            for spec in self.contract.runtime_artifact_inputs
+            for spec in self.lineage.contract.runtime_artifact_inputs
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingProcessingScope:
+    """OpenHCS execution scope implied by CellProfiler source bindings."""
+
+    source_bindings: StepSourceBindingsConfig
+
+    def components(self) -> ModuleProcessingComponents:
+        if self.requires_image_set_stack():
+            return ModuleProcessingComponents(
+                ("VariableComponents.CHANNEL",),
+                "GroupBy.SITE",
+            )
+        if self.source_bindings.requires_pipeline_start_resolution:
+            return ModuleProcessingComponents(
+                source_binding_variable_component_literals(self.source_bindings),
+                "GroupBy.NONE",
+            )
+        return ModuleProcessingComponents(
+            ("VariableComponents.SITE",),
+            "GroupBy.NONE",
+        )
+
+    def requires_image_set_stack(self) -> bool:
+        """Return whether one function call consumes multiple source-image aliases."""
+        return (
+            self.has_multi_image_binding_group()
+            and self.source_bindings.requires_step_input_channel_stack
+        ) or self.source_bindings.requires_pipeline_start_image_set_stack
+
+    def has_multi_image_binding_group(self) -> bool:
+        return any(
+            sum(
+                1
+                for binding in group.bindings
+                if binding.participates_in_execution_anchoring
+            )
+            > 1
+            for group in self.source_bindings.groups
         )
 
 
@@ -203,23 +410,138 @@ class ModuleProcessingComponentStrategy(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def components(
         self,
-        *,
-        category: str,
-        contract: ModuleArtifactContracts,
-        bound_kwargs: Mapping[str, Any],
-        category_defaults: Mapping[str, tuple[str, ...]],
-        lineage_variable_components: tuple[str, ...] = (),
-        lineage_requires_pairwise_object_domain_scope: bool = False,
+        request: ModuleProcessingComponentRequest,
     ) -> ModuleProcessingComponents:
         """Return generated processing-component literals for this module."""
 
-    def requires_pairwise_object_domain_scope(
+    def module_requires_pairwise_object_domain_scope(
         self,
         contract: ModuleArtifactContracts,
     ) -> bool:
-        return RuntimeArtifactProcessingScope(
-            contract,
-        ).requires_pairwise_object_domain_scope()
+        object_domain_inputs = tuple(
+            spec
+            for spec in contract.runtime_artifact_inputs
+            if spec.kind.participates_in_pairwise_object_domain_input
+        )
+        object_domain_outputs = tuple(
+            spec
+            for spec in contract.outputs
+            if spec.kind.participates_in_object_domain_scope
+        )
+        return len(object_domain_inputs) > 1 and bool(object_domain_outputs)
+
+
+class ModuleProcessingScopePolicy(ABC, metaclass=AutoRegisterMeta):
+    """Auto-registered precedence policy for default module execution scope."""
+
+    __registry_key__ = "policy_name"
+    __skip_if_no_key__ = True
+    policy_name: ClassVar[str]
+
+    @classmethod
+    def for_request(
+        cls,
+        request: ModuleProcessingComponentRequest,
+    ) -> "ModuleProcessingScopePolicy":
+        for policy_type in cls.__registry__.values():
+            policy = policy_type()
+            if policy.matches(request):
+                return policy
+        raise RuntimeError("No module processing scope policy matched request.")
+
+    @abstractmethod
+    def matches(self, request: ModuleProcessingComponentRequest) -> bool:
+        """Return whether this policy owns the request."""
+
+    @abstractmethod
+    def components(
+        self,
+        strategy: ModuleProcessingComponentStrategy,
+        request: ModuleProcessingComponentRequest,
+    ) -> ModuleProcessingComponents:
+        """Return generated processing-component literals for the policy."""
+
+
+class RuntimeArtifactModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
+    """Runtime artifacts determine scope before direct source bindings."""
+
+    policy_name = "runtime_artifact"
+
+    def matches(self, request: ModuleProcessingComponentRequest) -> bool:
+        return bool(request.runtime_lineage.contract.runtime_artifact_inputs)
+
+    def components(
+        self,
+        strategy: ModuleProcessingComponentStrategy,
+        request: ModuleProcessingComponentRequest,
+    ) -> ModuleProcessingComponents:
+        return request.runtime_artifact_scope(
+            module_requires_pairwise_object_domain_scope=(
+                strategy.module_requires_pairwise_object_domain_scope(
+                    request.runtime_lineage.contract
+                )
+            ),
+        ).components()
+
+
+class SourceBindingModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
+    """Direct CellProfiler source bindings determine scope for source steps."""
+
+    policy_name = "source_binding"
+
+    def matches(self, request: ModuleProcessingComponentRequest) -> bool:
+        return not request.runtime_lineage.contract.source_bindings.is_empty
+
+    def components(
+        self,
+        strategy: ModuleProcessingComponentStrategy,
+        request: ModuleProcessingComponentRequest,
+    ) -> ModuleProcessingComponents:
+        del strategy
+        return SourceBindingProcessingScope(
+            request.runtime_lineage.contract.source_bindings
+        ).components()
+
+
+class InputlessArtifactModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
+    """Artifact-only aggregate modules execute once per site axis."""
+
+    policy_name = "inputless_artifact"
+
+    def matches(self, request: ModuleProcessingComponentRequest) -> bool:
+        return _is_inputless_artifact_only_contract(request.runtime_lineage.contract)
+
+    def components(
+        self,
+        strategy: ModuleProcessingComponentStrategy,
+        request: ModuleProcessingComponentRequest,
+    ) -> ModuleProcessingComponents:
+        del strategy, request
+        return ModuleProcessingComponents(
+            ("VariableComponents.SITE",),
+            "GroupBy.NONE",
+        )
+
+
+class CategoryDefaultModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
+    """Absorbed module category defaults fill the remaining pure image cases."""
+
+    policy_name = "category_default"
+
+    def matches(self, request: ModuleProcessingComponentRequest) -> bool:
+        del request
+        return True
+
+    def components(
+        self,
+        strategy: ModuleProcessingComponentStrategy,
+        request: ModuleProcessingComponentRequest,
+    ) -> ModuleProcessingComponents:
+        del strategy
+        return ModuleProcessingComponents(
+            tuple(request.category_default_components()),
+            "GroupBy.NONE",
+        )
 
 
 class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy):
@@ -229,50 +551,21 @@ class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy
 
     def components(
         self,
-        *,
-        category: str,
-        contract: ModuleArtifactContracts,
-        bound_kwargs: Mapping[str, Any],
-        category_defaults: Mapping[str, tuple[str, ...]],
-        lineage_variable_components: tuple[str, ...] = (),
-        lineage_requires_pairwise_object_domain_scope: bool = False,
+        request: ModuleProcessingComponentRequest,
     ) -> ModuleProcessingComponents:
-        del bound_kwargs
-        source_bindings = contract.source_bindings
-        if not source_bindings.is_empty:
-            if source_bindings.requires_step_input_channel_stack:
-                return ModuleProcessingComponents(
-                    ("VariableComponents.CHANNEL",),
-                    "GroupBy.SITE",
-                )
-            if source_bindings.requires_pipeline_start_image_set_stack:
-                return ModuleProcessingComponents(
-                    ("VariableComponents.CHANNEL",),
-                    "GroupBy.SITE",
-                )
-            if source_bindings.requires_pipeline_start_resolution:
-                return ModuleProcessingComponents(
-                    source_binding_variable_component_literals(source_bindings),
-                    "GroupBy.NONE",
-                )
-            return ModuleProcessingComponents(("VariableComponents.SITE",))
-        if contract.runtime_artifact_inputs:
-            return RuntimeArtifactProcessingScope(
-                contract,
-                lineage_variable_components,
-                lineage_requires_pairwise_object_domain_scope,
-                self.requires_pairwise_object_domain_scope(contract),
-            ).components()
-        if _is_inputless_artifact_only_contract(contract):
-            return ModuleProcessingComponents(("VariableComponents.SITE",), "GroupBy.NONE")
-        return ModuleProcessingComponents(
-            tuple(
-                category_defaults.get(
-                    category,
-                    ("VariableComponents.SITE",),
-                )
-            )
+        return ModuleProcessingScopePolicy.for_request(request).components(
+            self,
+            request,
         )
+
+
+def _unique_component_literals(*groups: Iterable[str]) -> tuple[str, ...]:
+    components: list[str] = []
+    for group in groups:
+        for component in group:
+            if component not in components:
+                components.append(component)
+    return tuple(components)
 
 
 def source_binding_variable_component_literals(
@@ -348,7 +641,7 @@ class RuntimeArtifactSourceLineage:
 
         if ModuleProcessingComponentStrategy.for_module(
             contract.module_name
-        ).requires_pairwise_object_domain_scope(contract):
+        ).module_requires_pairwise_object_domain_scope(contract):
             return True
 
         for symbol in contract.input_symbols:
@@ -367,9 +660,7 @@ class RuntimeArtifactSourceLineage:
 
     @staticmethod
     def _extend_unique(components: list[str], values: Iterable[str]) -> None:
-        for value in values:
-            if value not in components:
-                components.append(value)
+        components[:] = _unique_component_literals(components, values)
 
 
 class TrackObjectsProcessingComponentStrategy(DefaultModuleProcessingComponentStrategy):
@@ -379,22 +670,9 @@ class TrackObjectsProcessingComponentStrategy(DefaultModuleProcessingComponentSt
 
     def components(
         self,
-        *,
-        category: str,
-        contract: ModuleArtifactContracts,
-        bound_kwargs: Mapping[str, Any],
-        category_defaults: Mapping[str, tuple[str, ...]],
-        lineage_variable_components: tuple[str, ...] = (),
-        lineage_requires_pairwise_object_domain_scope: bool = False,
+        request: ModuleProcessingComponentRequest,
     ) -> ModuleProcessingComponents:
-        del (
-            category,
-            contract,
-            bound_kwargs,
-            category_defaults,
-            lineage_variable_components,
-            lineage_requires_pairwise_object_domain_scope,
-        )
+        del request
         return ModuleProcessingComponents(
             ("VariableComponents.TIMEPOINT",),
             "GroupBy.NONE",
@@ -408,7 +686,7 @@ class MeasureImageAreaOccupiedProcessingComponentStrategy(
 
     module_name = "MeasureImageAreaOccupiedBinary"
 
-    def requires_pairwise_object_domain_scope(
+    def module_requires_pairwise_object_domain_scope(
         self,
         contract: ModuleArtifactContracts,
     ) -> bool:
@@ -429,15 +707,9 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
 
     def components(
         self,
-        *,
-        category: str,
-        contract: ModuleArtifactContracts,
-        bound_kwargs: Mapping[str, Any],
-        category_defaults: Mapping[str, tuple[str, ...]],
-        lineage_variable_components: tuple[str, ...] = (),
-        lineage_requires_pairwise_object_domain_scope: bool = False,
+        request: ModuleProcessingComponentRequest,
     ) -> ModuleProcessingComponents:
-        raw_scope = bound_kwargs.get(
+        raw_scope = request.bound_settings.value(
             "calculation_scope",
             IlluminationCalculationScope.EACH,
         )
@@ -447,16 +719,7 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
                 ("VariableComponents.SITE",),
                 "GroupBy.CHANNEL",
             )
-        return super().components(
-            category=category,
-            contract=contract,
-            bound_kwargs=bound_kwargs,
-            category_defaults=category_defaults,
-            lineage_variable_components=lineage_variable_components,
-            lineage_requires_pairwise_object_domain_scope=(
-                lineage_requires_pairwise_object_domain_scope
-            ),
-        )
+        return super().components(request)
 
 
 def _is_inputless_artifact_only_contract(contract: ModuleArtifactContracts) -> bool:
@@ -533,6 +796,22 @@ class GeneratedPipeline:
         logger.info(f"Saved pipeline to {output_path}")
 
 
+@dataclass(frozen=True, slots=True)
+class SkippedModuleSelection:
+    """Public optional skipped-module argument normalized for generation."""
+
+    modules: tuple[ModuleBlock, ...] = ()
+
+    @classmethod
+    def from_optional(
+        cls,
+        modules: Optional[List[ModuleBlock]],
+    ) -> "SkippedModuleSelection":
+        if modules is None:
+            return cls(())
+        return cls(tuple(modules))
+
+
 @dataclass(frozen=True)
 class GeneratedPipelineRequest:
     """Nominal request for one registry-backed CellProfiler pipeline generation."""
@@ -559,7 +838,9 @@ class GeneratedPipelineRequest:
         return cls(
             pipeline_name=pipeline_name,
             source_cppipe=source_cppipe,
-            skipped_modules=tuple(skipped_modules or ()),
+            skipped_modules=SkippedModuleSelection.from_optional(
+                skipped_modules
+            ).modules,
             prune_dead_unmaterialized_artifact_steps=(
                 prune_dead_unmaterialized_artifact_steps
             ),
@@ -572,7 +853,7 @@ class GeneratedPipelineRequest:
 class PipelineGeneratorRegistryStage:
     """Absorbed-library registry loading and module metadata lookup."""
 
-    generator: Any
+    generator: "PipelineGenerator"
 
     def load_registry(self) -> dict[str, AbsorbedModuleMetadata]:
         """Load full module metadata from the OpenHCS-owned absorbed catalog."""
@@ -603,11 +884,15 @@ class PipelineGeneratorRegistryStage:
 
         try:
             data = json.loads(contracts_file.read_text())
-            return {
-                module_name: AbsorbedModuleMetadata.from_registry_record(info)
-                for module_name, info in data.items()
-                if info.get("validated", False)
-            }
+            registry: dict[str, AbsorbedModuleMetadata] = {}
+            for module_name, info in data.items():
+                record = AbsorbedRegistryRecordView(info)
+                if not record.optional_bool("validated", False):
+                    continue
+                registry[module_name] = AbsorbedModuleMetadata.from_registry_record(
+                    info
+                )
+            return registry
         except Exception as e:
             raise RuntimeError(f"Failed to load registry: {e}")
 
@@ -620,11 +905,37 @@ class PipelineGeneratorRegistryStage:
         return self.generator._registry[canonical_module_name(module_name)]
 
 
+@dataclass(slots=True)
+class OutputSymbolsBySetting:
+    """Output artifact symbols grouped by normalized CellProfiler setting name."""
+
+    values: dict[str, set[ArtifactSpecKey]]
+
+    @classmethod
+    def empty(cls) -> "OutputSymbolsBySetting":
+        return cls({})
+
+    def add(self, setting_name: str, artifact: ArtifactSpecKey) -> None:
+        if setting_name not in self.values:
+            self.values[setting_name] = set()
+        self.values[setting_name].add(artifact)
+
+    def dead_setting_names(
+        self,
+        retained_outputs: frozenset[ArtifactSpecKey],
+    ) -> frozenset[str]:
+        return frozenset(
+            setting_name
+            for setting_name, output_symbols in self.values.items()
+            if output_symbols and not output_symbols & retained_outputs
+        )
+
+
 @dataclass(frozen=True)
 class PipelineGeneratorArtifactPruner:
     """Dead-artifact pruning and setting-pruning authority."""
 
-    generator: Any
+    generator: "PipelineGenerator"
 
     def prune_dead_unmaterialized_artifact_steps(
         self,
@@ -702,26 +1013,19 @@ class PipelineGeneratorArtifactPruner:
         self,
         *,
         module: ModuleBlock,
-        translated_kwargs: dict[str, Any],
-        param_mapping: Mapping[str, Any],
+        translated_kwargs: GeneratedStepSettings,
+        param_mapping: Mapping[str, GeneratedParameterName],
         artifact_contract: ModuleArtifactContracts,
-    ) -> dict[str, Any]:
+    ) -> GeneratedStepSettings:
         """Drop function kwargs for output-name settings pruned from artifacts."""
         dead_settings = self.dead_output_setting_names(
             module=module,
             artifact_contract=artifact_contract,
         )
-        pruned_kwargs = dict(translated_kwargs)
-        for setting_name in dead_settings:
-            mapped_parameter = param_mapping.get(setting_name)
-            if mapped_parameter is None:
-                mapped_parameter = setting_name
-            if isinstance(mapped_parameter, list):
-                for parameter_name in mapped_parameter:
-                    pruned_kwargs.pop(parameter_name, None)
-            else:
-                pruned_kwargs.pop(mapped_parameter, None)
-        return pruned_kwargs
+        return translated_kwargs.without_dead_output_settings(
+            dead_settings=dead_settings,
+            param_mapping=param_mapping,
+        )
 
     @staticmethod
     def dead_output_setting_names(
@@ -734,21 +1038,18 @@ class PipelineGeneratorArtifactPruner:
             ArtifactSpecKey(symbol.kind.artifact_kind, symbol.name)
             for symbol in artifact_contract.output_symbols
         )
-        output_symbols_by_setting: dict[str, set[ArtifactSpecKey]] = {}
+        output_symbols_by_setting = OutputSymbolsBySetting.empty()
         for symbol in artifact_setting_symbols(module):
             if symbol.role.is_input:
                 continue
             normalized_setting = normalize_cellprofiler_setting_name(
                 symbol.setting_name
             )
-            output_symbols_by_setting.setdefault(normalized_setting, set()).add(
+            output_symbols_by_setting.add(
+                normalized_setting,
                 ArtifactSpecKey(symbol.role.artifact_kind, symbol.name)
             )
-        return frozenset(
-            setting_name
-            for setting_name, output_symbols in output_symbols_by_setting.items()
-            if output_symbols and not output_symbols & retained_outputs
-        )
+        return output_symbols_by_setting.dead_setting_names(retained_outputs)
 
     @staticmethod
     def terminal_image_artifacts(
@@ -783,7 +1084,7 @@ class PipelineGeneratorArtifactPruner:
 class PipelineGeneratorRuntimeContractProjector:
     """Projection from symbol-table contracts to runtime artifact contracts."""
 
-    generator: Any
+    generator: "PipelineGenerator"
 
     def by_module_num(
         self,
@@ -852,11 +1153,130 @@ class PipelineGeneratorRuntimeContractProjector:
         return replace(spec, materialization=tiff_stack(normalize_uint8=True))
 
 
+class ArtifactContractCommentSection(ABC, metaclass=AutoRegisterMeta):
+    """Auto-registered generated-comment section for artifact contracts."""
+
+    __registry_key__ = "section_name"
+    __skip_if_no_key__ = True
+    section_name: ClassVar[str]
+    order: ClassVar[int]
+
+    @classmethod
+    def lines_for(cls, contract: ModuleArtifactContracts) -> list[str]:
+        lines: list[str] = []
+        section_types = sorted(
+            cls.__registry__.values(),
+            key=lambda section_type: section_type.order,
+        )
+        for section_type in section_types:
+            section = section_type()
+            if section.matches(contract):
+                lines.append(section.line(contract))
+        return lines
+
+    @staticmethod
+    def format_artifact_specs(specs: tuple[ArtifactSpec, ...]) -> str:
+        """Format artifact specs for deterministic generated-code comments."""
+        return ", ".join(f"{spec.kind.value}:{spec.name}" for spec in specs)
+
+    @abstractmethod
+    def matches(self, contract: ModuleArtifactContracts) -> bool:
+        """Return whether this comment section has content."""
+
+    @abstractmethod
+    def line(self, contract: ModuleArtifactContracts) -> str:
+        """Return the generated comment line for this section."""
+
+
+class InputArtifactCommentSection(ArtifactContractCommentSection):
+    """Comment section for declared CellProfiler artifact inputs."""
+
+    section_name = "inputs"
+    order = 10
+
+    def matches(self, contract: ModuleArtifactContracts) -> bool:
+        return bool(contract.inputs)
+
+    def line(self, contract: ModuleArtifactContracts) -> str:
+        return (
+            "        # CellProfiler artifact inputs: "
+            + self.format_artifact_specs(contract.inputs)
+        )
+
+
+class SourceBindingCommentSection(ArtifactContractCommentSection):
+    """Comment section for external source-image bindings."""
+
+    section_name = "source_bindings"
+    order = 20
+
+    def matches(self, contract: ModuleArtifactContracts) -> bool:
+        return bool(contract.external_source_symbols)
+
+    def line(self, contract: ModuleArtifactContracts) -> str:
+        return "        # Source bindings: " + ", ".join(
+            symbol.name for symbol in contract.external_source_symbols
+        )
+
+
+class RuntimeArtifactCommentSection(ArtifactContractCommentSection):
+    """Comment section for runtime artifact dependencies."""
+
+    section_name = "runtime_artifact_inputs"
+    order = 30
+
+    def matches(self, contract: ModuleArtifactContracts) -> bool:
+        return bool(contract.runtime_artifact_inputs)
+
+    def line(self, contract: ModuleArtifactContracts) -> str:
+        return (
+            "        # Runtime artifact inputs: "
+            + self.format_artifact_specs(contract.runtime_artifact_inputs)
+        )
+
+
+class OutputArtifactCommentSection(ArtifactContractCommentSection):
+    """Comment section for declared CellProfiler artifact outputs."""
+
+    section_name = "outputs"
+    order = 40
+
+    def matches(self, contract: ModuleArtifactContracts) -> bool:
+        return bool(contract.outputs)
+
+    def line(self, contract: ModuleArtifactContracts) -> str:
+        return (
+            "        # CellProfiler artifact outputs: "
+            + self.format_artifact_specs(contract.outputs)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StepInputSourceLiteral:
+    """Generated LazyProcessingConfig input_source fragment for one step."""
+
+    value: str | None = None
+
+    @classmethod
+    def from_contract(
+        cls,
+        contract: ModuleArtifactContracts,
+    ) -> "StepInputSourceLiteral":
+        if contract.external_source_symbols:
+            return cls("InputSource.PIPELINE_START")
+        return cls()
+
+    def append_to(self, lines: list[str]) -> None:
+        if self.value is None:
+            return
+        lines.append(f"            input_source={self.value},")
+
+
 @dataclass(frozen=True)
 class PipelineGeneratorCodeEmitter:
     """Generated-code emission for imports, FunctionStep declarations, and comments."""
 
-    generator: Any
+    generator: "PipelineGenerator"
 
     def generate_steps_from_registry(
         self,
@@ -881,13 +1301,11 @@ class PipelineGeneratorCodeEmitter:
             artifact_contract = artifact_contracts[module.module_num]
             func_name = function_names_by_module[module.module_num]
 
-            input_source_literal = (
-                "InputSource.PIPELINE_START"
-                if artifact_contract.external_source_symbols
-                else None
+            input_source_literal = StepInputSourceLiteral.from_contract(
+                artifact_contract
             )
 
-            param_mapping = {}
+            param_mapping: dict[str, GeneratedParameterName] = {}
             dead_output_settings = self.generator.pruner.dead_output_setting_names(
                 module=module,
                 artifact_contract=artifact_contract,
@@ -901,7 +1319,9 @@ class PipelineGeneratorCodeEmitter:
                 ignored_unmapped_settings=dead_output_settings,
             )
             setting_coverage.extend(bound_settings.setting_coverage)
-            translated_kwargs = dict(bound_settings.kwargs)
+            translated_kwargs = GeneratedStepSettings.from_mapping(
+                bound_settings.kwargs
+            )
             translated_kwargs = self.generator.pruner.prune_dead_output_setting_kwargs(
                 module=module,
                 translated_kwargs=translated_kwargs,
@@ -914,18 +1334,18 @@ class PipelineGeneratorCodeEmitter:
             processing_components = ModuleProcessingComponentStrategy.for_module(
                 module.name
             ).components(
-                category=category,
-                contract=artifact_contract,
-                bound_kwargs=translated_kwargs,
-                category_defaults=self.generator.CATEGORY_TO_VARIABLE_COMPONENTS,
-                lineage_variable_components=source_lineage.variable_components_for(
-                    artifact_contract
-                ),
-                lineage_requires_pairwise_object_domain_scope=(
-                    source_lineage.requires_pairwise_object_domain_scope_for(
-                        artifact_contract
-                    )
-                ),
+                ModuleProcessingComponentRequest(
+                    category=category,
+                    runtime_lineage=RuntimeArtifactLineageScope(
+                        artifact_contract,
+                        source_lineage.variable_components_for(artifact_contract),
+                        source_lineage.requires_pairwise_object_domain_scope_for(
+                            artifact_contract
+                        ),
+                    ),
+                    bound_settings=translated_kwargs,
+                    category_defaults=self.generator.CATEGORY_TO_VARIABLE_COMPONENTS,
+                )
             )
 
             lines.append("    FunctionStep(")
@@ -967,12 +1387,10 @@ class PipelineGeneratorCodeEmitter:
                 + ", ".join(processing_components.variable_components)
                 + "],"
             )
-            if processing_components.group_by_literal is not None:
-                lines.append(
-                    f"            group_by={processing_components.group_by_literal},"
-                )
-            if input_source_literal is not None:
-                lines.append(f"            input_source={input_source_literal},")
+            lines.append(
+                f"            group_by={processing_components.group_by_literal},"
+            )
+            input_source_literal.append_to(lines)
             lines.append("        ),")
 
             lines.append("    ),")
@@ -1025,42 +1443,14 @@ class PipelineGeneratorCodeEmitter:
         contract: ModuleArtifactContracts,
     ) -> list[str]:
         """Return generated comments summarizing artifact contract semantics."""
-        lines: list[str] = []
-        if contract.inputs:
-            lines.append(
-                "        # CellProfiler artifact inputs: "
-                + self.format_artifact_specs(contract.inputs)
-            )
-        if contract.external_source_symbols:
-            lines.append(
-                "        # Source bindings: "
-                + ", ".join(
-                    symbol.name for symbol in contract.external_source_symbols
-                )
-            )
-        if contract.runtime_artifact_inputs:
-            lines.append(
-                "        # Runtime artifact inputs: "
-                + self.format_artifact_specs(contract.runtime_artifact_inputs)
-            )
-        if contract.outputs:
-            lines.append(
-                "        # CellProfiler artifact outputs: "
-                + self.format_artifact_specs(contract.outputs)
-            )
-        return lines
-
-    @staticmethod
-    def format_artifact_specs(specs: tuple[ArtifactSpec, ...]) -> str:
-        """Format artifact specs for deterministic generated-code comments."""
-        return ", ".join(f"{spec.kind.value}:{spec.name}" for spec in specs)
+        return ArtifactContractCommentSection.lines_for(contract)
 
 
 @dataclass(frozen=True)
 class PipelineGeneratorBuildStage:
     """Top-level CellProfiler module partitioning and generated-pipeline assembly."""
 
-    generator: Any
+    generator: "PipelineGenerator"
 
     def generate(
         self,
@@ -1336,14 +1726,20 @@ from openhcs.constants.input_source import InputSource
     }
 
 
-def python_literal(value: Any) -> str:
+def python_literal(value: GeneratedLiteralValue) -> str:
     """Render a deterministic generated-code literal for bound setting values."""
     if isinstance(value, Enum):
         return repr(value.value)
     if isinstance(value, tuple):
-        return "(" + ", ".join(python_literal(item) for item in value) + (
-            "," if len(value) == 1 else ""
-        ) + ")"
+        trailing_comma = ""
+        if len(value) == 1:
+            trailing_comma = ","
+        return (
+            "("
+            + ", ".join(python_literal(item) for item in value)
+            + trailing_comma
+            + ")"
+        )
     if isinstance(value, list):
         return "[" + ", ".join(python_literal(item) for item in value) + "]"
     if isinstance(value, dict):

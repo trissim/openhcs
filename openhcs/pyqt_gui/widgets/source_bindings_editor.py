@@ -1627,7 +1627,7 @@ def create_source_bindings_editor_widget(
 def register_source_bindings_editor_widget() -> None:
     """Register the typed source-binding editor with pyqt-reactive forms."""
 
-    from pyqt_reactive.forms import register_inline_dataclass_widget
+    from pyqt_reactive.forms.parameter_info_types import register_inline_dataclass_widget
 
     register_inline_dataclass_widget(
         StepSourceBindingsConfig,

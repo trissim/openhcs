@@ -6,10 +6,10 @@ objects, measurements, relationships, and other richer runtime state.
 """
 
 from abc import ABC
-from dataclasses import dataclass, replace
+from collections.abc import Hashable, Iterable, Mapping
+from dataclasses import astuple, dataclass, is_dataclass, replace
 from enum import Enum
-from collections.abc import Iterable
-from typing import Any, ClassVar, Mapping, Self, cast
+from typing import ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -23,6 +23,32 @@ class ArtifactPayloadShape(str, Enum):
     MAPPING = "mapping"
 
 
+@dataclass(frozen=True, slots=True)
+class ArtifactKindOptions:
+    """Optional semantic flags attached to one artifact kind."""
+
+    uses_label_representation_payload_shape: bool = False
+    participates_in_measurement_source_names: bool = False
+    participates_in_main_flow_output: bool = False
+    participates_in_axis_plane_identity: bool = False
+    participates_in_object_domain_scope: bool = False
+    participates_in_pairwise_object_domain_input: bool = False
+    payload_description: str | None = None
+
+    def description_for(
+        self,
+        *,
+        value: str,
+        payload_shape: ArtifactPayloadShape,
+    ) -> str:
+        if self.payload_description is not None:
+            return self.payload_description
+        return f"{payload_shape} {value} payload"
+
+
+DEFAULT_ARTIFACT_KIND_OPTIONS = ArtifactKindOptions()
+
+
 class ArtifactKind(str, Enum):
     """Closed family of runtime artifact categories."""
 
@@ -30,32 +56,30 @@ class ArtifactKind(str, Enum):
         cls,
         value: str,
         payload_shape: "ArtifactPayloadShape",
-        options: Mapping[str, bool | str] | None = None,
+        options: ArtifactKindOptions = DEFAULT_ARTIFACT_KIND_OPTIONS,
     ):
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj._payload_shape = payload_shape
         obj.uses_label_representation_payload_shape = (
-            bool((options or {}).get("uses_label_representation_payload_shape"))
+            options.uses_label_representation_payload_shape
         )
-        obj.participates_in_measurement_source_names = bool(
-            (options or {}).get("participates_in_measurement_source_names")
+        obj.participates_in_measurement_source_names = (
+            options.participates_in_measurement_source_names
         )
-        obj.participates_in_main_flow_output = bool(
-            (options or {}).get("participates_in_main_flow_output")
+        obj.participates_in_main_flow_output = options.participates_in_main_flow_output
+        obj.participates_in_axis_plane_identity = (
+            options.participates_in_axis_plane_identity
         )
-        obj.participates_in_axis_plane_identity = bool(
-            (options or {}).get("participates_in_axis_plane_identity")
+        obj.participates_in_object_domain_scope = (
+            options.participates_in_object_domain_scope
         )
-        obj.participates_in_object_domain_scope = bool(
-            (options or {}).get("participates_in_object_domain_scope")
+        obj.participates_in_pairwise_object_domain_input = (
+            options.participates_in_pairwise_object_domain_input
         )
-        obj.participates_in_pairwise_object_domain_input = bool(
-            (options or {}).get("participates_in_pairwise_object_domain_input")
-        )
-        obj.payload_description = (options or {}).get(
-            "payload_description",
-            f"{payload_shape} {value} payload",
+        obj.payload_description = options.description_for(
+            value=value,
+            payload_shape=payload_shape,
         )
         return obj
 
@@ -63,49 +87,49 @@ class ArtifactKind(str, Enum):
     IMAGE = (
         "image",
         ArtifactPayloadShape.ARRAY,
-        {
-            "participates_in_measurement_source_names": True,
-            "participates_in_main_flow_output": True,
-        },
+        ArtifactKindOptions(
+            participates_in_measurement_source_names=True,
+            participates_in_main_flow_output=True,
+        ),
     )
     OBJECT_LABELS = (
         "object_labels",
         ArtifactPayloadShape.ARRAY,
-        {
-            "participates_in_main_flow_output": True,
-            "participates_in_object_domain_scope": True,
-            "participates_in_pairwise_object_domain_input": True,
-            "payload_description": "object_labels payload",
-            "uses_label_representation_payload_shape": True,
-        },
+        ArtifactKindOptions(
+            participates_in_main_flow_output=True,
+            participates_in_object_domain_scope=True,
+            participates_in_pairwise_object_domain_input=True,
+            payload_description="object_labels payload",
+            uses_label_representation_payload_shape=True,
+        ),
     )
     MEASUREMENTS = (
         "measurements",
         ArtifactPayloadShape.TABLE,
-        {"participates_in_axis_plane_identity": True},
+        ArtifactKindOptions(participates_in_axis_plane_identity=True),
     )
     RELATIONSHIPS = (
         "relationships",
         ArtifactPayloadShape.TABLE,
-        {
-            "participates_in_axis_plane_identity": True,
-            "participates_in_object_domain_scope": True,
-            "participates_in_pairwise_object_domain_input": True,
-        },
+        ArtifactKindOptions(
+            participates_in_axis_plane_identity=True,
+            participates_in_object_domain_scope=True,
+            participates_in_pairwise_object_domain_input=True,
+        ),
     )
     TABLE = ("table", ArtifactPayloadShape.TABLE)
     SPATIAL_GRID = (
         "spatial_grid",
         ArtifactPayloadShape.MAPPING,
-        {
-            "payload_description": "spatial grid mapping",
-            "participates_in_pairwise_object_domain_input": True,
-        },
+        ArtifactKindOptions(
+            payload_description="spatial grid mapping",
+            participates_in_pairwise_object_domain_input=True,
+        ),
     )
     METADATA = (
         "metadata",
         ArtifactPayloadShape.MAPPING,
-        {"payload_description": "metadata mapping"},
+        ArtifactKindOptions(payload_description="metadata mapping"),
     )
 
     @property
@@ -127,12 +151,11 @@ class ArtifactSidecarSpec:
     separator: str = "__"
 
     def __post_init__(self) -> None:
-        role = (
-            self.role
-            if isinstance(self.role, ArtifactSidecarRole)
-            else ArtifactSidecarRole(self.role)
-        )
-        object.__setattr__(self, "role", role)
+        if not isinstance(self.role, ArtifactSidecarRole):
+            raise TypeError(
+                "ArtifactSidecarSpec.role must be an ArtifactSidecarRole, "
+                f"got {type(self.role).__name__}."
+            )
         if not self.separator:
             raise ValueError("ArtifactSidecarSpec.separator cannot be empty.")
 
@@ -147,18 +170,62 @@ class ArtifactSidecarSpec:
 CROP_MASK_ARTIFACT_SIDECAR = ArtifactSidecarSpec(ArtifactSidecarRole.CROP_MASK)
 
 
+class ArtifactMaterializationPayload(ABC):
+    """Nominal marker for rich artifact materialization metadata."""
+
+
 @dataclass(frozen=True)
 class ArtifactSpec:
     """Declared input or output artifact contract for a function invocation."""
 
     name: str
     kind: ArtifactKind = ArtifactKind.SPECIAL
-    materialization: Any = None
+    materialization: ArtifactMaterializationPayload | None = None
     required: bool = True
     sidecar_role: ArtifactSidecarRole | None = None
 
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.name,
+                self.kind,
+                _artifact_spec_hash_value(self.materialization),
+                self.required,
+                self.sidecar_role,
+            )
+        )
 
-@dataclass(frozen=True, slots=True)
+
+def _artifact_spec_hash_value(value) -> Hashable:
+    """Project rich artifact metadata into a hashable equality-compatible value."""
+    if is_dataclass(value):
+        return (type(value), _artifact_spec_hash_value(astuple(value)))
+    if isinstance(value, Mapping):
+        return tuple(
+            sorted(
+                (
+                    (
+                        _artifact_spec_hash_value(key),
+                        _artifact_spec_hash_value(item),
+                    )
+                    for key, item in value.items()
+                ),
+                key=repr,
+            )
+        )
+    if isinstance(value, (tuple, list)):
+        return tuple(_artifact_spec_hash_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_artifact_spec_hash_value(item) for item in value)
+    if isinstance(value, Hashable):
+        return value
+    raise TypeError(
+        "ArtifactSpec materialization metadata contains unsupported "
+        f"unhashable value {type(value).__name__}."
+    )
+
+
+@dataclass(slots=True)
 class ArtifactSpecCollection:
     """Ordered query surface over declared artifact specs."""
 
@@ -172,7 +239,7 @@ class ArtifactSpecCollection:
                     "ArtifactSpecCollection requires ArtifactSpec values, "
                     f"got {type(spec).__name__}."
                 )
-        object.__setattr__(self, "specs", normalized)
+        self.specs = normalized
 
     def of_kind(self, kind: ArtifactKind) -> tuple[ArtifactSpec, ...]:
         """Return specs with the requested artifact kind, preserving order."""
@@ -307,7 +374,7 @@ class ArtifactOutputPlan(ArtifactPlan):
     plan_role: ClassVar[str] = "output"
     _missing_group_uses_default_path: ClassVar[bool] = True
 
-    materialization: Any = None
+    materialization: ArtifactMaterializationPayload | None = None
     producer_step_index: int | str | None = None
     producer_step_scope_id: str | None = None
     producer_step_name: str | None = None
@@ -359,8 +426,10 @@ class ArtifactInputPlan(ArtifactPlan):
         if requested_group_key not in (None, "default"):
             return requested_group_key
         axis_group_key = str(axis_id)
-        if axis_group_key in (self.group_keys or ()) and (
-            not self.paths_by_group or axis_group_key in self.paths_by_group
+        if axis_group_key in self.group_keys and (
+            self.paths_by_group is None
+            or len(self.paths_by_group) == 0
+            or axis_group_key in self.paths_by_group
         ):
             return axis_group_key
         return requested_group_key
@@ -374,5 +443,13 @@ class ArtifactInputPlan(ArtifactPlan):
 class StepResult:
     """Function return envelope for image output plus named artifacts."""
 
-    image: Any
-    artifacts: Mapping[str, Any]
+    image: "StepResultImagePayload"
+    artifacts: Mapping[str, "StepResultArtifactPayload"]
+
+
+class StepResultImagePayload(ABC):
+    """Nominal marker for StepResult primary image payloads."""
+
+
+class StepResultArtifactPayload(ABC):
+    """Nominal marker for StepResult named artifact payloads."""

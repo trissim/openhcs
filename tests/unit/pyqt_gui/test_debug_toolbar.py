@@ -23,7 +23,7 @@ from openhcs.pyqt_gui.windows.debug_inspector_window import (
 )
 from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
+from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget

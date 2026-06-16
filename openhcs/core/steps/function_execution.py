@@ -21,7 +21,6 @@ from openhcs.constants.constants import (
     LOADABLE_IMAGE_EXTENSIONS,
     Backend,
 )
-from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import CompiledFunctionGroup
 from openhcs.core.progress import ProgressPhase, ProgressStatus, emit
@@ -1107,12 +1106,6 @@ class FunctionStepExecutor:
             if runtime_adapter is None or not runtime_adapter.manages_artifact_inputs:
                 return False
             if not invocation.artifact_input_keys:
-                return False
-            if any(
-                self.plan.artifact_outputs[key].kind is ArtifactKind.IMAGE
-                for key in invocation.artifact_output_keys
-                if key in self.plan.artifact_outputs
-            ):
                 return False
         return True
 

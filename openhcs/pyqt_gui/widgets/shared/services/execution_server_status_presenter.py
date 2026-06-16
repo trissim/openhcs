@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import List
 
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     ExecutionServerInfo,
 )
 

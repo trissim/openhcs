@@ -10,6 +10,7 @@ Includes migration utilities to move existing cache files from legacy ~/.openhcs
 """
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -24,7 +25,8 @@ def get_openhcs_data_dir() -> Path:
     Returns:
         Path to ~/.local/share/openhcs/
     """
-    data_dir = Path.home() / ".local" / "share" / "openhcs"
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    data_dir = data_home / "openhcs"
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 

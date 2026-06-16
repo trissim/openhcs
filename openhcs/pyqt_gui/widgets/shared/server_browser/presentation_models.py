@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QTreeWidgetItem
 
 from openhcs.core.progress import ProgressEvent, phase_channel
 from openhcs.core.progress.types import ProgressChannelRole
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     BaseServerInfo,
     ExecutionServerInfo,
     GenericServerInfo,

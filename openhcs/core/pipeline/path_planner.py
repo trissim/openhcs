@@ -18,6 +18,7 @@ from openhcs.core.function_patterns import (
     compile_function_pattern,
     inject_artifact_input_values,
     inject_kwargs_into_pattern,
+    normalize_function_pattern,
     strip_disabled_functions,
 )
 from openhcs.core.invocation_artifacts import (
@@ -184,7 +185,7 @@ class PathPlannerArtifactStage:
         declarations: ArtifactGraph,
         execution_groups: List[Optional[str]],
     ) -> ArtifactGraph:
-        """Namespace grouped artifact outputs unless a later step consumes them globally."""
+        """Namespace compiler-owned grouped outputs without rewriting adapter artifacts."""
         if (
             isinstance(func_pattern, dict)
             or execution_groups == [None]
@@ -192,14 +193,49 @@ class PathPlannerArtifactStage:
         ):
             return declarations
 
+        adapter_managed_outputs = self.adapter_managed_output_names(
+            func_pattern,
+            declarations,
+        )
         output_groups = {
             output_key: tuple(
                 self.planner.execution_groups.normalize_group_key(group)
                 for group in execution_groups
             )
             for output_key in declarations.output_names
+            if output_key not in adapter_managed_outputs
         }
+        if not output_groups:
+            return declarations
         return declarations.with_output_groups(output_groups)
+
+    @staticmethod
+    def adapter_managed_output_names(
+        func_pattern: Any,
+        declarations: ArtifactGraph,
+    ) -> set[str]:
+        """Return output artifacts owned by runtime adapter semantics."""
+        managed_invocation_keys = set()
+        for invocation in normalize_function_pattern(func_pattern).iter_items():
+            runtime_adapter = invocation.contract.runtime_adapter
+            if runtime_adapter is None or not runtime_adapter.manages_artifact_inputs:
+                continue
+            managed_invocation_keys.add(invocation.key)
+
+        managed_by_name: dict[str, list[bool]] = defaultdict(list)
+        for producer in declarations.producers:
+            managed_by_name[producer.name].append(
+                bool(producer.invocation_keys)
+                and all(
+                    invocation_key in managed_invocation_keys
+                    for invocation_key in producer.invocation_keys
+                )
+            )
+        return {
+            output_name
+            for output_name, ownership in managed_by_name.items()
+            if ownership and all(ownership)
+        }
 
     def compile_plan_maps(
         self,
@@ -377,21 +413,18 @@ class PathPlannerArtifactStage:
     ) -> ArtifactInputPlan:
         producer = self.planner.declared[key]
         if producer.kind != input_spec.kind:
-            producer_name = (
-                producer.producer_step_name
-                or producer.producer_step_index
-                or "unknown"
-            )
-            consumer_name = step_name or sid
+            producer_name = self._producer_artifact_display_name(producer)
+            consumer_name = self._consumer_step_display_name(step_name, sid)
             raise ValueError(
                 f"Artifact input '{key}' in step '{consumer_name}' expects "
                 f"{input_spec.kind.value}, but producer step '{producer_name}' "
                 f"provides {producer.kind.value}."
             )
-        producer_groups = list(producer.group_keys or (None,))
+        producer_groups = self._producer_artifact_group_keys(producer)
+        producer_paths_by_group = self._producer_artifact_paths_by_group(producer)
 
         if producer_groups != [None] and normalized_consumers == [None]:
-            paths_by_group = dict(producer.paths_by_group or {})
+            paths_by_group = producer_paths_by_group.copy()
         elif producer_groups != [None]:
             missing = [
                 group
@@ -399,9 +432,9 @@ class PathPlannerArtifactStage:
                 if group not in producer_groups
             ]
             if missing:
-                if len(producer_groups) == 1 and producer.paths_by_group:
+                if len(producer_groups) == 1 and producer_paths_by_group:
                     producer_group = producer_groups[0]
-                    producer_path = producer.paths_by_group.get(producer_group)
+                    producer_path = producer_paths_by_group.get(producer_group)
                     if producer_path is not None:
                         paths_by_group = {
                             group: producer_path
@@ -416,22 +449,17 @@ class PathPlannerArtifactStage:
                             source_step_id=producer.producer_step_index,
                             source_step_scope_id=producer.producer_step_scope_id,
                         )
-                producer_name = (
-                    producer.producer_step_name
-                    or producer.producer_step_index
-                    or "unknown"
-                )
-                consumer_name = step_name or sid
+                producer_name = self._producer_artifact_display_name(producer)
+                consumer_name = self._consumer_step_display_name(step_name, sid)
                 raise ValueError(
                     f"Artifact input '{key}' in step '{consumer_name}' cannot be resolved: "
                     f"producer step '{producer_name}' provides groups {producer_groups}, "
                     f"but consumer needs {missing}."
                 )
             paths_by_group = {
-                group: producer.paths_by_group[group]
+                group: producer_paths_by_group[group]
                 for group in normalized_consumers
-                if producer.paths_by_group
-                and group in producer.paths_by_group
+                if group in producer_paths_by_group
             }
         else:
             paths_by_group = {
@@ -447,6 +475,36 @@ class PathPlannerArtifactStage:
             source_step_id=producer.producer_step_index,
             source_step_scope_id=producer.producer_step_scope_id,
         )
+
+    @staticmethod
+    def _producer_artifact_display_name(producer: ArtifactOutputPlan) -> object:
+        if producer.producer_step_name is not None:
+            return producer.producer_step_name
+        if producer.producer_step_index is not None:
+            return producer.producer_step_index
+        return "unknown"
+
+    @staticmethod
+    def _consumer_step_display_name(step_name: Optional[str], sid: int) -> object:
+        if step_name is not None:
+            return step_name
+        return sid
+
+    @staticmethod
+    def _producer_artifact_group_keys(
+        producer: ArtifactOutputPlan,
+    ) -> list[Optional[str]]:
+        if producer.group_keys:
+            return list(producer.group_keys)
+        return [None]
+
+    @staticmethod
+    def _producer_artifact_paths_by_group(
+        producer: ArtifactOutputPlan,
+    ) -> dict[Optional[str], str]:
+        if producer.paths_by_group is None:
+            return {}
+        return dict(producer.paths_by_group)
 
     def inject_metadata(self, pattern: Any, inputs: Dict) -> Any:
         """Inject metadata for artifact inputs."""

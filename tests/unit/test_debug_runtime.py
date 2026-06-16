@@ -60,8 +60,8 @@ from openhcs.core.source_bindings import (
     SourceBindingRuntimeContext,
 )
 from openhcs.core.steps.function_runtime import (
+    FunctionChainExecutor,
     FunctionChainExecutionRequest,
-    execute_function_chain,
 )
 
 
@@ -298,7 +298,7 @@ def test_execute_chain_emits_debug_invocation_events():
         source_binding_context=SourceBindingRuntimeContext.empty(),
     )
 
-    result = execute_function_chain(request)
+    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 4, 6]))
     assert [event.event_type for event in sink.events] == [
@@ -341,7 +341,7 @@ def test_execute_chain_debug_events_include_planned_artifact_refs():
         source_binding_context=SourceBindingRuntimeContext.empty(),
     )
 
-    result = execute_function_chain(request)
+    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 4, 6]))
     after_event = sink.events[-1]
@@ -380,7 +380,7 @@ def test_debug_step_executes_one_function_pattern_invocation():
         source_binding_context=SourceBindingRuntimeContext.empty(),
     )
 
-    result = execute_function_chain(request)
+    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 4, 6]))
     assert [
@@ -420,7 +420,7 @@ def test_debug_step_can_advance_past_current_function_pattern_invocation():
         source_binding_context=SourceBindingRuntimeContext.empty(),
     )
 
-    result = execute_function_chain(request)
+    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 3, 4]))
     assert len(emitted) == 2
@@ -448,7 +448,7 @@ def test_execute_chain_emits_debug_exception_event():
     )
 
     try:
-        execute_function_chain(request)
+        FunctionChainExecutor(request).execute()
     except RuntimeError:
         pass
 

@@ -38,6 +38,10 @@ from openhcs.config_framework.global_config import get_current_global_config
 from openhcs.config_framework.lazy_factory import LazyDataclass, get_base_type_for_lazy
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.ui.shared.pattern_data_manager import PatternDataManager
+from openhcs.pyqt_gui.services.step_scope_identity import (
+    StepEditorScope,
+    build_step_scope_id,
+)
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
@@ -115,6 +119,8 @@ class DualEditorWindow(BaseFormDialog):
         parent=None,
         service_adapter=None,
         step_index: Optional[int] = None,
+        *,
+        plate_scope: str,
         source_schema: PipelineImageSchema | None = None,
         source_binding_context: SourceBindingContext | None = None,
         function_invocation_badge_provider: Optional[
@@ -134,6 +140,7 @@ class DualEditorWindow(BaseFormDialog):
             parent: Parent widget
             service_adapter: PyQt service adapter that owns main window services
             step_index: Position in pipeline (for border pattern matching list item)
+            plate_scope: Logical plate ObjectState scope used for step child scopes
         """
         super().__init__(parent)
 
@@ -157,6 +164,7 @@ class DualEditorWindow(BaseFormDialog):
         self.is_new = is_new
         self.on_save_callback = on_save_callback
         self.orchestrator = orchestrator  # Store orchestrator for context management
+        self.plate_scope = str(plate_scope)
 
         # Pattern management (extracted from Textual version)
         self.pattern_manager = PatternDataManager()
@@ -498,18 +506,28 @@ class DualEditorWindow(BaseFormDialog):
         - Tab bar tabs
         - Window flash overlay
         """
+        accent_color = self._required_scope_accent_color()
+        self._scope_accent_color = accent_color
+        hex_color = accent_color.name()
+
+        self._style_save_button_for_scope(hex_color, accent_color)
+        self._style_header_for_scope(hex_color)
+        self._style_tabs_for_scope(hex_color, accent_color)
+        self._style_step_editor_for_scope(hex_color)
+        self._style_function_editor_for_scope(hex_color)
+        self._ensure_window_flash_overlay()
+
+        super().apply_scope_accent_styling()
+
+    def _required_scope_accent_color(self):
         accent_color = self.get_scope_accent_color()
         if accent_color is None:
             raise RuntimeError(
                 "Scope accent color is missing; call init_scope_border() after setting scope_id"
             )
+        return accent_color
 
-        # Store for child widgets that need the computed accent.
-        self._scope_accent_color = accent_color
-
-        hex_color = accent_color.name()
-
-        # Style Save button with scope accent color
+    def _style_save_button_for_scope(self, hex_color: str, accent_color) -> None:
         self._save_button_base_style = f"""
             QPushButton {{
                 background-color: {hex_color};
@@ -529,76 +547,73 @@ class DualEditorWindow(BaseFormDialog):
         """
         self.save_button.setStyleSheet(self._save_button_base_style)
 
-        # Style header label with scope accent color
+    def _style_header_for_scope(self, hex_color: str) -> None:
         self.header_label.setStyleSheet(f"color: {hex_color};")
 
-        # Style tab bar with scope accent color
-        if self.tab_bar:
-            self.tab_bar.setStyleSheet(f"""
-                QTabBar::tab {{
-                    background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
-                    color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
-                    padding: 0px 16px;
-                    margin-right: 2px;
-                    border: none;
-                    border-radius: 4px 4px 0 0;
-                    height: {CURRENT_LAYOUT.button_height}px;
-                }}
-                QTabBar::tab:selected {{
-                    background-color: {hex_color};
-                    color: white;
-                }}
-                QTabBar::tab:hover:!selected {{
-                    background-color: {accent_color.lighter(115).name()};
-                    color: white;
-                }}
-            """)
+    def _style_tabs_for_scope(self, hex_color: str, accent_color) -> None:
+        if not self.tab_bar:
+            return
 
-        # Style step_editor elements
-        if self.step_editor:
-            # Tree selection
-            tree_style = self.get_scope_tree_selection_stylesheet()
-            if tree_style and self.step_editor.hierarchy_tree:
-                current_style = self.step_editor.hierarchy_tree.styleSheet() or ""
-                self.step_editor.hierarchy_tree.setStyleSheet(
-                    f"{current_style}\n{tree_style}"
-                )
+        self.tab_bar.setStyleSheet(f"""
+            QTabBar::tab {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
+                padding: 0px 16px;
+                margin-right: 2px;
+                border: none;
+                border-radius: 4px 4px 0 0;
+                height: {CURRENT_LAYOUT.button_height}px;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {hex_color};
+                color: white;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {accent_color.lighter(115).name()};
+                color: white;
+            }}
+        """)
 
-            # "Step Parameters" header label (may be None if render_header=False)
-            if self.step_editor.header_label is not None:
-                self.step_editor.header_label.setStyleSheet(
-                    f"color: {hex_color}; font-weight: bold; font-size: 14px;"
-                )
+    def _style_step_editor_for_scope(self, hex_color: str) -> None:
+        if not self.step_editor:
+            return
 
-            if self._scope_color_scheme:
-                self.step_editor.apply_scope_color_scheme(self._scope_color_scheme)
+        tree_style = self.get_scope_tree_selection_stylesheet()
+        if tree_style and self.step_editor.hierarchy_tree:
+            current_style = self.step_editor.hierarchy_tree.styleSheet() or ""
+            self.step_editor.hierarchy_tree.setStyleSheet(
+                f"{current_style}\n{tree_style}"
+            )
 
-        # Style func_editor elements (Function Pattern tab)
-        if self.func_editor:
-            # "Functions" header label (may be None if render_header=False)
-            if self.func_editor.header_label is not None:
-                self.func_editor.header_label.setStyleSheet(
-                    f"color: {hex_color}; font-weight: bold; font-size: 14px;"
-                )
+        if self.step_editor.header_label is not None:
+            self.step_editor.header_label.setStyleSheet(
+                f"color: {hex_color}; font-weight: bold; font-size: 14px;"
+            )
 
-            # Apply scope color scheme to function panes (for enableable styling and colors)
-            # Use inheritance - _scope_color_scheme is set by ScopedBorderMixin.init_scope_border()
-            if self._scope_color_scheme:
-                self.func_editor.set_scope_color_scheme(self._scope_color_scheme)
+        if self._scope_color_scheme:
+            self.step_editor.apply_scope_color_scheme(self._scope_color_scheme)
 
-        # Show window flash when dual editor opens
+    def _style_function_editor_for_scope(self, hex_color: str) -> None:
+        if not self.func_editor:
+            return
+
+        if self.func_editor.header_label is not None:
+            self.func_editor.header_label.setStyleSheet(
+                f"color: {hex_color}; font-weight: bold; font-size: 14px;"
+            )
+
+        if self._scope_color_scheme:
+            self.func_editor.set_scope_color_scheme(self._scope_color_scheme)
+
+    def _ensure_window_flash_overlay(self) -> None:
         if self._flash_overlay is None:
             from pyqt_reactive.animation import WindowFlashOverlay
 
             self._flash_overlay = WindowFlashOverlay(self)
             self._flash_overlay_cleaned = False
 
-        super().apply_scope_accent_styling()
-
     def _build_step_scope_id(self) -> str:
-        return ScopeTokenService.build_scope_id(
-            self.orchestrator.plate_path, self.editing_step
-        )
+        return build_step_scope_id(self.plate_scope, self.editing_step)
 
     def _on_pipeline_changed(self, new_pipeline_steps: list):
         """Handle pipeline_changed signal from global event bus.
@@ -615,18 +630,18 @@ class DualEditorWindow(BaseFormDialog):
         Args:
             new_pipeline_steps: Updated list of FunctionStep objects from the pipeline
         """
-        # Find our step in the new pipeline by matching scope_id
-        # CRITICAL: Use scope_id matching (more robust than object identity)
-        # The window's scope_id is "plate_path::functionstep_N", extract the token
+        # Find our step in the new pipeline by matching scope token.
         window_scope_id = self.scope_id
         if not window_scope_id:
             return
 
-        # Extract step token from scope_id (e.g., "plate_path::functionstep_3" -> "functionstep_3")
-        window_step_token = (
-            window_scope_id.split("::")[-1] if "::" in window_scope_id else None
-        )
-        if not window_step_token:
+        try:
+            window_step_token = StepEditorScope.parse(window_scope_id).step_token.raw
+        except ValueError:
+            logger.debug(
+                "Ignoring non-step editor scope during pipeline refresh: %s",
+                window_scope_id,
+            )
             return
 
         # Find matching step by scope token
@@ -831,7 +846,7 @@ class DualEditorWindow(BaseFormDialog):
 
         return info
 
-    def on_orchestrator_config_changed(self, plate_path: str, effective_config):
+    def on_orchestrator_config_changed(self, plate_scope: str, effective_config):
         """Handle orchestrator configuration changes for placeholder refresh.
 
         This is called when the pipeline config is saved and the orchestrator's
@@ -839,13 +854,13 @@ class DualEditorWindow(BaseFormDialog):
         reference and refresh the step editor's placeholders.
 
         Args:
-            plate_path: Path of the plate whose orchestrator config changed
+            plate_scope: Logical plate scope whose orchestrator config changed
             effective_config: The orchestrator's new effective configuration
         """
         # Only refresh if this is for our orchestrator
-        if self.orchestrator and str(self.orchestrator.plate_path) == plate_path:
+        if self.orchestrator and self.plate_scope == plate_scope:
             logger.debug(
-                f"Step editor received orchestrator config change for {plate_path}"
+                f"Step editor received orchestrator config change for {plate_scope}"
             )
 
             # Update our stored pipeline_config reference to the orchestrator's current config

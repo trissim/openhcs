@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from asyncio import AbstractEventLoop
+from collections.abc import Awaitable
+from dataclasses import dataclass
 import logging
-from typing import Any, Callable, Dict, List, TypeVar
+from typing import Callable, ClassVar, TypeVar
 
+from metaclass_registry import AutoRegisterMeta
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
+from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileJobCallback,
@@ -30,8 +38,46 @@ from zmqruntime.execution import (
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
-RunBlockingCallable = Callable[[object, Callable[[], T]], Any]
-ProgressClientConnector = Callable[[], Any]
+RunBlockingCallable = Callable[[AbstractEventLoop, Callable[[], T]], Awaitable[T]]
+ProgressClientConnector = Callable[[], Awaitable[ZMQExecutionClient]]
+
+
+class CompileConfigParamsByPlate(ABC, metaclass=AutoRegisterMeta):
+    """Variant family for compile-time config params keyed by plate scope."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
+
+    @abstractmethod
+    def params_for_plate(self, plate_path: str) -> dict | None:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class EmptyCompileConfigParamsByPlate(CompileConfigParamsByPlate):
+    """Compile policy with no per-plate config params."""
+
+    registry_key: ClassVar[str] = "empty"
+
+    def params_for_plate(self, plate_path: str) -> dict | None:
+        del plate_path
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitCompileConfigParamsByPlate(CompileConfigParamsByPlate):
+    """Explicit per-plate compile params supplied by a caller."""
+
+    registry_key: ClassVar[str] = "explicit"
+    params_by_plate: dict[str, dict]
+
+    def params_for_plate(self, plate_path: str) -> dict | None:
+        return self.params_by_plate.get(plate_path)
+
+
+EMPTY_COMPILE_CONFIG_PARAMS_BY_PLATE = EmptyCompileConfigParamsByPlate()
 
 
 class CompileBatchWorkflowService:
@@ -42,7 +88,7 @@ class CompileBatchWorkflowService:
         *,
         host,
         client_service: ZMQClientService,
-        global_config_provider: Callable[[], Any],
+        global_config_provider: Callable[[], GlobalPipelineConfig],
         run_blocking: RunBlockingCallable,
         connect_progress_client: ProgressClientConnector,
         compile_workflow: CompileWorkflowService | None = None,
@@ -63,7 +109,7 @@ class CompileBatchWorkflowService:
             host
         )
 
-    async def compile_plates(self, selected_items: List[Dict]) -> None:
+    async def compile_plates(self, selected_items: list[PlateManagerRow]) -> None:
         """Compile pipelines for selected plates."""
         self.host.emit_progress_started(len(selected_items))
         import asyncio
@@ -72,7 +118,7 @@ class CompileBatchWorkflowService:
 
         try:
             zmq_client = await self._connect_progress_client()
-            plate_paths = [str(item["path"]) for item in selected_items]
+            plate_paths = [row.scope_id for row in selected_items]
             for plate_path in plate_paths:
                 self.host.clear_plate_execution_tracking(plate_path)
             self.host.plate_compile_pending.update(plate_paths)
@@ -82,17 +128,17 @@ class CompileBatchWorkflowService:
             )
 
             completed_count = 0
-            compile_jobs: List[CompileJob] = []
-            for plate_data in selected_items:
-                plate_path = str(plate_data["path"])
+            compile_jobs: list[CompileJob] = []
+            for row in selected_items:
+                plate_path = row.scope_id
                 try:
                     compile_jobs.append(
-                        self._plate_request_builder.build_compile_job_from_plate_data(
-                            plate_data
+                        self._plate_request_builder.build_compile_job_from_plate_row(
+                            row
                         )
                     )
                 except Exception as error:
-                    self._handle_compile_failure(plate_data, plate_path, error)
+                    self._handle_compile_failure(row.name, plate_path, error)
                     completed_count += 1
                     self.host.emit_progress_updated(completed_count)
 
@@ -112,9 +158,12 @@ class CompileBatchWorkflowService:
             def _on_wait_error(
                 job: CompileJob, error: Exception, _idx: int, _total: int
             ) -> None:
-                self._handle_compile_failure(
-                    {"name": job.plate_name}, job.plate_path, error
-                )
+                self._handle_compile_failure(job.plate_name, job.plate_path, error)
+
+            def _on_submit_error(
+                job: CompileJob, error: Exception, _idx: int, _total: int
+            ) -> None:
+                self._handle_compile_failure(job.plate_name, job.plate_path, error)
 
             def _on_wait_start(_job: CompileJob, _idx: int, total: int) -> None:
                 nonlocal waiting_announced
@@ -137,12 +186,7 @@ class CompileBatchWorkflowService:
                 loop=loop,
                 fail_fast_submit=False,
                 fail_fast_wait=False,
-                on_submit_error=lambda job,
-                error,
-                _idx,
-                _total: self._handle_compile_failure(
-                    {"name": job.plate_name}, job.plate_path, error
-                ),
+                on_submit_error=_on_submit_error,
                 on_wait_start=_on_wait_start,
                 on_wait_success=_on_wait_success,
                 on_wait_error=_on_wait_error,
@@ -161,20 +205,23 @@ class CompileBatchWorkflowService:
 
     async def compile_before_execution(
         self,
-        run_specs: List[RunSpec],
+        run_specs: list[RunSpec],
         loop,
-        config_params_by_plate: dict[str, dict[str, Any]] | None = None,
-    ) -> Dict[str, str]:
+        config_params_by_plate: CompileConfigParamsByPlate = (
+            EMPTY_COMPILE_CONFIG_PARAMS_BY_PLATE
+        ),
+    ) -> dict[str, str]:
         """Compile all selected plates before submitting execution jobs."""
         if self.client_service.zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
 
         zmq_client = self.client_service.zmq_client
-        compile_config_params = config_params_by_plate or {}
         compile_jobs = [
             PlatePipelineRequestBuilder.compile_job_from_run_spec(
                 run_spec,
-                config_params=compile_config_params.get(run_spec.plate_path),
+                config_params=config_params_by_plate.params_for_plate(
+                    run_spec.plate_path
+                ),
             )
             for run_spec in run_specs
         ]
@@ -289,16 +336,15 @@ class CompileBatchWorkflowService:
             orchestrator._state = state
 
     def _handle_compile_failure(
-        self, plate_data: Dict[str, Any], plate_path: str, error: Exception
+        self, plate_name: str, plate_path: str, error: Exception
     ) -> None:
         logger.error("COMPILATION ERROR: %s: %s", plate_path, error, exc_info=True)
-        plate_data["error"] = str(error)
         self.host.clear_plate_execution_tracking(plate_path)
         self._set_orchestrator_state(plate_path, OrchestratorState.COMPILE_FAILED)
         self.host.plate_compile_pending.discard(plate_path)
         self.host.update_item_list()
         self.host.emit_orchestrator_state(plate_path, "COMPILE_FAILED")
-        self.host.emit_compilation_error(plate_data["name"], str(error))
+        self.host.emit_compilation_error(plate_name, str(error))
 
 
 __all__ = ("CompileBatchWorkflowService",)

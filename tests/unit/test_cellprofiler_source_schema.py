@@ -906,6 +906,86 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     ) == 2
 
 
+def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"(?P<well>[A-Z]\d+)_s(?P<site>\d+)_w(?P<channel>\d)",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Select the rule criteria", 'and (metadata does channel "1")'),
+                ("Name to assign these images", "OrigBlue"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does channel "2")'),
+                ("Name to assign these images", "OrigGreen"),
+                ("Select the image type", "Grayscale image"),
+            ],
+        ),
+    ]
+    processing_modules = [
+        ModuleBlock(
+            name="IdentifyPrimaryObjects",
+            module_num=3,
+            settings={
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Nuclei",
+            },
+        ),
+        ModuleBlock(
+            name="IdentifySecondaryObjects",
+            module_num=4,
+            settings={
+                "Select the input objects": "Nuclei",
+                "Select the input image": "OrigGreen",
+                "Name the objects to be identified": "Cells",
+            },
+        ),
+    ]
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_mixed_runtime_source_binding",
+        source_cppipe=Path("source.pipeline"),
+        modules=processing_modules,
+        skipped_modules=setup_modules,
+    )
+
+    primary_match = re.search(
+        r'name="IdentifyPrimaryObjects".*?'
+        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
+        generated.code,
+        re.S,
+    )
+    assert primary_match is not None
+    primary_config = primary_match.group("body")
+    assert "VariableComponents.CHANNEL" not in primary_config
+    assert "variable_components=[VariableComponents.SITE]," in primary_config
+    assert "group_by=GroupBy.NONE," in primary_config
+
+    secondary_match = re.search(
+        r'name="IdentifySecondaryObjects".*?'
+        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
+        generated.code,
+        re.S,
+    )
+    assert secondary_match is not None
+    secondary_config = secondary_match.group("body")
+    assert "VariableComponents.CHANNEL" not in secondary_config
+    assert "variable_components=[VariableComponents.SITE]," in secondary_config
+    assert "group_by=GroupBy.NONE," in secondary_config
+
+
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
     names_and_types_module = _module_with_records(
         2,
@@ -1115,7 +1195,7 @@ def test_generated_runtime_callables_with_non_image_artifacts_are_flexible():
     assert "identify_tertiary_objects," in generated.code
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "name=\"IdentifyTertiaryObjects\"," in generated.code
-    assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
+    assert "variable_components=[]," in generated.code
     assert "group_by=GroupBy.SITE," in generated.code
 
 

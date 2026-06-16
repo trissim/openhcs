@@ -188,6 +188,40 @@ class CellProfilerPlateWorkspacePreparer:
             for file in sorted(pipeline_files, key=lambda file: file.sort_key)
         )
 
+    def preferred_cppipe_path(self) -> Path | None:
+        """Return the default CellProfiler pipeline for this physical plate."""
+        candidates = self.cppipe_paths()
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        preferred_name = (
+            self.request.plate_root / f"{self.request.plate_root.name}.cppipe"
+        )
+        if preferred_name in candidates:
+            return preferred_name
+
+        final_pipelines = tuple(
+            path
+            for path in candidates
+            if CellProfilerPipelineStage.from_path(path)
+            is CellProfilerPipelineStage.FINAL
+        )
+        if len(final_pipelines) == 1:
+            return final_pipelines[0]
+
+        unlabeled_pipelines = tuple(
+            path
+            for path in candidates
+            if CellProfilerPipelineStage.from_path(path)
+            is CellProfilerPipelineStage.UNLABELED
+        )
+        if len(unlabeled_pipelines) == 1:
+            return unlabeled_pipelines[0]
+
+        return candidates[0]
+
     def generated_pipeline_path(self, cppipe_path: Path) -> Path:
         generated_dir = self.request.plate_root / ".openhcs_cellprofiler"
         generated_dir.mkdir(parents=True, exist_ok=True)

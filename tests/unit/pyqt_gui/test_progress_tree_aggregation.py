@@ -5,7 +5,7 @@ from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ProgressTopologyState,
     ProgressTreeBuilder,
 )
-from pyqt_reactive.services import DefaultServerInfoParser
+from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 
 
 def _event(

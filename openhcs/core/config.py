@@ -16,7 +16,6 @@ from abc import ABC, abstractmethod
 from openhcs.constants import (
     Microscope,
     SequentialComponents,
-    VirtualComponents,
     VariableComponents,
     GroupBy,
     DtypeConversion,
@@ -256,18 +255,12 @@ VisualizationDtype.__doc__ = (
 
 # Create NapariDisplayConfig using factory
 # Note: Uses lazy colormap enum to avoid importing napari at module level
-# Note: component_order is automatically derived from VirtualComponents + AllComponents
-# This makes VirtualComponents the single source of truth
 NapariDisplayConfig = create_napari_display_config(
     colormap_enum=NapariColormap,
     dimension_mode_enum=NapariDimensionMode,
     variable_size_handling_enum=NapariVariableSizeHandling,
     visualization_dtype_enum=VisualizationDtype,
-    virtual_components=VirtualComponents,
-    component_order=_build_component_order(),  # Auto-generated from VirtualComponents
-    virtual_component_defaults={
-        "source": NapariDimensionMode.SLICE  # Separate layers per step by default
-    },
+    component_order=_build_component_order(),
 )
 
 # Apply the global pipeline config decorator with ui_hidden=True
@@ -312,17 +305,10 @@ class FijiDimensionMode(Enum):
 
 
 # Create FijiDisplayConfig using factory (with component-specific fields like Napari)
-# Note: component_order is automatically derived from VirtualComponents + AllComponents
-# This makes VirtualComponents the single source of truth
 FijiDisplayConfig = create_fiji_display_config(
     lut_enum=FijiLUT,
     dimension_mode_enum=FijiDimensionMode,
-    virtual_components=VirtualComponents,
-    component_order=_build_component_order(),  # Auto-generated from VirtualComponents
-    virtual_component_defaults={
-        # source is WINDOW by default for window grouping (well is already WINDOW in component_defaults)
-        "source": FijiDimensionMode.WINDOW
-    },
+    component_order=_build_component_order(),
 )
 
 # Apply the global pipeline config decorator with ui_hidden=True
@@ -588,7 +574,7 @@ class PathPlanningConfig(WellFilterConfig):
 
 
 @abbreviation("step_wf")
-@global_pipeline_config
+@global_pipeline_config(always_viewable_fields=["well_filter"])
 @dataclass(frozen=True)
 class StepWellFilterConfig(WellFilterConfig):
     """Well filter configuration specialized for step-level configs with different defaults."""

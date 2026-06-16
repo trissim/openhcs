@@ -282,7 +282,7 @@ class OpenHCSComponentSelectionProvider:
 
     def _get_plate_manager(self):
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-        from pyqt_reactive.services import ServiceRegistry
+        from pyqt_reactive.services.service_registry import ServiceRegistry
 
         return ServiceRegistry.get(PlateManagerWidget)
 
@@ -440,14 +440,13 @@ def register_reactor_providers() -> None:
     # FormGenConfig with OpenHCS paths
     config = OpenHCSFormGenConfig()
     try:
-        from openhcs.core.xdg_paths import get_data_file_path
+        from openhcs.core.xdg_paths import get_data_file_path, get_openhcs_data_dir
 
         config.path_cache_file = str(get_data_file_path("path_cache.json"))
+        config.log_dir = str(get_openhcs_data_dir() / "logs")
     except Exception:
         config.path_cache_file = None
-
-    # Log directory
-    config.log_dir = str(Path.home() / ".local" / "share" / "openhcs" / "logs")
+        config.log_dir = None
 
     # Jedi project paths (openhcs package + repo root if available)
     pkg_root = Path(__file__).resolve().parents[2]

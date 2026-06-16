@@ -27,10 +27,12 @@ from openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset import (
     reset_progress_views_for_new_batch,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
-from pyqt_reactive.services import (
+from pyqt_reactive.services.interval_snapshot_poller import (
     CallbackIntervalSnapshotPollerPolicy,
-    ExecutionServerInfo,
     IntervalSnapshotPoller,
+)
+from pyqt_reactive.services.zmq_server_info_parser import (
+    ExecutionServerInfo,
     ServerInfoParserABC,
 )
 

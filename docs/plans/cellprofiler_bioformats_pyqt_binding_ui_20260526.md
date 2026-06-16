@@ -46,15 +46,16 @@ Relevant files:
 When a folder is added, Plate Manager asks
 `CellProfilerPlateWorkspacePreparer.cppipe_paths()` for direct `.cppipe` files.
 If there is one `.cppipe`, the folder is represented by one plate row. If there
-are multiple `.cppipe` files, the UI creates one logical plate row per pipeline
-using:
+are multiple `.cppipe` files, the UI creates one logical plate row per pipeline.
+CellProfiler pipeline identity is encoded inside the plate scope segment using:
 
 ```text
-<physical plate root>::cppipe::<cppipe stem>
+<physical plate root>#openhcs-cppipe=<encoded cppipe file name>
 ```
 
 The logical scope id is used for ObjectState and per-plate UI state. The
-physical plate root remains the selected folder.
+physical plate root remains the selected folder. `::` remains reserved for real
+ObjectState nesting such as `<plate scope>::functionstep_0`.
 
 During initialization, Plate Manager calls:
 

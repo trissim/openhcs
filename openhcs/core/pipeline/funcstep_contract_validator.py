@@ -13,12 +13,20 @@ import inspect
 import logging
 import os
 from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
-from openhcs.constants.constants import VALID_MEMORY_TYPES, get_openhcs_config
+from openhcs.constants.constants import (
+    AllComponents,
+    VALID_MEMORY_TYPES,
+    get_openhcs_config,
+)
+from openhcs.core.artifacts import ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.steps.function_step import FunctionStep
 
 from openhcs.core.components.validation import GenericValidator
@@ -38,6 +46,100 @@ class ParameterKindPolicy:
 
     kind: inspect._ParameterKind
     required_in_kwargs: bool
+
+
+@dataclass(frozen=True)
+class ArtifactManagedRuntimeScope:
+    """Compiled execution scope for adapter-managed runtime artifacts."""
+
+    step_name: str
+    variable_components: tuple[Enum, ...]
+    group_by: Enum | None
+    artifact_outputs: Mapping[str, ArtifactOutputPlan]
+    compiled_function_pattern: CompiledFunctionPattern
+
+    @classmethod
+    def from_step_plan(
+        cls,
+        step_plan: CompiledStepPlan,
+        *,
+        group_by: Enum | None = None,
+        variable_components: tuple[Enum, ...] | None = None,
+    ) -> "ArtifactManagedRuntimeScope":
+        resolved_components = step_plan.variable_components
+        if resolved_components is None:
+            resolved_components = ()
+        resolved_outputs = step_plan.artifact_outputs
+        return cls(
+            step_name=step_plan.step_name,
+            variable_components=(
+                tuple(resolved_components)
+                if variable_components is None
+                else variable_components
+            ),
+            group_by=step_plan.group_by if group_by is None else group_by,
+            artifact_outputs=resolved_outputs,
+            compiled_function_pattern=step_plan.compiled_function_pattern,
+        )
+
+    def expansion_axes(self) -> frozenset[str]:
+        """Return execution axes that can fan out one semantic invocation."""
+        axes = {
+            str(component.value)
+            for component in self.variable_components
+            if component.value is not None
+        }
+        if self.group_by is not None and self.group_by.value is not None:
+            axes.add(str(self.group_by.value))
+        return frozenset(axes)
+
+    def artifact_managed_invocation_names(self) -> tuple[str, ...]:
+        """Return runtime-adapter invocation names that consume and produce artifacts."""
+        names: list[str] = []
+        for invocation in self.compiled_function_pattern.iter_invocations():
+            runtime_adapter = invocation.contract.runtime_adapter
+            if runtime_adapter is None or not runtime_adapter.manages_artifact_inputs:
+                continue
+            if not invocation.artifact_input_keys:
+                continue
+            if not any(
+                key in self.artifact_outputs
+                for key in invocation.artifact_output_keys
+            ):
+                continue
+            names.append(invocation.key.function_name)
+        return tuple(names)
+
+
+@dataclass(frozen=True)
+class ArtifactManagedRuntimeScopePolicy:
+    """Validation policy for adapter-managed runtime artifact execution axes."""
+
+    forbidden_expansion_axes: frozenset[str]
+
+    def validate(self, scope: ArtifactManagedRuntimeScope) -> None:
+        invocation_names = scope.artifact_managed_invocation_names()
+        if not invocation_names:
+            return
+
+        forbidden_axes = self.forbidden_expansion_axes & scope.expansion_axes()
+        if not forbidden_axes:
+            return
+
+        raise ValueError(
+            "Adapter-managed runtime artifact step "
+            f"{scope.step_name!r} cannot expand named runtime artifacts by "
+            f"{', '.join(sorted(forbidden_axes)).upper()}. "
+            "Named CellProfiler artifacts already encode semantic image source "
+            "identity; split by SITE/TIMEPOINT or group an explicit source-image "
+            "stack instead. "
+            f"Artifact-managed invocation(s): {', '.join(invocation_names)}."
+        )
+
+
+_ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY = ArtifactManagedRuntimeScopePolicy(
+    forbidden_expansion_axes=frozenset((AllComponents.CHANNEL.value,)),
+)
 
 
 def _parameter_kind_policy_by_kind(
@@ -597,6 +699,27 @@ class FuncStepContractValidator:
             )
             if not dict_validation_result.is_valid:
                 raise ValueError(dict_validation_result.error_message)
+
+        FuncStepContractValidator.validate_artifact_managed_runtime_scope(
+            step_plan,
+            group_by=group_by,
+            variable_components=tuple(variable_components),
+        )
+
+    @staticmethod
+    def validate_artifact_managed_runtime_scope(
+        step_plan,
+        *,
+        group_by: Enum | None = None,
+        variable_components: tuple[Enum, ...] | None = None,
+    ) -> None:
+        """Reject execution axes that duplicate named runtime artifact semantics."""
+        scope = ArtifactManagedRuntimeScope.from_step_plan(
+            step_plan,
+            group_by=group_by,
+            variable_components=variable_components,
+        )
+        _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
 
     @staticmethod
     def validate_funcstep(

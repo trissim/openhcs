@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from asyncio import AbstractEventLoop
+from collections.abc import Awaitable
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict
+from typing import Callable, TypeVar
 
 from openhcs.core.debug import (
     DebugArtifactExportResponse,
@@ -17,6 +19,10 @@ from openhcs.core.debug import (
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
 )
+from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
+    CompileConfigParamsByPlate,
+    ExplicitCompileConfigParamsByPlate,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     TerminalExecutionStatus,
 )
@@ -28,8 +34,10 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
+from zmqruntime.messages import MessageFields, ResponseType
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -61,11 +69,11 @@ class DebugPlateRunRequest:
         )
 
     @property
-    def config_params(self) -> dict[str, Any]:
+    def config_params(self) -> dict:
         return self.execution_config.to_config_params()
 
     @property
-    def compile_config_params(self) -> dict[str, Any]:
+    def compile_config_params(self) -> dict:
         return self.execution_config.compile_cache_config_params()
 
 
@@ -79,10 +87,37 @@ class DebugCompileArtifactCacheKey:
     replay_mode: DebugReplayMode
 
 
-RunBlockingCallable = Callable[[object, Callable[[], Any]], Any]
+@dataclass(frozen=True, slots=True)
+class DebugSubmissionResponse:
+    """Typed response from a debug execution submission."""
+
+    status: ResponseType
+    execution_id: str | None
+    message: str | None
+
+    @classmethod
+    def from_wire(cls, response: dict) -> "DebugSubmissionResponse":
+        return cls(
+            status=ResponseType(response[MessageFields.STATUS]),
+            execution_id=response.get(MessageFields.EXECUTION_ID),
+            message=response.get(MessageFields.MESSAGE),
+        )
+
+    @property
+    def accepted(self) -> bool:
+        return self.status is ResponseType.ACCEPTED
+
+    @property
+    def failure_message(self) -> str:
+        if self.message is not None:
+            return self.message
+        return f"Debug submission returned status {self.status.value!r}."
+
+
+RunBlockingCallable = Callable[[AbstractEventLoop, Callable[[], T]], Awaitable[T]]
 CompileBeforeExecutionCallable = Callable[
-    [list[RunSpec], object, dict[str, dict[str, Any]] | None],
-    Any,
+    [list[RunSpec], AbstractEventLoop, CompileConfigParamsByPlate],
+    Awaitable[dict[str, str]],
 ]
 
 
@@ -133,7 +168,9 @@ class DebugWorkflowService:
         compile_artifacts = await self._compile_before_execution(
             [run_spec],
             loop,
-            {run_spec.plate_path: debug_request.compile_config_params},
+            ExplicitCompileConfigParamsByPlate(
+                {run_spec.plate_path: debug_request.compile_config_params}
+            ),
         )
         compile_artifact_id = compile_artifacts[run_spec.plate_path]
         if debug_request.replay_mode.retains_compile_artifact:
@@ -162,7 +199,7 @@ class DebugWorkflowService:
             CompileWorkflowService.pipeline_fingerprint(definition_pipeline),
         )
 
-        def submit_debug() -> Dict[str, Any]:
+        def submit_debug() -> dict:
             return self._client_service.zmq_client.submit_debug_pipeline(
                 OpenHCSExecutionSubmission(
                     plate_id=plate_path,
@@ -185,22 +222,24 @@ class DebugWorkflowService:
                 replay_mode=debug_request.replay_mode,
             )
 
-        response = await self._run_blocking(loop, submit_debug)
-        execution_id = response.get("execution_id")
+        response = DebugSubmissionResponse.from_wire(
+            await self._run_blocking(loop, submit_debug)
+        )
+        execution_id = response.execution_id
         if execution_id:
             self._host.plate_execution_ids[plate_path] = execution_id
             self._host.current_execution_id = execution_id
 
-        if response.get("status") == "accepted":
+        if response.accepted:
             self._host.emit_status(f"Submitted debug run for {plate_path}")
             if execution_id:
                 self._execution_submission.start_completion_poller(
                     str(execution_id),
                     plate_path,
-                )
+            )
             return
 
-        error_msg = response.get("message", "Unknown error")
+        error_msg = response.failure_message
         logger.error("Debug run %s submission failed: %s", plate_path, error_msg)
         self._host.emit_error(f"Debug submission failed for {plate_path}: {error_msg}")
         self._host.execution_runtime.mark_terminal(
@@ -255,7 +294,7 @@ class DebugWorkflowService:
         return response
 
 
-def is_debug_workflow_service_export(name: str, value: object) -> bool:
+def is_debug_workflow_service_export(name: str, value) -> bool:
     return (
         isinstance(value, type)
         and value.__module__ == __name__

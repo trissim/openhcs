@@ -7,14 +7,23 @@ import numpy as np
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    ImageMetadataPayload,
     ObjectLabelPayload,
     RuntimeArrayPayload,
+    image_payload_metadata,
+    image_payload_with_context,
     normalize_artifact_value,
 )
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
+)
+from openhcs.core.steps.function_runtime import (
+    FunctionOutputContextRequest,
+    FunctionOutputContextStrategy,
 )
 from openhcs.processing.materialization import CsvOptions, JsonOptions, ROIOptions, csv_only
 
@@ -53,6 +62,7 @@ def _plan(output_plan, *, streaming_configs=(), memory_paths=()):
         step_name="measure",
         axis_id="A01",
         pipeline_position=7,
+        step_scope_id="measure-scope-7",
         get_paths_for_axis=lambda *_args: list(memory_paths),
         output_dir=Path("/tmp/output"),
         input_dir=Path("/tmp/input"),
@@ -68,6 +78,161 @@ def _context(filemanager):
         microscope_handler=SimpleNamespace(
             parser=SimpleNamespace(parse_filename=lambda _filename: None)
         ),
+    )
+
+
+def test_slice_aligned_object_label_arrays_preserve_source_slice_metadata():
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    source = image_payload_with_context(
+        np.zeros((2, 8, 8), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/input/A02_s001_w1_z001_t001.tif",
+                "/input/A02_s002_w1_z001_t001.tif",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A02", "site": 1, "channel": 1},
+                {"well": "A02", "site": 2, "channel": 1},
+            ),
+        ),
+    )
+    label_slices = RuntimeSliceAlignedValues(
+        (
+            np.array([[0, 1], [0, 0]], dtype=np.int32),
+            np.array([[0, 2], [0, 0]], dtype=np.int32),
+        )
+    )
+
+    request = FunctionOutputContextRequest(
+        source_payload=source,
+        output_value=label_slices,
+        output_plan=output_plan,
+    )
+    contextualized = FunctionOutputContextStrategy.for_output(request).contextualize(
+        request
+    )
+    runtime_value = normalize_artifact_value(
+        output_plan,
+        contextualized,
+        axis_id="A02",
+    )
+
+    assert isinstance(runtime_value.data, ObjectLabelPayload)
+    assert runtime_value.data.channel_source_paths == (
+        "/input/A02_s001_w1_z001_t001.tif",
+        "/input/A02_s002_w1_z001_t001.tif",
+    )
+    assert tuple(
+        dict(item) for item in runtime_value.data.channel_source_component_metadata
+    ) == (
+        {"well": "A02", "site": 1, "channel": 1},
+        {"well": "A02", "site": 2, "channel": 1},
+    )
+
+
+def test_image_outputs_merge_source_provenance_when_output_already_has_metadata():
+    output_plan = ArtifactOutputPlan(
+        name="Corrected",
+        path="/memory/Corrected.pkl",
+        kind=ArtifactKind.IMAGE,
+    )
+    source = image_payload_with_context(
+        np.zeros((2, 8, 8), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/input/A02_s001_w1_z001_t001.tif",
+                "/input/A02_s002_w1_z001_t001.tif",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A02", "site": 1, "channel": 1},
+                {"well": "A02", "site": 2, "channel": 1},
+            ),
+        ),
+    )
+    output = ImageMetadataPayload(
+        data=np.ones((2, 8, 8), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_dtype="float32"),
+    )
+
+    request = FunctionOutputContextRequest(
+        source_payload=source,
+        output_value=output,
+        output_plan=output_plan,
+    )
+    contextualized = FunctionOutputContextStrategy.for_output(request).contextualize(
+        request
+    )
+
+    metadata = image_payload_metadata(contextualized)
+    assert metadata.source_dtype == "float32"
+    assert metadata.channel_source_paths == (
+        "/input/A02_s001_w1_z001_t001.tif",
+        "/input/A02_s002_w1_z001_t001.tif",
+    )
+    assert tuple(dict(item) for item in metadata.channel_source_component_metadata) == (
+        {"well": "A02", "site": 1, "channel": 1},
+        {"well": "A02", "site": 2, "channel": 1},
+    )
+
+
+def test_object_label_payload_stack_preserves_source_slice_metadata():
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    source = image_payload_with_context(
+        np.zeros((2, 8, 8), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/input/A02_s001_w1_z001_t001.tif",
+                "/input/A02_s002_w1_z001_t001.tif",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A02", "site": 1, "channel": 1},
+                {"well": "A02", "site": 2, "channel": 1},
+            ),
+        ),
+    )
+    labels = ObjectLabelPayload(
+        labels=np.stack(
+            (
+                np.array([[0, 1], [0, 0]], dtype=np.int32),
+                np.array([[0, 2], [0, 0]], dtype=np.int32),
+            )
+        ),
+        declared_object_count=2,
+    )
+
+    request = FunctionOutputContextRequest(
+        source_payload=source,
+        output_value=labels,
+        output_plan=output_plan,
+    )
+    contextualized = FunctionOutputContextStrategy.for_output(request).contextualize(
+        request
+    )
+    runtime_value = normalize_artifact_value(
+        output_plan,
+        contextualized,
+        axis_id="A02",
+    )
+
+    assert isinstance(runtime_value.data, ObjectLabelPayload)
+    assert runtime_value.data.declared_object_count == 2
+    assert runtime_value.data.channel_source_paths == (
+        "/input/A02_s001_w1_z001_t001.tif",
+        "/input/A02_s002_w1_z001_t001.tif",
+    )
+    assert tuple(
+        dict(item) for item in runtime_value.data.channel_source_component_metadata
+    ) == (
+        {"well": "A02", "site": 1, "channel": 1},
+        {"well": "A02", "site": 2, "channel": 1},
     )
 
 
@@ -422,7 +587,16 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
     assert path == "/analysis/A01_labels_step7.roi.zip"
     assert backends == ["napari_stream"]
     assert backend_kwargs["napari_stream"]["port"] == 5555
-    assert backend_kwargs["napari_stream"]["source"] == "measure"
+    assert backend_kwargs["napari_stream"]["producer_identity"].to_payload() == {
+        "origin": "pipeline",
+        "output_kind": "artifact",
+        "output_key": "labels",
+        "step_name": "measure",
+        "pipeline_position": 7,
+        "step_scope_id": "measure-scope-7",
+        "invocation_key": None,
+        "artifact_kind": "object_labels",
+    }
 
 
 def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streaming(

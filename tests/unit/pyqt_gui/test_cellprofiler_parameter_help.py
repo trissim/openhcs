@@ -155,3 +155,65 @@ def test_help_context_routes_parameter_help_with_function_target(monkeypatch) ->
     assert kind == "parameter"
     assert args[:2] == ("labels", "Parameter: Labels")
     assert kwargs["help_target"] is cellprofiler.measure_object_intensity
+
+
+def test_dataclass_help_uses_source_field_docs_instead_of_signature() -> None:
+    import openhcs  # noqa: F401 - activates source-checkout externals first
+    from openhcs.core.config import LazyPathPlanningConfig, PathPlanningConfig
+    from pyqt_reactive.windows.help_window_manager import (
+        docstring_info_for_target,
+        resolved_parameter_description,
+    )
+
+    docstring_info = docstring_info_for_target(LazyPathPlanningConfig)
+
+    assert docstring_info.summary == (
+        "Configuration for pipeline path planning and directory structure."
+    )
+    assert "PathPlanningConfig(" not in docstring_info.summary
+    assert "output_dir_suffix" in docstring_info.parameters
+    assert (
+        docstring_info.parameters["output_dir_suffix"]
+        == "Default suffix for general step output directories."
+    )
+
+    description = resolved_parameter_description(
+        help_target=PathPlanningConfig,
+        param_name="global_output_folder",
+        widget_description="Parameter: Global Output Folder",
+    )
+
+    assert "Optional global output folder" in description
+    assert description != "Parameter: Global Output Folder"
+
+
+def test_nested_dataclass_form_uses_nested_dataclass_help_target(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    import openhcs  # noqa: F401 - activates source-checkout externals first
+    from PyQt6.QtWidgets import QApplication
+    from objectstate import ObjectState
+    from openhcs.core.config import PathPlanningConfig, PipelineConfig
+    from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
+    from pyqt_reactive.theming import ColorScheme
+    from pyqt_reactive.windows.help_window_manager import source_dataclass_type
+
+    app = QApplication.instance() or QApplication([])
+    manager = ParameterFormManager(
+        state=ObjectState(PipelineConfig()),
+        config=FormManagerConfig(field_id="", color_scheme=ColorScheme()),
+    )
+    for _ in range(200):
+        app.processEvents()
+
+    nested_manager = manager.nested_managers["path_planning_config"]
+
+    assert source_dataclass_type(nested_manager.function_target) is PathPlanningConfig
+    assert source_dataclass_type(
+        nested_manager.labels["output_dir_suffix"].help_context.help_target
+    ) is PathPlanningConfig

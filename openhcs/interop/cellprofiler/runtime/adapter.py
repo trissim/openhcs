@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Hashable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from functools import lru_cache
 from inspect import isabstract
 import logging
@@ -17,17 +18,19 @@ from types import MappingProxyType
 from typing import Any, Callable, ClassVar, TypeVar, cast
 from weakref import WeakKeyDictionary
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
 from openhcs.constants.constants import Backend, FileFormat
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
+from openhcs.core.config import ZarrConfig
+from openhcs.core.function_patterns import DEFAULT_GROUP_KEY
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import detect_memory_type, stack_slices
 from openhcs.core.aligned_image_payload import payload_slices_for_alignment
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
-from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
+from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     NamedSourceBinding,
@@ -108,11 +111,14 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_values import (
     ChannelSourceComponentMetadata,
+    ColumnarRows,
     FieldSpec,
     RuntimeArrayPayload,
     SourceComponentMetadata,
     MeasurementTable,
     NamedImage,
+    ImagePayloadMetadataInput,
+    ObjectLabelData,
     ObjectLabelPayload,
     ObjectLabelPure2DSliceAggregator,
     ObjectLabelSet,
@@ -120,7 +126,8 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     SparseIJVLabelRows,
     SpatialGrid,
-    compose_image_payload_metadata,
+    ImagePayloadMetadataCompositionRequest,
+    SourceAlignedObjectLabelProvenanceRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
@@ -133,7 +140,10 @@ from openhcs.core.runtime_values import (
 from openhcs.interop.cellprofiler.measurement_lookup import (
     child_count_feature_child_name,
 )
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    NominalTypeKeyedStrategyMixin,
+)
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
@@ -150,15 +160,152 @@ _SOURCE_CANDIDATE_PROCESS_CACHE: OrderedDict[
 ] = OrderedDict()
 _OBJECT_FEATURE_VALUE_PROCESS_CACHE: WeakKeyDictionary[
     RuntimeValueStore,
-    dict[RuntimeObjectFeatureMeasurementQuery, Any],
+    "ObjectFeatureValueProcessCache",
 ] = WeakKeyDictionary()
 
 MeasurementTableSelection = tuple[MeasurementTable, ...] | None
+ImagePayloadValue = RuntimeArrayPayload | np.ndarray
+MeasurementCellValue = str | int | float | bool | None
+CellProfilerMeasurementVector = np.ndarray | Sequence[MeasurementCellValue]
+CellProfilerMeasurementSliceValues = tuple[CellProfilerMeasurementVector, ...]
+CellProfilerMeasurementCacheValue = (
+    tuple[MeasurementTable, ...]
+    | CellProfilerMeasurementVector
+    | CellProfilerMeasurementSliceValues
+)
+ObjectFeatureValueProcessCache = dict[
+    RuntimeObjectFeatureMeasurementQuery,
+    CellProfilerMeasurementVector,
+]
+ObjectLabelMeasurementValuesProcessCache = dict[
+    RuntimeObjectLabelMeasurementQuery,
+    CellProfilerMeasurementSliceValues,
+]
+CellProfilerFilePayload = (
+    ImagePayloadValue
+    | ObjectLabelPayload
+    | ObjectLabelSet
+    | MeasurementTable
+    | ObjectRelationship
+    | SpatialGrid
+    | SparseIJVLabelRows
+    | ColumnarRows
+)
+AdapterObjectLabelInput = ObjectLabelSet | ObjectLabelPayload | ObjectLabelData
+AdapterObjectLabelNominalType = (
+    type[ObjectLabelSet]
+    | type[ObjectLabelPayload]
+    | tuple[type[ObjectLabelSet] | type[ObjectLabelPayload], ...]
+)
 SpatialGridGroupValues = tuple[
     SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
     ...,
 ]
 SourcePlaneIdentitySequence = tuple[frozenset[SourceImageSetIdentity], ...]
+AdapterProfileFieldValue = str | int | tuple[int, ...] | SourceComponentMetadata | None
+AdapterProfileFields = dict[str, AdapterProfileFieldValue]
+PipelineStartPayloadCacheValue = tuple[ImagePayloadValue, ...]
+SourceOrderCacheValue = int | tuple[str, ...]
+CellProfilerFileManagerOption = ZarrConfig | str | int | float | bool | None
+CellProfilerParsedMetadataValue = str | int | float | bool | None
+
+
+class CellProfilerFileManager(ABC):
+    """Nominal filemanager surface used by the CellProfiler runtime adapter."""
+
+    @abstractmethod
+    def load(
+        self,
+        file_path: str | Path,
+        backend: str,
+        **backend_options: CellProfilerFileManagerOption,
+    ) -> ImagePayloadValue:
+        """Load one payload from a backend."""
+
+    @abstractmethod
+    def load_batch(
+        self,
+        file_paths: Sequence[str | Path],
+        backend: str,
+        **backend_options: CellProfilerFileManagerOption,
+    ) -> Sequence[ImagePayloadValue]:
+        """Load several payloads from a backend."""
+
+    @abstractmethod
+    def save(
+        self,
+        data: CellProfilerFilePayload,
+        output_path: str | Path,
+        backend: str,
+        **backend_options: CellProfilerFileManagerOption,
+    ) -> None:
+        """Save one payload to a backend."""
+
+    @abstractmethod
+    def delete(
+        self,
+        path: str | Path,
+        backend: str,
+        recursive: bool = False,
+    ) -> bool:
+        """Delete one path from a backend."""
+
+    @abstractmethod
+    def ensure_directory(self, directory: str | Path, backend: str) -> str:
+        """Ensure a backend directory exists."""
+
+
+class CellProfilerGlobalConfig(ABC):
+    """Global config surface needed while loading source images."""
+
+    @property
+    @abstractmethod
+    def zarr_config(self) -> ZarrConfig | None:
+        """Return VFS zarr backend options."""
+
+
+class CellProfilerFilenameParser(ABC):
+    """Microscope filename parser surface needed for source ordering."""
+
+    @abstractmethod
+    def parse_filename(
+        self,
+        filename: str,
+    ) -> Mapping[str, CellProfilerParsedMetadataValue] | None:
+        """Parse source filename metadata."""
+
+
+class CellProfilerMicroscopeHandler(ABC):
+    """Microscope handler surface needed by the adapter."""
+
+    @property
+    @abstractmethod
+    def parser(self) -> CellProfilerFilenameParser:
+        """Return the filename parser."""
+
+
+class CellProfilerProcessingContext(ABC):
+    """Processing context surface consumed by CellProfiler runtime adapter."""
+
+    @property
+    @abstractmethod
+    def filemanager(self) -> CellProfilerFileManager:
+        """Return the OpenHCS VFS filemanager."""
+
+    @property
+    @abstractmethod
+    def input_dir(self) -> str:
+        """Return the processing input directory."""
+
+    @property
+    @abstractmethod
+    def global_config(self) -> CellProfilerGlobalConfig:
+        """Return the merged pipeline config."""
+
+    @property
+    @abstractmethod
+    def microscope_handler(self) -> CellProfilerMicroscopeHandler:
+        """Return the initialized microscope handler."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -663,14 +810,20 @@ _OBJECT_MEASUREMENT_TABLE_INDEX_PROCESS_CACHE: WeakKeyDictionary[
 ] = WeakKeyDictionary()
 _OBJECT_LABEL_MEASUREMENT_VALUES_PROCESS_CACHE: WeakKeyDictionary[
     RuntimeValueStore,
-    dict[RuntimeObjectLabelMeasurementQuery, tuple[Any, ...]],
+    ObjectLabelMeasurementValuesProcessCache,
 ] = WeakKeyDictionary()
 _PIPELINE_START_PAYLOAD_CACHE_LIMIT = 64
 _PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
     tuple[Hashable, ...],
-    tuple[Any, ...],
+    PipelineStartPayloadCacheValue,
 ] = OrderedDict()
 _MAX_DENSE_LABEL_STACK_BYTES = 1 << 30
+_DEFAULT_RUNTIME_GROUP_KEYS = frozenset((None, DEFAULT_GROUP_KEY))
+
+
+def _is_default_runtime_group_key(group_key: str | None) -> bool:
+    """Return whether a runtime group key addresses the compiled default group."""
+    return group_key in _DEFAULT_RUNTIME_GROUP_KEYS
 
 
 class RelationshipChildCountUnavailable(RuntimeError):
@@ -1223,6 +1376,21 @@ class ObjectLabelSourceImageDomain:
     channel_source_paths: tuple[str | None, ...] = ()
     channel_source_component_metadata: ChannelSourceComponentMetadata = ()
 
+    @property
+    def has_source_coordinate(self) -> bool:
+        """Return whether this domain can identify its source plane."""
+        return any(
+            (
+                self.source_path is not None,
+                self.source_component_metadata is not None,
+                any(path is not None for path in self.channel_source_paths),
+                any(
+                    metadata is not None
+                    for metadata in self.channel_source_component_metadata
+                ),
+            )
+        )
+
     @classmethod
     def for_adapter_source_image(
         cls,
@@ -1231,14 +1399,20 @@ class ObjectLabelSourceImageDomain:
     ) -> "ObjectLabelSourceImageDomain":
         if source_image_name is None:
             return cls()
-        if not adapter.has_runtime_artifact(
-            name=source_image_name,
-            kind=ArtifactKind.IMAGE,
+        requires_source_coordinate = adapter.requires_declared_source_image_domain(
+            source_image_name
+        )
+        if (
+            not requires_source_coordinate
+            and not adapter.has_runtime_artifact(
+                name=source_image_name,
+                kind=ArtifactKind.IMAGE,
+            )
         ):
             return cls()
         source_image = adapter.get_image(source_image_name)
         metadata = image_payload_metadata(source_image.data)
-        return cls(
+        domain = cls(
             spatial_origin_yx=metadata.spatial_origin_yx,
             source_spatial_shape_yx=metadata.source_spatial_shape_yx,
             source_path=metadata.source_path,
@@ -1246,6 +1420,15 @@ class ObjectLabelSourceImageDomain:
             channel_source_paths=metadata.channel_source_paths,
             channel_source_component_metadata=metadata.channel_source_component_metadata,
         )
+        if requires_source_coordinate and not domain.has_source_coordinate:
+            raise RuntimeError(
+                "Object labels produced from declared source image "
+                f"{source_image_name!r} require source coordinate metadata. "
+                "The source image artifact did not carry source_path, "
+                "source_component_metadata, channel_source_paths, or "
+                "channel_source_component_metadata."
+            )
+        return domain
 
     def origin_or(self, existing: tuple[int, int] | None) -> tuple[int, int] | None:
         return existing if existing is not None else self.spatial_origin_yx
@@ -1258,30 +1441,433 @@ class ObjectLabelSourceImageDomain:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeArtifactSourceScopePolicyRow:
-    """Exhaustive source-scope selection policy for runtime artifact inputs."""
+class ObjectLabelAdapterConstructionRequest:
+    """Inputs for recording a CellProfiler object-label result in OpenHCS."""
 
-    artifact_kind: ArtifactKind
-    selects_current_source_image: bool = False
+    adapter: "CellProfilerRuntimeAdapter"
+    name: str
+    labels: AdapterObjectLabelInput
+    source_image_name: str | None = None
+    source_image_names: tuple[str, ...] = ()
+    dimensions: tuple[str, ...] = ()
+    representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
+
+    def source_image_names_or(
+        self,
+        existing: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Return explicit names, preserving already-carried names first."""
+        if existing:
+            return existing
+        return self.source_image_names
+
+    def declared_source_image_names(self) -> tuple[str, ...]:
+        """Return source-image names declared by the adapter call."""
+        return self.source_image_names + tuple(
+            name
+            for name in (self.source_image_name,)
+            if name is not None and not self.source_image_names
+        )
+
+
+class ObjectLabelAdapterConstructionPolicy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered adapter storage constructor for CellProfiler object labels."""
+
+    value_type: ClassVar[AdapterObjectLabelNominalType | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+    fallback_policy_type: ClassVar[
+        type["ObjectLabelAdapterConstructionPolicy"] | None
+    ] = None
 
     @classmethod
-    def by_kind(cls) -> Mapping[ArtifactKind, "RuntimeArtifactSourceScopePolicyRow"]:
-        rows = (
-            cls(ArtifactKind.SPECIAL),
-            cls(ArtifactKind.IMAGE),
-            cls(ArtifactKind.OBJECT_LABELS, selects_current_source_image=True),
-            cls(ArtifactKind.MEASUREMENTS, selects_current_source_image=True),
-            cls(ArtifactKind.RELATIONSHIPS),
-            cls(ArtifactKind.TABLE),
-            cls(ArtifactKind.SPATIAL_GRID),
-            cls(ArtifactKind.METADATA),
+    def for_labels(
+        cls,
+        labels: AdapterObjectLabelInput,
+    ) -> "ObjectLabelAdapterConstructionPolicy":
+        strategy = cls.for_nominal_value(labels)
+        if strategy is not None:
+            return strategy
+        fallback_type = cls.fallback_policy_type
+        if fallback_type is None:
+            raise TypeError(f"{cls.__name__} must declare fallback_policy_type.")
+        return fallback_type()
+
+    @staticmethod
+    def normalized_dense_labels(labels: ObjectLabelData | None) -> ObjectLabelData | None:
+        if labels is None:
+            return None
+        return cast(
+            ObjectLabelData,
+            RuntimeRecordStackAuthority.normalize_dense_object_label_payload(labels),
         )
-        by_kind = {row.artifact_kind: row for row in rows}
-        if set(by_kind) != set(ArtifactKind):
-            raise TypeError(
-                "RuntimeArtifactSourceScopePolicyRow must cover every ArtifactKind."
+
+    @abstractmethod
+    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
+        """Return an OpenHCS-native object-label set for adapter recording."""
+
+
+class ObjectLabelSetAdapterConstructionPolicy(ObjectLabelAdapterConstructionPolicy):
+    """Preserve native object-label metadata while recording through the adapter."""
+
+    value_type = ObjectLabelSet
+
+    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
+        labels = cast(ObjectLabelSet, request.labels)
+        return ObjectLabelSet(
+            name=request.name,
+            labels=cast(
+                ObjectLabelData,
+                self.normalized_dense_labels(labels.labels),
+            ),
+            unedited_labels=self.normalized_dense_labels(labels.unedited_labels),
+            small_removed_labels=self.normalized_dense_labels(
+                labels.small_removed_labels
+            ),
+            declared_object_count=labels.declared_object_count,
+            declared_object_ids=labels.declared_object_ids,
+            declared_object_id_domains=labels.declared_object_id_domains,
+            domain_scope=labels.domain_scope,
+            plane_axis=labels.plane_axis,
+            spatial_origin_yx=labels.spatial_origin_yx,
+            source_spatial_shape_yx=labels.source_spatial_shape_yx,
+            source_path=labels.source_path,
+            source_component_metadata=labels.source_component_metadata,
+            channel_source_paths=labels.channel_source_paths,
+            channel_source_component_metadata=labels.channel_source_component_metadata,
+            source_image_names=request.source_image_names_or(labels.source_image_names),
+            source_image_name=request.source_image_name or labels.source_image_name,
+            dimensions=request.dimensions or labels.dimensions,
+            representation=labels.representation,
+        )
+
+
+class ObjectLabelPayloadAdapterConstructionPolicy(ObjectLabelAdapterConstructionPolicy):
+    """Promote serialized object-label payload metadata into native adapter storage."""
+
+    value_type = ObjectLabelPayload
+
+    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
+        labels = cast(ObjectLabelPayload, request.labels)
+        return ObjectLabelSet(
+            name=request.name,
+            labels=cast(
+                ObjectLabelData,
+                self.normalized_dense_labels(labels.labels),
+            ),
+            unedited_labels=self.normalized_dense_labels(labels.unedited_labels),
+            small_removed_labels=self.normalized_dense_labels(
+                labels.small_removed_labels
+            ),
+            declared_object_count=labels.declared_object_count,
+            declared_object_ids=labels.declared_object_ids,
+            declared_object_id_domains=labels.declared_object_id_domains,
+            domain_scope=labels.domain_scope,
+            plane_axis=labels.plane_axis,
+            spatial_origin_yx=labels.spatial_origin_yx,
+            source_spatial_shape_yx=labels.source_spatial_shape_yx,
+            source_path=labels.source_path,
+            source_component_metadata=labels.source_component_metadata,
+            channel_source_paths=labels.channel_source_paths,
+            channel_source_component_metadata=labels.channel_source_component_metadata,
+            source_image_names=request.source_image_names_or(labels.source_image_names),
+            source_image_name=request.source_image_name,
+            dimensions=request.dimensions,
+            representation=request.representation,
+        )
+
+
+class RawObjectLabelAdapterConstructionPolicy(ObjectLabelAdapterConstructionPolicy):
+    """Build native adapter storage from raw dense CellProfiler label arrays."""
+
+    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
+        source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
+            request.adapter,
+            request.source_image_name,
+        )
+        return ObjectLabelSet(
+            name=request.name,
+            labels=cast(
+                ObjectLabelData,
+                self.normalized_dense_labels(request.labels),
+            ),
+            spatial_origin_yx=source_domain.spatial_origin_yx,
+            source_spatial_shape_yx=source_domain.source_spatial_shape_yx,
+            source_path=source_domain.source_path,
+            source_component_metadata=source_domain.source_component_metadata,
+            channel_source_paths=source_domain.channel_source_paths,
+            channel_source_component_metadata=(
+                source_domain.channel_source_component_metadata
+            ),
+            source_image_names=request.declared_source_image_names(),
+            source_image_name=request.source_image_name,
+            dimensions=request.dimensions,
+            representation=request.representation,
+        )
+
+
+ObjectLabelAdapterConstructionPolicy.fallback_policy_type = (
+    RawObjectLabelAdapterConstructionPolicy
+)
+
+
+RuntimeArtifactRecordResolution = tuple[StoredRuntimeValue, ...] | None
+
+
+class RuntimeArtifactSourceScopeStage(str, Enum):
+    """Runtime record resolution stage for current-source scoping diagnostics."""
+
+    GROUPED_INPUT = "grouped_input"
+    MATCHING_INPUT = "matching_input"
+    AXIS_FALLBACK = "axis_fallback"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactSourceScopeStageSpec:
+    """Diagnostic policy for one current-source resolution stage."""
+
+    error_subject: str
+    include_scope_diagnostics: bool
+
+
+_SOURCE_SCOPE_STAGE_SPECS = MappingProxyType(
+    {
+        RuntimeArtifactSourceScopeStage.GROUPED_INPUT: RuntimeArtifactSourceScopeStageSpec(
+            error_subject="Grouped runtime artifact input",
+            include_scope_diagnostics=False,
+        ),
+        RuntimeArtifactSourceScopeStage.MATCHING_INPUT: RuntimeArtifactSourceScopeStageSpec(
+            error_subject="Runtime artifact input",
+            include_scope_diagnostics=False,
+        ),
+        RuntimeArtifactSourceScopeStage.AXIS_FALLBACK: RuntimeArtifactSourceScopeStageSpec(
+            error_subject="Runtime artifact",
+            include_scope_diagnostics=True,
+        ),
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactRecordRequest:
+    """Runtime artifact lookup coordinates for one CellProfiler adapter call."""
+
+    adapter: "CellProfilerRuntimeAdapter"
+    name: str
+    kind: ArtifactKind
+    current_image: Any | None
+
+    def axis_records(self) -> tuple[StoredRuntimeValue, ...]:
+        return self.adapter.runtime_value_store.find(
+            name=self.name,
+            kind=self.kind,
+            axis_id=self.adapter.axis_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentSourceRuntimeInputGroupResolution:
+    """Infer a producer group only when the current source scope is singular."""
+
+    adapter: "CellProfilerRuntimeAdapter"
+    group_keys: frozenset[str]
+    current_image: Any | None
+
+    def resolve(self) -> str | None:
+        if self.is_multi_source_scope():
+            return None
+        return self.adapter.runtime_input_group_key_from_current_sources(self.group_keys)
+
+    def is_multi_source_scope(self) -> bool:
+        if self.current_image is None:
+            return False
+        identities = RuntimeRecordSourceImageSetSelector(
+            self.adapter,
+            self.current_image,
+        ).current_source_identities()
+        return len(identities) > 1
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactCurrentSourceScopeResolution:
+    """Resolve candidate records against the current source image scope."""
+
+    request: RuntimeArtifactRecordRequest
+    records: tuple[StoredRuntimeValue, ...]
+    stage_spec: RuntimeArtifactSourceScopeStageSpec
+
+    def resolve(self) -> RuntimeArtifactRecordResolution:
+        if self.request.current_image is None:
+            return self.records
+        selector = RuntimeRecordSourceImageSetSelector(
+            self.request.adapter,
+            self.request.current_image,
+        )
+        if not selector.has_current_source_scope():
+            return self.records
+        if selector.has_template_current_source_scope():
+            return self.records
+        if not selector.records_have_metadata_source_scope(self.records):
+            return self.records
+        scoped_records = selector.select(self.records)
+        if scoped_records:
+            return scoped_records
+        message = (
+            f"{self.stage_spec.error_subject} {self.request.name!r} "
+            f"({self.request.kind.value}) has records, but none match the "
+            "current source image scope."
+        )
+        if self.stage_spec.include_scope_diagnostics:
+            message = (
+                f"{message} "
+                f"current_paths={selector.current_source_paths()!r}; "
+                f"current_identities={selector.current_source_identities()!r}; "
+                f"record_identities="
+                f"{tuple(selector.record_source_identities(record) for record in self.records)!r}."
             )
-        return MappingProxyType(by_kind)
+        raise RuntimeError(message)
+
+
+class RuntimeArtifactSourceScopePolicy(
+    EnumKeyedStrategyMixin[ArtifactKind],
+    metaclass=AutoRegisterMeta,
+):
+    """Resolve runtime artifact records according to source-scope semantics."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "kind"
+    kind: ClassVar[ArtifactKind | None] = None
+
+    @classmethod
+    def for_kind(cls, kind: ArtifactKind) -> "RuntimeArtifactSourceScopePolicy":
+        policy_type = cls.__registry__.get(kind.value, RuntimeArtifactGlobalScopePolicy)
+        return policy_type()
+
+    def grouped_input_records(
+        self,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        return records
+
+    def query_miss_records(
+        self,
+        request: RuntimeArtifactRecordRequest,
+    ) -> RuntimeArtifactRecordResolution:
+        return None
+
+    def matching_records(
+        self,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        return None
+
+    def axis_records_after_query_miss(
+        self,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        return records
+
+
+class RuntimeArtifactGlobalScopePolicy(RuntimeArtifactSourceScopePolicy):
+    """Keep axis/group records intact for artifact kinds without source scoping."""
+
+
+class RuntimeArtifactCurrentSourceScopePolicy(
+    RuntimeArtifactGlobalScopePolicy,
+    ABC,
+):
+    """Select records matching the current CellProfiler source image when needed."""
+
+    def grouped_input_records(
+        self,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        return self.records_for_source_scope_stage(
+            RuntimeArtifactSourceScopeStage.GROUPED_INPUT,
+            request,
+            records,
+        )
+
+    def query_miss_records(
+        self,
+        request: RuntimeArtifactRecordRequest,
+    ) -> RuntimeArtifactRecordResolution:
+        if request.current_image is None:
+            return None
+        candidate_records = request.axis_records()
+        if not candidate_records:
+            return None
+        selector = RuntimeRecordSourceImageSetSelector(
+            request.adapter,
+            request.current_image,
+        )
+        if not selector.has_current_source_scope():
+            return None
+        scoped_records = selector.select(candidate_records)
+        if scoped_records:
+            return scoped_records
+        return None
+
+    def matching_records(
+        self,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        if len(records) <= 1:
+            return None
+        return self.records_for_source_scope_stage(
+            RuntimeArtifactSourceScopeStage.MATCHING_INPUT,
+            request,
+            records,
+        )
+
+    def axis_records_after_query_miss(
+        self,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        return self.records_for_source_scope_stage(
+            RuntimeArtifactSourceScopeStage.AXIS_FALLBACK,
+            request,
+            records,
+        )
+
+    @staticmethod
+    def records_for_source_scope_stage(
+        stage: RuntimeArtifactSourceScopeStage,
+        request: RuntimeArtifactRecordRequest,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> RuntimeArtifactRecordResolution:
+        return RuntimeArtifactCurrentSourceScopeResolution(
+            request=request,
+            records=records,
+            stage_spec=_SOURCE_SCOPE_STAGE_SPECS[stage],
+        ).resolve()
+
+
+class ObjectLabelRuntimeArtifactSourceScopePolicy(
+    RuntimeArtifactCurrentSourceScopePolicy
+):
+    """Object-label records are scoped to the current source image when possible."""
+
+    kind = ArtifactKind.OBJECT_LABELS
+
+
+class MeasurementRuntimeArtifactSourceScopePolicy(
+    RuntimeArtifactCurrentSourceScopePolicy
+):
+    """Measurement records are scoped to the current source image when possible."""
+
+    kind = ArtifactKind.MEASUREMENTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -1302,6 +1888,58 @@ class RuntimeArtifactUniqueCandidateResolution:
                 f"one candidate, got {len(self.records)}."
             )
         return self.records[0]
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelAdapterProfileFields:
+    """Typed profile payload for object-label adapter writes."""
+
+    label_shape: tuple[int, ...]
+    declared_object_count: int | None
+    declared_object_ids: int
+    declared_object_id_domains: int
+    domain_scope: str
+    plane_axis: str
+    source_path: str | None
+    source_component_metadata: SourceComponentMetadata | None
+    channel_source_paths: int
+    channel_source_component_metadata: int
+
+    @classmethod
+    def from_labels(cls, labels: ObjectLabelSet) -> "ObjectLabelAdapterProfileFields":
+        return cls(
+            label_shape=tuple(np.asarray(labels.labels).shape),
+            declared_object_count=labels.declared_object_count,
+            declared_object_ids=len(labels.declared_object_ids),
+            declared_object_id_domains=len(labels.declared_object_id_domains),
+            domain_scope=labels.domain_scope.value,
+            plane_axis=labels.plane_axis.value,
+            source_path=labels.source_path,
+            source_component_metadata=labels.source_component_metadata,
+            channel_source_paths=len(labels.channel_source_paths),
+            channel_source_component_metadata=len(
+                labels.channel_source_component_metadata
+            ),
+        )
+
+    def extra_fields(self) -> AdapterProfileFields:
+        source_component_metadata = None
+        if self.source_component_metadata is not None:
+            source_component_metadata = dict(self.source_component_metadata)
+        return {
+            "label_shape": self.label_shape,
+            "declared_object_count": self.declared_object_count,
+            "declared_object_ids": self.declared_object_ids,
+            "declared_object_id_domains": self.declared_object_id_domains,
+            "domain_scope": self.domain_scope,
+            "plane_axis": self.plane_axis,
+            "source_path": self.source_path,
+            "source_component_metadata": source_component_metadata,
+            "channel_source_paths": self.channel_source_paths,
+            "channel_source_component_metadata": (
+                self.channel_source_component_metadata
+            ),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1327,8 +1965,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     group_key: str | None = None
     axis_component: str | None = None
     axis_component_value: str | None = None
-    processing_context: Any | None = None
-    filemanager: Any | None = None
+    processing_context: CellProfilerProcessingContext | None = None
+    filemanager: CellProfilerFileManager | None = None
     backend: str = Backend.MEMORY.value
     plane_projection: RuntimePlaneProjection = field(
         default_factory=RuntimePlaneProjection.stack
@@ -1339,7 +1977,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ] = field(default_factory=dict, init=False, repr=False, compare=False)
     _pipeline_start_payload_cache: dict[
         tuple[Hashable, ...],
-        tuple[Any, ...],
+        PipelineStartPayloadCacheValue,
     ] = field(default_factory=dict, init=False, repr=False, compare=False)
     _image_cache: dict[tuple[str | None, str], NamedImage] = field(
         default_factory=dict,
@@ -1353,7 +1991,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         repr=False,
         compare=False,
     )
-    _measurement_cache: dict[Hashable, Any] = field(
+    _measurement_cache: dict[Hashable, CellProfilerMeasurementCacheValue] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -1365,7 +2003,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         repr=False,
         compare=False,
     )
-    _source_order_cache: dict[tuple[Hashable, ...], Any] = field(
+    _source_order_cache: dict[tuple[Hashable, ...], SourceOrderCacheValue] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -1448,7 +2086,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         mapped = source_paths.get(path) or path
         return source_path_identity_key(mapped)
 
-    def object_feature_value_cache(self) -> dict[RuntimeObjectFeatureMeasurementQuery, Any]:
+    def object_feature_value_cache(self) -> ObjectFeatureValueProcessCache:
         """Return the process cache for stable object-feature vectors in this store."""
         return _OBJECT_FEATURE_VALUE_PROCESS_CACHE.setdefault(
             self.runtime_value_store,
@@ -1457,7 +2095,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
     def object_label_measurement_values_cache(
         self,
-    ) -> dict[RuntimeObjectLabelMeasurementQuery, tuple[Any, ...]]:
+    ) -> ObjectLabelMeasurementValuesProcessCache:
         """Return the process cache for label-aligned object-feature vectors."""
         return _OBJECT_LABEL_MEASUREMENT_VALUES_PROCESS_CACHE.setdefault(
             self.runtime_value_store,
@@ -1598,17 +2236,20 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     def source_image_payload_for_name(
         self,
         image_name: str,
-        current_image: Any | None,
-    ) -> Any | None:
+        current_image: ImagePayloadValue | None,
+    ) -> ImagePayloadValue | None:
         """Resolve an image name through source bindings or runtime image records."""
         if current_image is not None and self.has_source_binding(
             image_name,
             ArtifactKind.IMAGE,
         ):
-            return self.resolve_source_image(image_name, current_image)
+            return cast(
+                ImagePayloadValue,
+                self.resolve_source_image(image_name, current_image),
+            )
         if not self.has_runtime_artifact(name=image_name, kind=ArtifactKind.IMAGE):
             return None
-        return self.get_image(image_name).data
+        return cast(ImagePayloadValue, self.get_image(image_name).data)
 
     def invalidate_runtime_query_caches_for_kind(self, kind: ArtifactKind) -> None:
         """Invalidate adapter caches whose semantic domain can change for ``kind``."""
@@ -1635,11 +2276,18 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         """Return whether this execution scope contains a runtime artifact."""
         return bool(self._query_context().find(name=name, kind=kind))
 
+    def requires_declared_source_image_domain(self, image_name: str) -> bool:
+        """Return whether object labels must inherit source metadata from an image."""
+        input_plan = self.artifact_inputs.get(image_name)
+        if input_plan is not None:
+            return input_plan.kind is ArtifactKind.IMAGE
+        return False
+
     def resolve_source_image(
         self,
         alias: str,
-        current_image: Any,
-    ) -> Any:
+        current_image: ImagePayloadValue,
+    ) -> ImagePayloadValue:
         request = self._source_resolution_request(
             alias,
             ArtifactKind.IMAGE,
@@ -1649,14 +2297,17 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             request
         )
         if isinstance(image_payload_data(image), RuntimeArrayPayload):
-            return image
-        metadata = image_payload_metadata(image)
-        return image_payload_with_context(
-            image_payload_data(image),
-            mask=image_payload_mask(image),
-            metadata=replace(
-                metadata,
-                source_image_names=metadata.source_image_names or (alias,),
+            return cast(ImagePayloadValue, image)
+        source_metadata = image_payload_metadata(image)
+        metadata = replace(
+            source_metadata,
+            source_image_names=source_metadata.source_image_names or (alias,),
+        )
+        return cast(
+            ImagePayloadValue,
+            metadata.payload_with(
+                image_payload_data(image),
+                mask=image_payload_mask(image),
             ),
         )
 
@@ -1818,13 +2469,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             **dict(label_metadata.source_component_metadata or {}),
             SOURCE_IMAGE_TYPE_METADATA_FIELD: "Objects",
         }
-        labels = apply_source_image_loading_semantics(
-            labels,
-            source_metadata=label_source_metadata,
-            source_path=label_metadata.source_path,
-            read_backend=self.source_binding_context.pipeline_input_backend,
-            filemanager=self.filemanager,
-        )
+        labels = SourceImagePayloadSemantics.from_source_metadata(
+            label_source_metadata,
+            label_metadata.source_path,
+            self.source_binding_context.pipeline_input_backend,
+            self.filemanager,
+        ).apply(labels)
         return SourceImageObjectLabelBuildRequest(
             image=labels,
             labels=image_payload_data(labels),
@@ -1945,112 +2595,44 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     def add_objects(
         self,
         name: str,
-        labels: Any,
+        labels: AdapterObjectLabelInput,
         *,
         source_image_name: str | None = None,
         source_image_names: tuple[str, ...] = (),
+        source_image_payload: ImagePayloadMetadataInput | None = None,
         dimensions: tuple[str, ...] = (),
         representation: ObjectLabelRepresentation = (
             ObjectLabelRepresentation.DENSE_LABELS
         ),
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
-        if isinstance(labels, ObjectLabelSet):
-            normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                labels.labels
-            )
-            object_labels = ObjectLabelSet(
-                name=name,
-                labels=normalized_labels,
-                unedited_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels.unedited_labels
-                ),
-                small_removed_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels.small_removed_labels
-                ),
-                declared_object_count=labels.declared_object_count,
-                declared_object_ids=labels.declared_object_ids,
-                declared_object_id_domains=labels.declared_object_id_domains,
-                domain_scope=labels.domain_scope,
-                plane_axis=labels.plane_axis,
-                spatial_origin_yx=labels.spatial_origin_yx,
-                source_spatial_shape_yx=labels.source_spatial_shape_yx,
-                source_path=labels.source_path,
-                source_component_metadata=labels.source_component_metadata,
-                channel_source_paths=labels.channel_source_paths,
-                channel_source_component_metadata=labels.channel_source_component_metadata,
-                source_image_names=labels.source_image_names or source_image_names,
-                source_image_name=source_image_name or labels.source_image_name,
-                dimensions=dimensions or labels.dimensions,
-                representation=labels.representation,
-            )
-        elif isinstance(labels, ObjectLabelPayload):
-            normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                labels.labels
-            )
-            object_labels = ObjectLabelSet(
-                name=name,
-                labels=normalized_labels,
-                unedited_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels.unedited_labels
-                ),
-                small_removed_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels.small_removed_labels
-                ),
-                declared_object_count=labels.declared_object_count,
-                declared_object_ids=labels.declared_object_ids,
-                declared_object_id_domains=labels.declared_object_id_domains,
-                domain_scope=labels.domain_scope,
-                plane_axis=labels.plane_axis,
-                spatial_origin_yx=labels.spatial_origin_yx,
-                source_spatial_shape_yx=labels.source_spatial_shape_yx,
-                source_path=labels.source_path,
-                source_component_metadata=labels.source_component_metadata,
-                channel_source_paths=labels.channel_source_paths,
-                channel_source_component_metadata=labels.channel_source_component_metadata,
-                source_image_names=labels.source_image_names or source_image_names,
-                source_image_name=source_image_name,
-                dimensions=dimensions,
-                representation=representation,
-            )
-        else:
-            source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
-                self,
-                source_image_name,
-            )
-            object_labels = ObjectLabelSet(
-                name=name,
-                labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels
-                ),
-                spatial_origin_yx=source_domain.spatial_origin_yx,
-                source_spatial_shape_yx=source_domain.source_spatial_shape_yx,
-                source_path=source_domain.source_path,
-                source_component_metadata=source_domain.source_component_metadata,
-                channel_source_paths=source_domain.channel_source_paths,
-                channel_source_component_metadata=source_domain.channel_source_component_metadata,
-                source_image_names=source_image_names
-                or ((source_image_name,) if source_image_name is not None else ()),
-                source_image_name=source_image_name,
-                dimensions=dimensions,
-                representation=representation,
-            )
+        construction_request = ObjectLabelAdapterConstructionRequest(
+            adapter=self,
+            name=name,
+            labels=labels,
+            source_image_name=source_image_name,
+            source_image_names=source_image_names,
+            dimensions=dimensions,
+            representation=representation,
+        )
+        object_labels = ObjectLabelAdapterConstructionPolicy.for_labels(
+            labels
+        ).construct(construction_request)
+        if source_image_payload is not None:
+            object_labels = object_labels.with_source_image_context(source_image_payload)
+            SourceAlignedObjectLabelProvenanceRequest(
+                image=source_image_payload,
+                labels=object_labels,
+                label_name=name,
+            ).validate()
+        profile_fields = ObjectLabelAdapterProfileFields.from_labels(object_labels)
         AdapterProfileLog.artifact(
             "adapter_construct_object_labels",
             time.perf_counter() - construct_started_at,
             artifact_name=name,
             kind=ArtifactKind.OBJECT_LABELS,
             payload_type=type(labels).__name__,
-            extra_fields={
-                "label_shape": tuple(np.asarray(object_labels.labels).shape),
-                "declared_object_count": object_labels.declared_object_count,
-                "declared_object_ids": len(object_labels.declared_object_ids),
-                "declared_object_id_domains": len(
-                    object_labels.declared_object_id_domains
-                ),
-                "domain_scope": object_labels.domain_scope.value,
-                "plane_axis": object_labels.plane_axis.value,
-            },
+            extra_fields=profile_fields.extra_fields(),
         )
         return self._record_native_value(
             name,
@@ -2129,25 +2711,30 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             axis_id=self.axis_id,
             requested_group_key=requested_group_key,
         )
-        if selected not in (None, "default") or current_image is None:
+        if not _is_default_runtime_group_key(selected) or current_image is None:
             return selected
         group_keys = {str(group_key) for group_key in (input_plan.group_keys or ())}
         if not group_keys:
             return selected
-        for candidate in self.source_candidates(
-            self.source_binding_context.step_input_files
-        ):
-            if not self.current_image_matches_source_candidate(current_image, candidate):
-                continue
-            for value in candidate.metadata.values():
-                normalized = str(value)
-                if normalized in group_keys:
-                    return normalized
-        current_step_group = self.runtime_input_group_key_from_current_sources(
-            group_keys
+        current_source_scope = RuntimeRecordSourceImageSetSelector(self, current_image)
+        if len(current_source_scope.current_source_identities()) == 1:
+            for candidate in self.source_candidates(
+                self.source_binding_context.step_input_files
+            ):
+                if not self.current_image_matches_source_candidate(current_image, candidate):
+                    continue
+                for value in candidate.metadata.values():
+                    normalized = str(value)
+                    if normalized in group_keys:
+                        return normalized
+        current_step_group = CurrentSourceRuntimeInputGroupResolution(
+            adapter=self,
+            group_keys=frozenset(group_keys),
+            current_image=current_image,
         )
-        if current_step_group is not None:
-            return current_step_group
+        current_step_group_key = current_step_group.resolve()
+        if current_step_group_key is not None:
+            return current_step_group_key
         return selected
 
     def runtime_input_group_key_from_current_sources(
@@ -3852,6 +4439,13 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         current_image: Any | None = None,
     ) -> tuple[StoredRuntimeValue, ...]:
         input_plan = self.artifact_inputs.get(name)
+        source_scope_policy = RuntimeArtifactSourceScopePolicy.for_kind(kind)
+        record_request = RuntimeArtifactRecordRequest(
+            adapter=self,
+            name=name,
+            kind=kind,
+            current_image=current_image,
+        )
         resolved_group_key = self.runtime_input_group_key(
             name=name,
             kind=kind,
@@ -3877,26 +4471,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                     )
                     for input_group_key in input_plan.group_keys
                 )
-                if current_image is None:
-                    return records
-                selector = RuntimeRecordSourceImageSetSelector(
-                    self,
-                    current_image,
+                scoped_resolution = source_scope_policy.grouped_input_records(
+                    record_request,
+                    records,
                 )
-                if not selector.has_current_source_scope():
-                    return records
-                if selector.has_template_current_source_scope():
-                    return records
-                if not selector.records_have_metadata_source_scope(records):
-                    return records
-                scoped_records = selector.select(records)
-                if scoped_records:
-                    return scoped_records
-                raise RuntimeError(
-                    f"Grouped runtime artifact input {name!r} ({kind.value}) "
-                    "has producer-group records, but none match the current "
-                    "source image scope."
-                )
+                if scoped_resolution is not None:
+                    return scoped_resolution
             query = _runtime_query_for_input_plan(
                 input_plan.for_group(resolved_group_key) or input_plan,
                 axis_id=self.axis_id,
@@ -3904,59 +4484,34 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 backend=self.backend,
             )
             records = self.runtime_value_store.find_matching(query)
-            source_scope_policy = RuntimeArtifactSourceScopePolicyRow.by_kind()[kind]
-            if not records:
-                candidate_records = self.runtime_value_store.find(
+            if len(records) > 1:
+                grouped_records = self._records_for_ambiguous_producer_group_input(
+                    records,
                     name=name,
                     kind=kind,
-                    axis_id=self.axis_id,
+                    resolved_group_key=resolved_group_key,
+                    current_image=current_image,
                 )
+                if grouped_records:
+                    return grouped_records
+            if not records:
+                candidate_records = record_request.axis_records()
                 unique_candidate = RuntimeArtifactUniqueCandidateResolution(
                     candidate_records
                 )
                 if unique_candidate.is_resolved:
                     return (unique_candidate.record,)
-            if (
-                not records
-                and source_scope_policy.selects_current_source_image
-                and current_image is not None
-            ):
-                candidate_records = self.runtime_value_store.find(
-                    name=name,
-                    kind=kind,
-                    axis_id=self.axis_id,
+                scoped_resolution = source_scope_policy.query_miss_records(
+                    record_request,
                 )
-                selector = RuntimeRecordSourceImageSetSelector(
-                    self,
-                    current_image,
-                )
-                if candidate_records and selector.has_current_source_scope():
-                    scoped_records = selector.select(candidate_records)
-                    if scoped_records:
-                        return scoped_records
-            if (
-                source_scope_policy.selects_current_source_image
-                and len(records) > 1
-            ):
-                if current_image is None:
-                    return records
-                selector = RuntimeRecordSourceImageSetSelector(
-                    self,
-                    current_image,
-                )
-                if not selector.has_current_source_scope():
-                    return records
-                if selector.has_template_current_source_scope():
-                    return records
-                if not selector.records_have_metadata_source_scope(records):
-                    return records
-                scoped_records = selector.select(records)
-                if scoped_records:
-                    return scoped_records
-                raise RuntimeError(
-                    f"Runtime artifact input {name!r} ({kind.value}) has "
-                    "records, but none match the current source image scope."
-                )
+                if scoped_resolution is not None:
+                    return scoped_resolution
+            scoped_resolution = source_scope_policy.matching_records(
+                record_request,
+                records,
+            )
+            if scoped_resolution is not None:
+                return scoped_resolution
             return (
                 self.runtime_value_store.resolve(
                     query,
@@ -3966,41 +4521,75 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         try:
             return (self._query_context(group_key).resolve(name=name, kind=kind),)
         except RuntimeError:
-            records = self.runtime_value_store.find(
-                name=name,
-                kind=kind,
-                axis_id=self.axis_id,
-            )
-            if records and resolved_group_key in (None, "default"):
-                if not RuntimeArtifactSourceScopePolicyRow.by_kind()[
-                    kind
-                ].selects_current_source_image:
-                    return records
-                if current_image is None:
-                    return records
-                selector = RuntimeRecordSourceImageSetSelector(
-                    self,
-                    current_image,
+            records = record_request.axis_records()
+            if records and _is_default_runtime_group_key(resolved_group_key):
+                scoped_resolution = source_scope_policy.axis_records_after_query_miss(
+                    record_request,
+                    records,
                 )
-                if not selector.has_current_source_scope():
-                    return records
-                if selector.has_template_current_source_scope():
-                    return records
-                if not selector.records_have_metadata_source_scope(records):
-                    return records
-                scoped_records = selector.select(records)
-                if scoped_records:
-                    return scoped_records
-                raise RuntimeError(
-                    f"Runtime artifact {name!r} ({kind.value}) has "
-                    "axis records, but none match the current source image "
-                    "scope; "
-                    f"current_paths={selector.current_source_paths()!r}; "
-                    f"current_identities={selector.current_source_identities()!r}; "
-                    f"record_identities="
-                    f"{tuple(selector.record_source_identities(record) for record in records)!r}."
-                )
+                if scoped_resolution is not None:
+                    return scoped_resolution
             raise
+
+    def _records_for_ambiguous_producer_group_input(
+        self,
+        records: tuple[StoredRuntimeValue, ...],
+        *,
+        name: str,
+        kind: ArtifactKind,
+        resolved_group_key: str | None,
+        current_image: Any | None,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        """Resolve location reads that match multiple runtime-sliced producer groups."""
+        group_keys = {
+            str(record.key.scope.group_key)
+            for record in records
+            if record.key.scope.group_key is not None
+        }
+        if len(group_keys) <= 1:
+            return ()
+
+        if resolved_group_key is not None:
+            selected_group = str(resolved_group_key)
+            if selected_group in group_keys:
+                return tuple(
+                    record
+                    for record in records
+                    if str(record.key.scope.group_key) == selected_group
+                )
+
+        current_step_group = CurrentSourceRuntimeInputGroupResolution(
+            adapter=self,
+            group_keys=frozenset(group_keys),
+            current_image=current_image,
+        )
+        current_step_group_key = current_step_group.resolve()
+        if current_step_group_key is not None:
+            return tuple(
+                record
+                for record in records
+                if str(record.key.scope.group_key) == current_step_group_key
+            )
+        if current_image is None:
+            return records
+
+        selector = RuntimeRecordSourceImageSetSelector(
+            self,
+            current_image,
+        )
+        if not selector.has_current_source_scope():
+            return records
+        if selector.has_template_current_source_scope():
+            return records
+        if not selector.records_have_metadata_source_scope(records):
+            return records
+        scoped_records = selector.select(records)
+        if scoped_records:
+            return scoped_records
+        raise RuntimeError(
+            f"Runtime artifact input {name!r} ({kind.value}) has producer-group "
+            "records, but none match the current source image scope."
+        )
 
     def _require_artifact_declared_or_available(
         self,
@@ -4376,7 +4965,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
         )
         return _select_step_input_stack(
             request=request,
-            selected_paths=tuple(candidate.path for candidate in selected_files),
+            selected_sources=selected_files,
         )
 
     @staticmethod
@@ -4901,45 +5490,50 @@ class RuntimeRecordStackAuthority:
             cls.grouped_image_array(image_payload_data(payload))
             for payload in payloads
         )
-        memory_type = detect_memory_type(arrays[0])
-        data = (
-            stack_slices(
-                list(arrays),
-                memory_type,
-                0,
-            )
-            if all(getattr(array, "ndim", None) == 2 for array in arrays)
-            else np.stack(
-                tuple(np.asarray(array) for array in arrays),
-                axis=0,
-            )
-        )
+        data = cls.stack_grouped_planes(arrays)
         masks = tuple(image_payload_mask(payload) for payload in payloads)
-        present_masks = tuple(mask for mask in masks if mask is not None)
-        if present_masks and len(present_masks) != len(masks):
-            raise ValueError("Cannot stack mixed masked and unmasked grouped image inputs.")
-        mask = (
-            None
-            if not present_masks
-            else stack_slices(list(present_masks), memory_type, 0)
-            if all(getattr(mask, "ndim", None) == 2 for mask in present_masks)
-            else np.stack(tuple(np.asarray(mask) for mask in present_masks), axis=0)
-        )
+        mask = cls.stack_grouped_masks(masks)
         return image_payload_with_context(
             data,
             mask=mask,
-            metadata=compose_image_payload_metadata(payloads),
+            metadata=ImagePayloadMetadataCompositionRequest(payloads).metadata(),
         )
+
+    @classmethod
+    def stack_grouped_planes(cls, values: tuple[Any, ...]) -> Any:
+        """Stack grouped values as image planes when they are homogeneous slices."""
+        if not values:
+            raise ValueError("Cannot stack an empty grouped runtime value set.")
+        memory_type = detect_memory_type(values[0])
+        if cls.all_values_are_2d_arrays(values):
+            return stack_slices(list(values), memory_type, 0)
+        return np.stack(
+            tuple(np.asarray(value) for value in values),
+            axis=0,
+        )
+
+    @classmethod
+    def stack_grouped_masks(cls, masks: tuple[Any | None, ...]) -> Any | None:
+        """Stack grouped masks while rejecting partially masked image groups."""
+        present_masks = tuple(mask for mask in masks if mask is not None)
+        if present_masks and len(present_masks) != len(masks):
+            raise ValueError("Cannot stack mixed masked and unmasked grouped image inputs.")
+        if not present_masks:
+            return None
+        return cls.stack_grouped_planes(present_masks)
 
     @staticmethod
     def grouped_image_array(array: Any) -> Any:
-        if (
-            getattr(array, "ndim", None) == 3
-            and not is_color_image_slice(array)
-            and getattr(array, "shape", ())[0] == 1
-        ):
+        if not hasattr(array, "ndim") or not hasattr(array, "shape"):
+            return array
+        if array.ndim == 3 and not is_color_image_slice(array) and array.shape[0] == 1:
             return array[0]
         return array
+
+    @staticmethod
+    def all_values_are_2d_arrays(values: tuple[Any, ...]) -> bool:
+        """Return whether every grouped value is a two-dimensional array-like plane."""
+        return all(hasattr(value, "ndim") and value.ndim == 2 for value in values)
 
     @staticmethod
     def stack_object_label_records(
@@ -5114,13 +5708,10 @@ class CurrentSourceImagePayloadProjection(CurrentSourcePlaneProjectionBase):
         if plane_index is None:
             return payload
         mask = image_payload_mask(payload)
-        mask_plane = (
-            None
-            if mask is None
-            else np.asarray(mask)[plane_index]
-            if getattr(mask, "ndim", 0) >= 3
-            and getattr(mask, "shape", (None,))[0] == data.shape[0]
-            else mask
+        mask_plane = self.project_mask_plane(
+            mask,
+            data=data,
+            plane_index=plane_index,
         )
         return image_payload_with_context(
             data[plane_index],
@@ -5138,6 +5729,21 @@ class CurrentSourceImagePayloadProjection(CurrentSourcePlaneProjectionBase):
             and not is_color_image_slice(data)
             and data.shape[0] > 1
         )
+
+    @staticmethod
+    def project_mask_plane(
+        mask: Any | None,
+        *,
+        data: np.ndarray,
+        plane_index: int,
+    ) -> Any | None:
+        """Project a stack-aligned mask plane when the mask carries that axis."""
+        if mask is None:
+            return None
+        mask_array = np.asarray(mask)
+        if mask_array.ndim >= 3 and mask_array.shape[0] == data.shape[0]:
+            return mask_array[plane_index]
+        return mask
 
 
 @dataclass(frozen=True, slots=True)
@@ -5260,7 +5866,7 @@ def _is_global_grouped_input_request(
     if len(group_keys) <= 1:
         return False
     paths_by_group = input_plan.paths_by_group or {}
-    return group_key in (None, "default") and group_key not in paths_by_group
+    return _is_default_runtime_group_key(group_key) and group_key not in paths_by_group
 
 
 class SpatialGridValueAuthority:
@@ -6241,13 +6847,12 @@ class ContextSourceMetadataAuthority:
             request.adapter.source_binding_context.source_metadata_by_path,
             include_native_path_fallback=True,
         )
-        return apply_source_image_loading_semantics(
-            payload,
-            source_metadata=source_metadata,
-            source_path=storage_path,
-            read_backend=request.backend,
-            filemanager=_require_processing_context(request.adapter).filemanager,
-        )
+        return SourceImagePayloadSemantics.from_source_metadata(
+            source_metadata,
+            storage_path,
+            request.backend,
+            _require_processing_context(request.adapter).filemanager,
+        ).apply(payload)
 
     @classmethod
     def has_metadata_for_any(
@@ -6353,6 +6958,15 @@ class SourceCandidateMatcher:
         explicit_metadata_fields = {
             selector.field for selector in binding.selector.metadata
         }
+        explicit_selector_components = {
+            component
+            for field_name in (
+                *component_selectors,
+                *explicit_metadata_fields,
+            )
+            for component in (source_metadata_component(field_name),)
+            if component is not None
+        }
         effective_components = (
             {
                 **{
@@ -6360,6 +6974,8 @@ class SourceCandidateMatcher:
                     for name, value in inherit_components.items()
                     if name not in component_selectors
                     and name not in explicit_metadata_fields
+                    and source_metadata_component(name)
+                    not in explicit_selector_components
                 },
                 **component_selectors,
             }
@@ -6814,9 +7430,10 @@ def _source_candidate_summary(
 def _select_step_input_stack(
     *,
     request: SourceBindingResolutionRequest,
-    selected_paths: tuple[str, ...],
+    selected_sources: tuple[ParsedSourceCandidate, ...],
 ) -> Any:
     context = request.adapter.source_binding_context
+    selected_paths = tuple(candidate.path for candidate in selected_sources)
     current_step_input_files = context.current_step_input_files
     indexed_paths = {
         path: index for index, path in enumerate(current_step_input_files)
@@ -6830,7 +7447,7 @@ def _select_step_input_stack(
     if len(selected_indexes) != len(selected_paths):
         return _load_step_input_stack(
             request=request,
-            selected_paths=selected_paths,
+            selected_sources=selected_sources,
         )
     if not selected_indexes:
         raise RuntimeError(
@@ -6847,7 +7464,7 @@ def _select_step_input_stack(
 def _load_step_input_stack(
     *,
     request: SourceBindingResolutionRequest,
-    selected_paths: tuple[str, ...],
+    selected_sources: tuple[ParsedSourceCandidate, ...],
 ) -> Any:
     context = request.adapter.source_binding_context
     if context.step_input_dir is None or context.step_input_backend is None:
@@ -6855,17 +7472,32 @@ def _load_step_input_stack(
             "Step-input selector resolution needs step_input_dir and "
             "step_input_backend when selected files are outside the current stack."
         )
-    full_paths = tuple(str(Path(context.step_input_dir) / path) for path in selected_paths)
+    storage_paths = tuple(candidate.path for candidate in selected_sources)
     processing_context = _require_processing_context(request.adapter)
     loaded = processing_context.filemanager.load_batch(
-        list(full_paths),
+        list(storage_paths),
         context.step_input_backend,
     )
     if not loaded:
         raise RuntimeError(
-            f"Step-input source resolution loaded no payloads from {list(full_paths)}."
+            f"Step-input source resolution loaded no payloads from {list(storage_paths)}."
         )
-    return RestackLikePayloadAuthority.restack(list(loaded), request.current_image)
+    if len(loaded) != len(selected_sources):
+        raise RuntimeError(
+            "Step-input source resolution loaded a different number of payloads "
+            f"than selected candidates: {len(loaded)} loaded for "
+            f"{len(selected_sources)} selected."
+        )
+    contextualized = [
+        SourceImagePayloadSemantics.from_source_metadata(
+            candidate.metadata,
+            candidate.resolved_path,
+            context.step_input_backend,
+            processing_context.filemanager,
+        ).apply(payload)
+        for candidate, payload in zip(selected_sources, loaded, strict=True)
+    ]
+    return RestackLikePayloadAuthority.restack(contextualized, request.current_image)
 
 
 def _load_pipeline_start_stack(
@@ -6988,7 +7620,7 @@ class RestackLikePayloadAuthority:
         return image_payload_with_context(
             stacked,
             mask=cls.stack_masks(slices, memory_type),
-            metadata=compose_image_payload_metadata(slices),
+            metadata=ImagePayloadMetadataCompositionRequest(slices).metadata(),
         )
 
     @staticmethod

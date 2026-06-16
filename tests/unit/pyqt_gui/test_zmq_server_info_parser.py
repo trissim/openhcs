@@ -1,4 +1,4 @@
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     DefaultServerInfoParser,
     ExecutionServerInfo,
     ViewerServerInfo,

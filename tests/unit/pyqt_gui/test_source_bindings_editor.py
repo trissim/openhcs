@@ -35,10 +35,12 @@ from openhcs.pyqt_gui.widgets.source_bindings_editor import (
     StructuredSelectorDialog,
 )
 from openhcs.config_framework.object_state import ObjectState
-from pyqt_reactive.forms import (
+from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
-    InlineDataclassWidgetInfo,
     ParameterFormManager,
+)
+from pyqt_reactive.forms.parameter_info_types import (
+    InlineDataclassWidgetInfo,
     create_parameter_info,
 )
 from pyqt_reactive.theming import ColorScheme

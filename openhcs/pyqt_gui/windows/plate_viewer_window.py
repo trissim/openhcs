@@ -391,7 +391,7 @@ class PlateViewerWindow(BaseFormDialog):
 
     def _create_single_metadata_form(self, layout, metadata_instance):
         """Create a single metadata form."""
-        from pyqt_reactive.forms import ParameterFormManager
+        from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
         from openhcs.config_framework.object_state import ObjectState
 
         if metadata_instance.image_files is not None:
@@ -413,7 +413,7 @@ class PlateViewerWindow(BaseFormDialog):
 
     def _metadata_form_config(self):
         """Return the shared read-only metadata form configuration."""
-        from pyqt_reactive.forms import FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
 
         return FormManagerConfig(
             parent=None,

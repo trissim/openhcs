@@ -8,7 +8,6 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import dataclasses
 import os
-from enum import Enum
 from typing import Type, Any, Callable, Optional, Dict
 
 from PyQt6.QtWidgets import (
@@ -31,9 +30,13 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QShowEvent
 
 # Infrastructure classes removed - functionality migrated to ParameterFormManager service layer
-from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.widgets.shared.config_hierarchy_tree import ConfigHierarchyTreeHelper
+from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
+    ConfigHierarchyTreeHelper,
+    ConfigTreeItemKind,
+    ConfigTreeItemPayload,
+)
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
 from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton, HelpContext
@@ -68,41 +71,108 @@ from openhcs.core.lazy_placeholder_simplified import (
 logger = logging.getLogger(__name__)
 
 
-class ConfigTreeItemType(str, Enum):
-    """Closed tree item variants emitted by ConfigHierarchyTreeHelper."""
+class ConfigWindowStateResolver:
+    """Resolve the ObjectState a config window is allowed to edit."""
 
-    DATACLASS = "dataclass"
-    INHERITANCE_LINK = "inheritance_link"
+    def __init__(
+        self,
+        config_class: Type,
+        current_config: Any,
+        scope_id: Optional[str],
+    ) -> None:
+        self.config_class = config_class
+        self.current_config = current_config
+        self.scope_id = scope_id
+
+    def resolve(self) -> ObjectState:
+        state = ObjectStateRegistry.get_by_scope(self.scope_id)
+        if self.config_class is PipelineConfig:
+            return self._required_pipeline_config_state(state)
+
+        if state is not None:
+            return state
+        return ObjectState(
+            object_instance=self.current_config,
+            scope_id=self.scope_id,
+        )
+
+    def _required_pipeline_config_state(
+        self,
+        state: ObjectState | None,
+    ) -> ObjectState:
+        if self.scope_id in (None, ""):
+            raise RuntimeError(
+                "PipelineConfig editor requires a non-empty orchestrator scope."
+            )
+        if state is None:
+            raise RuntimeError(
+                "PipelineConfig editor requires an existing orchestrator ObjectState "
+                f"for scope {self.scope_id!r}; refusing to create a standalone "
+                "PipelineConfig state."
+            )
+        if not state.has_delegate:
+            raise RuntimeError(
+                "PipelineConfig editor scope must resolve to an orchestrator "
+                f"ObjectState delegated to pipeline_config; got "
+                f"{type(state.object_instance).__name__} at scope {self.scope_id!r}."
+            )
+        if not isinstance(state.saved_object, PipelineConfig):
+            raise RuntimeError(
+                "PipelineConfig editor delegate must be a PipelineConfig; got "
+                f"{type(state.saved_object).__name__} at scope {self.scope_id!r}."
+            )
+        return state
+
+
+class ConfigWidgetValueProjection:
+    """Project nullable config values into concrete Qt widget values."""
+
+    EMPTY_SPIN_VALUE = 0
+    EMPTY_DOUBLE_SPIN_VALUE = 0.0
+    EMPTY_LINE_EDIT_TEXT = ""
 
     @classmethod
-    def from_tree_data(cls, data: dict[str, Any]) -> "ConfigTreeItemType":
-        item_type = data.get("type")
-        try:
-            return cls(item_type)
-        except ValueError:
-            raise ValueError(f"Unknown config tree item type: {item_type!r}") from None
+    def checkbox_value(cls, value: Any) -> bool:
+        return bool(value)
 
-    def handle_double_click(self, window: "ConfigWindow", data: dict[str, Any]) -> None:
-        CONFIG_TREE_ITEM_HANDLERS[self](window, data)
+    @classmethod
+    def spin_box_value(cls, value: Any) -> int:
+        if value is None:
+            return cls.EMPTY_SPIN_VALUE
+        return int(value)
+
+    @classmethod
+    def double_spin_box_value(cls, value: Any) -> float:
+        if value is None:
+            return cls.EMPTY_DOUBLE_SPIN_VALUE
+        return float(value)
+
+    @classmethod
+    def line_edit_text(cls, value: Any) -> str:
+        if value is None:
+            return cls.EMPTY_LINE_EDIT_TEXT
+        return str(value)
 
 
-def _handle_dataclass_tree_item(window: "ConfigWindow", data: dict[str, Any]) -> None:
-    field_path = data.get("field_path") or data.get("field_name")
-    if field_path:
-        window._scroll_to_section(field_path)
-        logger.debug("Navigating to section: %s", field_path)
+def _handle_dataclass_tree_item(
+    window: "ConfigWindow",
+    payload: ConfigTreeItemPayload,
+) -> None:
+    if payload.navigation_path:
+        window._scroll_to_section(payload.navigation_path)
+        logger.debug("Navigating to section: %s", payload.navigation_path)
         return
 
-    class_obj = data.get("class")
-    class_name = class_obj.__name__ if isinstance(class_obj, type) else "Unknown"
+    class_name = payload.class_obj.__name__ if payload.class_obj else "Unknown"
     logger.debug("Double-clicked on root dataclass: %s", class_name)
 
 
 def _handle_inheritance_link_tree_item(
-    window: "ConfigWindow", data: dict[str, Any]
+    window: "ConfigWindow",
+    payload: ConfigTreeItemPayload,
 ) -> None:
-    target_class = data.get("target_class")
-    if not isinstance(target_class, type):
+    target_class = payload.target_class
+    if target_class is None:
         return
 
     field_name = window._find_field_for_class(target_class)
@@ -119,11 +189,11 @@ def _handle_inheritance_link_tree_item(
 
 
 CONFIG_TREE_ITEM_HANDLERS: dict[
-    ConfigTreeItemType,
-    Callable[["ConfigWindow", dict[str, Any]], None],
+    ConfigTreeItemKind,
+    Callable[["ConfigWindow", ConfigTreeItemPayload], None],
 ] = {
-    ConfigTreeItemType.DATACLASS: _handle_dataclass_tree_item,
-    ConfigTreeItemType.INHERITANCE_LINK: _handle_inheritance_link_tree_item,
+    ConfigTreeItemKind.DATACLASS: _handle_dataclass_tree_item,
+    ConfigTreeItemKind.INHERITANCE_LINK: _handle_inheritance_link_tree_item,
 }
 
 
@@ -218,13 +288,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         # The overlay (current form state) will be built by ParameterFormManager
         # This fixes the circular context bug where reset showed old values instead of global defaults
 
-        # Create or lookup ObjectState from registry - callers own state directly
-        self.state = ObjectStateRegistry.get_by_scope(self.scope_id)
-        if self.state is None:
-            self.state = ObjectState(
-                object_instance=current_config,
-                scope_id=self.scope_id,
-            )
+        self.state = ConfigWindowStateResolver(
+            config_class=self.config_class,
+            current_config=current_config,
+            scope_id=self.scope_id,
+        ).resolve()
 
         # When editing per-orchestrator PipelineConfig we typically reuse the orchestrator's
         # ObjectState (delegated to pipeline_config) under the plate scope_id.
@@ -561,12 +629,19 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         if not data:
             return
 
+        if not isinstance(data, ConfigTreeItemPayload):
+            raise TypeError(
+                "Config tree item data must be ConfigTreeItemPayload; got "
+                f"{type(data).__name__}."
+            )
+        payload = data
+
         # Check if this item is ui_hidden - if so, ignore the double-click
-        if data.get("ui_hidden", False):
+        if payload.ui_hidden:
             logger.debug("Ignoring double-click on ui_hidden item")
             return
 
-        ConfigTreeItemType.from_tree_data(data).handle_double_click(self, data)
+        CONFIG_TREE_ITEM_HANDLERS[payload.item_type](self, payload)
 
     def _find_field_for_class(self, target_class) -> str:
         """Find the field name that has the given class type (or its lazy version)."""
@@ -610,18 +685,20 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
         try:
             if isinstance(widget, QCheckBox):
-                widget.setChecked(bool(value))
+                widget.setChecked(ConfigWidgetValueProjection.checkbox_value(value))
             elif isinstance(widget, QSpinBox):
-                widget.setValue(int(value) if value is not None else 0)
+                widget.setValue(ConfigWidgetValueProjection.spin_box_value(value))
             elif isinstance(widget, QDoubleSpinBox):
-                widget.setValue(float(value) if value is not None else 0.0)
+                widget.setValue(
+                    ConfigWidgetValueProjection.double_spin_box_value(value)
+                )
             elif isinstance(widget, QComboBox):
                 for i in range(widget.count()):
                     if widget.itemData(i) == value:
                         widget.setCurrentIndex(i)
                         break
             elif isinstance(widget, QLineEdit):
-                widget.setText(str(value) if value is not None else "")
+                widget.setText(ConfigWidgetValueProjection.line_edit_text(value))
         finally:
             widget.blockSignals(False)
 

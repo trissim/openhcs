@@ -154,26 +154,18 @@ def create_streaming_config(
 
 def build_component_order():
     """
-    Build canonical component order from VirtualComponents + AllComponents.
-
-    This ensures VirtualComponents is the single source of truth - if you add/remove
-    a virtual component, the component_order is automatically updated.
+    Build canonical streaming component order from real filename components.
 
     Returns:
         List of component names in canonical order for layer/window naming
     """
-    from openhcs.constants import AllComponents, VirtualComponents
+    from openhcs.constants import AllComponents
 
-    # Virtual components come first (for step/source grouping)
-    virtual_component_names = [vc.value for vc in VirtualComponents]
-
-    # Then filename components in standard order
     filename_component_names = [ac.value for ac in AllComponents]
 
-    # Combine, preserving order and avoiding duplicates
     component_order = []
     seen = set()
-    for name in virtual_component_names + filename_component_names:
+    for name in filename_component_names:
         if name not in seen:
             component_order.append(name)
             seen.add(name)

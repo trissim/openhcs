@@ -6,9 +6,10 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Mapping
+from typing import ClassVar, TYPE_CHECKING
 
 from metaclass_registry import AutoRegisterMeta
+from polystore.streaming.identity import StreamProducerIdentity
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.artifact_materialization_policy import (
@@ -18,9 +19,14 @@ from openhcs.core.runtime_stores import (
     StoredRuntimeValue,
     require_runtime_value_store,
 )
-from openhcs.core.runtime_values import image_payload_metadata
+from openhcs.core.runtime_values import SourceComponentMetadata, image_payload_metadata
 from openhcs.core.source_matching import source_component_metadata_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
+from openhcs.processing.materialization.core import BackendKwargs
+
+if TYPE_CHECKING:
+    from polystore.filemanager import FileManager
+    from openhcs.core.context.processing_context import ProcessingContext
 
 
 logger = logging.getLogger(__name__)
@@ -36,15 +42,15 @@ class ArtifactMaterializationTargetPlan(ABC, metaclass=AutoRegisterMeta):
     def backend_kwargs(
         self,
         plan: FunctionStepExecutionPlan,
-        context: Any,
-    ) -> dict[str, dict[str, Any]]:
+        context: "ProcessingContext",
+    ) -> BackendKwargs:
         backend_kwargs = self.persistent_backend_kwargs()
         for config in plan.streaming_configs:
             backend_kwargs[config.backend.value] = config.get_streaming_kwargs(context)
         return backend_kwargs
 
     @abstractmethod
-    def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
+    def persistent_backend_kwargs(self) -> BackendKwargs:
         """Return persistent materialization backends owned by this policy."""
 
 
@@ -55,7 +61,7 @@ class PersistentArtifactMaterializationTargetPlan(ArtifactMaterializationTargetP
     target_key = "persistent"
     backend: str
 
-    def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
+    def persistent_backend_kwargs(self) -> BackendKwargs:
         return {self.backend: {}}
 
 
@@ -64,7 +70,7 @@ class StreamingOnlyArtifactMaterializationTargetPlan(ArtifactMaterializationTarg
 
     target_key = "streaming_only"
 
-    def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
+    def persistent_backend_kwargs(self) -> BackendKwargs:
         return {}
 
 
@@ -73,7 +79,7 @@ class ArtifactAnalysisOutputDescriptor:
     """Filename plus source component metadata for an artifact materialization."""
 
     filename: str
-    component_metadata: Mapping[str, Any] | None
+    component_metadata: SourceComponentMetadata | None
 
 
 class AnalysisOutputDescriptorAuthority:
@@ -85,7 +91,7 @@ class AnalysisOutputDescriptorAuthority:
         output_key: str,
         plan: FunctionStepExecutionPlan,
         dict_key: str | None = None,
-        context: Any = None,
+        context: "ProcessingContext | None" = None,
         artifact_path: str | None = None,
         record: StoredRuntimeValue | None = None,
     ) -> ArtifactAnalysisOutputDescriptor:
@@ -155,10 +161,10 @@ class AnalysisOutputDescriptorAuthority:
     def source_component_metadata_for_record(
         record: StoredRuntimeValue | None,
         *,
-        fallback: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any] | None:
+        fallback: SourceComponentMetadata | None = None,
+    ) -> SourceComponentMetadata | None:
         """Return source component metadata carried by a runtime artifact payload."""
-        candidate: Mapping[str, Any] | None = None
+        candidate: SourceComponentMetadata | None = None
         if record is None:
             return fallback
         payload_metadata = image_payload_metadata(record.value.data)
@@ -176,9 +182,9 @@ class AnalysisOutputDescriptorAuthority:
 
     @staticmethod
     def merge_source_component_metadata(
-        primary: Mapping[str, Any] | None,
-        fallback: Mapping[str, Any] | None,
-    ) -> Mapping[str, Any] | None:
+        primary: SourceComponentMetadata | None,
+        fallback: SourceComponentMetadata | None,
+    ) -> SourceComponentMetadata | None:
         """Merge payload metadata with parser-derived axis metadata."""
         if primary is None:
             return fallback
@@ -196,90 +202,146 @@ class AnalysisOutputDescriptorAuthority:
 
     @staticmethod
     def component_metadata_for_path(
-        context: Any,
+        context: "ProcessingContext | None",
         path: str | Path | None,
-    ) -> Mapping[str, Any] | None:
+    ) -> SourceComponentMetadata | None:
         """Return microscope component metadata for a source path when available."""
         if context is None or path is None:
             return None
         return context.microscope_handler.parser.parse_filename(Path(path).name)
 
 
-def _backend_kwargs_with_component_metadata(
-    backend_kwargs: Mapping[str, Mapping[str, Any]],
-    component_metadata: Mapping[str, Any] | None,
-) -> dict[str, dict[str, Any]]:
-    """Attach source component metadata to each materialization backend."""
-    if component_metadata is None:
-        return {backend: dict(kwargs) for backend, kwargs in backend_kwargs.items()}
-    return {
-        backend: {**kwargs, "component_metadata": dict(component_metadata)}
-        for backend, kwargs in backend_kwargs.items()
-    }
+STREAMING_BACKENDS = frozenset(
+    (
+        Backend.NAPARI_STREAM.value,
+        Backend.FIJI_STREAM.value,
+    )
+)
 
 
-def _planned_artifact_paths(output_plan: ArtifactOutputPlan) -> frozenset[str]:
+class BackendKwargsWithStreamIdentityAuthority:
+    """Attach stream identity and source-plane metadata to streaming backends."""
+
+    @staticmethod
+    def build(
+        backend_kwargs: BackendKwargs,
+        component_metadata: SourceComponentMetadata | None,
+        producer_identity: StreamProducerIdentity,
+    ) -> BackendKwargs:
+        result: BackendKwargs = {}
+        for backend, kwargs in backend_kwargs.items():
+            next_kwargs = dict(kwargs)
+            if component_metadata is not None:
+                next_kwargs["component_metadata"] = dict(component_metadata)
+            if backend in STREAMING_BACKENDS:
+                next_kwargs["producer_identity"] = producer_identity
+            result[backend] = next_kwargs
+        return result
+
+
+class ArtifactStreamIdentityAuthority:
+    """Build stable stream producer identities for artifact outputs."""
+
+    @staticmethod
+    def build(
+        plan: FunctionStepExecutionPlan,
+        output_key: str,
+        output_plan: ArtifactOutputPlan,
+    ) -> StreamProducerIdentity:
+        return StreamProducerIdentity.pipeline_output(
+            output_kind="artifact",
+            output_key=output_key,
+            step_name=plan.step_name,
+            pipeline_position=plan.pipeline_position,
+            step_scope_id=plan.step_scope_id,
+            artifact_kind=output_plan.kind.value,
+        )
+
+
+class PlannedArtifactPathsAuthority:
     """Return every compiler-planned memory path for one artifact output."""
-    paths = {output_plan.path}
-    paths.update((output_plan.paths_by_group or {}).values())
-    return frozenset(paths)
+
+    @staticmethod
+    def paths(output_plan: ArtifactOutputPlan) -> frozenset[str]:
+        paths = {output_plan.path}
+        if output_plan.paths_by_group:
+            paths.update(output_plan.paths_by_group.values())
+        return frozenset(paths)
 
 
-def _sort_key_for_record(
-    record: StoredRuntimeValue,
-    output_plan: ArtifactOutputPlan,
-) -> tuple[int, str]:
-    group_order = {
-        group_key: index
-        for index, group_key in enumerate(output_plan.group_keys or (None,))
-    }
-    group_key = record.key.scope.group_key
-    return (
-        group_order.get(group_key, len(group_order)),
-        "" if group_key is None else str(group_key),
-    )
+class MaterializationRecordSortKeyAuthority:
+    """Sort runtime artifact records by compiler group order."""
+
+    @staticmethod
+    def key(
+        record: StoredRuntimeValue,
+        output_plan: ArtifactOutputPlan,
+    ) -> tuple[int, str]:
+        group_keys = output_plan.group_keys
+        if group_keys is None:
+            group_keys = (None,)
+        group_order = {
+            group_key: index
+            for index, group_key in enumerate(group_keys)
+        }
+        group_key = record.key.scope.group_key
+        if group_key in group_order:
+            group_index = group_order[group_key]
+        else:
+            group_index = len(group_order)
+        if group_key is None:
+            group_name = ""
+        else:
+            group_name = str(group_key)
+        return group_index, group_name
 
 
-def _actual_materialization_records(
-    *,
-    context: Any,
-    plan: FunctionStepExecutionPlan,
-    output_plan: ArtifactOutputPlan,
-) -> tuple[StoredRuntimeValue, ...]:
+class ActualMaterializationRecordsAuthority:
     """Resolve records actually produced for one planned output."""
-    store = require_runtime_value_store(context, owner_name="context")
-    planned_paths = _planned_artifact_paths(output_plan)
-    records = tuple(
-        record
-        for record in store.find(
-            name=output_plan.name,
-            kind=output_plan.kind,
-            axis_id=plan.axis_id,
+
+    @staticmethod
+    def records(
+        *,
+        context: "ProcessingContext",
+        plan: FunctionStepExecutionPlan,
+        output_plan: ArtifactOutputPlan,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        store = require_runtime_value_store(context, owner_name="context")
+        planned_paths = PlannedArtifactPathsAuthority.paths(output_plan)
+        records = tuple(
+            record
+            for record in store.find(
+                name=output_plan.name,
+                kind=output_plan.kind,
+                axis_id=plan.axis_id,
+            )
+            if (
+                record.backend == Backend.MEMORY.value
+                and record.path in planned_paths
+            )
         )
-        if (
-            record.backend == Backend.MEMORY.value
-            and record.path in planned_paths
+        if not records:
+            raise RuntimeError(
+                f"Missing RuntimeValueStore record for planned artifact materialization "
+                f"'{output_plan.name}' ({output_plan.kind.value}) on axis "
+                f"'{plan.axis_id}'."
+            )
+        return tuple(
+            sorted(
+                records,
+                key=lambda record: MaterializationRecordSortKeyAuthority.key(
+                    record,
+                    output_plan,
+                ),
+            )
         )
-    )
-    if not records:
-        raise RuntimeError(
-            f"Missing RuntimeValueStore record for planned artifact materialization "
-            f"'{output_plan.name}' ({output_plan.kind.value}) on axis "
-            f"'{plan.axis_id}'."
-        )
-    return tuple(
-        sorted(
-            records,
-            key=lambda record: _sort_key_for_record(record, output_plan),
-        )
-    )
 
 
 def materialize_artifact_outputs(
-    filemanager: Any,
+    filemanager: "FileManager",
     plan: FunctionStepExecutionPlan,
     target_plan: ArtifactMaterializationTargetPlan,
-    context: Any,
+    context: "ProcessingContext",
 ) -> None:
     """Materialize planned artifact outputs to persistent and streaming backends."""
     from openhcs.processing.materialization import materialize
@@ -295,7 +357,6 @@ def materialize_artifact_outputs(
 
     for kwargs in backend_kwargs.values():
         kwargs["images_dir"] = images_dir
-        kwargs["source"] = plan.step_name
 
     filemanager._materialization_context = {"images_dir": images_dir}
 
@@ -303,7 +364,7 @@ def materialize_artifact_outputs(
         if output_plan.materialization is None and output_plan.kind is ArtifactKind.SPECIAL:
             continue
 
-        records = _actual_materialization_records(
+        records = ActualMaterializationRecordsAuthority.records(
             context=context,
             plan=plan,
             output_plan=output_plan,
@@ -337,9 +398,14 @@ def materialize_artifact_outputs(
                 str(analysis_path),
                 filemanager,
                 backends,
-                _backend_kwargs_with_component_metadata(
+                BackendKwargsWithStreamIdentityAuthority.build(
                     backend_kwargs,
                     output_descriptor.component_metadata,
+                    ArtifactStreamIdentityAuthority.build(
+                        plan,
+                        output_key,
+                        output_plan,
+                    ),
                 ),
                 context=context,
             )

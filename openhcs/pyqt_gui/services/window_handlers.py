@@ -5,11 +5,11 @@ Called during application initialization.
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtWidgets import QWidget
-from pyqt_reactive.services import ScopeWindowRegistry
+from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
+from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 
 if TYPE_CHECKING:
     from openhcs.config_framework.object_state import ObjectState
@@ -21,26 +21,7 @@ from openhcs.core.steps.function_step import FunctionStep
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class StepEditorScope:
-    """Parsed identity for a step/function editor scope."""
-
-    scope_id: str
-    plate_path: str
-    step_scope_id: str
-    is_function_scope: bool
-
-    @classmethod
-    def parse(cls, scope_id: str) -> "StepEditorScope":
-        parts = scope_id.split("::")
-        if len(parts) < 2:
-            raise ValueError(f"Invalid step scope_id format: {scope_id}")
-        return cls(
-            scope_id=scope_id,
-            plate_path=parts[0],
-            step_scope_id=f"{parts[0]}::{parts[1]}",
-            is_function_scope=len(parts) >= 3,
-        )
+ORCHESTRATOR_SCOPE_PATTERN = r"^/(?!.*::).*$"
 
 
 class OpenHCSWindowCreationAuthority:
@@ -92,14 +73,30 @@ class OpenHCSWindowCreationAuthority:
         from openhcs.core.config import PipelineConfig
         from objectstate import ObjectStateRegistry
 
-        orchestrator = ObjectStateRegistry.get_object(scope_id)
-        if not orchestrator:
+        state = ObjectStateRegistry.get_by_scope(scope_id)
+        if state is None:
             logger.warning("No orchestrator found for scope: %s", scope_id)
+            return None
+        if not state.has_delegate:
+            logger.warning(
+                "Scope %s is not an orchestrator config scope; got %s",
+                scope_id,
+                type(state.object_instance).__name__,
+            )
+            return None
+
+        pipeline_config = state.saved_object
+        if not isinstance(pipeline_config, PipelineConfig):
+            logger.warning(
+                "Scope %s delegate is not PipelineConfig; got %s",
+                scope_id,
+                type(pipeline_config).__name__,
+            )
             return None
 
         window = ConfigWindow(
             config_class=PipelineConfig,
-            current_config=orchestrator.pipeline_config,
+            current_config=pipeline_config,
             on_save_callback=None,  # ObjectState handles save
             scope_id=scope_id,
         )
@@ -120,9 +117,12 @@ class OpenHCSWindowCreationAuthority:
             logger.warning("Could not find PlateManager for step editor")
             return None
 
-        orchestrator = ObjectStateRegistry.get_object(editor_scope.plate_path)
+        orchestrator = ObjectStateRegistry.get_object(editor_scope.plate_scope)
         if not orchestrator:
-            logger.warning("No orchestrator found for plate: %s", editor_scope.plate_path)
+            logger.warning(
+                "No orchestrator found for plate scope: %s",
+                editor_scope.plate_scope,
+            )
             return None
 
         step = self._resolve_step(editor_scope, object_state)
@@ -136,6 +136,7 @@ class OpenHCSWindowCreationAuthority:
             on_save_callback=None,  # ObjectState handles save
             orchestrator=orchestrator,
             service_adapter=plate_manager.service_adapter,
+            plate_scope=editor_scope.plate_scope,
             parent=None,
         )
         self._select_step_editor_tab(window, editor_scope)
@@ -159,22 +160,28 @@ class OpenHCSWindowCreationAuthority:
         if step_state is not None and isinstance(step_state.object_instance, FunctionStep):
             return step_state.object_instance
 
-        return self._find_step_by_scope_id(editor_scope.plate_path, editor_scope.step_scope_id)
+        return self._find_step_by_scope_id(
+            editor_scope.plate_scope,
+            editor_scope.step_scope_id,
+        )
 
     def _find_step_by_scope_id(
         self,
-        plate_path: str,
+        plate_scope: str,
         step_scope_id: str,
     ) -> Optional[FunctionStep]:
         """Find a step through the pipeline state's declared step scopes."""
         from objectstate import ObjectStateRegistry
 
-        pipeline_state = ObjectStateRegistry.get_by_scope(f"{plate_path}::pipeline")
+        pipeline_state = ObjectStateRegistry.get_by_scope(f"{plate_scope}::pipeline")
         if pipeline_state is None:
-            logger.debug("No pipeline state for %s", plate_path)
+            logger.debug("No pipeline state for %s", plate_scope)
             return None
 
-        step_scope_ids = pipeline_state.parameters.get("step_scope_ids") or []
+        if "step_scope_ids" not in pipeline_state.parameters:
+            step_scope_ids = []
+        else:
+            step_scope_ids = pipeline_state.parameters["step_scope_ids"]
         if step_scope_id not in step_scope_ids:
             logger.debug(
                 "Step scope '%s' not found in %d registered steps",
@@ -214,10 +221,13 @@ class OpenHCSWindowCreationAuthority:
                 select_function_tab,
             )
 
-        window.tab_widget.setCurrentIndex(1 if select_function_tab else 0)
+        tab_index = 0
+        if select_function_tab:
+            tab_index = 1
+        window.tab_widget.setCurrentIndex(tab_index)
 
     def _plate_manager(self):
-        from pyqt_reactive.services import ServiceRegistry
+        from pyqt_reactive.services.service_registry import ServiceRegistry
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
         return ServiceRegistry.get(PlateManagerWidget)
@@ -237,16 +247,18 @@ def register_openhcs_window_handlers():
 
     # Order matters - more specific patterns should come first
 
-    # Step/function editors (::functionstep_N or ::functionstep_N::func_M)
-    # Note: uses "functionstep" prefix derived from FunctionStep class name
+    # Step/function editors owned by the typed step scope contract.
     ScopeWindowRegistry.register_handler(
-        pattern=r"^.*::functionstep_\d+(::func_\d+)?$",
+        pattern=StepEditorScope.handler_pattern(),
         handler=window_authority.create_step_editor_window,
     )
 
-    # Plate configs (/path/to/plate - no :: in scope_id)
+    # Plate configs. Step/function scopes are registered first; every remaining
+    # absolute scope must prove it is a delegated PipelineConfig ObjectState in
+    # create_plate_config_window().
     ScopeWindowRegistry.register_handler(
-        pattern=r"^/[^:]*$", handler=window_authority.create_plate_config_window
+        pattern=ORCHESTRATOR_SCOPE_PATTERN,
+        handler=window_authority.create_plate_config_window,
     )
 
     # Plates root list

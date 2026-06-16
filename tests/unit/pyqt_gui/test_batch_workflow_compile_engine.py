@@ -11,8 +11,7 @@ from openhcs.core.debug import (
     DebugExecutionConfig,
     DebugProgressEventRequest,
 )
-from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
-    BatchWorkflowService,
+from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
@@ -24,6 +23,8 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
 )
+from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.execution_control_service import (
     ExecutionControlService,
 )
@@ -52,7 +53,7 @@ from openhcs.core.progress.live_measurements import (
     LiveMeasurementProgressPayload,
     LiveMeasurementTablePreview,
 )
-from pyqt_reactive.services import DefaultServerInfoParser
+from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 from zmqruntime.execution import BatchSubmitWaitEngine
 
 
@@ -145,8 +146,12 @@ def test_compile_submission_uses_execution_plate_path_for_transport():
         global_config_provider=lambda: object(),
         run_blocking=run_blocking,
     )
+    plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+        "/tmp/source",
+        "/tmp/source/BBBC022_Analysis_Start.cppipe",
+    ).scope_id
     job = CompileJob(
-        plate_path="/tmp/source::cppipe::Analysis_Start",
+        plate_path=plate_scope,
         execution_plate_path="/tmp/source/.openhcs_cellprofiler/Analysis_Start",
         selected_pipeline_path="/tmp/source/BBBC022_Analysis_Start.cppipe",
         plate_name="Analysis_Start",
@@ -159,7 +164,7 @@ def test_compile_submission_uses_execution_plate_path_for_transport():
     )
 
     assert execution_id == "compile-1"
-    assert captured["plate_id"] == "/tmp/source::cppipe::Analysis_Start"
+    assert captured["plate_id"] == plate_scope
     assert captured["execution_plate_id"] == "/tmp/source/.openhcs_cellprofiler/Analysis_Start"
     assert captured["selected_pipeline_path"] == "/tmp/source/BBBC022_Analysis_Start.cppipe"
 
@@ -288,6 +293,112 @@ def test_compile_policy_non_fail_fast_wait_tracks_error_and_finally():
     assert callbacks["success"] == [("/tmp/a", "exec-/tmp/a")]
     assert callbacks["error"] == [("/tmp/b", "compile failed")]
     assert callbacks["finally"] == ["/tmp/a", "/tmp/b"]
+
+
+class CompilePlateRowHostHarness:
+    """Minimal host surface for compile-only row contract tests."""
+
+    def __init__(self) -> None:
+        self.execution_state = ManagerExecutionState.IDLE
+        self.plate_compile_pending = set()
+        self.plate_compiled_data = {}
+        self.cleared_tracking = []
+        self.statuses = []
+        self.item_updates = 0
+        self.button_updates = 0
+        self.progress_started = []
+        self.progress_updated = []
+        self.progress_finished = 0
+        self.compilation_errors = []
+        self.orchestrator_states = []
+
+    def emit_progress_started(self, total: int) -> None:
+        self.progress_started.append(total)
+
+    def clear_plate_execution_tracking(self, plate_path: str) -> None:
+        self.cleared_tracking.append(plate_path)
+
+    def update_item_list(self) -> None:
+        self.item_updates += 1
+
+    def emit_status(self, status: str) -> None:
+        self.statuses.append(status)
+
+    def emit_progress_updated(self, value: int) -> None:
+        self.progress_updated.append(value)
+
+    def emit_progress_finished(self) -> None:
+        self.progress_finished += 1
+
+    def update_button_states(self) -> None:
+        self.button_updates += 1
+
+    def emit_orchestrator_state(self, plate_path: str, state: str) -> None:
+        self.orchestrator_states.append((plate_path, state))
+
+    def emit_compilation_error(self, plate_name: str, error: str) -> None:
+        self.compilation_errors.append((plate_name, error))
+
+
+class RecordingPlateRequestBuilder:
+    """Compile-job builder that records the row contract it receives."""
+
+    def __init__(self) -> None:
+        self.rows = []
+
+    def build_compile_job_from_plate_row(self, row: PlateManagerRow) -> CompileJob:
+        self.rows.append(row)
+        return CompileJob(
+            plate_path=row.scope_id,
+            execution_plate_path=row.scope_id,
+            selected_pipeline_path=row.cppipe_path,
+            plate_name=row.name,
+            definition_pipeline=[],
+            pipeline_config={"x": 1},
+        )
+
+
+class RecordingCompileBatchEngine:
+    """Batch engine seam that records jobs without touching transport."""
+
+    def __init__(self) -> None:
+        self.jobs = []
+
+    async def run(self, jobs, policy):
+        del policy
+        self.jobs = list(jobs)
+        return {}
+
+
+def test_compile_plates_accepts_plate_manager_rows() -> None:
+    host = CompilePlateRowHostHarness()
+    client_service = ClientServiceHarness()
+    builder = RecordingPlateRequestBuilder()
+    engine = RecordingCompileBatchEngine()
+
+    async def connect_progress_client():
+        return object()
+
+    service = CompileBatchWorkflowService(
+        host=host,
+        client_service=client_service,
+        global_config_provider=lambda: object(),
+        run_blocking=lambda _loop, func: func(),
+        connect_progress_client=connect_progress_client,
+        plate_request_builder=builder,
+        compile_batch_engine=engine,
+    )
+    row = PlateManagerRow.from_scope("/tmp/plate")
+
+    asyncio.run(service.compile_plates([row]))
+
+    assert builder.rows == [row]
+    assert [job.plate_path for job in engine.jobs] == [row.scope_id]
+    assert host.cleared_tracking == [row.scope_id]
+    assert host.progress_started == [1]
+    assert host.progress_finished == 1
+    assert host.compilation_errors == []
+    assert client_service.disconnect_calls == 1
 
 
 class ExecutionRuntimeHarness:

@@ -13,7 +13,7 @@ from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_image_stack,
 )
-from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.image_stack_layout import ImageStackLayout, SourceSliceUnstackRequest
 from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -216,12 +216,12 @@ def test_image_stack_layout_stacks_single_ambiguous_volume_slice():
 def test_image_stack_layout_unstacks_result_matching_source_volume_as_single_slice():
     volume = np.zeros((3, 4, 5), dtype=np.uint16)
 
-    observed = ImageStackLayout.unstack_result_for_source_slices(
+    observed = SourceSliceUnstackRequest(
         volume,
-        source_slice_shapes=(tuple(volume.shape),),
-        memory_type=MEMORY_TYPE_NUMPY,
-        gpu_id=0,
-    )
+        (tuple(volume.shape),),
+        MEMORY_TYPE_NUMPY,
+        0,
+    ).slices()
 
     assert len(observed) == 1
     np.testing.assert_array_equal(observed[0], volume)
@@ -232,12 +232,12 @@ def test_image_stack_layout_unstacks_masked_volume_stack_payload_with_slice_cont
     mask = np.ones((1, 3, 4, 5), dtype=bool)
     payload = MaskedImagePayload(data=stack, mask=mask)
 
-    observed = ImageStackLayout.unstack_result_for_source_slices(
+    observed = SourceSliceUnstackRequest(
         payload,
-        source_slice_shapes=((3, 4, 5),),
-        memory_type=MEMORY_TYPE_NUMPY,
-        gpu_id=0,
-    )
+        ((3, 4, 5),),
+        MEMORY_TYPE_NUMPY,
+        0,
+    ).slices()
 
     assert len(observed) == 1
     assert isinstance(observed[0], MaskedImagePayload)

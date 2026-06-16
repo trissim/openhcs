@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
 import textwrap
@@ -31,6 +32,55 @@ class ViewerProtocolStatus(Enum):
 
     SUCCESS = "success"
     ERROR = "error"
+
+
+class ViewerComponentValueOrdering:
+    """Canonical ordering for viewer component values and stack coordinates."""
+
+    NATURAL_TOKEN_PATTERN = re.compile(r"(\d+)")
+
+    @classmethod
+    def key(cls, value: object) -> tuple[object, ...]:
+        numeric_value = cls.numeric_value(value)
+        if numeric_value is not None:
+            return (0, numeric_value, type(value).__name__, str(value))
+
+        text = str(value)
+        return (1, cls.natural_text_key(text), type(value).__name__, text)
+
+    @classmethod
+    def tuple_key(cls, values: tuple[object, ...]) -> tuple[tuple[object, ...], ...]:
+        return tuple(cls.key(value) for value in values)
+
+    @staticmethod
+    def numeric_value(value: object) -> int | float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return value
+        if not isinstance(value, str):
+            return None
+
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return float(text)
+            except ValueError:
+                return None
+
+    @classmethod
+    def natural_text_key(cls, text: str) -> tuple[tuple[int, object], ...]:
+        return tuple(
+            (0, int(token)) if token.isdecimal() else (1, token.casefold())
+            for token in cls.NATURAL_TOKEN_PATTERN.split(text)
+            if token
+        )
 
 
 class QtPlatformName(Enum):

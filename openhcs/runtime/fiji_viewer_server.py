@@ -8,6 +8,7 @@ via PyImageJ. Inherits from ZMQServer ABC for ping/pong handshake and dual-chann
 import logging
 import time
 import threading
+from dataclasses import dataclass
 from typing import Dict, Any, List
 
 from polystore.streaming_constants import StreamingDataType
@@ -19,6 +20,7 @@ from openhcs.core.config import TransportMode as OpenHCSTransportMode
 from openhcs.runtime.viewer_protocol import (
     FIJI_HEARTBEAT,
     FijiPayloadKind,
+    ViewerComponentValueOrdering,
     ViewerProtocolStatus,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -32,6 +34,55 @@ _ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
 
 # Registry mapping data types to handler methods
 _FIJI_ITEM_HANDLERS = {}
+
+
+@dataclass(frozen=True)
+class FijiBatchMessage:
+    """Validated Fiji stream batch payload."""
+
+    items: List[Dict[str, Any]]
+    display_config: Dict[str, Any]
+    images_dir: str | None
+    component_names_metadata: Dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: Dict[str, Any]) -> "FijiBatchMessage":
+        if "type" not in payload:
+            raise ValueError("Fiji batch message missing required field: 'type'")
+        msg_type = payload["type"]
+        if msg_type != "batch":
+            raise ValueError(
+                f"Fiji stream messages must be batch messages, got {msg_type!r}."
+            )
+        missing = [
+            field_name
+            for field_name in (
+                "images",
+                "display_config",
+                "images_dir",
+                "component_names_metadata",
+            )
+            if field_name not in payload
+        ]
+        if missing:
+            raise ValueError(f"Fiji batch message missing required fields: {missing}")
+        items = payload["images"]
+        display_config = payload["display_config"]
+        component_names_metadata = payload["component_names_metadata"]
+        if not isinstance(items, list):
+            raise TypeError("Fiji batch message 'images' must be a list.")
+        if not isinstance(display_config, dict):
+            raise TypeError("Fiji batch message 'display_config' must be a mapping.")
+        if not isinstance(component_names_metadata, dict):
+            raise TypeError(
+                "Fiji batch message 'component_names_metadata' must be a mapping."
+            )
+        return cls(
+            items=items,
+            display_config=display_config,
+            images_dir=payload["images_dir"],
+            component_names_metadata=component_names_metadata,
+        )
 
 
 def register_fiji_handler(data_type: StreamingDataType):
@@ -355,7 +406,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         Args:
             items: List of items with copied data
             display_config_dict: Display configuration
-            images_dir: Source image subdirectory
+            images_dir: Artifact image directory context.
             component_names_metadata: Component name mappings for dimension labels
         """
         self._batch_engine.enqueue(
@@ -407,43 +458,30 @@ class FijiViewerServer(StreamingVisualizerServer):
             # Parse JSON message
             data = json.loads(message.decode("utf-8"))
 
-            msg_type = data.get("type")
+            batch_message = FijiBatchMessage.from_payload(data)
 
-            # Check message type
-            if msg_type == "batch":
-                items = data.get("images", [])
-                display_config_dict = data.get("display_config", {})
-                images_dir = data.get("images_dir")
-                component_names_metadata = data.get("component_names_metadata", {})
+            logger.info(
+                "📨 FIJI SERVER: Received batch message with %d items",
+                len(batch_message.items),
+            )
 
-                logger.info(
-                    f"📨 FIJI SERVER: Received batch message with {len(items)} items"
-                )
+            if not batch_message.items:
+                return {
+                    "status": ViewerProtocolStatus.SUCCESS.value,
+                    "message": "Empty batch",
+                }
 
-                if not items:
-                    return {
-                        "status": ViewerProtocolStatus.SUCCESS.value,
-                        "message": "Empty batch",
-                    }
+            # CRITICAL: Copy data from shared memory IMMEDIATELY
+            # This must happen before we send ack, so worker doesn't close shared memory
+            copied_items = self._copy_items_from_shared_memory(batch_message.items)
 
-                # CRITICAL: Copy data from shared memory IMMEDIATELY
-                # This must happen before we send ack, so worker doesn't close shared memory
-                copied_items = self._copy_items_from_shared_memory(items)
-
-                # Queue copied items for debounced processing
-                self._queue_for_debounced_processing(
-                    copied_items,
-                    display_config_dict,
-                    images_dir,
-                    component_names_metadata,
-                )
-
-            else:
-                # Single image message (fallback)
-                copied_items = self._copy_items_from_shared_memory([data])
-                self._queue_for_debounced_processing(
-                    copied_items, data.get("display_config", {}), data.get("images_dir")
-                )
+            # Queue copied items for debounced processing
+            self._queue_for_debounced_processing(
+                copied_items,
+                batch_message.display_config,
+                batch_message.images_dir,
+                batch_message.component_names_metadata,
+            )
 
             return {
                 "status": ViewerProtocolStatus.SUCCESS.value,
@@ -472,7 +510,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         Args:
             items: List of items (mixed types allowed)
             display_config_dict: Display configuration with component_modes
-            images_dir: Source image subdirectory (for mapping ROI source to image source)
+            images_dir: Artifact image directory context.
             component_names_metadata: Component name mappings for dimension labels (e.g., channel names)
         """
         if not items:
@@ -508,7 +546,6 @@ class FijiViewerServer(StreamingVisualizerServer):
             items,
             component_modes=component_modes,
             component_order=component_order,
-            images_dir=images_dir,
         )
         window_components = projection.window_components
         channel_components = projection.channel_components
@@ -720,15 +757,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         # Combine and deduplicate
         merged = set(stored_values) | set(new_values)
 
-        # Sort with custom key that handles mixed types (int/str) in tuples
-        # Convert each element to (type_priority, str_value) for comparison
-        # This ensures consistent ordering even with mixed types
-        def sort_key(value_tuple):
-            return tuple(
-                (0 if isinstance(v, (int, float)) else 1, str(v)) for v in value_tuple
-            )
-
-        return sorted(merged, key=sort_key)
+        return sorted(merged, key=ViewerComponentValueOrdering.tuple_key)
 
     def _collect_dimension_values_from_items(
         self, items: List[Dict[str, Any]], component_list: List[str]
@@ -754,14 +783,7 @@ class FijiViewerServer(StreamingVisualizerServer):
             value_tuple = tuple(meta[comp] for comp in component_list)
             unique_values.add(value_tuple)
 
-        # Sort with custom key that handles mixed types (int/str) in tuples
-        # Convert each element to (type_priority, str_value) for comparison
-        def sort_key(value_tuple):
-            return tuple(
-                (0 if isinstance(v, (int, float)) else 1, str(v)) for v in value_tuple
-            )
-
-        return sorted(unique_values, key=sort_key)
+        return sorted(unique_values, key=ViewerComponentValueOrdering.tuple_key)
 
     def _get_dimension_index(
         self,

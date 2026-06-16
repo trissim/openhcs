@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from openhcs.microscopes.openhcs import OpenHCSMetadata
-from pyqt_reactive.forms import ParameterFormManager
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import BaseFormDialog
 
@@ -218,7 +218,7 @@ class MetadataViewerDialog(BaseFormDialog):
         self, metadata_instance: OpenHCSMetadata, layout: Optional[QVBoxLayout] = None
     ):
         """Create a single metadata form for one OpenHCSMetadata instance."""
-        from pyqt_reactive.forms import FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
         from openhcs.config_framework.object_state import ObjectState
 
         form_layout = layout or QVBoxLayout(self.form_container)
@@ -250,7 +250,7 @@ class MetadataViewerDialog(BaseFormDialog):
 
     def _create_multi_subdirectory_forms(self, subdirs_instances: dict):
         """Create separate forms for each subdirectory in multi-subdirectory plates."""
-        from pyqt_reactive.forms import FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
         from openhcs.config_framework.object_state import ObjectState
 
         form_layout = QVBoxLayout(self.form_container)

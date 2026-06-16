@@ -38,7 +38,7 @@ from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
     TerminalExecutionResultBuilder,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
-from pyqt_reactive.services import ServerInfoParserABC
+from pyqt_reactive.services.zmq_server_info_parser import ServerInfoParserABC
 from zmqruntime.execution import ExecutionStatusPoller
 
 T = TypeVar("T")

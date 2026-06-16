@@ -91,6 +91,21 @@ OptionalMeasurementValueIndexResult = MeasurementValueIndexResult | None
 MeasurementTablesByObject = Mapping[str, tuple[MeasurementTable, ...]]
 MeasurementValueIndexesByObject = Mapping[str, MeasurementValueIndexResult]
 MeasurementFeatureValueIndexesByObject = dict[str | None, "MeasurementFeatureValueIndex"]
+_DIAGNOSTIC_NONE = "<none>"
+
+
+def _diagnostic_value(value: object | None) -> str:
+    if value is None or value == "":
+        return _DIAGNOSTIC_NONE
+    return str(value)
+
+
+def _first_measurement_row_mapping(
+    rows: tuple[object, ...],
+) -> Mapping[str, object]:
+    if not rows:
+        return MappingProxyType({})
+    return measurement_row_mapping(rows[0])
 
 
 def _is_structural_missing_measurement_cell(value: object) -> bool:
@@ -570,15 +585,15 @@ class MeasurementFeatureQuery:
         diagnostics: list[str] = []
         for table in measurement_tables:
             rows = measurement_rows((table,))
-            first_row = measurement_row_mapping(rows[0]) if rows else {}
+            first_row = _first_measurement_row_mapping(rows)
             matching_fields = matching_measurement_fields(
                 first_row,
                 self.field_candidates,
             )
             diagnostics.append(
-                f"{table.name}/object={measurement_table_object_name(table) or '<none>'}/"
-                f"query_object={self.query_object_name or '<none>'}/"
-                f"row_count={len(rows)}/first_object={measurement_row_object_name(first_row) or '<none>'}/"
+                f"{table.name}/object={_diagnostic_value(measurement_table_object_name(table))}/"
+                f"query_object={_diagnostic_value(self.query_object_name)}/"
+                f"row_count={len(rows)}/first_object={_diagnostic_value(measurement_row_object_name(first_row))}/"
                 f"matching_fields={matching_fields}/"
                 f"first_keys={tuple(str(key) for key in tuple(first_row)[:12])}"
             )
@@ -602,12 +617,12 @@ class MeasurementFeatureQuery:
                 feature_column = schema.matching_feature_column(self)
                 row_count = str(len(table.rows))
                 query_object_name = self.query_object_name
-                object_mask = (
-                    schema.object_mask(query_object_name)
-                    if query_object_name is not None
+                object_mask = None
+                if (
+                    query_object_name is not None
                     and measurement_table_object_name(table) is None
-                    else None
-                )
+                ):
+                    object_mask = schema.object_mask(query_object_name)
                 if object_mask is not None:
                     object_match_count = str(int(object_mask.sum()))
                 axis_values = tuple(
@@ -618,10 +633,10 @@ class MeasurementFeatureQuery:
                     )
                 )
             summaries.append(
-                f"{table.name}/object={measurement_table_object_name(table) or '<none>'}/"
-                f"source={table.source_image_name or '<none>'}/"
+                f"{table.name}/object={_diagnostic_value(measurement_table_object_name(table))}/"
+                f"source={_diagnostic_value(table.source_image_name)}/"
                 f"rows={type(table.rows).__name__}/objects={semantics.object_names[:8]}/"
-                f"feature_column={feature_column or '<none>'}/"
+                f"feature_column={_diagnostic_value(feature_column)}/"
                 f"row_count={row_count}/object_matches={object_match_count}/"
                 f"axes={axis_values}/feature_count={len(features)}/features={features[:8]}"
             )
@@ -2424,16 +2439,36 @@ def measurement_table_axis_values(
         if axis_field not in column_names:
             return set()
         return {
-            int(axis_value)
+            axis_integer
             for axis_value in columnar_row_values(table.rows, axis_field)
-            if axis_value is not None
+            for axis_integer in (_measurement_axis_integer_value(axis_value, axis),)
+            if axis_integer is not None
         }
     return {
-        int(row_mapping[axis_field])
+        axis_integer
         for row in measurement_rows((table,))
         for row_mapping in (measurement_row_mapping(row),)
-        if row_mapping.get(axis_field) is not None
+        for axis_integer in (
+            _measurement_axis_integer_value(row_mapping.get(axis_field), axis),
+        )
+        if axis_integer is not None
     }
+
+
+def _measurement_axis_integer_value(
+    value: object,
+    axis: MeasurementRowAxisField,
+) -> int | None:
+    literal = MeasurementScalarLiteral(value)
+    if not literal.is_present_axis_value:
+        return None
+    integer_value = literal.integer_value
+    if integer_value is None:
+        raise ValueError(
+            f"Measurement axis field {axis.value!r} requires integer-compatible "
+            f"values, got {value!r}."
+        )
+    return integer_value
 
 
 def measurement_values_for_label_slices(
@@ -2744,8 +2779,12 @@ class MeasurementLabelSliceFeatureQuery(MeasurementLabelSliceTableQuery):
                 )
                 if not table_index.present:
                     continue
+                target = by_slice.get(slice_index)
+                if target is None:
+                    target = ({}, [])
+                    by_slice[slice_index] = target
                 _merge_measurement_value_index(
-                    by_slice.setdefault(slice_index, ({}, [])),
+                    target,
                     table_index.as_query_result(),
                 )
 
@@ -2756,8 +2795,11 @@ class MeasurementLabelSliceFeatureQuery(MeasurementLabelSliceTableQuery):
                 positional_values = [*defaults[1], *by_slice[slice_index][1]]
                 by_slice[slice_index] = (values_by_label, positional_values)
         if defaults[0] or defaults[1]:
-            by_slice.setdefault(-1, defaults)
-        return by_slice if by_slice else None
+            if -1 not in by_slice:
+                by_slice[-1] = defaults
+        if by_slice:
+            return by_slice
+        return None
 
 
 def _merge_measurement_value_index(

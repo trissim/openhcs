@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from openhcs.core.config import (
     FijiStreamingConfig,
     NapariStreamingConfig,
@@ -50,6 +52,8 @@ def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
     assert NapariStreamingConfig().viewer_type == "napari"
     assert FijiStreamingConfig().streaming_config_key == "fiji_streaming_config"
     assert FijiStreamingConfig().viewer_type == "fiji"
+    assert "source" not in NapariStreamingConfig().component_modes()
+    assert "source" not in FijiStreamingConfig().component_modes()
 
     assert StreamingService.supported_viewer_types() == [
         "fiji_streaming_config",
@@ -96,6 +100,16 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     assert metadata["display_config"] is config
     assert metadata["host"] == config.host
     assert metadata["transport_mode"] is config.transport_mode
+    assert metadata["producer_identity"].to_payload() == {
+        "origin": "manual",
+        "output_kind": "manual",
+        "output_key": "selected_images",
+        "step_name": None,
+        "pipeline_position": None,
+        "step_scope_id": None,
+        "invocation_key": None,
+        "artifact_kind": None,
+    }
 
 
 def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
@@ -156,7 +170,7 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
     }
 
 
-def test_stream_rois_falls_back_to_single_plane_metadata_for_unparsed_roi() -> None:
+def test_stream_rois_rejects_unresolved_source_plane_metadata() -> None:
     service = StreamingService(
         filemanager=FakeFileManager(),
         microscope_handler=SimpleNamespace(
@@ -164,17 +178,8 @@ def test_stream_rois_falls_back_to_single_plane_metadata_for_unparsed_roi() -> N
         ),
         plate_path=Path("/plate"),
     )
-    metadata_by_path = service._roi_component_metadata_by_path(
-        ["nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"],
-        FijiStreamingConfig(enabled=True),
-    )
 
-    assert metadata_by_path[
-        "nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"
-    ] == {
-        "well": "nuclei1_out_c00_dr90_image_Watershed_step3_rois",
-        "site": 1,
-        "channel": 1,
-        "z_index": 1,
-        "timepoint": 1,
-    }
+    with pytest.raises(ValueError, match="Could not resolve source-plane metadata"):
+        service._roi_component_metadata_by_path(
+            ["nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"],
+        )

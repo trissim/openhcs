@@ -177,18 +177,19 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
+    ImagePayloadMetadataInput,
     SourceImageObjectLabelBuildRequest,
     SourceImageObjectLabelDomainRequest,
+    SourceImagePlaneAxisPolicy,
     SourceImagePlaneAxisRequest,
     object_label_dense_array,
-    object_label_payload_with_source_image_context,
-    object_label_set_with_source_image_context,
 )
 from openhcs.core.runtime_values import (
+    DerivedImagePayloadContext,
     ImageMetadataPayload,
     MaskedImagePayload,
     SpatialGrid,
-    compose_image_payload_metadata,
+    ImagePayloadMetadataCompositionRequest,
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
@@ -984,7 +985,6 @@ class CellProfilerFunctionReferenceRehydrator(FunctionReferenceRehydrator):
         )
 
 
-@lru_cache(maxsize=None)
 def _declared_input_specs_for_contract(
     contract: ModuleArtifactContract,
 ) -> tuple[ArtifactSpec, ...]:
@@ -3113,7 +3113,7 @@ for _main_flow_policy_spec in (
 class CellProfilerInvocationExecutionModePolicy(
     CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Nominal policy for modules whose settings change stack execution mode."""
 
@@ -4576,7 +4576,7 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
 class CellProfilerObjectInputPolicy(
     CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
@@ -4603,7 +4603,7 @@ class CellProfilerObjectInputPolicy(
 class CellProfilerPrimaryImageInputPolicy(
     CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Nominal policy for image artifacts that drive absorbed execution."""
 
@@ -4906,7 +4906,7 @@ class SourcePairObjectMeasurementInvocation(ObjectMeasurementInvocation):
 class CellProfilerObjectMeasurementRowPolicy(
     CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Nominal export-row policy for object-scoped measurement modules."""
 
@@ -7565,7 +7565,7 @@ class CurrentRuntimePlaneKwargProjection:
 
 @dataclass(frozen=True, slots=True)
 class CurrentRuntimeSliceObjectLabelProjection:
-    """Project runtime-slice object labels into an already-scoped 2D invocation."""
+    """Project object labels only when the current group selects their plane axis."""
 
     value: Any
     plane_index: int
@@ -7579,6 +7579,8 @@ class CurrentRuntimeSliceObjectLabelProjection:
         if not isinstance(labels, np.ndarray) or labels.ndim < 3:
             return self.value
         projected_index = self.projected_plane_index(labels)
+        if projected_index is None:
+            return self.value
         return ObjectLabelMeasurementPayloadStrategy.for_source(
             self.value
         ).with_projected_plane(
@@ -7587,14 +7589,12 @@ class CurrentRuntimeSliceObjectLabelProjection:
             projected_index,
         )
 
-    def projected_plane_index(self, labels: np.ndarray) -> int:
+    def projected_plane_index(self, labels: np.ndarray) -> int | None:
+        """Return a label-stack plane index when the grouped plane is in domain."""
         if labels.shape[0] == 1:
             return 0
         if self.plane_index < 0 or self.plane_index >= labels.shape[0]:
-            raise ValueError(
-                "Runtime-slice object-label kwarg projection index is outside "
-                f"label stack: plane {self.plane_index} for shape {labels.shape!r}."
-            )
+            return None
         return self.plane_index
 
 
@@ -7890,7 +7890,9 @@ class ObjectLabelSourceBindingProjectionRequest:
             and self.measurement_image.source_image_name is None
         ):
             return None
-        return self.current_axis_plane_index(RuntimePlaneAxis.RUNTIME_SLICE)
+        return self.label_bounded_plane_index(
+            self.current_axis_plane_index(RuntimePlaneAxis.RUNTIME_SLICE)
+        )
 
     def preserves_object_label_measurement_stack(self) -> bool:
         """Return whether object-domain measurements consume the whole label stack."""
@@ -8039,7 +8041,7 @@ class PlaneObjectLabelSourceBindingProjectionStrategy(
 class CellProfilerMeasurementRecordBuilder(
     CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Nominal module-specific measurement-row enrichment."""
 
@@ -8594,7 +8596,11 @@ class CellProfilerImageOutputContextStrategy(
         )
 
     @abstractmethod
-    def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
+    def runtime_image_value(
+        self,
+        value: ImagePayloadMetadataInput,
+        source_image_payload: ImagePayloadMetadataInput,
+    ) -> ImagePayloadMetadataInput:
         """Return the output in OpenHCS runtime image-payload form."""
 
 
@@ -8603,13 +8609,16 @@ class ContextualCellProfilerImageOutputStrategy(CellProfilerImageOutputContextSt
 
     value_type = (ImageMetadataPayload, MaskedImagePayload)
 
-    def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
-        del source_image_payload
+    def runtime_image_value(
+        self,
+        value: ImagePayloadMetadataInput,
+        source_image_payload: ImagePayloadMetadataInput,
+    ) -> ImagePayloadMetadataInput:
         if not isinstance(value, (ImageMetadataPayload, MaskedImagePayload)):
             raise TypeError(
                 "Contextual image output strategy requires an OpenHCS image payload."
             )
-        return value
+        return DerivedImagePayloadContext(source_image_payload, value).payload()
 
 
 class NumpyCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrategy):
@@ -8617,7 +8626,11 @@ class NumpyCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrateg
 
     value_type = np.ndarray
 
-    def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
+    def runtime_image_value(
+        self,
+        value: ImagePayloadMetadataInput,
+        source_image_payload: ImagePayloadMetadataInput,
+    ) -> ImagePayloadMetadataInput:
         if not isinstance(value, np.ndarray):
             raise TypeError("Numpy image output strategy requires numpy.ndarray.")
         return DerivedImagePayloadContext(
@@ -8666,15 +8679,7 @@ class ContextualCellProfilerObjectLabelOutputStrategy(
             return value
         if source_image_payload is None:
             return value
-        if isinstance(value, ObjectLabelPayload):
-            return object_label_payload_with_source_image_context(
-                source_image_payload,
-                value,
-            )
-        return object_label_set_with_source_image_context(
-            source_image_payload,
-            value,
-        )
+        return value.with_source_image_context(source_image_payload)
 
 
 class NumpyCellProfilerObjectLabelOutputStrategy(
@@ -8843,6 +8848,7 @@ class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
             source_image_names=(
                 request.source_image_names or source_metadata.source_image_names
             ),
+            source_image_payload=source_payload,
         )
 
 
@@ -8865,6 +8871,7 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
                     object_name=measurement_record.object_name,
                     source_image_name=measurement_record.source_image_name,
                     source_image_payload=measurement_record.source_image_payload,
+                    output_values=request.output_values,
                     current_image=request.current_image,
                     axis_state=CellProfilerMeasurementOutputAxisState.for_rows(
                         measurement_record.rows
@@ -8886,6 +8893,7 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
                     object_name=partition.object_name,
                     source_image_name=partition.source_image_name,
                     source_image_payload=partition.source_image_payload,
+                    output_values=request.output_values,
                     current_image=request.current_image,
                     axis_state=CellProfilerMeasurementOutputAxisState.for_rows(
                         partition.rows
@@ -10234,6 +10242,29 @@ class RowSequenceMeasurementObjectRowIdentityProjectionStrategy(
 
 _MISSING_MEASUREMENT_OBJECT_NAME = object()
 ProjectedMeasurementRowsResult = tuple[Sequence[Any] | ColumnarRows, ProjectedMeasurementRows]
+CellProfilerMeasurementSourcePayload = ImagePayloadMetadataInput | ObjectLabelValue
+CellProfilerMeasurementOutputValue = (
+    CellProfilerMeasurementSourcePayload
+    | MeasurementTable
+    | ParentChildRelationshipPayload
+    | ObjectRelationship
+    | SpatialGrid
+)
+CellProfilerMeasurementOutputValues = Mapping[str, CellProfilerMeasurementOutputValue]
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementAxisSourceContext:
+    """Resolved source identity for CellProfiler measurement-axis projection."""
+
+    source_image_name: str | None
+    payload: CellProfilerMeasurementSourcePayload | None = None
+
+    @property
+    def source_paths(self) -> tuple[str, ...]:
+        if self.payload is None:
+            return ()
+        return CellProfilerImageNumberStart.payload_source_paths(self.payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -10242,8 +10273,9 @@ class CellProfilerMeasurementProjectionSource:
 
     adapter: CellProfilerRuntimeAdapter
     source_image_name: str | None = None
-    source_image_payload: Any | None = None
-    current_image: Any | None = None
+    source_image_payload: CellProfilerMeasurementSourcePayload | None = None
+    current_image: CellProfilerMeasurementSourcePayload | None = None
+    output_values: CellProfilerMeasurementOutputValues = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -10362,8 +10394,9 @@ class CellProfilerMeasurementMaterializationRequest:
         fields: tuple[FieldSpec, ...] = (),
         object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
         source_image_name: str | None = None,
-        source_image_payload: Any | None = None,
-        current_image: Any | None = None,
+        source_image_payload: CellProfilerMeasurementSourcePayload | None = None,
+        output_values: CellProfilerMeasurementOutputValues | None = None,
+        current_image: CellProfilerMeasurementSourcePayload | None = None,
         axis_state: MeasurementRowAxisState = MeasurementRowAxisState.RUNTIME_AXES,
     ) -> "CellProfilerMeasurementMaterializationRequest":
         return cls(
@@ -10374,6 +10407,11 @@ class CellProfilerMeasurementMaterializationRequest:
                     source_image_name=source_image_name,
                     source_image_payload=source_image_payload,
                     current_image=current_image,
+                    output_values=(
+                        MappingProxyType({})
+                        if output_values is None
+                        else output_values
+                    ),
                 ),
                 rows=rows,
                 object_name=object_name,
@@ -10489,18 +10527,16 @@ class CellProfilerMeasurementRowsProjection:
 
     @property
     def start(self) -> int:
-        resolved_source_image_name, resolved_source_payload = self.axis_source_context()
-        source_paths = CellProfilerImageNumberStart.payload_source_paths(
-            resolved_source_payload if resolved_source_payload is not None else object()
-        )
+        source_context = self.axis_source_context()
+        source_paths = source_context.source_paths
         start = CellProfilerImageNumberStart(
             adapter=self.request.source.adapter,
             image_payload=(
-                resolved_source_payload
-                if resolved_source_payload is not None
+                source_context.payload
+                if source_context.payload is not None
                 else object()
             ),
-            source_image_name=resolved_source_image_name,
+            source_image_name=source_context.source_image_name,
         ).value
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_measurement_axis_start",
@@ -10510,39 +10546,62 @@ class CellProfilerMeasurementRowsProjection:
                 if self.request.object_name is not _MISSING_MEASUREMENT_OBJECT_NAME
                 else None
             ),
-            source_image_name=resolved_source_image_name,
+            source_image_name=source_context.source_image_name,
             source_paths=source_paths,
             start=start,
         )
         return start
 
-    def axis_source_context(self) -> tuple[str | None, Any | None]:
+    def axis_source_context(self) -> CellProfilerMeasurementAxisSourceContext:
         """Return source image identity used for measurement axis projection."""
         resolved_source_image_name = self.request.source.source_image_name
         resolved_source_payload = self.request.source.source_image_payload
+        measurement_object_name = self.request.object_name
+        has_measurement_object_name = (
+            measurement_object_name is not _MISSING_MEASUREMENT_OBJECT_NAME
+            and measurement_object_name is not None
+        )
+        if has_measurement_object_name:
+            output_value = self.request.source.output_values.get(
+                str(measurement_object_name)
+            )
+            if (
+                output_value is not None
+                and CellProfilerImageNumberStart.payload_source_paths(output_value)
+            ):
+                if (
+                    resolved_source_image_name is None
+                    and isinstance(output_value, ObjectLabelValue)
+                ):
+                    resolved_source_image_name = output_value.source_image_name
+                return CellProfilerMeasurementAxisSourceContext(
+                    source_image_name=resolved_source_image_name,
+                    payload=output_value,
+                )
         if (
             resolved_source_image_name is None
-            and self.request.object_name is not _MISSING_MEASUREMENT_OBJECT_NAME
-            and self.request.object_name is not None
+            and has_measurement_object_name
         ):
             object_labels = self.request.source.adapter.get_objects(
-                str(self.request.object_name),
+                str(measurement_object_name),
                 current_image=self.request.source.current_image,
             )
             resolved_source_image_name = object_labels.source_image_name
             if CellProfilerImageNumberStart.payload_source_paths(object_labels):
                 resolved_source_payload = object_labels
-        return resolved_source_image_name, resolved_source_payload
+        return CellProfilerMeasurementAxisSourceContext(
+            source_image_name=resolved_source_image_name,
+            payload=resolved_source_payload,
+        )
 
     @property
     def slice_index_image_numbers(self) -> CellProfilerSliceIndexImageNumberProjection:
-        _source_image_name, source_payload = self.axis_source_context()
-        source_paths = CellProfilerImageNumberStart.payload_source_paths(
-            source_payload if source_payload is not None else object()
-        )
+        source_context = self.axis_source_context()
         return CellProfilerSliceIndexImageNumberProjection(
             start=self.start,
-            image_numbers_by_slice=self.image_numbers_by_slice(source_paths),
+            image_numbers_by_slice=self.image_numbers_by_slice(
+                source_context.source_paths
+            ),
         )
 
     def image_numbers_by_slice(
@@ -11699,10 +11758,10 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         )
         plane_index = self.adapter.runtime_slice_plane_index()
         if plane_index is not None:
-            payload = RuntimeSliceProjection.object_label_endpoint(
-                payload,
-                slice_index=plane_index,
-            )
+            payload = CurrentRuntimeSliceObjectLabelProjection(
+                value=payload,
+                plane_index=plane_index,
+            ).projected_value()
         return object_label_dense_array(payload, dtype=np.int32)
 
     def relationship_runtime_slice_index(self) -> int | None:
@@ -11804,7 +11863,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
 class CellProfilerSpecialInputPolicy(
     CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Nominal module-specific binding for CellProfiler special_inputs."""
 
@@ -13304,7 +13363,7 @@ def _with_stacked_output_context(
     masks: Sequence[Any | None],
     memory_type: str,
 ) -> Any:
-    metadata = compose_image_payload_metadata(slice_outputs)
+    metadata = ImagePayloadMetadataCompositionRequest(slice_outputs).metadata()
     present_masks = tuple(mask for mask in masks if mask is not None)
     if not present_masks:
         return image_payload_with_context(stacked, metadata=metadata)
@@ -13438,7 +13497,9 @@ class CellProfilerFunctionContractExecutor:
         if slice_count <= 1:
             return self.execute_pure_3d(func, image, **kwargs)
         aggregation_plane_axis = (
-            SourceImagePlaneAxisRequest(image).plane_axis()
+            SourceImagePlaneAxisPolicy.for_request(
+                SourceImagePlaneAxisRequest(image)
+            ).axis()
             or RuntimePlaneAxis.RUNTIME_SLICE
         )
 
@@ -13543,7 +13604,9 @@ class CellProfilerFunctionContractExecutor:
         prepare_started_at = time.perf_counter()
         memory_type = detect_memory_type(image_data)
         aggregation_plane_axis = (
-            SourceImagePlaneAxisRequest(image).plane_axis()
+            SourceImagePlaneAxisPolicy.for_request(
+                SourceImagePlaneAxisRequest(image)
+            ).axis()
             or RuntimePlaneAxis.RUNTIME_SLICE
         )
         if image_data.ndim == 2:

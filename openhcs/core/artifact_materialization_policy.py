@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactKind,
+    ArtifactMaterializationPayload,
+    ArtifactOutputPlan,
+)
 from openhcs.core.runtime_values import RuntimeValue, RuntimeValueSchema
 from openhcs.processing.materialization import (
     MaterializationSpec,
@@ -15,7 +19,7 @@ from openhcs.processing.materialization import (
 )
 
 
-class _NoArtifactMaterialization:
+class _NoArtifactMaterialization(ArtifactMaterializationPayload):
     """Explicit opt-out for artifact materialization policy resolution."""
 
     def __repr__(self) -> str:
@@ -57,7 +61,10 @@ class ArtifactMaterializationRule:
 
 
 def _csv_spec(schema: RuntimeValueSchema) -> MaterializationSpec:
-    fields = [field.name for field in schema.fields] or None
+    field_names = [field.name for field in schema.fields]
+    fields: list[str] | None = None
+    if field_names:
+        fields = field_names
     return csv_only(suffix=".csv", fields=fields)
 
 

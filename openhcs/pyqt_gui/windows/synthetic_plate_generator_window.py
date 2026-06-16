@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from pyqt_reactive.forms import ParameterFormManager
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
@@ -117,7 +117,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
         # Create form manager from SyntheticMicroscopyGenerator class
         # This automatically builds the UI from the __init__ signature (same pattern as function_pane.py)
         # CRITICAL: Pass color_scheme as parameter to ensure consistent theming with other parameter forms
-        from pyqt_reactive.forms import FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
         from openhcs.config_framework.object_state import ObjectState
 
         # Standalone tool - create local ObjectState (not registered in registry)

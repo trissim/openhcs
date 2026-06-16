@@ -7,28 +7,37 @@ from typing import Callable
 import os
 import time
 
+from zmqruntime.messages import MessageFields
+
 from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
 
 
 @dataclass(frozen=True, slots=True)
-class ImmediateZMQProgressQueue:
-    """Queue adapter that forwards compiler progress updates immediately."""
+class ZMQProgressTarget:
+    """Canonical ZMQ progress stream identity."""
 
     enqueue: Callable[[dict], None]
+    plate_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ImmediateZMQProgressQueue(ZMQProgressTarget):
+    """Queue adapter that forwards compiler progress updates immediately."""
+
     flush: Callable[[], None]
 
     def put(self, progress_update: dict) -> None:
-        self.enqueue(progress_update)
+        canonical_update = dict(progress_update)
+        canonical_update[MessageFields.PLATE_ID] = self.plate_id
+        self.enqueue(canonical_update)
         self.flush()
 
 
 @dataclass(frozen=True, slots=True)
-class ZMQProgressEmitter:
+class ZMQProgressEmitter(ZMQProgressTarget):
     """Semantic progress-event emitter for one ZMQ execution."""
 
-    enqueue: Callable[[dict], None]
     execution_id: str
-    plate_id: str
 
     def compile_started(self, step_count: int) -> None:
         self.emit(

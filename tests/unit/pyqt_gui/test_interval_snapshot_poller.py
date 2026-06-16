@@ -1,7 +1,7 @@
 import threading
 import time
 
-from pyqt_reactive.services import (
+from pyqt_reactive.services.interval_snapshot_poller import (
     CallbackIntervalSnapshotPollerPolicy,
     IntervalSnapshotPoller,
 )

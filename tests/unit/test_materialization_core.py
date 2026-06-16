@@ -18,7 +18,11 @@ from openhcs.processing.materialization import (
     tabular_field_names_from_materialization,
     tiff_stack,
 )
-from openhcs.core.runtime_values import ObjectLabelPayload
+from openhcs.core.runtime_values import (
+    ImageMetadataPayload,
+    ImagePayloadMetadata,
+    ObjectLabelPayload,
+)
 
 
 @pytest.mark.unit
@@ -141,6 +145,54 @@ def test_tiff_stack_splits_scalar_3d_stack_by_plane() -> None:
 
 
 @pytest.mark.unit
+def test_tiff_stack_streaming_saves_per_slice_component_metadata() -> None:
+    class _RecordingBackend:
+        requires_filesystem_validation = False
+
+    class _RecordingFileManager:
+        def __init__(self):
+            self.saved = []
+
+        def _get_backend(self, _backend):
+            return _RecordingBackend()
+
+        def save(self, content, path, backend, **kwargs):
+            self.saved.append((content, path, backend, kwargs))
+
+    fm = _RecordingFileManager()
+    payload = ObjectLabelPayload(
+        labels=np.zeros((2, 5, 7), dtype=np.int32),
+        channel_source_component_metadata=(
+            {"well": "A01", "site": 1, "z_index": 1},
+            {"well": "A01", "site": 2, "z_index": 1},
+        ),
+    )
+
+    materialize(
+        tiff_stack(),
+        data=payload,
+        path="/tmp/A01_s001_w1_z001_t001_NucleiObjects3D_step9",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={
+            "napari_stream": {
+                "component_metadata": {"well": "A01", "site": 1, "z_index": 1}
+            }
+        },
+    )
+
+    saved_slices = [
+        item
+        for item in fm.saved
+        if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
+    ]
+    assert [item[3]["component_metadata"] for item in saved_slices] == [
+        {"well": "A01", "site": 1, "z_index": 1},
+        {"well": "A01", "site": 2, "z_index": 1},
+    ]
+
+
+@pytest.mark.unit
 def test_roi_materialization_offsets_object_label_payload_geometry() -> None:
     fm = FileManager({"memory": MemoryStorageBackend()})
     labels = np.zeros((8, 8), dtype=np.int32)
@@ -186,6 +238,152 @@ def test_roi_materialization_extracts_each_plane_from_object_label_stack() -> No
     assert [roi.metadata["label"] for roi in rois] == [1, 2]
     assert [roi.metadata["plane_indices"] for roi in rois] == [(0,), (1,)]
     assert all(roi.metadata["plane_shape"] == (2,) for roi in rois)
+
+
+@pytest.mark.unit
+def test_roi_materialization_splits_addressable_label_planes_for_streaming() -> None:
+    class _RecordingBackend:
+        requires_filesystem_validation = False
+
+    class _RecordingFileManager:
+        def __init__(self):
+            self.saved = []
+
+        def _get_backend(self, _backend):
+            return _RecordingBackend()
+
+        def save(self, content, path, backend, **kwargs):
+            self.saved.append((content, path, backend, kwargs))
+
+    fm = _RecordingFileManager()
+    labels = np.zeros((2, 8, 8), dtype=np.int32)
+    labels[0, 1:4, 1:4] = 1
+    labels[1, 4:7, 4:7] = 2
+    payload = ObjectLabelPayload(
+        labels=labels,
+        channel_source_paths=(
+            "/input/A01_s001_w1_z001_t001.tif",
+            "/input/A01_s002_w1_z001_t001.tif",
+        ),
+        channel_source_component_metadata=(
+            {"well": "A01", "site": 1, "channel": 1},
+            {"well": "A01", "site": 2, "channel": 1},
+        ),
+    )
+
+    out = materialize(
+        MaterializationSpec(ROIOptions(min_area=0)),
+        data=payload,
+        path="/tmp/A01_s001_w1_z001_t001_Nuclei_step3.roi.zip",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={
+            "napari_stream": {
+                "component_metadata": {"well": "A01", "site": 999, "channel": 999}
+            }
+        },
+    )
+
+    roi_saves = [
+        item
+        for item in fm.saved
+        if item[1].endswith(".roi.zip")
+    ]
+    assert out == "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"
+    assert [item[1] for item in roi_saves] == [
+        "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
+        "/tmp/A01_s002_w1_z001_t001_Nuclei_step3_rois.roi.zip",
+    ]
+    assert [item[3]["component_metadata"] for item in roi_saves] == [
+        {"well": "A01", "site": 1, "channel": 1},
+        {"well": "A01", "site": 2, "channel": 1},
+    ]
+    assert [len(item[0]) for item in roi_saves] == [1, 1]
+
+
+@pytest.mark.unit
+def test_roi_materialization_uses_source_context_for_partial_label_stack() -> None:
+    class _RecordingBackend:
+        requires_filesystem_validation = False
+
+    class _RecordingFileManager:
+        def __init__(self):
+            self.saved = []
+
+        def _get_backend(self, _backend):
+            return _RecordingBackend()
+
+        def save(self, content, path, backend, **kwargs):
+            self.saved.append((content, path, backend, kwargs))
+
+    fm = _RecordingFileManager()
+    source_image = ImageMetadataPayload(
+        data=np.zeros((2, 8, 8), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/input/A02_s001_w1_z001_t001.tif",
+                "/input/A02_s002_w1_z001_t001.tif",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A02", "site": 1, "channel": 1},
+                {"well": "A02", "site": 2, "channel": 1},
+            ),
+        ),
+    )
+    labels = np.zeros((2, 8, 8), dtype=np.int32)
+    labels[0, 1:4, 1:4] = 1
+    labels[1, 4:7, 4:7] = 2
+    payload = ObjectLabelPayload(
+        labels=labels,
+        channel_source_paths=(None, None),
+        channel_source_component_metadata=(None, None),
+    ).with_source_image_context(source_image)
+
+    materialize(
+        MaterializationSpec(ROIOptions(min_area=0)),
+        data=payload,
+        path="/tmp/A02_s001_w1_z001_t001_Nuclei_step3.roi.zip",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={"napari_stream": {"component_metadata": {}}},
+    )
+
+    roi_saves = [
+        item
+        for item in fm.saved
+        if item[1].endswith(".roi.zip")
+    ]
+    assert [item[1] for item in roi_saves] == [
+        "/tmp/A02_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
+        "/tmp/A02_s002_w1_z001_t001_Nuclei_step3_rois.roi.zip",
+    ]
+    assert [item[3]["component_metadata"] for item in roi_saves] == [
+        {"well": "A02", "site": 1, "channel": 1},
+        {"well": "A02", "site": 2, "channel": 1},
+    ]
+
+
+@pytest.mark.unit
+def test_roi_materialization_rejects_unaddressed_stack_provenance_slots() -> None:
+    fm = FileManager({"memory": MemoryStorageBackend()})
+    labels = np.zeros((2, 8, 8), dtype=np.int32)
+    labels[0, 1:4, 1:4] = 1
+    labels[1, 4:7, 4:7] = 2
+    payload = ObjectLabelPayload(
+        labels=labels,
+        channel_source_paths=(None, None),
+        channel_source_component_metadata=(None, None),
+    )
+
+    with pytest.raises(ValueError, match="per-plane source identity"):
+        materialize(
+            MaterializationSpec(ROIOptions(min_area=0)),
+            data=payload,
+            path="/tmp/A01_s001_w1_z001_t001_Nuclei_step3.roi.zip",
+            filemanager=fm,
+            backends=["memory"],
+            backend_kwargs={},
+        )
 
 
 @pytest.mark.unit

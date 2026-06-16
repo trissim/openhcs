@@ -52,7 +52,6 @@ def create_display_config(
     Creates a frozen dataclass with:
     - Base fields (e.g., colormap, variable_size_handling)
     - Component-specific mode fields (e.g., channel_mode, z_index_mode, well_mode)
-    - Virtual component mode fields (e.g., step_name_mode, source_mode)
     - Custom methods (e.g., get_dimension_mode, get_colormap_name)
     - COMPONENT_ORDER class attribute for canonical layer naming order
 
@@ -61,8 +60,8 @@ def create_display_config(
         base_fields: Dict mapping field names to (type, default_value) tuples
         component_mode_enum: Enum class for component dimension modes
         component_defaults: Optional dict mapping component names to default modes
-        virtual_components: Optional enum of virtual components (step_name, source, etc.)
-        component_order: Canonical order for layer naming (e.g., ['step_name', 'source', 'well', ...])
+        virtual_components: Optional enum for non-filename components.
+        component_order: Canonical order for layer naming (e.g., ['well', 'channel'])
         default_mode: Default mode for components not specified in component_defaults (required)
         methods: Optional dict mapping method names to method implementations
         docstring: Optional docstring for the created class
@@ -79,8 +78,7 @@ def create_display_config(
         ...     },
         ...     component_mode_enum=NapariDimensionMode,
         ...     component_defaults={'channel': NapariDimensionMode.SLICE},
-        ...     virtual_components=VirtualComponents,
-        ...     component_order=['step_name', 'source', 'well', 'channel'],
+        ...     component_order=['well', 'channel'],
         ...     methods={'get_colormap_name': lambda self: self.colormap.value}
         ... )
     """
@@ -125,10 +123,13 @@ def create_display_config(
             object.__setattr__(self, field_name, value)
 
     def component_modes(self) -> dict[str, str]:
-        return {
-            component: object.__getattribute__(self, f"{component}_mode").value
-            for component in component_order or ()
-        }
+        modes = {}
+        storage = vars(self)
+        for component in component_order or ():
+            mode = storage[f"{component}_mode"]
+            if mode is not None:
+                modes[component] = mode.value
+        return modes
 
     class_attrs = {
         '__annotations__': annotations,
@@ -175,7 +176,7 @@ def create_napari_display_config(
         dimension_mode_enum: Enum for dimension modes (SLICE/STACK)
         variable_size_handling_enum: Enum for variable size handling
         visualization_dtype_enum: Enum for dtype normalization (UINT8/UINT16/FLOAT32)
-        virtual_components: Optional enum of virtual components (step_name, source, etc.)
+        virtual_components: Optional enum for non-filename display components.
         component_order: Canonical order for layer naming
         virtual_component_defaults: Optional dict mapping virtual component names to default modes
         default_visualization_dtype: Default dtype for visualization normalization (defaults to UINT16)
@@ -236,8 +237,6 @@ def create_napari_display_config(
         Includes ALL dimensions (site, channel, z_index, timepoint, well) regardless of
         which dimension is used as the multiprocessing axis.
 
-        Also includes virtual components (step_name, step_index, source) for streaming contexts.
-
         visualization_dtype controls dtype normalization for stacking - all images in a stack
         are normalized to this dtype using contrast-preserving scaling (not simple casting).
         Defaults to UINT16 (microscopy standard) for optimal precision preservation.
@@ -266,7 +265,7 @@ def create_fiji_display_config(
     Args:
         lut_enum: Enum for Fiji LUT options
         dimension_mode_enum: Enum for dimension modes (WINDOW/CHANNEL/SLICE/FRAME)
-        virtual_components: Optional enum of virtual components (step_name, source, etc.)
+        virtual_components: Optional enum for non-filename display components.
         component_order: Canonical order for layer naming
         virtual_component_defaults: Optional dict mapping virtual component names to default modes
 
@@ -321,8 +320,6 @@ def create_fiji_display_config(
 
         Includes ALL dimensions (site, channel, z_index, timepoint, well) regardless of
         which dimension is used as the multiprocessing axis.
-
-        Also includes virtual components (step_name, step_index, source) for streaming contexts.
 
         ImageJ hyperstacks have 3 dimensions:
         - Channels (C): Color channels or sites

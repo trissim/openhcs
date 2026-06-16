@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List
 
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileWorkflowService,
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 class RunSpec(PlatePipelineRequest):
     """Execution request assembled from one plate and its resolved config."""
 
-    global_config: Any
+    global_config: GlobalPipelineConfig
 
 
 class PlatePipelineRequestBuilder:
@@ -33,16 +34,16 @@ class PlatePipelineRequestBuilder:
     def __init__(self, host) -> None:
         self._host = host
 
-    def build_compile_job_from_plate_data(
+    def build_compile_job_from_plate_row(
         self,
-        plate_data: Dict[str, Any],
+        row: PlateManagerRow,
     ) -> CompileJob:
-        plate_path = str(plate_data["path"])
+        plate_path = row.scope_id
         execution_plate_path = self._execution_plate_path_for_scope(plate_path)
         selected_pipeline_path = self._selected_pipeline_path_for_scope(plate_path)
         definition_pipeline = self._definition_pipeline_for_plate(
             plate_path=plate_path,
-            display_name=str(plate_data["name"]),
+            display_name=row.name,
         )
         pipeline_config = resolve_pipeline_config_for_plate(self._host, plate_path)
         logger.info(
@@ -56,7 +57,7 @@ class PlatePipelineRequestBuilder:
             plate_path=plate_path,
             execution_plate_path=execution_plate_path,
             selected_pipeline_path=selected_pipeline_path,
-            plate_name=str(plate_data["name"]),
+            plate_name=row.name,
             definition_pipeline=definition_pipeline,
             pipeline_config=pipeline_config,
         )
@@ -90,7 +91,7 @@ class PlatePipelineRequestBuilder:
     def compile_job_from_run_spec(
         run_spec: RunSpec,
         *,
-        config_params: dict[str, Any] | None = None,
+        config_params: dict | None = None,
     ) -> CompileJob:
         plate_path = run_spec.plate_path
         definition_pipeline = run_spec.definition_pipeline
@@ -147,7 +148,7 @@ class PlatePipelineRequestBuilder:
         *,
         plate_path: str,
         display_name: str,
-    ) -> List:
+    ) -> list:
         definition_pipeline = self._host.get_pipeline_definition(plate_path)
         if not definition_pipeline:
             logger.warning(
@@ -162,7 +163,7 @@ class PlatePipelineRequestBuilder:
         return definition_pipeline
 
     @staticmethod
-    def validate_pipeline_steps(pipeline: List) -> None:
+    def validate_pipeline_steps(pipeline: list) -> None:
         for step in pipeline:
             if step.func is None:
                 raise AttributeError(
@@ -171,7 +172,7 @@ class PlatePipelineRequestBuilder:
                 )
 
 
-def is_plate_pipeline_request_builder_export(name: str, value: object) -> bool:
+def is_plate_pipeline_request_builder_export(name: str, value) -> bool:
     return (
         isinstance(value, type)
         and value.__module__ == __name__

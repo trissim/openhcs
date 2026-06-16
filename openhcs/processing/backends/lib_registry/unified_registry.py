@@ -52,7 +52,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelMeasurementPayloadStrategy,
     ObjectLabelPure2DSliceAggregator,
     RuntimeArrayPayload,
-    compose_image_payload_metadata,
+    ImagePayloadMetadataCompositionRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_slice_context,
@@ -621,7 +621,7 @@ class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOut
         return image_payload_with_context(
             data,
             mask=mask,
-            metadata=compose_image_payload_metadata(tuple(values)),
+            metadata=ImagePayloadMetadataCompositionRequest(tuple(values)).metadata(),
         )
 
 

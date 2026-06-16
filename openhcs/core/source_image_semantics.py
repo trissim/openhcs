@@ -21,31 +21,16 @@ from openhcs.core.pipeline_image_schema import (
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
+    ImageMetadataPayload,
+    MaskedImagePayload,
+    RuntimeArrayData,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     image_payload_metadata_from_source,
-    image_payload_with_context,
 )
 from openhcs.core.source_matching import source_metadata_value
-
-
-def apply_source_image_loading_semantics(
-    payload: Any,
-    *,
-    source_metadata: Mapping[str, str] | None,
-    source_path: str | None,
-    read_backend: str | None = None,
-    filemanager: Any | None = None,
-) -> Any:
-    """Apply typed source image semantics to pixels loaded from storage."""
-
-    return SourceImagePayloadSemantics.from_source_metadata(
-        source_metadata=source_metadata,
-        source_path=source_path,
-        read_backend=read_backend,
-        filemanager=filemanager,
-    ).apply(payload)
+from openhcs.core.vfs_protocol import FileManagerLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,30 +41,25 @@ class SourceImagePayloadSemantics:
     source_path: str | None
     source_component_metadata: Mapping[str, str] | None = None
     read_backend: str | None = None
-    filemanager: Any | None = None
+    filemanager: FileManagerLike | None = None
 
     @classmethod
     def from_source_metadata(
         cls,
-        *,
         source_metadata: Mapping[str, str] | None,
         source_path: str | None,
         read_backend: str | None = None,
-        filemanager: Any | None = None,
+        filemanager: FileManagerLike | None = None,
     ) -> "SourceImagePayloadSemantics":
-        image_type = (
-            None
-            if source_metadata is None
-            else source_metadata_value(
+        image_type: str | None = None
+        if source_metadata is not None:
+            image_type = source_metadata_value(
                 source_metadata,
                 SOURCE_IMAGE_TYPE_METADATA_FIELD,
             )
-        )
-        role = (
-            None
-            if image_type is None
-            else ImageTypeSourceRole.for_image_type(image_type)
-        )
+        role: ImageTypeSourceRole | None = None
+        if image_type is not None:
+            role = ImageTypeSourceRole.for_image_type(image_type)
         return cls(
             role=role,
             source_path=source_path,
@@ -88,7 +68,7 @@ class SourceImagePayloadSemantics:
             filemanager=filemanager,
         )
 
-    def apply(self, payload: Any) -> Any:
+    def apply(self, payload: RuntimeArrayData) -> RuntimeArrayData:
         strategy = SourceImagePayloadRoleStrategy.for_role(self.role)
         data = strategy.source_data(payload)
         mask = strategy.source_mask(payload, data)
@@ -99,13 +79,17 @@ class SourceImagePayloadSemantics:
             and not metadata.has_values
         ):
             return payload
-        return image_payload_with_context(
-            data,
-            mask=mask,
-            metadata=metadata,
-        )
+        if mask is not None:
+            return MaskedImagePayload(data, mask, metadata)
+        if metadata.has_values:
+            return ImageMetadataPayload(data, metadata)
+        return data
 
-    def source_metadata(self, payload: Any, data: Any) -> ImagePayloadMetadata:
+    def source_metadata(
+        self,
+        payload: RuntimeArrayData,
+        data: RuntimeArrayData,
+    ) -> ImagePayloadMetadata:
         """Return source-file image metadata for transformed payload data."""
         existing_metadata = image_payload_metadata(payload)
         if self.source_path is None:
@@ -116,10 +100,10 @@ class SourceImagePayloadSemantics:
             return ImagePayloadMetadata.for_array_payload(data)
         return image_payload_metadata_from_source(
             data,
-            source_path=self.source_path,
-            source_component_metadata=self.source_component_metadata,
-            read_backend=self.read_backend,
-            filemanager=self.filemanager,
+            self.source_path,
+            self.source_component_metadata,
+            self.read_backend,
+            self.filemanager,
         )
 
 
@@ -150,10 +134,14 @@ class SourceImagePayloadRoleStrategy(
             )
         return strategy
 
-    def source_data(self, payload: Any) -> Any:
+    def source_data(self, payload: RuntimeArrayData) -> RuntimeArrayData:
         return image_payload_data(payload)
 
-    def source_mask(self, payload: Any, data: Any) -> Any | None:
+    def source_mask(
+        self,
+        payload: RuntimeArrayData,
+        data: RuntimeArrayData,
+    ) -> RuntimeArrayData | None:
         return image_payload_mask(payload)
 
 
@@ -179,14 +167,18 @@ class ImageStackSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrategy
 
     value_type = ImageStackSourceRole
 
-    def source_mask(self, payload: Any, data: Any) -> Any | None:
+    def source_mask(
+        self,
+        payload: RuntimeArrayData,
+        data: RuntimeArrayData,
+    ) -> RuntimeArrayData | None:
         mask = image_payload_mask(payload)
         if mask is not None:
             return mask
         return np.ones(self.source_mask_shape(data), dtype=bool)
 
     @staticmethod
-    def source_mask_shape(data: Any) -> tuple[int, ...]:
+    def source_mask_shape(data: RuntimeArrayData) -> tuple[int, ...]:
         array = np.asarray(data)
         if is_color_image_slice(array):
             return tuple(int(value) for value in array.shape[:2])
@@ -203,7 +195,7 @@ class MonochromeImageStackSourcePayloadRoleStrategy(
 
     value_type = MonochromeImageStackSourceRole
 
-    def source_data(self, payload: Any) -> Any:
+    def source_data(self, payload: RuntimeArrayData) -> RuntimeArrayData:
         data = image_payload_data(payload)
         if is_color_image_slice(data):
             return self.cellprofiler_rgb_to_gray(np.asarray(data)[..., :3])
@@ -218,7 +210,7 @@ class MonochromeImageStackSourcePayloadRoleStrategy(
         return data
 
     @staticmethod
-    def cellprofiler_rgb_to_gray(rgb_data: Any) -> np.ndarray:
+    def cellprofiler_rgb_to_gray(rgb_data: np.ndarray) -> np.ndarray:
         from skimage.color import rgb2gray
 
         return rgb2gray(rgb_data)
@@ -230,7 +222,7 @@ class ObjectLabelsSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrate
 
     value_type = ObjectLabelsImageTypeSourceRole
 
-    def source_data(self, payload: Any) -> Any:
+    def source_data(self, payload: RuntimeArrayData) -> RuntimeArrayData:
         data = np.asarray(image_payload_data(payload))
         if is_color_image_slice(data):
             return self.color_label_plane_to_ids(data)
@@ -242,7 +234,7 @@ class ObjectLabelsSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrate
         return data
 
     @staticmethod
-    def color_label_plane_to_ids(plane: Any) -> np.ndarray:
+    def color_label_plane_to_ids(plane: np.ndarray) -> np.ndarray:
         """Convert CellProfiler color object-label images into dense label IDs."""
         rgb = np.asarray(plane)
         flat = rgb[..., :3].reshape(-1, 3)

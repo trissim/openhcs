@@ -8,11 +8,13 @@ from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import QTimer, Qt, pyqtSlot
 from PyQt6.QtWidgets import QTreeWidgetItem
 
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     BaseServerInfo,
     DefaultServerInfoParser,
     ExecutionServerInfo,
     ServerInfoParserABC,
+)
+from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
 )
 from pyqt_reactive.theming import StyleSheetGenerator

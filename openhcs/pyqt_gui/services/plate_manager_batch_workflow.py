@@ -1,17 +1,15 @@
-"""Unified batch workflow service for compile + execute flows."""
+"""PlateManager batch workflow orchestration."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Dict, List, Callable, TypeVar
+from typing import Callable, TypeVar
 
 from PyQt6.QtCore import QEventLoop
 from PyQt6.QtWidgets import QApplication
 
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
-from openhcs.core.progress import ProgressEvent
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugArtifactExportResponse,
@@ -34,8 +32,9 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ManagerExecutionState,
 )
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     DefaultServerInfoParser,
     ServerInfoParserABC,
 )
@@ -44,24 +43,8 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-@dataclass(frozen=True)
-class ZMQClientConnectionSpec:
-    """Connection request for execution-server progress clients."""
-
-    progress_callback: Callable[[ProgressEvent], None]
-    persistent: bool = True
-    timeout: int = 15
-
-    async def connect(self, client_service: ZMQClientService):
-        return await client_service.connect(
-            progress_callback=self.progress_callback,
-            persistent=self.persistent,
-            timeout=self.timeout,
-        )
-
-
-class BatchWorkflowService:
-    """Single owner of batch compilation and execution workflow."""
+class PlateManagerBatchWorkflow:
+    """Single owner of PlateManager compilation and execution workflow."""
 
     def __init__(
         self,
@@ -105,13 +88,13 @@ class BatchWorkflowService:
             )
             if not removed:
                 raise RuntimeError(
-                    "BatchWorkflowService listener removal failed: listener not registered"
+                    "PlateManagerBatchWorkflow listener removal failed: listener not registered"
                 )
             self._registry_listener_registered = False
 
         self.components.progress_workflow.cleanup()
 
-    async def compile_plates(self, selected_items: List[Dict]) -> None:
+    async def compile_plates(self, selected_items: list[PlateManagerRow]) -> None:
         """Compile pipelines for selected plates."""
         self._flush_pending_ui_edits()
         self.components.progress_workflow.reset_for_new_batch()
@@ -133,12 +116,12 @@ class BatchWorkflowService:
 
         self.components.live_measurements.add_listener(listener)
 
-    async def run_plates(self, ready_items: List[Dict]) -> None:
+    async def run_plates(self, ready_items: list[PlateManagerRow]) -> None:
         """Run selected plates using compile-all then execute-all workflow."""
         self._flush_pending_ui_edits()
         loop = asyncio.get_event_loop()
         try:
-            plate_paths = [str(item["path"]) for item in ready_items]
+            plate_paths = [row.scope_id for row in ready_items]
             logger.info("Starting ZMQ execution for %d plates", len(plate_paths))
 
             self.components.progress_workflow.reset_for_new_batch()
@@ -153,8 +136,8 @@ class BatchWorkflowService:
 
             from objectstate import ObjectStateRegistry
 
-            for item in ready_items:
-                plate_path = str(item["path"])
+            for row in ready_items:
+                plate_path = row.scope_id
                 orchestrator = ObjectStateRegistry.get_object(plate_path)
                 if orchestrator is not None:
                     orchestrator._state = OrchestratorState.EXECUTING
@@ -289,9 +272,11 @@ class BatchWorkflowService:
     async def _connect_progress_client(self):
         """Connect the shared ZMQ client with the standard progress callback."""
 
-        return await ZMQClientConnectionSpec(
+        return await self.client_service.connect(
             progress_callback=self.components.progress_workflow.on_progress,
-        ).connect(self.client_service)
+            persistent=True,
+            timeout=15,
+        )
 
     @staticmethod
     async def _run_blocking(loop, func: Callable[[], T]) -> T:
@@ -318,7 +303,7 @@ class BatchWorkflowService:
         self.components.execution_control.disconnect_async()
 
 
-def is_batch_workflow_service_export(name: str, value: object) -> bool:
+def is_plate_manager_batch_workflow_export(name: str, value) -> bool:
     return (
         isinstance(value, type)
         and value.__module__ == __name__
@@ -329,5 +314,5 @@ def is_batch_workflow_service_export(name: str, value: object) -> bool:
 __all__ = tuple(
     name
     for name, value in globals().items()
-    if is_batch_workflow_service_export(name, value)
+    if is_plate_manager_batch_workflow_export(name, value)
 )

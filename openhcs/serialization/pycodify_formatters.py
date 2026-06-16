@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Dict, Tuple
+from dataclasses import dataclass, fields
 
 from openhcs.core.steps.function_step import FunctionStep
-from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
+from pyqt_reactive.pattern_metadata import SCOPE_TOKEN_KEY
+from openhcs.config_framework.lazy_factory import LazyDataclass
 
 from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
 
 
-def _module_contract_imports(contract: Any) -> set[tuple[str, str]]:
+SLICE_BY_SLICE_ATTR = "slice_by_slice"
+PROCESSING_CONTRACT_ATTR = "__processing_contract__"
+
+
+def _module_contract_imports(contract) -> set[tuple[str, str]]:
     from openhcs.core.artifact_materialization_policy import (
         NO_ARTIFACT_MATERIALIZATION,
     )
@@ -31,49 +36,117 @@ def _module_contract_imports(contract: Any) -> set[tuple[str, str]]:
     return imports
 
 
-def _is_external_registered_function(func: Any) -> bool:
-    """Check if function is an external library function registered with OpenHCS."""
-    return (
-        hasattr(func, "slice_by_slice")
-        and not hasattr(func, "__processing_contract__")
-        and not func.__module__.startswith("openhcs.")
-    )
+@dataclass(frozen=True)
+class CallableDecoratorMetadata:
+    attribute_names: frozenset[str]
+
+    @classmethod
+    def from_callable(cls, func) -> "CallableDecoratorMetadata":
+        if inspect.isfunction(func):
+            return cls(attribute_names=frozenset(func.__dict__))
+        return cls(attribute_names=frozenset())
+
+    def contains(self, attribute_name: str) -> bool:
+        return attribute_name in self.attribute_names
+
+
+@dataclass(frozen=True)
+class CallableExportIdentity:
+    module: str | None
+    name: str | None
+    has_slice_by_slice: bool
+    has_processing_contract: bool
+
+    @classmethod
+    def from_callable(cls, func) -> "CallableExportIdentity":
+        if not (inspect.isfunction(func) or inspect.isbuiltin(func)):
+            return cls(
+                module=None,
+                name=None,
+                has_slice_by_slice=False,
+                has_processing_contract=False,
+            )
+
+        metadata = CallableDecoratorMetadata.from_callable(func)
+
+        return cls(
+            module=func.__module__,
+            name=func.__name__,
+            has_slice_by_slice=metadata.contains(SLICE_BY_SLICE_ATTR),
+            has_processing_contract=metadata.contains(PROCESSING_CONTRACT_ATTR),
+        )
+
+    @property
+    def is_importable(self) -> bool:
+        return bool(self.module and self.name)
+
+    @property
+    def is_external_registered(self) -> bool:
+        if self.module is None:
+            return False
+        return (
+            self.has_slice_by_slice
+            and not self.has_processing_contract
+            and not self.module.startswith("openhcs.")
+        )
+
+    @property
+    def import_module(self) -> str:
+        if self.module is None:
+            raise ValueError("Callable identity has no importable module.")
+        if self.is_external_registered:
+            return f"openhcs.{self.module}"
+        return self.module
+
+    @property
+    def import_name(self) -> str:
+        if self.name is None:
+            raise ValueError("Callable identity has no importable name.")
+        return self.name
+
+
+class NameMappingLookup:
+    @staticmethod
+    def resolve(
+        context: FormatContext,
+        import_pair: tuple[str, str],
+        default_name: str,
+    ) -> str:
+        if import_pair in context.name_mappings:
+            return context.name_mappings[import_pair]
+        return default_name
 
 
 class OpenHCSCallableFormatter(SourceFormatter):
     priority = 75
 
-    def can_format(self, value: Any) -> bool:
+    def can_format(self, value) -> bool:
         return callable(value) and not isinstance(value, type)
 
-    def format(self, value: Any, context: FormatContext) -> SourceFragment:
+    def format(self, value, context: FormatContext) -> SourceFragment:
         if inspect.ismethod(value):
             return SourceFragment(repr(value), frozenset())
 
-        module = getattr(value, "__module__", None)
-        name = getattr(value, "__name__", None)
-        if not module or not name:
+        identity = CallableExportIdentity.from_callable(value)
+        if not identity.is_importable:
             return SourceFragment(repr(value), frozenset())
 
-        if _is_external_registered_function(value):
-            module = f"openhcs.{module}"
-
-        import_pair = (module, name)
-        mapped = context.name_mappings.get(import_pair, name)
+        import_pair = (identity.import_module, identity.import_name)
+        mapped = NameMappingLookup.resolve(context, import_pair, identity.import_name)
         return SourceFragment(mapped, frozenset([import_pair]))
 
 
 class CellProfilerRuntimeCallableFormatter(SourceFormatter):
     priority = 90
 
-    def can_format(self, value: Any) -> bool:
+    def can_format(self, value) -> bool:
         from openhcs.interop.cellprofiler.runtime.module_execution import (
             CellProfilerRuntimeCallable,
         )
 
         return isinstance(value, CellProfilerRuntimeCallable)
 
-    def format(self, value: Any, context: FormatContext) -> SourceFragment:
+    def format(self, value, context: FormatContext) -> SourceFragment:
         raw_func_frag = to_source(value.raw_func, context)
         if context.clean_mode:
             return raw_func_frag
@@ -83,9 +156,8 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
             "openhcs.interop.cellprofiler.runtime.module_execution",
             "cellprofiler_module_callable",
         )
-        factory_name = context.name_mappings.get(
-            import_pair,
-            "cellprofiler_module_callable",
+        factory_name = NameMappingLookup.resolve(
+            context, import_pair, "cellprofiler_module_callable"
         )
         imports = set(raw_func_frag.imports | contract_frag.imports)
         imports |= _module_contract_imports(value.contract)
@@ -114,17 +186,19 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
 class MaterializationSpecFormatter(SourceFormatter):
     priority = 110
 
-    def can_format(self, value: Any) -> bool:
+    def can_format(self, value) -> bool:
         from openhcs.processing.materialization.core import MaterializationSpec
 
         return isinstance(value, MaterializationSpec)
 
-    def format(self, value: Any, context: FormatContext) -> SourceFragment:
+    def format(self, value, context: FormatContext) -> SourceFragment:
         import_pair = (
             "openhcs.processing.materialization.core",
             "MaterializationSpec",
         )
-        class_name = context.name_mappings.get(import_pair, "MaterializationSpec")
+        class_name = NameMappingLookup.resolve(
+            context, import_pair, "MaterializationSpec"
+        )
         item_ctx = context.indented()
         output_frags = [to_source(output, item_ctx) for output in value.outputs]
         imports = {import_pair}
@@ -146,7 +220,7 @@ class MaterializationSpecFormatter(SourceFormatter):
         )
 
 
-def _is_pattern_tuple(value: Any) -> bool:
+def _is_pattern_tuple(value) -> bool:
     return (
         isinstance(value, tuple)
         and len(value) == 2
@@ -155,11 +229,11 @@ def _is_pattern_tuple(value: Any) -> bool:
     )
 
 
-def _is_pattern_item(value: Any) -> bool:
+def _is_pattern_item(value) -> bool:
     return callable(value) or _is_pattern_tuple(value)
 
 
-def _strip_internal_pattern_metadata(args: Dict[str, Any]) -> Dict[str, Any]:
+def _strip_internal_pattern_metadata(args):
     """Remove UI-only metadata keys from function-pattern kwargs."""
     if not isinstance(args, dict):
         return {}
@@ -169,10 +243,10 @@ def _strip_internal_pattern_metadata(args: Dict[str, Any]) -> Dict[str, Any]:
 class FunctionPatternTupleFormatter(SourceFormatter):
     priority = 85
 
-    def can_format(self, value: Any) -> bool:
+    def can_format(self, value) -> bool:
         return _is_pattern_tuple(value)
 
-    def format(self, value: Tuple[Any, Dict[str, Any]], context: FormatContext) -> SourceFragment:
+    def format(self, value, context: FormatContext) -> SourceFragment:
         func, args = value
         args = _strip_internal_pattern_metadata(args)
 
@@ -208,7 +282,7 @@ class FunctionPatternTupleFormatter(SourceFormatter):
 class FunctionPatternListFormatter(SourceFormatter):
     priority = 84
 
-    def can_format(self, value: Any) -> bool:
+    def can_format(self, value) -> bool:
         return isinstance(value, list) and value and all(_is_pattern_item(item) for item in value)
 
     def format(self, value: list, context: FormatContext) -> SourceFragment:
@@ -223,10 +297,137 @@ class FunctionPatternListFormatter(SourceFormatter):
         return SourceFragment(code, imports)
 
 
+@dataclass(frozen=True)
+class LazyDataclassFieldEmissionState:
+    explicit_field_names: frozenset[str]
+    has_concrete_field_values: bool
+
+    @classmethod
+    def from_instance(cls, value: LazyDataclass) -> "LazyDataclassFieldEmissionState":
+        raw_values = value.__dict__
+        explicit_field_names = frozenset(raw_values["_explicitly_set_fields"])
+        has_concrete_field_values = any(
+            raw_values[field.name] is not None for field in fields(value)
+        )
+        return cls(
+            explicit_field_names=explicit_field_names,
+            has_concrete_field_values=has_concrete_field_values,
+        )
+
+    @property
+    def requires_serialization(self) -> bool:
+        return bool(self.explicit_field_names) or self.has_concrete_field_values
+
+
+@dataclass(frozen=True)
+class LazyDataclassSerializedField:
+    name: str
+    fragment: SourceFragment
+
+
+@dataclass(frozen=True)
+class LazyDataclassSerializationPlan:
+    class_name: str
+    import_pair: tuple[str, str]
+    fields: tuple[LazyDataclassSerializedField, ...]
+
+    @classmethod
+    def from_instance(
+        cls,
+        value: LazyDataclass,
+        context: FormatContext,
+    ) -> "LazyDataclassSerializationPlan":
+        lazy_class = type(value)
+        import_pair = (lazy_class.__module__, lazy_class.__name__)
+        if import_pair in context.name_mappings:
+            class_name = context.name_mappings[import_pair]
+        else:
+            class_name = lazy_class.__name__
+
+        raw_values = value.__dict__
+        explicit_field_names = raw_values["_explicitly_set_fields"]
+        field_ctx = context.indented()
+        serialized_fields = []
+
+        for field in fields(value):
+            current_value = raw_values[field.name]
+            if (
+                context.clean_mode
+                and field.name not in explicit_field_names
+                and current_value is None
+            ):
+                continue
+
+            serialized_fields.append(
+                LazyDataclassSerializedField(
+                    name=field.name,
+                    fragment=to_source(current_value, field_ctx),
+                )
+            )
+
+        return cls(
+            class_name=class_name,
+            import_pair=import_pair,
+            fields=tuple(serialized_fields),
+        )
+
+
+class LazyDataclassFormatEligibility:
+    @staticmethod
+    def accepts(candidate) -> bool:
+        return isinstance(candidate, LazyDataclass)
+
+
+class FunctionStepCleanModeFieldPolicy:
+    def should_emit(
+        self,
+        current_value,
+        default_value,
+        context: FormatContext,
+    ) -> bool:
+        if not context.clean_mode:
+            return True
+
+        if isinstance(current_value, LazyDataclass):
+            return LazyDataclassFieldEmissionState.from_instance(
+                current_value
+            ).requires_serialization
+
+        return current_value != default_value
+
+
+class LazyDataclassFormatter(SourceFormatter):
+    priority = 36
+
+    def can_format(self, value) -> bool:
+        return LazyDataclassFormatEligibility.accepts(value)
+
+    def format(self, value: LazyDataclass, context: FormatContext) -> SourceFragment:
+        plan = LazyDataclassSerializationPlan.from_instance(value, context)
+        imports = {plan.import_pair}
+        field_ctx = context.indented()
+        lines = []
+
+        for field in plan.fields:
+            imports |= field.fragment.imports
+            lines.append(f"{field.name}={field.fragment.code}")
+
+        if not lines:
+            return SourceFragment(f"{plan.class_name}()", frozenset(imports))
+
+        inner = f",\n{field_ctx.indent_str}".join(lines)
+        code = (
+            f"{plan.class_name}(\n"
+            f"{field_ctx.indent_str}{inner}\n"
+            f"{context.indent_str})"
+        )
+        return SourceFragment(code, frozenset(imports))
+
+
 class FunctionStepFormatter(SourceFormatter):
     priority = 80
 
-    def can_format(self, value: Any) -> bool:
+    def can_format(self, value) -> bool:
         return isinstance(value, FunctionStep)
 
     def format(self, value: FunctionStep, context: FormatContext) -> SourceFragment:
@@ -250,12 +451,20 @@ class FunctionStepFormatter(SourceFormatter):
         field_ctx = context.indented()
         params = []
         imports = set()
+        field_policy = FunctionStepCleanModeFieldPolicy()
 
         for name, param in signatures:
-            current_value = step_values.get(name, param.default)
-            default_value = default_values.get(name, param.default)
+            if name in step_values:
+                current_value = step_values[name]
+            else:
+                current_value = param.default
 
-            if context.clean_mode and current_value == default_value:
+            if name in default_values:
+                default_value = default_values[name]
+            else:
+                default_value = param.default
+
+            if not field_policy.should_emit(current_value, default_value, context):
                 continue
 
             frag = to_source(current_value, field_ctx)
@@ -263,7 +472,9 @@ class FunctionStepFormatter(SourceFormatter):
             params.append(f"{name}={frag.code}")
 
         import_pair = (FunctionStep.__module__, FunctionStep.__name__)
-        class_name = context.name_mappings.get(import_pair, FunctionStep.__name__)
+        class_name = NameMappingLookup.resolve(
+            context, import_pair, FunctionStep.__name__
+        )
         imports.add(import_pair)
 
         if not params:

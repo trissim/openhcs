@@ -46,7 +46,7 @@ from pyqt_reactive.widgets.shared import TabbedFormWidget, TabConfig, TabbedForm
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import StreamingConfig
 from objectstate.lazy_factory import get_base_type_for_lazy
-from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 
 logger = logging.getLogger(__name__)
 

@@ -481,9 +481,9 @@ class ZMQExecutionServer(ExecutionServer):
         }
         compiled_contexts: dict[str, Any] | None = None
         progress_emitter = ZMQProgressEmitter(
-            self._enqueue_progress,
-            execution_id,
-            plate_id,
+            enqueue=self._enqueue_progress,
+            execution_id=execution_id,
+            plate_id=plate_id,
         )
 
         wells: list[str] | None = None
@@ -548,6 +548,7 @@ class ZMQExecutionServer(ExecutionServer):
                 immediate_progress_queue=ImmediateZMQProgressQueue(
                     enqueue=self._enqueue_progress,
                     flush=self._flush_progress_only,
+                    plate_id=plate_id,
                 ),
             ).resolve()
             compilation_resolved = True
