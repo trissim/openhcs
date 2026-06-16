@@ -517,6 +517,123 @@ class SourceSchemaCandidateDiscovery:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SourceSchemaImageSetProbeResult:
+    """Non-mutating viability result for one source-schema source root."""
+
+    source_root: Path
+    image_set_count: int
+    error_message: str | None = None
+
+    @property
+    def usable(self) -> bool:
+        return self.error_message is None and self.image_set_count > 0
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaImageSetProbe:
+    """Check whether source files can assemble schema image sets without writing."""
+
+    source_root: Path
+    source_files: tuple[Path, ...]
+    schema: PipelineImageSchema
+
+    def result(self) -> SourceSchemaImageSetProbeResult:
+        try:
+            candidates = SourceSchemaCandidateDiscovery(
+                SourceSchemaCandidateDiscoveryRequest(
+                    self.source_root,
+                    self.source_files,
+                    self.schema,
+                )
+            ).candidates()
+            candidate_matches = SourceSchemaCandidateMatches(candidates, self.schema)
+            stack_candidates = candidate_matches.stack_candidates()
+            image_sets = ImageSetAssembler.for_schema(self.schema).image_sets(
+                self.schema,
+                stack_candidates,
+            )
+        except Exception as exc:
+            return SourceSchemaImageSetProbeResult(
+                source_root=self.source_root,
+                image_set_count=0,
+                error_message=str(exc),
+            )
+        return SourceSchemaImageSetProbeResult(
+            source_root=self.source_root,
+            image_set_count=len(image_sets),
+            error_message=None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateMatches:
+    """Match discovered source candidates against schema assignments."""
+
+    candidates: tuple["SourceSchemaCandidate", ...]
+    schema: PipelineImageSchema
+
+    def stack_assignments(self) -> tuple[ImageAssignment, ...]:
+        return tuple(
+            assignment
+            for assignment in self.schema.assignments_by_alias.values()
+            if ImageTypeSourceRole.for_image_type(
+                assignment.image_type
+            ).participates_in_image_stack
+        )
+
+    def auxiliary_assignments(self) -> tuple[SourceAssignmentBase, ...]:
+        auxiliary_assignments = tuple(
+            assignment
+            for assignment in self.schema.assignments_by_alias.values()
+            if not ImageTypeSourceRole.for_image_type(
+                assignment.image_type
+            ).participates_in_image_stack
+        )
+        return auxiliary_assignments + tuple(
+            self.schema.source_artifacts_by_alias.values()
+        )
+
+    def stack_candidates(self) -> SourceSchemaCandidatesByAlias:
+        return self._candidates_by_alias(
+            self.stack_assignments(),
+            require_match=True,
+        )
+
+    def auxiliary_candidates(self) -> SourceSchemaCandidatesByAlias:
+        return self._candidates_by_alias(
+            self.auxiliary_assignments(),
+            require_match=False,
+        )
+
+    def _candidates_by_alias(
+        self,
+        assignments: tuple[SourceAssignmentBase, ...],
+        *,
+        require_match: bool,
+    ) -> SourceSchemaCandidatesByAlias:
+        matched: dict[str, tuple[SourceSchemaCandidate, ...]] = {}
+        for assignment in assignments:
+            alias_candidates = tuple(
+                candidate
+                for candidate in self.candidates
+                if _candidate_matches_selector(candidate, assignment.selector)
+            )
+            image_candidates = tuple(
+                candidate
+                for candidate in alias_candidates
+                if is_image_path(str(candidate.path))
+            )
+            selected_candidates = image_candidates if require_match else alias_candidates
+            if require_match and not selected_candidates:
+                raise ValueError(
+                    f"Source schema image alias {assignment.alias!r} matched no image files."
+                )
+            if selected_candidates:
+                matched[assignment.alias] = selected_candidates
+        return MappingProxyType(matched)
+
+
 class OpenHCSWorkspaceSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
     """Discover candidates from existing OpenHCS virtual-workspace metadata."""
 
@@ -1757,17 +1874,11 @@ def materialize_source_schema_workspace(
         local_candidates,
         _image_plane_source_candidates(workspace_root, schema, local_candidates),
     ).candidates
-    stack_assignments, auxiliary_assignments = _partition_assignments(schema)
-    stack_candidates = _matched_candidates_by_alias(
-        candidates,
-        stack_assignments,
-        require_match=True,
-    )
-    auxiliary_candidates = _matched_candidates_by_alias(
-        candidates,
-        auxiliary_assignments,
-        require_match=False,
-    )
+    candidate_matches = SourceSchemaCandidateMatches(candidates, schema)
+    stack_assignments = candidate_matches.stack_assignments()
+    auxiliary_assignments = candidate_matches.auxiliary_assignments()
+    stack_candidates = candidate_matches.stack_candidates()
+    auxiliary_candidates = candidate_matches.auxiliary_candidates()
     if stack_assignments:
         image_sets = ImageSetAssembler.for_schema(schema).image_sets(
             schema,
@@ -1940,21 +2051,6 @@ def _source_schema_virtual_path_for_well(
             used_paths.add(expanded_path)
             return expanded_path
         ordinal_site += 1
-
-
-def _partition_assignments(
-    schema: PipelineImageSchema,
-) -> tuple[tuple[ImageAssignment, ...], tuple[SourceAssignmentBase, ...]]:
-    stack_assignments: list[ImageAssignment] = []
-    auxiliary_assignments: list[SourceAssignmentBase] = []
-    for assignment in schema.assignments_by_alias.values():
-        role = ImageTypeSourceRole.for_image_type(assignment.image_type)
-        if role.participates_in_image_stack:
-            stack_assignments.append(assignment)
-        else:
-            auxiliary_assignments.append(assignment)
-    auxiliary_assignments.extend(schema.source_artifacts_by_alias.values())
-    return tuple(stack_assignments), tuple(auxiliary_assignments)
 
 
 def _backend_name(backend: Backend | str) -> str:
@@ -2319,32 +2415,6 @@ def _merge_imported_metadata_row(
         if source_metadata_value(metadata, key) in (None, str(value))
     }
     merge_source_metadata(metadata, additions, path=path)
-
-
-def _matched_candidates_by_alias(
-    candidates: tuple[SourceSchemaCandidate, ...],
-    assignments: tuple[SourceAssignmentBase, ...],
-    *,
-    require_match: bool,
-) -> SourceSchemaCandidatesByAlias:
-    matched: dict[str, tuple[SourceSchemaCandidate, ...]] = {}
-    for assignment in assignments:
-        alias_candidates = tuple(
-            candidate
-            for candidate in candidates
-            if _candidate_matches_selector(candidate, assignment.selector)
-        )
-        image_candidates = tuple(
-            candidate for candidate in alias_candidates if is_image_path(str(candidate.path))
-        )
-        selected_candidates = image_candidates if require_match else alias_candidates
-        if require_match and not selected_candidates:
-            raise ValueError(
-                f"Source schema image alias {assignment.alias!r} matched no image files."
-            )
-        if selected_candidates:
-            matched[assignment.alias] = selected_candidates
-    return MappingProxyType(matched)
 
 
 def _candidate_matches_selector(

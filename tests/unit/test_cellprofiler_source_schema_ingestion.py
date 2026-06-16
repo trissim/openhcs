@@ -7,13 +7,22 @@ import numpy as np
 import pytest
 import tifffile
 
-from openhcs.core.pipeline_image_schema import ImagesRule, PipelineImageSchema
+from openhcs.core.pipeline_image_schema import (
+    ImageAssignment,
+    ImagesRule,
+    PipelineImageSchema,
+)
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
+    SourceBindingMatchDimension,
+    SourceBindingMatchField,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
+    SourceSelector,
 )
 from openhcs.interop.cellprofiler.source_schema_ingestion import (
     CellProfilerPipelinePreparationError,
@@ -182,6 +191,95 @@ def test_cellprofiler_source_root_resolver_uses_single_child_with_folder_metadat
                 MetadataExtractionRule(
                     source=MetadataSource.FOLDER_NAME,
                     pattern=r"(?P<Plate>[0-9]{5})",
+                ),
+            ),
+        ),
+    ).source_root()
+
+    assert resolved == image_dir
+
+
+def test_cellprofiler_source_root_resolver_prefers_complete_image_set_child(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "BeginnerSegmentation"
+    image_dir = source_root / "images_Illum-corrected"
+    mask_dir = source_root / "cellpose_masks_nuclei"
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir()
+    tifffile.imwrite(
+        image_dir / "plate1_A14_site1_Ch1.tif",
+        np.full((4, 4), 1, dtype=np.uint16),
+    )
+    tifffile.imwrite(
+        image_dir / "plate1_A14_site1_Ch2.tif",
+        np.full((4, 4), 2, dtype=np.uint16),
+    )
+    (mask_dir / "plate1_A14_site1_Ch1_cp_masks.png").write_bytes(b"")
+
+    resolved = CellProfilerSourceRootResolver(
+        source_root,
+        PipelineImageSchema(
+            images_rule=ImagesRule(
+                filters=(
+                    SourceFilterClause(
+                        SourceFilterSubject.EXTENSION,
+                        SourceFilterMatchType.IS_IMAGE,
+                    ),
+                ),
+            ),
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=(
+                        r"plate1_(?P<Well>[A-Z][0-9]{2})_site"
+                        r"(?P<Site>[0-9])_Ch(?P<ChannelNumber>[0-9])"
+                    ),
+                ),
+            ),
+            assignments_by_alias={
+                "OrigDNA": ImageAssignment(
+                    alias="OrigDNA",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch1",
+                            ),
+                        ),
+                    ),
+                ),
+                "OrigER": ImageAssignment(
+                    alias="OrigER",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch2",
+                            ),
+                        ),
+                    ),
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(
+                method=SourceBindingMatchMethod.METADATA,
+                dimensions=(
+                    SourceBindingMatchDimension(
+                        fields=(
+                            SourceBindingMatchField("OrigDNA", "Well"),
+                            SourceBindingMatchField("OrigER", "Well"),
+                        ),
+                    ),
+                    SourceBindingMatchDimension(
+                        fields=(
+                            SourceBindingMatchField("OrigDNA", "Site"),
+                            SourceBindingMatchField("OrigER", "Site"),
+                        ),
+                    ),
                 ),
             ),
         ),

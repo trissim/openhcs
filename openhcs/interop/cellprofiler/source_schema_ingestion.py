@@ -14,6 +14,7 @@ from openhcs.constants import Backend
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_matching import is_image_path, source_filters_match
 from openhcs.core.source_schema_workspace import (
+    SourceSchemaImageSetProbe,
     SourceSchemaImageSetSelection,
     SourceSchemaWorkspaceMaterialization,
     materialize_source_schema_workspace,
@@ -349,15 +350,27 @@ class CellProfilerSourceRootResolver:
         selected_root = Path(self.selected_root)
         if not selected_root.exists():
             return selected_root
-        buckets = self._admitted_image_buckets(selected_root)
-        if selected_root in buckets:
-            return selected_root
-        if len(buckets) == 1:
-            return next(iter(buckets))
+        candidates = self._source_root_candidates(selected_root)
+        if len(candidates) == 1:
+            return candidates[0].root
+        usable_candidates = tuple(
+            candidate
+            for candidate in candidates
+            if SourceSchemaImageSetProbe(
+                source_root=candidate.root,
+                source_files=candidate.source_files,
+                schema=self.schema,
+            ).result().usable
+        )
+        if len(usable_candidates) == 1:
+            return usable_candidates[0].root
         return selected_root
 
-    def _admitted_image_buckets(self, selected_root: Path) -> dict[Path, None]:
-        buckets: dict[Path, None] = {}
+    def _source_root_candidates(
+        self,
+        selected_root: Path,
+    ) -> tuple["CellProfilerSourceRootCandidate", ...]:
+        source_files_by_root: dict[Path, list[Path]] = {}
         admission = CellProfilerSourcePathAdmission(
             selected_root=selected_root,
             schema=self.schema,
@@ -368,8 +381,26 @@ class CellProfilerSourceRootResolver:
             bucket_root = admission.bucket_for(path)
             if bucket_root is None:
                 continue
-            buckets[bucket_root] = None
-        return buckets
+            source_files = source_files_by_root.get(bucket_root)
+            if source_files is None:
+                source_files_by_root[bucket_root] = [path]
+                continue
+            source_files.append(path)
+        return tuple(
+            CellProfilerSourceRootCandidate(
+                root=root,
+                source_files=tuple(paths),
+            )
+            for root, paths in sorted(source_files_by_root.items())
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerSourceRootCandidate:
+    """One candidate source root and the files admitted under that root."""
+
+    root: Path
+    source_files: tuple[Path, ...]
 
 
 @dataclass(frozen=True, slots=True)
