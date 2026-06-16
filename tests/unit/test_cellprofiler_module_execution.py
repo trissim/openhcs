@@ -245,7 +245,7 @@ class _SyntheticObjectMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
-class _RuntimeSliceObjectAdapter:
+class _RuntimeSliceObjectAdapter(RuntimePlaneAxisProjector):
     objects: ObjectLabelSet
     slice_index: int
 
@@ -522,6 +522,56 @@ def test_relateobjects_special_inputs_bind_runtime_slice_index() -> None:
     bound = CellProfilerSpecialInputPolicy.for_module("RelateObjects").bind(request)
 
     assert bound["slice_index"] == 1
+
+
+def test_relateobjects_special_inputs_project_source_binding_labels_to_current_plane() -> None:
+    class SourceAxisObjectAdapter(_RuntimeSliceObjectAdapter):
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return 1 if source_aliases == ("Site1", "Site2") else None
+
+    labels = np.array(
+        [
+            [[1, 0], [0, 0]],
+            [[0, 0], [2, 0]],
+        ],
+        dtype=np.int32,
+    )
+    objects = ObjectLabelSet(
+        name="Objects",
+        labels=labels,
+        declared_object_id_domains=((1,), (2,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_names=("Site1", "Site2"),
+    )
+    request = SpecialInputBindingRequest(
+        module_name="RelateObjects",
+        func=relate_objects,
+        adapter=SourceAxisObjectAdapter(objects=objects, slice_index=0),
+        kwargs={},
+        current_image=np.zeros((2, 2), dtype=np.float32),
+        external_object_names=frozenset(),
+        parameter_names=("parent_labels", "child_labels"),
+        special_input_specs=(
+            ArtifactSpec("Parents", ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec("Children", ArtifactKind.OBJECT_LABELS),
+        ),
+        runtime_inputs=(
+            ArtifactSpec("Parents", ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec("Children", ArtifactKind.OBJECT_LABELS),
+        ),
+        external_image_names=frozenset(),
+        runtime_image_names=frozenset(),
+    )
+
+    bound = CellProfilerSpecialInputPolicy.for_module("RelateObjects").bind(request)
+
+    np.testing.assert_array_equal(bound["parent_labels"], labels[1])
+    np.testing.assert_array_equal(bound["child_labels"], labels[1])
+    assert "slice_index" not in bound
 
 
 def test_relateobjects_special_inputs_do_not_bind_source_axis_slice_index() -> None:
@@ -3047,6 +3097,214 @@ def test_module_executor_preserves_duplicate_image_roles_for_illumination_apply(
         image_payload_data(runtime.images["CorrGreen"].data),
         np.ones((4, 5)),
     )
+
+
+def test_illumination_apply_image_output_uses_original_input_source_payload() -> None:
+    source_paths = (
+        "/plate/IXMtest_A01_s1_w5.tif",
+        "/plate/IXMtest_A01_s2_w5.tif",
+    )
+    source_metadata = (
+        {"Well": "A01", "Site": "1", "ChannelNumber": "5"},
+        {"Well": "A01", "Site": "2", "ChannelNumber": "5"},
+    )
+    orig_mito = image_payload_with_context(
+        np.stack(
+            (
+                np.ones((3, 4), dtype=np.float32),
+                np.full((3, 4), 2.0, dtype=np.float32),
+            )
+        ),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=source_paths,
+            channel_source_component_metadata=source_metadata,
+            source_image_names=("OrigMito",),
+        ),
+    )
+    stale_invocation_payload = image_payload_with_context(
+        np.zeros((2, 3, 4), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(source_paths[0], source_paths[0]),
+            channel_source_component_metadata=(source_metadata[0], source_metadata[0]),
+            source_image_names=("OrigHoechst", "OrigMito"),
+        ),
+    )
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigMito": _FakeRuntimeImage(orig_mito),
+            "IllumMito": _FakeRuntimeImage(np.ones((3, 4), dtype=np.float32)),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="CorrectIlluminationApply",
+            inputs=(
+                ArtifactSpec("OrigMito", ArtifactKind.IMAGE),
+                ArtifactSpec("IllumMito", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Mito", ArtifactKind.IMAGE),),
+        )
+    )
+    output = np.stack(
+        (
+            np.full((3, 4), 10.0, dtype=np.float32),
+            np.full((3, 4), 20.0, dtype=np.float32),
+        )
+    )
+
+    CellProfilerOutputRecorder.for_kind(ArtifactKind.IMAGE).record(
+        CellProfilerOutputRecordRequest(
+            executor=executor,
+            adapter=runtime,
+            spec=ArtifactSpec("Mito", ArtifactKind.IMAGE),
+            value=output,
+            output_values={"Mito": output},
+            source_image_name=None,
+            source_image_names=("OrigMito", "IllumMito"),
+            source_image_payload=stale_invocation_payload,
+            current_image=np.zeros((2, 3, 4), dtype=np.float32),
+            func=lambda image: image,
+            call_kwargs={},
+        )
+    )
+
+    recorded_metadata = image_payload_metadata(runtime.images["Mito"].data)
+    assert recorded_metadata.channel_source_paths == source_paths
+    assert recorded_metadata.channel_source_component_metadata == source_metadata
+    assert recorded_metadata.source_image_names == ("OrigMito",)
+
+
+def test_illumination_apply_image_output_collapses_duplicate_source_plane_stack() -> None:
+    source_path = "/plate/IXMtest_A01_s1_w5.tif"
+    source_metadata = {"Well": "A01", "Site": "1", "ChannelNumber": "5"}
+    source_payload = image_payload_with_context(
+        np.ones((5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata=source_metadata,
+            source_image_names=("OrigMito",),
+        ),
+    )
+    duplicate_output = image_payload_with_context(
+        np.stack(
+            (
+                np.full((5, 6), 10.0, dtype=np.float32),
+                np.full((5, 6), 20.0, dtype=np.float32),
+            )
+        ),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(source_path, source_path),
+            channel_source_component_metadata=(source_metadata, source_metadata),
+            source_image_names=("OrigMito", "OrigSyto"),
+        ),
+    )
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigMito": _FakeRuntimeImage(source_payload),
+            "IllumMito": _FakeRuntimeImage(np.ones((5, 6), dtype=np.float32)),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="CorrectIlluminationApply",
+            inputs=(
+                ArtifactSpec("OrigMito", ArtifactKind.IMAGE),
+                ArtifactSpec("IllumMito", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Mito", ArtifactKind.IMAGE),),
+        )
+    )
+
+    CellProfilerOutputRecorder.for_kind(ArtifactKind.IMAGE).record(
+        CellProfilerOutputRecordRequest(
+            executor=executor,
+            adapter=runtime,
+            spec=ArtifactSpec("Mito", ArtifactKind.IMAGE),
+            value=duplicate_output,
+            output_values={"Mito": duplicate_output},
+            source_image_name=None,
+            source_image_names=("OrigMito", "IllumMito"),
+            source_image_payload=duplicate_output,
+            current_image=np.zeros((5, 6), dtype=np.float32),
+            func=lambda image: image,
+            call_kwargs={},
+        )
+    )
+
+    recorded = runtime.images["Mito"].data
+    np.testing.assert_allclose(
+        image_payload_data(recorded),
+        np.full((5, 6), 10.0, dtype=np.float32),
+    )
+    recorded_metadata = image_payload_metadata(recorded)
+    assert recorded_metadata.source_path == source_path
+    assert recorded_metadata.source_component_metadata == source_metadata
+    assert recorded_metadata.channel_source_paths == ()
+    assert recorded_metadata.channel_source_component_metadata == ()
+    assert recorded_metadata.source_image_names == ("OrigMito",)
+
+
+def test_illumination_apply_image_output_collapses_singleton_contextual_stack() -> None:
+    source_path = "/plate/IXMtest_A01_s2_w5.tif"
+    source_metadata = {"Well": "A01", "Site": "2", "ChannelNumber": "5"}
+    source_payload = image_payload_with_context(
+        np.ones((5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata=source_metadata,
+            source_image_names=("OrigMito",),
+        ),
+    )
+    singleton_output = image_payload_with_context(
+        np.full((1, 5, 6), 30.0, dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata=source_metadata,
+            source_image_names=("OrigMito",),
+        ),
+    )
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigMito": _FakeRuntimeImage(source_payload),
+            "IllumMito": _FakeRuntimeImage(np.ones((5, 6), dtype=np.float32)),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="CorrectIlluminationApply",
+            inputs=(
+                ArtifactSpec("OrigMito", ArtifactKind.IMAGE),
+                ArtifactSpec("IllumMito", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Mito", ArtifactKind.IMAGE),),
+        )
+    )
+
+    CellProfilerOutputRecorder.for_kind(ArtifactKind.IMAGE).record(
+        CellProfilerOutputRecordRequest(
+            executor=executor,
+            adapter=runtime,
+            spec=ArtifactSpec("Mito", ArtifactKind.IMAGE),
+            value=singleton_output,
+            output_values={"Mito": singleton_output},
+            source_image_name=None,
+            source_image_names=("OrigMito", "IllumMito"),
+            source_image_payload=singleton_output,
+            current_image=np.zeros((5, 6), dtype=np.float32),
+            func=lambda image: image,
+            call_kwargs={},
+        )
+    )
+
+    recorded = runtime.images["Mito"].data
+    np.testing.assert_allclose(
+        image_payload_data(recorded),
+        np.full((5, 6), 30.0, dtype=np.float32),
+    )
+    recorded_metadata = image_payload_metadata(recorded)
+    assert recorded_metadata.source_path == source_path
+    assert recorded_metadata.source_component_metadata == source_metadata
+    assert recorded_metadata.source_image_names == ("OrigMito",)
 
 
 def test_cellprofiler_contract_executor_slices_aligned_runtime_kwargs():

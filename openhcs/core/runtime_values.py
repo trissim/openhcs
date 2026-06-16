@@ -245,7 +245,6 @@ class SourceImageProvenance:
             self.channel_source_component_metadata,
             channel_index,
         )
-        source_image_name = _tuple_value(self.source_image_names, channel_index)
         return type(self)(
             source_path=source_path if source_path is not None else self.source_path,
             source_component_metadata=(
@@ -253,10 +252,14 @@ class SourceImageProvenance:
                 if source_component_metadata is not None
                 else self.source_component_metadata
             ),
-            source_image_names=tuple(
-                name for name in (source_image_name,) if name is not None
-            ),
+            source_image_names=self.source_image_names_for_channel(channel_index),
         )
+
+    def source_image_names_for_channel(self, channel_index: int) -> tuple[str, ...]:
+        """Return source-image aliases represented by a selected provenance plane."""
+        if len(self.source_image_names) <= channel_index:
+            return self.source_image_names
+        return (self.source_image_names[channel_index],)
 
     def identity(self) -> SourceProvenanceIdentity:
         return (
@@ -1091,9 +1094,10 @@ class DerivedImagePayloadContext:
 
     def payload(self) -> RuntimeArrayData:
         same_spatial_domain = self.same_spatial_domain()
-        metadata = image_payload_metadata(self.data).with_source_context_from(
-            image_payload_metadata(self.source_payload)
-        )
+        metadata = DerivedImagePayloadSourceMetadata(
+            source_payload=self.source_payload,
+            data=self.data,
+        ).metadata()
         if not same_spatial_domain:
             metadata = metadata.without_spatial_domain()
         return RuntimeImagePayloadContext(
@@ -1114,6 +1118,87 @@ class DerivedImagePayloadContext:
             and output_shape_yx is not None
             and source_shape_yx == output_shape_yx
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedImagePayloadSourceMetadata:
+    """Resolve source provenance for derived image payloads."""
+
+    source_payload: ImagePayloadMetadataInput | None
+    data: RuntimeArrayData
+
+    def metadata(self) -> ImagePayloadMetadata:
+        output_metadata = image_payload_metadata(self.data)
+        source_metadata = image_payload_metadata(self.source_payload)
+        if not self.source_planes_should_replace_output(output_metadata, source_metadata):
+            return output_metadata.with_source_context_from(source_metadata)
+        return DerivedImagePayloadPlaneSourceReplacement(
+            output_metadata=output_metadata,
+            source_metadata=source_metadata,
+        ).metadata()
+
+    def source_planes_should_replace_output(
+        self,
+        output_metadata: ImagePayloadMetadata,
+        source_metadata: ImagePayloadMetadata,
+    ) -> bool:
+        plane_count = self.output_plane_count()
+        if plane_count is None:
+            return False
+        source_plane_count = source_metadata.source_provenance.channel_plane_count
+        if source_plane_count != plane_count:
+            return False
+        output_plane_count = output_metadata.source_provenance.channel_plane_count
+        return output_plane_count != plane_count
+
+    def output_plane_count(self) -> int | None:
+        data = np.asarray(image_payload_data(self.data))
+        if data.ndim < 3 or is_color_image_slice(data):
+            return None
+        return int(data.shape[0])
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedImagePayloadPlaneSourceReplacement:
+    """Copy source plane provenance onto derived image payload metadata."""
+
+    output_metadata: ImagePayloadMetadata
+    source_metadata: ImagePayloadMetadata
+
+    def metadata(self) -> ImagePayloadMetadata:
+        metadata = replace(self.output_metadata)
+        metadata.source_path = self.source_metadata.source_path
+        metadata.source_component_metadata = self.source_metadata.source_component_metadata
+        metadata.channel_source_paths = self.source_metadata.channel_source_paths
+        metadata.channel_source_component_metadata = (
+            self.source_metadata.channel_source_component_metadata
+        )
+        metadata.source_image_names = (
+            self.source_metadata.source_image_names
+            or self.output_metadata.source_image_names
+        )
+        metadata.spatial_origin_yx = (
+            self.output_metadata.spatial_origin_yx
+            if self.output_metadata.spatial_origin_yx is not None
+            else self.source_metadata.spatial_origin_yx
+        )
+        metadata.source_spatial_shape_yx = (
+            self.output_metadata.source_spatial_shape_yx
+            if self.output_metadata.source_spatial_shape_yx is not None
+            else self.source_metadata.source_spatial_shape_yx
+        )
+        metadata.physical_border_edges_yx = (
+            self.output_metadata.physical_border_edges_yx
+            if self.output_metadata.physical_border_edges_yx is not None
+            else self.source_metadata.physical_border_edges_yx
+        )
+        metadata.mask_defines_border = (
+            self.output_metadata.mask_defines_border
+            if self.output_metadata.mask_defines_border is not None
+            else self.source_metadata.mask_defines_border
+        )
+        return metadata
+
 
 @dataclass(frozen=True, slots=True)
 class DerivedImagePayloadMaskContext:
@@ -1606,6 +1691,11 @@ class ObjectLabelValue(
     spatial_origin_yx: tuple[int, int] | None
     source_spatial_shape_yx: tuple[int, int] | None
 
+    @property
+    def source_image_name(self) -> str | None:
+        """Return the semantic source image name when this carrier has one."""
+        return None
+
     @abstractmethod
     def labels_for_variant(self, variant: ObjectLabelVariant | str) -> ObjectLabelData:
         """Return the dense labels for one semantic label variant."""
@@ -1634,6 +1724,53 @@ class ObjectLabelValue(
     @abstractmethod
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelValue":
         """Return this object-label value with missing provenance filled from image."""
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelSourceContextProvenanceMerge:
+    """Merge image provenance into object labels without reviving stale stack axes."""
+
+    label_provenance: SourceImageProvenance
+    image_provenance: SourceImageProvenance
+
+    @classmethod
+    def for_label_and_image(
+        cls,
+        label: ObjectLabelValue,
+        image: RuntimeArrayData,
+    ) -> "ObjectLabelSourceContextProvenanceMerge":
+        return cls(
+            label_provenance=label.source_provenance,
+            image_provenance=image_payload_metadata(image).source_provenance,
+        )
+
+    def provenance(self) -> SourceImageProvenance:
+        merged = self.label_provenance.with_missing_from(self.image_provenance)
+        if not self.label_has_scalar_source_identity:
+            return merged
+        return SourceImageProvenance(
+            source_path=merged.source_path,
+            source_component_metadata=merged.source_component_metadata,
+            source_image_names=self.scalar_source_image_names(
+                merged.source_image_names,
+            ),
+        )
+
+    @property
+    def label_has_scalar_source_identity(self) -> bool:
+        return (
+            self.label_provenance.addressable
+            and self.label_provenance.channel_plane_count == 0
+        )
+
+    @staticmethod
+    def scalar_source_image_names(names: tuple[str, ...]) -> tuple[str, ...]:
+        if len(names) <= 1:
+            return names
+        unique_names = tuple(dict.fromkeys(names))
+        if len(unique_names) == 1:
+            return unique_names
+        return ()
 
 
 @dataclass(slots=True)
@@ -1797,9 +1934,10 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelValue):
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelPayload":
         """Attach image provenance without changing this payload's label domain."""
         metadata = image_payload_metadata(image)
-        source_provenance = self.source_provenance.with_missing_from(
-            metadata.source_provenance
-        )
+        source_provenance = ObjectLabelSourceContextProvenanceMerge.for_label_and_image(
+            self,
+            image,
+        ).provenance()
         return ObjectLabelPayload(
             labels=self.labels,
             unedited_labels=self.unedited_labels,
@@ -2677,9 +2815,10 @@ class ObjectLabelSet(
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelSet":
         """Attach image provenance without changing this label set's domain."""
         metadata = image_payload_metadata(image)
-        source_provenance = self.source_provenance.with_missing_from(
-            metadata.source_provenance
-        )
+        source_provenance = ObjectLabelSourceContextProvenanceMerge.for_label_and_image(
+            self,
+            image,
+        ).provenance()
         return ObjectLabelSet(
             name=self.name,
             labels=self.labels,
@@ -4460,6 +4599,16 @@ class SourceImagePlaneAxisRequest:
     def metadata(self) -> ImagePayloadMetadata:
         return image_payload_metadata(self.image)
 
+    @property
+    def source_provenance(self) -> SourceImageProvenance:
+        """Return the source-image provenance carried by this payload."""
+        return self.metadata.source_provenance
+
+    @property
+    def channel_plane_count(self) -> int:
+        """Return the number of source-provenance planes declared by metadata."""
+        return self.source_provenance.channel_plane_count
+
 class SourceImagePlaneAxisPolicy(ABC, metaclass=AutoRegisterMeta):
     """Registered source-image plane-axis classifier."""
 
@@ -4495,11 +4644,33 @@ class SourceBindingPlaneAxisPolicy(SourceImagePlaneAxisPolicy):
         return RuntimePlaneAxis.SOURCE_BINDING
 
 
+class RuntimeSliceSourceImagePlaneAxisPolicy(SourceImagePlaneAxisPolicy):
+    """Policy base for source-image facts that select the runtime-slice axis."""
+
+    def axis(self) -> RuntimePlaneAxis | None:
+        return RuntimePlaneAxis.RUNTIME_SLICE
+
+
+class RepeatedSourceNamePlaneAxisPolicy(RuntimeSliceSourceImagePlaneAxisPolicy):
+    """Repeated semantic source names identify runtime-slice planes, not bindings."""
+
+    plane_axis_policy_name = "repeated_source_image_name"
+    priority = 0
+
+    def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
+        names = request.source_provenance.source_image_names
+        return (
+            request.channel_plane_count > 1
+            and len(names) == request.channel_plane_count
+            and len(set(names)) == 1
+        )
+
+
 class ChannelSourcePathPlaneAxisPolicy(SourceBindingPlaneAxisPolicy):
     """Channel source paths declare a source-binding stack axis."""
 
     plane_axis_policy_name = "channel_source_paths"
-    priority = 0
+    priority = 1
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         return len(request.metadata.channel_source_paths) > 1
@@ -4509,7 +4680,7 @@ class ChannelSourceComponentPlaneAxisPolicy(SourceBindingPlaneAxisPolicy):
     """Channel source component metadata declares a source-binding stack axis."""
 
     plane_axis_policy_name = "channel_source_component_metadata"
-    priority = 1
+    priority = 2
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         return len(request.metadata.channel_source_component_metadata) > 1
@@ -4519,7 +4690,7 @@ class ColorStackPlaneAxisPolicy(SourceBindingPlaneAxisPolicy):
     """Color stacks use their leading axis as source-binding planes."""
 
     plane_axis_policy_name = "color_stack"
-    priority = 2
+    priority = 3
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         return is_color_image_stack(request.image_array)
@@ -4529,7 +4700,7 @@ class VolumetricSourceImagePlaneAxisPolicy(SourceImagePlaneAxisPolicy):
     """Plain 3D grayscale image stacks do not imply source-bound label planes."""
 
     plane_axis_policy_name = "volumetric"
-    priority = 3
+    priority = 4
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         return request.image_array.ndim == 3
@@ -4538,18 +4709,15 @@ class VolumetricSourceImagePlaneAxisPolicy(SourceImagePlaneAxisPolicy):
         return None
 
 
-class RuntimeSlicePlaneAxisPolicy(SourceImagePlaneAxisPolicy):
+class RuntimeSlicePlaneAxisPolicy(RuntimeSliceSourceImagePlaneAxisPolicy):
     """Non-stack source images align object labels to the runtime slice axis."""
 
     plane_axis_policy_name = "runtime_slice"
-    priority = 4
+    priority = 5
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         del request
         return True
-
-    def axis(self) -> RuntimePlaneAxis | None:
-        return RuntimePlaneAxis.RUNTIME_SLICE
 
 
 @dataclass(frozen=True, slots=True)
@@ -4733,6 +4901,7 @@ def object_label_payload_with_projected_plane(
 ) -> ObjectLabelPayload:
     """Return one selected object-label plane with matching domain metadata."""
     domain = object_label_domain_for_projected_label_plane(source, plane_index)
+    source_provenance = source.source_provenance.for_channel(plane_index)
     return ObjectLabelPayload(
         labels=labels,
         unedited_labels=unedited_labels,
@@ -4744,14 +4913,9 @@ def object_label_payload_with_projected_plane(
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         spatial_origin_yx=source.spatial_origin_yx,
         source_spatial_shape_yx=source.source_spatial_shape_yx,
-        source_path=source.source_path,
-        source_component_metadata=source.source_component_metadata,
-        channel_source_paths=source.channel_source_paths,
-        channel_source_component_metadata=source.channel_source_component_metadata,
-        source_image_names=source_image_names_for_projected_label_plane(
-            source,
-            plane_index,
-        ),
+        source_path=source_provenance.source_path,
+        source_component_metadata=source_provenance.source_component_metadata,
+        source_image_names=source_provenance.source_image_names,
     )
 
 
@@ -4765,6 +4929,7 @@ def object_label_set_with_projected_plane(
 ) -> ObjectLabelSet:
     """Return one selected object-label-set plane with matching domain metadata."""
     domain = object_label_domain_for_projected_label_plane(source, plane_index)
+    source_provenance = source.source_provenance.for_channel(plane_index)
     return ObjectLabelSet(
         name=source.name,
         labels=ObjectLabelSetReplacementStrategy.for_source(source).replacement_labels(
@@ -4780,14 +4945,9 @@ def object_label_set_with_projected_plane(
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         spatial_origin_yx=source.spatial_origin_yx,
         source_spatial_shape_yx=source.source_spatial_shape_yx,
-        source_path=source.source_path,
-        source_component_metadata=source.source_component_metadata,
-        channel_source_paths=source.channel_source_paths,
-        channel_source_component_metadata=source.channel_source_component_metadata,
-        source_image_names=source_image_names_for_projected_label_plane(
-            source,
-            plane_index,
-        ),
+        source_path=source_provenance.source_path,
+        source_component_metadata=source_provenance.source_component_metadata,
+        source_image_names=source_provenance.source_image_names,
         dimensions=source.dimensions,
         source_image_name=source.source_image_name,
     )
@@ -4798,10 +4958,7 @@ def source_image_names_for_projected_label_plane(
     plane_index: int,
 ) -> tuple[str, ...]:
     """Return provenance aliases carried by a selected object-label plane."""
-    source_image_names = source.source_image_names
-    if len(source_image_names) <= plane_index:
-        return source_image_names
-    return (source_image_names[plane_index],)
+    return source.source_provenance.source_image_names_for_channel(plane_index)
 
 
 def object_label_projected_plane_index(

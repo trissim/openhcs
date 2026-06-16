@@ -114,6 +114,8 @@ from openhcs.core.runtime_values import (
     ColumnarRows,
     FieldSpec,
     RuntimeArrayPayload,
+    SourceImagePlaneAxisPolicy,
+    SourceImagePlaneAxisRequest,
     SourceComponentMetadata,
     MeasurementTable,
     NamedImage,
@@ -132,6 +134,7 @@ from openhcs.core.runtime_values import (
     image_payload_mask,
     image_payload_metadata,
     image_payload_metadata_from_source,
+    image_payload_slice_context,
     image_payload_with_context,
     normalize_artifact_value,
     object_label_dense_array,
@@ -1891,6 +1894,41 @@ class RuntimeArtifactUniqueCandidateResolution:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeArtifactRecordLocationIdentity:
+    """Physical runtime-artifact location identity for duplicate-read detection."""
+
+    path: str
+    backend: str
+
+    @classmethod
+    def from_record(
+        cls,
+        record: StoredRuntimeValue,
+    ) -> "RuntimeArtifactRecordLocationIdentity":
+        return cls(path=record.path, backend=record.backend)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactRecordDeduplication:
+    """Collapse repeated reads of the same persisted runtime record."""
+
+    records: tuple[StoredRuntimeValue, ...]
+
+    def unique_by_location(self) -> tuple[StoredRuntimeValue, ...]:
+        records_by_location: OrderedDict[
+            RuntimeArtifactRecordLocationIdentity,
+            StoredRuntimeValue,
+        ] = OrderedDict()
+        for record in self.records:
+            location_identity = RuntimeArtifactRecordLocationIdentity.from_record(
+                record
+            )
+            if location_identity not in records_by_location:
+                records_by_location[location_identity] = record
+        return tuple(records_by_location.values())
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectLabelAdapterProfileFields:
     """Typed profile payload for object-label adapter writes."""
 
@@ -2303,13 +2341,15 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             source_metadata,
             source_image_names=source_metadata.source_image_names or (alias,),
         )
-        return cast(
-            ImagePayloadValue,
-            metadata.payload_with(
-                image_payload_data(image),
-                mask=image_payload_mask(image),
-            ),
+        payload = metadata.payload_with(
+            image_payload_data(image),
+            mask=image_payload_mask(image),
         )
+        payload = RuntimePlaneImagePayloadProjection(
+            self,
+            current_image=current_image,
+        ).project(payload)
+        return cast(ImagePayloadValue, payload)
 
     def runtime_slice_plane_index(self) -> int | None:
         """Return the current axis-local runtime-slice plane index."""
@@ -2581,6 +2621,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 self,
                 current_image,
             ).project(data)
+        data = RuntimePlaneImagePayloadProjection(
+            self,
+            current_image=current_image,
+        ).project(data)
         schema = record.value.schema
         image = NamedImage(
             name=name,
@@ -4459,18 +4503,20 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                     f"{kind.value}, got compiled kind {input_plan.kind.value}."
                 )
             if _is_global_grouped_input_request(input_plan, resolved_group_key):
-                records = tuple(
-                    self.runtime_value_store.resolve(
-                        _runtime_query_for_input_plan(
-                            input_plan,
-                            axis_id=self.axis_id,
-                            group_key=input_group_key,
-                            backend=self.backend,
-                        ),
-                        purpose="CellProfiler grouped runtime artifact input",
+                records = RuntimeArtifactRecordDeduplication(
+                    tuple(
+                        self.runtime_value_store.resolve(
+                            _runtime_query_for_input_plan(
+                                input_plan,
+                                axis_id=self.axis_id,
+                                group_key=input_group_key,
+                                backend=self.backend,
+                            ),
+                            purpose="CellProfiler grouped runtime artifact input",
+                        )
+                        for input_group_key in input_plan.group_keys
                     )
-                    for input_group_key in input_plan.group_keys
-                )
+                ).unique_by_location()
                 scoped_resolution = source_scope_policy.grouped_input_records(
                     record_request,
                     records,
@@ -5523,17 +5569,20 @@ class RuntimeRecordStackAuthority:
         return cls.stack_grouped_planes(present_masks)
 
     @staticmethod
-    def grouped_image_array(array: Any) -> Any:
-        if not hasattr(array, "ndim") or not hasattr(array, "shape"):
-            return array
-        if array.ndim == 3 and not is_color_image_slice(array) and array.shape[0] == 1:
-            return array[0]
+    def grouped_image_array(array: ImagePayloadValue) -> ImagePayloadValue:
+        array_view = np.asarray(array)
+        if (
+            array_view.ndim == 3
+            and not is_color_image_slice(array_view)
+            and array_view.shape[0] == 1
+        ):
+            return array_view[0]
         return array
 
     @staticmethod
-    def all_values_are_2d_arrays(values: tuple[Any, ...]) -> bool:
+    def all_values_are_2d_arrays(values: tuple[ImagePayloadValue, ...]) -> bool:
         """Return whether every grouped value is a two-dimensional array-like plane."""
-        return all(hasattr(value, "ndim") and value.ndim == 2 for value in values)
+        return all(np.asarray(value).ndim == 2 for value in values)
 
     @staticmethod
     def stack_object_label_records(
@@ -5692,6 +5741,397 @@ class CurrentSourcePayloadPlaneSelection:
     @property
     def is_matched(self) -> bool:
         return self.plane_index is not None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadProjection:
+    """Project source-bound image stacks to the adapter's selected runtime plane."""
+
+    adapter: "CellProfilerRuntimeAdapter"
+    current_image: ImagePayloadMetadataInput | None = None
+
+    def project(
+        self,
+        payload: ImagePayloadMetadataInput,
+    ) -> ImagePayloadMetadataInput:
+        if self.adapter.runtime_slice_plane_index() is None:
+            return payload
+        plane_stack = RuntimePlaneImagePayloadStack(payload)
+        if not plane_stack.is_projectable:
+            return payload
+        selection = RuntimePlaneImagePayloadPlaneSelection(
+            adapter=self.adapter,
+            payload=payload,
+            current_image=self.current_image,
+            plane_count=plane_stack.plane_count,
+        ).select()
+        plane_index = selection.plane_index
+        if plane_index is None:
+            return payload
+        if plane_index >= plane_stack.plane_count:
+            raise RuntimeError(
+                "Runtime image plane projection produced an out-of-range plane "
+                f"index {plane_index} for payload shape {plane_stack.shape!r}."
+            )
+        return RuntimePlaneImagePayloadSliceContext(
+            payload=payload,
+            current_image=self.current_image,
+            plane=plane_stack.plane(plane_index),
+            plane_index=plane_index,
+            source_context=selection.source_context,
+        ).project()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadStack:
+    """Array-domain view used for runtime-plane image projection."""
+
+    payload: ImagePayloadMetadataInput
+
+    @property
+    def array(self) -> np.ndarray:
+        return np.asarray(image_payload_data(self.payload))
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return tuple(int(size) for size in self.array.shape)
+
+    @property
+    def is_projectable(self) -> bool:
+        return self.array.ndim >= 3 and self.plane_count > 1
+
+    @property
+    def plane_count(self) -> int:
+        if self.array.ndim < 1:
+            return 0
+        return int(self.array.shape[0])
+
+    def plane(self, plane_index: int) -> np.ndarray:
+        return self.array[plane_index]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneProjectionRequest:
+    """Shared runtime-plane projection request coordinates."""
+
+    adapter: "CellProfilerRuntimeAdapter"
+    plane_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlanePayloadProjectionRequest(RuntimePlaneProjectionRequest):
+    """Runtime-plane projection request coordinates for one image payload."""
+
+    payload: ImagePayloadMetadataInput
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadPlaneSelection(RuntimePlanePayloadProjectionRequest):
+    """Resolve a projection plane from source provenance or current image context."""
+
+    current_image: ImagePayloadMetadataInput | None
+
+    def select(self) -> "RuntimePlaneImagePayloadPlaneSelectionResult":
+        axis = SourceImagePlaneAxisPolicy.for_request(
+            SourceImagePlaneAxisRequest(self.payload)
+        ).axis()
+        if axis is not None:
+            if (
+                axis is RuntimePlaneAxis.SOURCE_BINDING
+                and self.current_image is not None
+                and not RuntimePlaneCurrentImagePayloadPlaneIndex(
+                    adapter=self.adapter,
+                    current_image=self.current_image,
+                    plane_count=self.plane_count,
+                    ).current_image_is_planar()
+            ):
+                return RuntimePlaneImagePayloadPlaneSelectionResult(
+                    plane_index=None,
+                    source_context=RuntimePlaneImagePayloadSourceContext.PAYLOAD_PLANE,
+                )
+            return RuntimePlaneImagePayloadPlaneSelectionResult(
+                plane_index=RuntimePlaneImagePayloadPlaneIndex(
+                    adapter=self.adapter,
+                    payload=self.payload,
+                    plane_count=self.plane_count,
+                    axis=axis,
+                ).value(),
+                source_context=RuntimePlaneImagePayloadSourceContext.PAYLOAD_PLANE,
+            )
+        return RuntimePlaneImagePayloadPlaneSelectionResult(
+            plane_index=RuntimePlaneCurrentImagePayloadPlaneIndex(
+                adapter=self.adapter,
+                current_image=self.current_image,
+                plane_count=self.plane_count,
+            ).value(),
+            source_context=RuntimePlaneImagePayloadSourceContext.CURRENT_IMAGE,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadPlaneSelectionResult:
+    """Plane selection plus the authority for the projected plane source context."""
+
+    plane_index: int | None
+    source_context: "RuntimePlaneImagePayloadSourceContext"
+
+
+class RuntimePlaneImagePayloadSourceContext(Enum):
+    """Source-context authority for a projected runtime image plane."""
+
+    PAYLOAD_PLANE = "payload_plane"
+    CURRENT_IMAGE = "current_image"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneCurrentImagePayloadPlaneIndex(RuntimePlaneProjectionRequest):
+    """Fallback plane selection for stacks that lost per-plane source metadata."""
+
+    current_image: ImagePayloadMetadataInput | None
+
+    def value(self) -> int | None:
+        if self.current_image is None:
+            return None
+        if not self.current_image_is_planar():
+            return None
+        return RuntimePlaneIndexBounds(
+            plane_count=self.plane_count,
+            plane_index=self.adapter.runtime_slice_plane_index(),
+        ).bounded_value()
+
+    def current_image_is_planar(self) -> bool:
+        current_data = image_payload_data(self.current_image)
+        if is_color_image_slice(current_data):
+            return True
+        current_array = np.asarray(current_data)
+        return current_array.ndim == 2
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadSliceContext:
+    """Attach the best source context to a projected runtime image plane."""
+
+    payload: ImagePayloadMetadataInput
+    current_image: ImagePayloadMetadataInput | None
+    plane: np.ndarray
+    plane_index: int
+    source_context: RuntimePlaneImagePayloadSourceContext
+
+    def project(self) -> ImagePayloadMetadataInput:
+        projected = image_payload_slice_context(
+            self.payload,
+            self.plane,
+            self.plane_index,
+        )
+        if self.current_image is None:
+            return projected
+        metadata = RuntimePlaneImagePayloadProjectedMetadata(
+            projected=projected,
+            current_image=self.current_image,
+            source_context=self.source_context,
+        ).metadata()
+        return metadata.payload_with(
+            image_payload_data(projected),
+            mask=image_payload_mask(projected),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadProjectedMetadata:
+    """Resolve metadata for a runtime-image plane after projection."""
+
+    projected: ImagePayloadMetadataInput
+    current_image: ImagePayloadMetadataInput
+    source_context: RuntimePlaneImagePayloadSourceContext
+
+    def metadata(self) -> Any:
+        projected_metadata = image_payload_metadata(self.projected)
+        current_metadata = image_payload_metadata(self.current_image)
+        if self.source_context is RuntimePlaneImagePayloadSourceContext.CURRENT_IMAGE:
+            metadata = replace(projected_metadata)
+            metadata.source_path = current_metadata.source_path
+            metadata.source_component_metadata = current_metadata.source_component_metadata
+            metadata.channel_source_paths = current_metadata.channel_source_paths
+            metadata.channel_source_component_metadata = (
+                current_metadata.channel_source_component_metadata
+            )
+            metadata.source_image_names = (
+                current_metadata.source_image_names
+                or projected_metadata.source_image_names
+            )
+            metadata.spatial_origin_yx = current_metadata.spatial_origin_yx
+            metadata.source_spatial_shape_yx = current_metadata.source_spatial_shape_yx
+            metadata.physical_border_edges_yx = current_metadata.physical_border_edges_yx
+            metadata.mask_defines_border = current_metadata.mask_defines_border
+            return metadata
+        return projected_metadata.with_source_context_from(current_metadata)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadPlaneIndex(RuntimePlanePayloadProjectionRequest):
+    """Resolve the selected plane for an image payload's semantic plane axis."""
+
+    axis: RuntimePlaneAxis
+
+    def value(self) -> int | None:
+        if self.axis is RuntimePlaneAxis.RUNTIME_SLICE:
+            return RuntimePlaneIndexBounds(
+                plane_count=self.plane_count,
+                plane_index=self.adapter.runtime_slice_plane_index(),
+            ).bounded_value()
+        alias_plane_index = self.source_binding_alias_plane_index()
+        if alias_plane_index is not None:
+            return alias_plane_index
+        return self.grouped_component_plane_index()
+
+    def source_binding_alias_plane_index(self) -> int | None:
+        alias_set = RuntimePlaneImagePayloadAliasSet.from_payload(self.payload)
+        if alias_set.is_empty:
+            return None
+        return RuntimePlaneIndexBounds(
+            plane_count=self.plane_count,
+            plane_index=self.adapter.source_binding_axis_plane_index(
+                alias_set.aliases
+            ),
+        ).bounded_value()
+
+    def grouped_component_plane_index(self) -> int | None:
+        axis_component = self.adapter.axis_component
+        axis_component_value = self.adapter.axis_component_value
+        if axis_component is None or axis_component_value is None:
+            return None
+        values = self.channel_component_values(axis_component)
+        if len(values) != self.plane_count:
+            return None
+        present_values = tuple(value for value in values if value is not None)
+        if len(set(present_values)) <= 1:
+            return None
+        matching_indexes = tuple(
+            index
+            for index, value in enumerate(values)
+            if value is not None
+            and source_metadata_values_equal(value, axis_component_value)
+        )
+        if len(matching_indexes) != 1:
+            return None
+        return matching_indexes[0]
+
+    def channel_component_values(
+        self,
+        axis_component: str,
+    ) -> tuple[str | None, ...]:
+        metadata = image_payload_metadata(self.payload)
+        if metadata.channel_source_component_metadata:
+            return RuntimePlaneImagePayloadComponentMetadata(
+                metadata.channel_source_component_metadata
+            ).component_values(axis_component)
+        return tuple(
+            self.component_value_for_source_path(path, axis_component)
+            for path in metadata.channel_source_paths
+        )
+
+    def component_value_for_source_path(
+        self,
+        source_path: str | None,
+        axis_component: str,
+    ) -> str | None:
+        if source_path is None:
+            return None
+        return SourcePathMetadataLookup(
+            adapter=self.adapter,
+            source_path=source_path,
+        ).component_value(axis_component)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneIndexBounds:
+    """Validate a selected plane index against a payload plane count."""
+
+    plane_count: int
+    plane_index: int | None
+
+    def bounded_value(self) -> int | None:
+        if self.plane_index is None:
+            return None
+        if self.plane_index >= self.plane_count:
+            return None
+        return self.plane_index
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadAliasSet:
+    """Source-binding aliases declared by an image payload."""
+
+    aliases: tuple[str, ...]
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: ImagePayloadMetadataInput,
+    ) -> "RuntimePlaneImagePayloadAliasSet":
+        return cls(
+            tuple(
+                alias
+                for alias in image_payload_metadata(payload).source_image_names
+                if alias
+            )
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.aliases
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneImagePayloadComponentMetadata:
+    """Per-plane component metadata carried by an image payload."""
+
+    channel_metadata: ChannelSourceComponentMetadata
+
+    def component_values(self, axis_component: str) -> tuple[str | None, ...]:
+        return tuple(
+            self.component_value(channel_metadata, axis_component)
+            for channel_metadata in self.channel_metadata
+        )
+
+    @staticmethod
+    def component_value(
+        channel_metadata: SourceComponentMetadata | None,
+        axis_component: str,
+    ) -> str | None:
+        if channel_metadata is None:
+            return None
+        return semantic_source_metadata_value(channel_metadata, axis_component)
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePathMetadataLookup:
+    """Resolve source metadata for one path through the adapter source context."""
+
+    adapter: "CellProfilerRuntimeAdapter"
+    source_path: str
+
+    def component_value(self, axis_component: str) -> str | None:
+        metadata = self.metadata()
+        if metadata is None:
+            return None
+        return semantic_source_metadata_value(metadata, axis_component)
+
+    def metadata(self) -> SourceComponentMetadata | None:
+        metadata_by_path = self.adapter.source_binding_context.source_metadata_by_path
+        for candidate_path in self.candidate_paths():
+            metadata = metadata_by_path.get(candidate_path)
+            if metadata is not None:
+                return metadata
+        return None
+
+    def candidate_paths(self) -> tuple[str, ...]:
+        return (
+            self.source_path,
+            str(Path(self.source_path).resolve(strict=False)),
+            self.adapter.cellprofiler_source_order_path(self.source_path),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CurrentSourceImagePayloadProjection(CurrentSourcePlaneProjectionBase):

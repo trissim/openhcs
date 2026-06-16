@@ -166,6 +166,9 @@ _INPUTLESS_ARTIFACT_ONLY_KINDS = frozenset(
 )
 _SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
 _GROUPING_COMPONENTS = frozenset((AllComponents.WELL, AllComponents.SITE))
+_SITE_COMPONENT_LITERAL = "VariableComponents.SITE"
+_GROUP_BY_SITE_LITERAL = "GroupBy.SITE"
+_GROUP_BY_NONE_LITERAL = "GroupBy.NONE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,21 +318,24 @@ class RuntimeArtifactProcessingScope:
 
     def components(self) -> ModuleProcessingComponents:
         variable_components = self.lineage.variable_components_without_channel()
+        site_split = RuntimeArtifactSiteSplit(variable_components).components()
+        if site_split is not None:
+            return site_split
         if self.module_requires_pairwise_object_domain_scope or (
             self.lineage.requires_pairwise_object_domain_scope
             and self.uses_measurement_only_runtime_inputs()
         ):
-            return ModuleProcessingComponents((), "GroupBy.SITE")
+            return ModuleProcessingComponents((), _GROUP_BY_SITE_LITERAL)
         if any(
             spec.kind.participates_in_object_domain_scope
             for spec in self.lineage.contract.outputs
         ):
             if variable_components:
-                return ModuleProcessingComponents(variable_components, "GroupBy.NONE")
-            return ModuleProcessingComponents((), "GroupBy.SITE")
+                return ModuleProcessingComponents(variable_components, _GROUP_BY_NONE_LITERAL)
+            return ModuleProcessingComponents((), _GROUP_BY_SITE_LITERAL)
         return ModuleProcessingComponents(
-            variable_components or ("VariableComponents.SITE",),
-            "GroupBy.NONE",
+            variable_components,
+            _GROUP_BY_NONE_LITERAL if variable_components else _GROUP_BY_SITE_LITERAL,
         )
 
     def requires_pairwise_object_domain_scope(self) -> bool:
@@ -349,6 +355,25 @@ class RuntimeArtifactProcessingScope:
         return bool(self.lineage.contract.runtime_artifact_inputs) and all(
             spec.kind is ArtifactKind.MEASUREMENTS
             for spec in self.lineage.contract.runtime_artifact_inputs
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactSiteSplit:
+    """Convert inherited site lineage into an execution group, not a stack axis."""
+
+    variable_components: tuple[str, ...]
+
+    def components(self) -> ModuleProcessingComponents | None:
+        if _SITE_COMPONENT_LITERAL not in self.variable_components:
+            return None
+        return ModuleProcessingComponents(
+            tuple(
+                component
+                for component in self.variable_components
+                if component != _SITE_COMPONENT_LITERAL
+            ),
+            _GROUP_BY_SITE_LITERAL,
         )
 
 

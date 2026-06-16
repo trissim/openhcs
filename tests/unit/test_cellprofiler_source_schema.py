@@ -897,13 +897,31 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
         skipped_modules=setup_modules,
     )
 
+    primary_match = re.search(
+        r'name="IdentifyPrimaryObjects".*?'
+        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
+        generated.code,
+        re.S,
+    )
+    assert primary_match is not None
+    primary_config = primary_match.group("body")
     assert (
         "variable_components=[VariableComponents.SITE, VariableComponents.TIMEPOINT]"
-        in generated.code
+        in primary_config
     )
-    assert generated.code.count(
-        "variable_components=[VariableComponents.SITE, VariableComponents.TIMEPOINT]"
-    ) == 2
+    assert "group_by=GroupBy.NONE," in primary_config
+
+    measurement_match = re.search(
+        r'name="MeasureObjectSizeShape".*?'
+        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
+        generated.code,
+        re.S,
+    )
+    assert measurement_match is not None
+    measurement_config = measurement_match.group("body")
+    assert "variable_components=[VariableComponents.TIMEPOINT]," in measurement_config
+    assert "VariableComponents.SITE" not in measurement_config
+    assert "group_by=GroupBy.SITE," in measurement_config
 
 
 def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
@@ -982,8 +1000,8 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     assert secondary_match is not None
     secondary_config = secondary_match.group("body")
     assert "VariableComponents.CHANNEL" not in secondary_config
-    assert "variable_components=[VariableComponents.SITE]," in secondary_config
-    assert "group_by=GroupBy.NONE," in secondary_config
+    assert "variable_components=[]," in secondary_config
+    assert "group_by=GroupBy.SITE," in secondary_config
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

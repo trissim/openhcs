@@ -88,6 +88,7 @@ from openhcs.core.runtime_values import (
     ColumnarRows,
     RuntimeArrayPayload,
     SpatialGrid,
+    image_payload_data,
     image_payload_metadata,
     image_payload_mask,
     image_payload_with_context,
@@ -965,6 +966,315 @@ def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
     assert image.data.shape == (2, 2, 2)
     np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
     np.testing.assert_array_equal(image.data[1], np.full((2, 2), 2.0))
+
+
+def test_cellprofiler_adapter_projects_source_bound_runtime_image_to_group_plane():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    image_name = "MaskedMito"
+    image_path = "/memory/MaskedMito.pkl"
+    source_paths = (
+        "/plate/Images/A01_s1_w5.tif",
+        "/plate/Images/A01_s2_w5.tif",
+    )
+    source_metadata = (
+        {"site": "1", "channel": "5"},
+        {"site": "2", "channel": "5"},
+    )
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={
+            image_name: ArtifactOutputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+                paths_by_group={None: image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+    producer.add_image(
+        image_name,
+        image_payload_with_context(
+            np.stack(
+                (
+                    np.full((2, 3), 1.0, dtype=np.float32),
+                    np.full((2, 3), 2.0, dtype=np.float32),
+                ),
+                axis=0,
+            ),
+            metadata=ImagePayloadMetadata(
+                channel_source_paths=source_paths,
+                channel_source_component_metadata=source_metadata,
+            ),
+        ),
+    )
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="2",
+        axis_component="site",
+        axis_component_value="2",
+        plane_projection=RuntimePlaneProjection.group(1),
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=("2",),
+                paths_by_group={"2": image_path},
+            )
+        },
+        source_binding_context=SourceBindingRuntimeContext(
+            source_metadata_by_path=dict(
+                zip(source_paths, source_metadata, strict=True)
+            ),
+        ),
+        filemanager=filemanager,
+    )
+
+    image = consumer.get_image(image_name)
+    metadata = image_payload_metadata(image.data)
+
+    assert image_payload_data(image.data).shape == (2, 3)
+    np.testing.assert_array_equal(
+        image_payload_data(image.data),
+        np.full((2, 3), 2.0, dtype=np.float32),
+    )
+    assert metadata.source_path == source_paths[1]
+    assert metadata.source_component_metadata == source_metadata[1]
+
+
+def test_cellprofiler_adapter_deduplicates_grouped_runtime_image_input_locations():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    image_name = "MaskedMito"
+    image_path = "/memory/MaskedMito.pkl"
+    source_paths = (
+        "/plate/Images/A01_s1_w5.tif",
+        "/plate/Images/A01_s2_w5.tif",
+    )
+    source_metadata = (
+        {"site": "1", "channel": "5"},
+        {"site": "2", "channel": "5"},
+    )
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={
+            image_name: ArtifactOutputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+                paths_by_group={None: image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+    producer.add_image(
+        image_name,
+        image_payload_with_context(
+            np.stack(
+                (
+                    np.full((2, 3), 1.0, dtype=np.float32),
+                    np.full((2, 3), 2.0, dtype=np.float32),
+                ),
+                axis=0,
+            ),
+            metadata=ImagePayloadMetadata(
+                channel_source_paths=source_paths,
+                channel_source_component_metadata=source_metadata,
+            ),
+        ),
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        axis_component="site",
+        axis_component_value="2",
+        plane_projection=RuntimePlaneProjection.group(1),
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=("1", "2"),
+                paths_by_group={"1": image_path, "2": image_path},
+            )
+        },
+        source_binding_context=SourceBindingRuntimeContext(
+            source_metadata_by_path=dict(
+                zip(source_paths, source_metadata, strict=True)
+            ),
+        ),
+        filemanager=filemanager,
+    )
+
+    image = consumer.get_image(image_name)
+    metadata = image_payload_metadata(image.data)
+
+    assert image_payload_data(image.data).shape == (2, 3)
+    np.testing.assert_array_equal(
+        image_payload_data(image.data),
+        np.full((2, 3), 2.0, dtype=np.float32),
+    )
+    assert metadata.source_path == source_paths[1]
+    assert metadata.source_component_metadata == source_metadata[1]
+
+
+def test_cellprofiler_adapter_does_not_project_channel_stack_for_site_group():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    image_name = "Corrected"
+    image_path = "/memory/Corrected.pkl"
+    source_paths = (
+        "/plate/Images/A01_s2_w1.tif",
+        "/plate/Images/A01_s2_w2.tif",
+    )
+    source_metadata = (
+        {"site": "2", "channel": "1"},
+        {"site": "2", "channel": "2"},
+    )
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={
+            image_name: ArtifactOutputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+                paths_by_group={None: image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+    producer.add_image(
+        image_name,
+        image_payload_with_context(
+            np.stack(
+                (
+                    np.full((2, 3), 1.0, dtype=np.float32),
+                    np.full((2, 3), 2.0, dtype=np.float32),
+                ),
+                axis=0,
+            ),
+            metadata=ImagePayloadMetadata(
+                channel_source_paths=source_paths,
+                channel_source_component_metadata=source_metadata,
+            ),
+        ),
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="2",
+        axis_component="site",
+        axis_component_value="2",
+        plane_projection=RuntimePlaneProjection.group(1),
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=("2",),
+                paths_by_group={"2": image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    image = consumer.get_image(image_name)
+    metadata = image_payload_metadata(image.data)
+
+    assert image_payload_data(image.data).shape == (2, 2, 3)
+    np.testing.assert_array_equal(
+        image_payload_data(image.data)[0],
+        np.full((2, 3), 1.0, dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        image_payload_data(image.data)[1],
+        np.full((2, 3), 2.0, dtype=np.float32),
+    )
+    assert metadata.channel_source_paths == source_paths
+
+
+def test_cellprofiler_adapter_projects_stack_with_current_image_plane_context():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    image_name = "Masked"
+    image_path = "/memory/Masked.pkl"
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={
+            image_name: ArtifactOutputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=(None,),
+                paths_by_group={None: image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+    producer.add_image(
+        image_name,
+        image_payload_with_context(
+            np.stack(
+                (
+                    np.full((2, 3), 1.0, dtype=np.float32),
+                    np.full((2, 3), 2.0, dtype=np.float32),
+                ),
+                axis=0,
+            ),
+            metadata=ImagePayloadMetadata(
+                source_path="/plate/Images/A01_s1_w1.tif",
+                source_component_metadata={"site": "1", "channel": "1"},
+            ),
+        ),
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="2",
+        axis_component="site",
+        axis_component_value="2",
+        plane_projection=RuntimePlaneProjection.group(1),
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                kind=ArtifactKind.IMAGE,
+                group_keys=("2",),
+                paths_by_group={"2": image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+    current_image = image_payload_with_context(
+        np.zeros((2, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/Images/A01_s2_w1.tif",
+            source_component_metadata={"site": "2", "channel": "1"},
+        ),
+    )
+
+    image = consumer.get_image(image_name, current_image=current_image)
+    metadata = image_payload_metadata(image.data)
+
+    assert image_payload_data(image.data).shape == (2, 3)
+    np.testing.assert_array_equal(
+        image_payload_data(image.data),
+        np.full((2, 3), 2.0, dtype=np.float32),
+    )
+    assert metadata.source_path == "/plate/Images/A01_s2_w1.tif"
+    assert metadata.source_component_metadata == {"site": "2", "channel": "1"}
 
 
 def test_cellprofiler_adapter_keeps_template_scoped_object_records_grouped():

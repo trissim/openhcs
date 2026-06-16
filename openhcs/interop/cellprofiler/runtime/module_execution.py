@@ -165,6 +165,7 @@ from openhcs.core.runtime_values import (
     ColumnarRows,
     DerivedImagePayloadContext,
     MeasurementTable,
+    ObjectLabelData,
     ObjectLabelDenseDataStrategy,
     ObjectLabelMeasurementPayloadStrategy,
     DenseObjectLabelPlaneDomainStack,
@@ -193,6 +194,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
+    image_payload_slice_context,
     image_payload_with_context,
     project_image_mask_to_data_domain,
     normalize_image_payload_intensity,
@@ -282,6 +284,24 @@ from openhcs.interop.cellprofiler.runtime.adapter import (
 _MODULE_NAME_REGISTRY_KEY = "module_name"
 _CELLPROFILER_IMAGE_OVERRIDE_KWARG = "_cellprofiler_image_override"
 _CELLPROFILER_EXECUTION_MODE_OVERRIDE_KWARG = "_cellprofiler_execution_mode_override"
+CellProfilerSpecialInputValue = (
+    ImagePayloadMetadataInput
+    | ObjectLabelData
+    | ObjectLabelValue
+    | MeasurementTable
+    | ObjectRelationship
+    | SpatialGrid
+    | str
+    | int
+    | float
+    | bool
+    | None
+)
+CellProfilerSpecialInputKwargs = dict[str, CellProfilerSpecialInputValue]
+CellProfilerRuntimePlaneKwargValue = (
+    RuntimeSliceAlignedValueSet | CellProfilerSpecialInputValue
+)
+CellProfilerRuntimeCallable = Callable[..., CellProfilerSpecialInputValue]
 _SLICE_INDEX_PARAMETER = "slice_index"
 _MASK_IMAGE_MODULE = "MaskImage"
 _RELATE_OBJECTS_MODULE = "RelateObjects"
@@ -3085,6 +3105,7 @@ class MainFlowReplacementPolicySpec(GeneratedLeafClassSpec):
         return attrs
 
 
+_CORRECT_ILLUMINATION_APPLY_MODULE = "CorrectIlluminationApply"
 _CORRECT_ILLUMINATION_CALCULATE_MODULE = "CorrectIlluminationCalculate"
 
 
@@ -7549,7 +7570,10 @@ class CurrentRuntimePlaneKwargProjection:
         )
 
     @staticmethod
-    def project_value(value: Any, plane_index: int) -> Any:
+    def project_value(
+        value: CellProfilerRuntimePlaneKwargValue,
+        plane_index: int,
+    ) -> CellProfilerRuntimePlaneKwargValue:
         if isinstance(value, RuntimeSliceAlignedValueSet):
             if plane_index < 0 or plane_index >= value.slice_count:
                 raise ValueError(
@@ -7557,23 +7581,25 @@ class CurrentRuntimePlaneKwargProjection:
                     f"count: plane {plane_index} for {value.slice_count} slices."
                 )
             return value.value_for_slice(plane_index)
-        return CurrentRuntimeSliceObjectLabelProjection(
+        return CurrentPlaneObjectLabelProjection(
             value=value,
             plane_index=plane_index,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         ).projected_value()
 
 
 @dataclass(frozen=True, slots=True)
-class CurrentRuntimeSliceObjectLabelProjection:
-    """Project object labels only when the current group selects their plane axis."""
+class CurrentPlaneObjectLabelProjection:
+    """Project object labels only when the current invocation selects their plane axis."""
 
-    value: Any
+    value: ObjectLabelValue | ObjectLabelData
     plane_index: int
+    plane_axis: RuntimePlaneAxis
 
-    def projected_value(self) -> Any:
+    def projected_value(self) -> ObjectLabelValue | ObjectLabelData:
         if not isinstance(self.value, ObjectLabelValue):
             return self.value
-        if self.value.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+        if self.value.plane_axis is not self.plane_axis:
             return self.value
         labels = object_label_dense_array(self.value)
         if not isinstance(labels, np.ndarray) or labels.ndim < 3:
@@ -8577,6 +8603,195 @@ class CellProfilerOutputContextSelectionMixin(ABC):
         """Return the type error message for unsupported output payloads."""
 
 
+class CellProfilerImageOutputSourcePayloadPolicy(
+    CellProfilerModulePolicyLookupMixin,
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
+    """Resolve metadata-bearing source payloads for declared image outputs."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
+
+    @abstractmethod
+    def source_payload(self, request: CellProfilerOutputRecordRequest) -> Any | None:
+        """Return source context for one image output artifact."""
+
+
+class DefaultImageOutputSourcePayloadPolicy(CellProfilerImageOutputSourcePayloadPolicy):
+    """Use the invocation source payload when a module has no output map."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
+
+    def source_payload(self, request: CellProfilerOutputRecordRequest) -> Any | None:
+        return request.source_image_payload
+
+
+class CellProfilerImageOutputValuePolicy(
+    CellProfilerModulePolicyLookupMixin,
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
+    """Normalize declared image output values before source context is attached."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
+
+    @abstractmethod
+    def output_value(self, request: CellProfilerOutputRecordRequest) -> Any:
+        """Return the value to record for one image output artifact."""
+
+
+class DefaultImageOutputValuePolicy(CellProfilerImageOutputValuePolicy):
+    """Record image outputs exactly as produced by CellProfiler."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
+
+    def output_value(self, request: CellProfilerOutputRecordRequest) -> Any:
+        return request.value
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerInputImageSourcePayload:
+    """Resolve one declared image input into a metadata-bearing payload."""
+
+    request: CellProfilerOutputRecordRequest
+    spec: ArtifactSpec
+
+    def payload(self) -> Any | None:
+        if self.spec.name in self.runtime_image_names:
+            return self.runtime_payload()
+        return self.external_payload()
+
+    @property
+    def runtime_image_names(self) -> frozenset[str]:
+        return frozenset(self.request.executor.runtime_image_names)
+
+    def runtime_payload(self) -> Any | None:
+        runtime_current_image = (
+            self.request.executor._primary_image_input_policy.runtime_image_current_image(
+                self.request.executor.module_name,
+                self.spec,
+                self.request.current_image,
+            )
+        )
+        return self.request.adapter.get_image(
+            self.spec.name,
+            current_image=runtime_current_image,
+        ).data
+
+    def external_payload(self) -> Any | None:
+        if self.request.current_image is None:
+            return self.request.source_image_payload
+        return self.request.adapter.resolve_source_image(
+            self.spec.name,
+            self.request.current_image,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectIlluminationApplyOutputSourceInput:
+    """Map corrected image outputs back to their original source image inputs."""
+
+    request: CellProfilerOutputRecordRequest
+
+    def spec(self) -> ArtifactSpec | None:
+        input_specs = {spec.name: spec for spec in self.original_image_inputs()}
+        for candidate_name in self.candidate_names():
+            if candidate_name in input_specs:
+                return input_specs[candidate_name]
+        return None
+
+    def original_image_inputs(self) -> tuple[ArtifactSpec, ...]:
+        return tuple(
+            spec
+            for spec in self.request.executor.primary_image_inputs(self.request.func)
+            if spec.name.startswith("Orig")
+        )
+
+    def candidate_names(self) -> tuple[str, ...]:
+        output_name = self.request.spec.name
+        if output_name.startswith("Orig"):
+            return (output_name,)
+        return (f"Orig{output_name}", output_name)
+
+
+class CorrectIlluminationApplyImageOutputSourcePayloadPolicy(
+    CellProfilerImageOutputSourcePayloadPolicy
+):
+    """Use the corrected channel's original image as output provenance."""
+
+    module_name = _CORRECT_ILLUMINATION_APPLY_MODULE
+
+    def source_payload(self, request: CellProfilerOutputRecordRequest) -> Any | None:
+        source_spec = CorrectIlluminationApplyOutputSourceInput(request).spec()
+        if source_spec is None:
+            return request.source_image_payload
+        return CellProfilerInputImageSourcePayload(request, source_spec).payload()
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectedImageOutputPlaneStack:
+    """Detect corrected-image output stacks that represent one source plane."""
+
+    value: Any
+
+    def plane_index(self) -> int | None:
+        data = np.asarray(image_payload_data(self.value))
+        if data.ndim < 3 or is_color_image_slice(data):
+            return None
+        if data.shape[0] == 1:
+            return 0
+        if self.has_duplicate_source_plane_identity(data.shape[0]):
+            return 0
+        return None
+
+    def has_duplicate_source_plane_identity(self, plane_count: int) -> bool:
+        identities = self.plane_identities(plane_count)
+        if not identities:
+            return False
+        return len(frozenset(identities)) == 1
+
+    def plane_identities(
+        self,
+        plane_count: int,
+    ) -> tuple[tuple[str | None, tuple[tuple[str, str], ...] | None], ...]:
+        provenance = image_payload_metadata(self.value).source_provenance
+        if provenance.channel_plane_count != plane_count:
+            return ()
+        return tuple(
+            provenance.for_channel(plane_index).identity()
+            for plane_index in range(plane_count)
+        )
+
+
+class CorrectIlluminationApplyImageOutputValuePolicy(CellProfilerImageOutputValuePolicy):
+    """Collapse duplicate grouped-plane stacks emitted for one corrected source."""
+
+    module_name = _CORRECT_ILLUMINATION_APPLY_MODULE
+
+    def output_value(self, request: CellProfilerOutputRecordRequest) -> Any:
+        plane_index = CorrectedImageOutputPlaneStack(request.value).plane_index()
+        if plane_index is None:
+            return request.value
+        output_data = np.asarray(image_payload_data(request.value))[plane_index]
+        return image_payload_slice_context(request.value, output_data, plane_index)
+
+
 class CellProfilerImageOutputContextStrategy(
     CellProfilerOutputContextSelectionMixin,
     NominalTypeKeyedStrategyMixin,
@@ -8814,11 +9029,17 @@ class ImageOutputRecorder(ImmediateOutputRecorder):
     kind = ArtifactKind.IMAGE
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
+        output_value = CellProfilerImageOutputValuePolicy.for_module(
+            request.executor.module_name
+        ).output_value(request)
+        source_payload = CellProfilerImageOutputSourcePayloadPolicy.for_module(
+            request.executor.module_name
+        ).source_payload(request)
         value = CellProfilerImageOutputContextStrategy.for_value(
-            request.value
+            output_value
         ).runtime_image_value(
-            request.value,
-            request.source_image_payload,
+            output_value,
+            source_payload,
         )
         request.adapter.add_image(
             request.spec.name,
@@ -11734,7 +11955,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
     def runtime_value_without_current_image_projection(
         self,
         spec: ArtifactSpec,
-    ) -> Any:
+    ) -> CellProfilerSpecialInputValue:
         """Return a runtime artifact input without ambient source-image narrowing."""
         request = replace(self.artifact_input_request(spec), current_image=None)
         return RuntimeArtifactKindStrategy.for_kind(spec.kind).runtime_input_value(request)
@@ -11743,7 +11964,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         self,
         spec: ArtifactSpec,
         semantics: CellProfilerSpecialInputPayloadSemantics,
-    ) -> Any:
+    ) -> ObjectLabelData:
         """Return an object-label special input in the invocation's artifact domain."""
         payload = RuntimeArtifactKindStrategy.for_kind(spec.kind).runtime_input_value(
             self.artifact_input_request(spec)
@@ -11751,16 +11972,30 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         del semantics
         return object_label_dense_array(payload, dtype=np.int32)
 
-    def current_plane_object_label_runtime_value(self, spec: ArtifactSpec) -> Any:
+    def current_plane_object_label_runtime_value(
+        self,
+        spec: ArtifactSpec,
+    ) -> ObjectLabelData:
         """Return object labels projected into the invocation's current plane."""
         payload = RuntimeArtifactKindStrategy.for_kind(spec.kind).runtime_input_value(
             self.artifact_input_request(spec)
         )
-        plane_index = self.adapter.runtime_slice_plane_index()
+        if not isinstance(payload, ObjectLabelValue):
+            return object_label_dense_array(payload, dtype=np.int32)
+        plane_axis = payload.plane_axis
+        source_aliases = ObjectLabelSourceAliasesAuthority(payload).source_alias_group
+        try:
+            plane_index = RuntimePlaneAxisProjectionRequest(
+                plane_axis,
+                source_aliases,
+            ).resolve(self.adapter)
+        except NotImplementedError:
+            plane_index = None
         if plane_index is not None:
-            payload = CurrentRuntimeSliceObjectLabelProjection(
+            payload = CurrentPlaneObjectLabelProjection(
                 value=payload,
                 plane_index=plane_index,
+                plane_axis=plane_axis,
             ).projected_value()
         return object_label_dense_array(payload, dtype=np.int32)
 
@@ -11810,7 +12045,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
                 source_aliases=aliases,
                 source_plane_index=source_plane_index,
             )
-            if source_plane_index == plane_index:
+            if source_plane_index is not None:
                 return True
         return False
 
@@ -11842,7 +12077,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
             runtime_image_names=self.runtime_image_names,
         )
 
-    def bind_positional_parameters(self) -> dict[str, Any]:
+    def bind_positional_parameters(self) -> CellProfilerSpecialInputKwargs:
         """Bind declared special-input parameters to compiled runtime specs."""
         if len(self.parameter_names) != len(self.special_input_specs):
             raise NotImplementedError(
@@ -11880,7 +12115,7 @@ class CellProfilerSpecialInputPolicy(
     def special_image_inputs(
         self,
         module_name: str,
-        func: Callable[..., Any],
+        func: CellProfilerRuntimeCallable,
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
         """Return trailing image specs consumed by special_inputs instead of primary image payload."""
@@ -11890,9 +12125,9 @@ class CellProfilerSpecialInputPolicy(
     def binding_current_image(
         self,
         *,
-        current_image: Any,
-        primary_image: Any | None,
-    ) -> Any:
+        current_image: ImagePayloadMetadataInput,
+        primary_image: ImagePayloadMetadataInput | None,
+    ) -> ImagePayloadMetadataInput:
         """Return the source image context used to bind special inputs."""
         del primary_image
         return current_image
@@ -11901,7 +12136,7 @@ class CellProfilerSpecialInputPolicy(
     def bind(
         self,
         request: SpecialInputBindingRequest,
-    ) -> dict[str, Any]:
+    ) -> CellProfilerSpecialInputKwargs:
         """Return kwargs for a callable's declared special_inputs."""
 
 
@@ -11913,7 +12148,7 @@ class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
     def bind(
         self,
         request: SpecialInputBindingRequest,
-    ) -> dict[str, Any]:
+    ) -> CellProfilerSpecialInputKwargs:
         return request.bind_positional_parameters()
 
 
@@ -11921,7 +12156,7 @@ class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
 class ObjectLabelSourceAliasesAuthority:
     """Source-binding alias semantics carried by an object-label value."""
 
-    labels: ObjectLabelSet
+    labels: ObjectLabelValue
 
     @property
     def source_aliases(self) -> tuple[str, ...]:
@@ -11930,8 +12165,9 @@ class ObjectLabelSourceAliasesAuthority:
         )
         if aliases:
             return aliases
-        if self.labels.source_image_name:
-            return (self.labels.source_image_name,)
+        source_image_name = self.source_image_name
+        if source_image_name:
+            return (source_image_name,)
         return ()
 
     @property
@@ -11944,7 +12180,9 @@ class ObjectLabelSourceAliasesAuthority:
     @property
     def composed_source_axis(self) -> tuple[str, ...]:
         axis = self._source_image_name_axis
-        return axis if len(axis) > 1 else ()
+        if len(axis) <= 1:
+            return ()
+        return axis
 
     @property
     def is_composed_source_axis_component(self) -> bool:
@@ -11958,9 +12196,14 @@ class ObjectLabelSourceAliasesAuthority:
 
     @property
     def _source_image_name_axis(self) -> tuple[str, ...]:
-        if not self.labels.source_image_name:
+        source_image_name = self.source_image_name
+        if not source_image_name:
             return ()
-        return tuple(alias for alias in self.labels.source_image_name.split("__") if alias)
+        return tuple(alias for alias in source_image_name.split("__") if alias)
+
+    @property
+    def source_image_name(self) -> str | None:
+        return self.labels.source_image_name
 
 
 class ObjectLabelPlaneAlignmentAbsenceReason(str, Enum):
