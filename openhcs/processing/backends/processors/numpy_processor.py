@@ -9,7 +9,8 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit NumPy dependency
 - Clause 106-A — Declared Memory Types: All methods specify NumPy arrays
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 import logging
 from typing import Any, List, Optional, Tuple
@@ -26,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 @numpy_func
-def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> np.ndarray:
+def create_linear_weight_mask(
+    height: int, width: int, margin_ratio: float = 0.1
+) -> np.ndarray:
     """
     Create a 2D weight mask that linearly ramps from 0 at the edges to 1 in the center.
 
@@ -79,6 +82,7 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
     if array.ndim != 3:
         raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
+
 @numpy_func
 def sharpen(image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.ndarray:
     """
@@ -116,18 +120,23 @@ def sharpen(image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.n
         sharpened = np.clip(sharpened, 0, 1.0)
 
         # Scale back to original range
-        sharpened = exposure.rescale_intensity(sharpened, in_range='image', out_range=(0, 65535))
+        sharpened = exposure.rescale_intensity(
+            sharpened, in_range="image", out_range=(0, 65535)
+        )
         result[z] = sharpened
 
     # Convert back to original dtype
     return result.astype(dtype)
 
+
 @numpy_func
-def percentile_normalize(image: np.ndarray,
-                        low_percentile: float = 1.0,
-                        high_percentile: float = 99.0,
-                        target_min: float = 0.0,
-                        target_max: float = 65535.0) -> np.ndarray:
+def percentile_normalize(
+    image: np.ndarray,
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: float = 0.0,
+    target_max: float = 65535.0,
+) -> np.ndarray:
     """
     Normalize a 3D image using percentile-based contrast stretching.
 
@@ -161,15 +170,20 @@ def percentile_normalize(image: np.ndarray,
         percentile_func=np.percentile,
         clip_func=np.clip,
         ones_like_func=np.ones_like,
-        zeros_like_func=lambda arr, dtype=None: np.zeros_like(arr, dtype=dtype or np.float32)
+        zeros_like_func=lambda arr, dtype=None: np.zeros_like(
+            arr, dtype=dtype or np.float32
+        ),
     )
 
+
 @numpy_func
-def stack_percentile_normalize(stack: np.ndarray,
-                              low_percentile: float = 1.0,
-                              high_percentile: float = 99.0,
-                              target_min: float = 0.0,
-                              target_max: float = 65535.0) -> np.ndarray:
+def stack_percentile_normalize(
+    stack: np.ndarray,
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: float = 0.0,
+    target_max: float = 65535.0,
+) -> np.ndarray:
     """
     Normalize a stack using global percentile-based contrast stretching.
 
@@ -203,8 +217,9 @@ def stack_percentile_normalize(stack: np.ndarray,
         target_max=target_max,
         percentile_func=lambda arr, pct: np.percentile(arr, pct, axis=None),
         clip_func=np.clip,
-        ones_like_func=np.ones_like
+        ones_like_func=np.ones_like,
     )
+
 
 @numpy_func
 def create_composite(
@@ -233,9 +248,13 @@ def create_composite(
         # Convert tuple to list if needed
         weights = list(weights)
         if len(weights) != n_slices:
-            raise ValueError(f"Number of weights ({len(weights)}) must match number of slices ({n_slices})")
+            raise ValueError(
+                f"Number of weights ({len(weights)}) must match number of slices ({n_slices})"
+            )
     else:
-        raise TypeError(f"weights must be a list of values or None, got {type(weights)}: {weights}")
+        raise TypeError(
+            f"weights must be a list of values or None, got {type(weights)}: {weights}"
+        )
 
     # Normalize weights to sum to 1
     weight_sum = sum(weights)
@@ -260,6 +279,7 @@ def create_composite(
     composite_slice = composite_slice.astype(stack.dtype)
 
     return composite_slice
+
 
 @numpy_func
 def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -306,6 +326,7 @@ def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     # If we get here, the mask is neither 2D nor 3D NumPy array
     raise TypeError(f"mask must be a 2D or 3D NumPy array, got {type(mask)}")
 
+
 @numpy_func
 def create_weight_mask(shape: Tuple[int, int], margin_ratio: float = 0.1) -> np.ndarray:
     """
@@ -324,6 +345,7 @@ def create_weight_mask(shape: Tuple[int, int], margin_ratio: float = 0.1) -> np.
     height, width = shape
     return create_linear_weight_mask(height, width, margin_ratio)
 
+
 @numpy_func
 def max_projection(stack: np.ndarray) -> np.ndarray:
     """
@@ -341,6 +363,7 @@ def max_projection(stack: np.ndarray) -> np.ndarray:
     projection_2d = np.max(stack, axis=0)
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
+
 @numpy_func
 def mean_projection(stack: np.ndarray) -> np.ndarray:
     """
@@ -357,6 +380,42 @@ def mean_projection(stack: np.ndarray) -> np.ndarray:
     # Create mean projection
     projection_2d = np.mean(stack, axis=0).astype(stack.dtype)
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+
+
+@numpy_func
+def create_orthogonal_projections(
+    stack: np.ndarray, projections: Tuple[str, ...] = ("xy", "xz", "yz")
+) -> dict:
+    """
+    Create orthogonal max projections from a Z-stack.
+
+    Args:
+        stack: 3D NumPy array of shape (Z, Y, X)
+        projections: Tuple of projection types to create. Options: "xy", "xz", "yz"
+
+    Returns:
+        Dict of 2D NumPy arrays, keyed by projection type:
+        - "xy": (Y, X) - max along Z axis (top-down view)
+        - "xz": (Z, X) - max along Y axis (side view)
+        - "yz": (Z, Y) - max along X axis (side view)
+
+    Invariants:
+        - Pure function: same input → same output
+        - No external dependencies beyond numpy
+        - Returns data, never performs I/O
+        - Testable in isolation
+    """
+    _validate_3d_array(stack)
+
+    result = {}
+    if "xy" in projections:
+        result["xy"] = stack.max(axis=0)
+    if "xz" in projections:
+        result["xz"] = stack.max(axis=1)
+    if "yz" in projections:
+        result["yz"] = stack.max(axis=2)
+    return result
+
 
 @numpy_func
 def gaussian_blur(stack: np.ndarray, sigma: float = 1.0) -> np.ndarray:
@@ -379,11 +438,10 @@ def gaussian_blur(stack: np.ndarray, sigma: float = 1.0) -> np.ndarray:
 
     return blurred.astype(stack.dtype)
 
+
 @numpy_func
 def spatial_bin_2d(
-    stack: np.ndarray,
-    bin_size: int = 2,
-    method: str = "mean"
+    stack: np.ndarray, bin_size: int = 2, method: str = "mean"
 ) -> np.ndarray:
     """
     Apply 2D spatial binning to each slice in the stack.
@@ -413,7 +471,9 @@ def spatial_bin_2d(
     new_width = width // bin_size
 
     if new_height == 0 or new_width == 0:
-        raise ValueError(f"bin_size {bin_size} is too large for image dimensions {height}x{width}")
+        raise ValueError(
+            f"bin_size {bin_size} is too large for image dimensions {height}x{width}"
+        )
 
     # Crop to make dimensions divisible by bin_size
     crop_height = new_height * bin_size
@@ -421,7 +481,9 @@ def spatial_bin_2d(
     cropped_stack = stack[:, :crop_height, :crop_width]
 
     # Reshape for binning: (Z, new_height, bin_size, new_width, bin_size)
-    reshaped = cropped_stack.reshape(z_slices, new_height, bin_size, new_width, bin_size)
+    reshaped = cropped_stack.reshape(
+        z_slices, new_height, bin_size, new_width, bin_size
+    )
 
     # Apply binning operation
     if method == "mean":
@@ -435,11 +497,10 @@ def spatial_bin_2d(
 
     return result.astype(stack.dtype)
 
+
 @numpy_func
 def spatial_bin_3d(
-    stack: np.ndarray,
-    bin_size: int = 2,
-    method: str = "mean"
+    stack: np.ndarray, bin_size: int = 2, method: str = "mean"
 ) -> np.ndarray:
     """
     Apply 3D spatial binning to the entire stack.
@@ -469,7 +530,9 @@ def spatial_bin_3d(
     new_width = width // bin_size
 
     if new_depth == 0 or new_height == 0 or new_width == 0:
-        raise ValueError(f"bin_size {bin_size} is too large for stack dimensions {depth}x{height}x{width}")
+        raise ValueError(
+            f"bin_size {bin_size} is too large for stack dimensions {depth}x{height}x{width}"
+        )
 
     # Crop to make dimensions divisible by bin_size
     crop_depth = new_depth * bin_size
@@ -478,7 +541,9 @@ def spatial_bin_3d(
     cropped_stack = stack[:crop_depth, :crop_height, :crop_width]
 
     # Reshape for 3D binning: (new_depth, bin_size, new_height, bin_size, new_width, bin_size)
-    reshaped = cropped_stack.reshape(new_depth, bin_size, new_height, bin_size, new_width, bin_size)
+    reshaped = cropped_stack.reshape(
+        new_depth, bin_size, new_height, bin_size, new_width, bin_size
+    )
 
     # Apply binning operation across the three bin_size dimensions
     if method == "mean":
@@ -492,12 +557,13 @@ def spatial_bin_3d(
 
     return result.astype(stack.dtype)
 
+
 @numpy_func
 def stack_equalize_histogram(
     stack: np.ndarray,
     bins: int = 65536,
     range_min: float = 0.0,
-    range_max: float = 65535.0
+    range_max: float = 65535.0,
 ) -> np.ndarray:
     """
     Apply histogram equalization to an entire stack.
@@ -537,14 +603,19 @@ def stack_equalize_histogram(
             cdf = cdf / cdf[-1]
 
     # Use linear interpolation to map input values to equalized values
-    equalized_stack = np.interp(stack.flatten(), bin_edges[:-1], cdf).reshape(stack.shape)
+    equalized_stack = np.interp(stack.flatten(), bin_edges[:-1], cdf).reshape(
+        stack.shape
+    )
 
     # Convert back to input dtype
     if np.issubdtype(input_dtype, np.integer):
         dtype_info = np.iinfo(input_dtype)
-        return np.clip(equalized_stack, dtype_info.min, dtype_info.max).astype(input_dtype)
+        return np.clip(equalized_stack, dtype_info.min, dtype_info.max).astype(
+            input_dtype
+        )
     else:
         return equalized_stack.astype(input_dtype)
+
 
 @numpy_func
 def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
@@ -567,7 +638,9 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
         return mean_projection(stack)
 
     # FAIL FAST: No fallback projection methods
-    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
+    raise ValueError(
+        f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection"
+    )
 
 
 @numpy_func
@@ -578,7 +651,7 @@ def crop(
     start_z: int = 0,
     width: int = 1,
     height: int = 1,
-    depth: int = 1
+    depth: int = 1,
 ) -> np.ndarray:
     """
     Crop a given substack out of a given image stack.
@@ -611,10 +684,14 @@ def crop(
 
     # Validate crop parameters
     if width <= 0 or height <= 0 or depth <= 0:
-        raise ValueError(f"Crop dimensions must be positive: width={width}, height={height}, depth={depth}")
+        raise ValueError(
+            f"Crop dimensions must be positive: width={width}, height={height}, depth={depth}"
+        )
 
     if start_x < 0 or start_y < 0 or start_z < 0:
-        raise ValueError(f"Start coordinates must be non-negative: start_x={start_x}, start_y={start_y}, start_z={start_z}")
+        raise ValueError(
+            f"Start coordinates must be non-negative: start_x={start_x}, start_y={start_y}, start_z={start_z}"
+        )
 
     # Get input dimensions
     input_depth, input_height, input_width = input_image.shape
@@ -637,13 +714,14 @@ def crop(
 
     return cropped
 
+
 @numpy_func
 def tophat(
     image: np.ndarray,
     selem_radius: int = 50,
     downsample_factor: int = 4,
     downsample_anti_aliasing: bool = True,
-    upsample_order: int = 0
+    upsample_order: int = 0,
 ) -> np.ndarray:
     """
     Apply white top-hat filter to a 3D image for background removal.
@@ -672,9 +750,12 @@ def tophat(
         # 1) Downsample
         image_small = trans.resize(
             image[z],
-            (image[z].shape[0]//downsample_factor, image[z].shape[1]//downsample_factor),
+            (
+                image[z].shape[0] // downsample_factor,
+                image[z].shape[1] // downsample_factor,
+            ),
             anti_aliasing=downsample_anti_aliasing,
-            preserve_range=True
+            preserve_range=True,
         )
 
         # 2) Build structuring element for the smaller image
@@ -686,10 +767,7 @@ def tophat(
         # 4) Upscale background to original size
         background_small = image_small - tophat_small
         background_large = trans.resize(
-            background_small,
-            image[z].shape,
-            order=upsample_order,
-            preserve_range=True
+            background_small, image[z].shape, order=upsample_order, preserve_range=True
         )
 
         # 5) Subtract background and clip negative values
