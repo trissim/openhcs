@@ -15,11 +15,13 @@ from openhcs.interop.cellprofiler.runtime import (
 from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerImageNumberResolver,
     CurrentSourceObjectLabelPayloadProjection,
+    ObjectLabelMeasurementSliceBatchResolver,
     ObjectLabelMeasurementSliceRequest,
     ObjectMeasurementTableIndex,
     ParsedSourceCandidate,
     ParsedSourceCandidateCollection,
     SpatialGridValueAuthority,
+    SourceBindingAxisPlaneResolution,
     SourceImageSetIdentityCompatibility,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
@@ -300,6 +302,52 @@ def test_axis_image_number_start_matches_declared_axis_component_only():
                 "site": "2",
                 "channel": "2",
                 "timepoint": "1",
+            },
+        },
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id="2",
+        source_binding_context=context,
+        axis_component="site",
+        processing_context=SimpleNamespace(
+            microscope_handler=SimpleNamespace(
+                parser=SimpleNamespace(parse_filename=lambda _name: {})
+            )
+        ),
+    )
+
+    assert adapter.cellprofiler_axis_image_number_start() == 2
+
+
+def test_axis_image_number_start_matches_cellprofiler_metadata_spelling():
+    context = SourceBindingRuntimeContext(
+        pipeline_input_files=(
+            "plate1_A14_site1_Ch1.tif",
+            "plate1_A14_site1_Ch4.tif",
+            "plate1_A14_site2_Ch1.tif",
+            "plate1_A14_site2_Ch4.tif",
+        ),
+        source_metadata_by_path={
+            "plate1_A14_site1_Ch1.tif": {
+                "Well": "A14",
+                "Site": "1",
+                "ChannelNumber": "1",
+            },
+            "plate1_A14_site1_Ch4.tif": {
+                "Well": "A14",
+                "Site": "1",
+                "ChannelNumber": "4",
+            },
+            "plate1_A14_site2_Ch1.tif": {
+                "Well": "A14",
+                "Site": "2",
+                "ChannelNumber": "1",
+            },
+            "plate1_A14_site2_Ch4.tif": {
+                "Well": "A14",
+                "Site": "2",
+                "ChannelNumber": "4",
             },
         },
     )
@@ -2914,6 +2962,15 @@ def test_cellprofiler_adapter_source_binding_plane_uses_group_order_for_volumes(
     assert adapter.source_binding_axis_plane_index(("origDNA", "origMemb")) is None
 
 
+def test_source_binding_axis_plane_resolution_keeps_composed_alias_axis():
+    resolution = SourceBindingAxisPlaneResolution(
+        source_aliases=("OrigDNA", "OrigER", "OrigMito", "OrigRNA"),
+        indexes=(36, 6),
+    )
+
+    assert resolution.plane_index() is None
+
+
 def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_unqualified():
     single_source_bindings = StepSourceBindingsConfig(
         groups=(
@@ -2969,6 +3026,135 @@ def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_
 
     assert single_adapter.source_binding_axis_plane_index(()) == 1
     assert multi_adapter.source_binding_axis_plane_index(()) is None
+
+
+def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metadata():
+    dna_virtual_path = "A14_s001_w1_z001_t001.tif"
+    dna_real_path = "/plate/images_Illum-corrected/plate1_A14_site1_Ch1.tif"
+    dna_archive_en_path = (
+        "/plate/Archive_EN/images_Illum-corrected/plate1_A14_site1_Ch1.tif"
+    )
+    dna_archive_es_path = (
+        "/plate/Archive_ES/images_Illum-corrected/plate1_A14_site1_Ch1.tif"
+    )
+    er_virtual_path = "A14_s001_w2_z001_t001.tif"
+    er_real_path = "/plate/images_Illum-corrected/plate1_A14_site1_Ch2.tif"
+    er_archive_en_path = (
+        "/plate/Archive_EN/images_Illum-corrected/plate1_A14_site1_Ch2.tif"
+    )
+    er_archive_es_path = (
+        "/plate/Archive_ES/images_Illum-corrected/plate1_A14_site1_Ch2.tif"
+    )
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="OrigDNA",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "Ch1",
+                                ),
+                            )
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="OrigER",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "Ch2",
+                                ),
+                            )
+                        ),
+                    ),
+                )
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(
+            method=SourceBindingMatchMethod.METADATA,
+            dimensions=(
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField("OrigDNA", "Well"),
+                        SourceBindingMatchField("OrigER", "Well"),
+                    )
+                ),
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField("OrigDNA", "Site"),
+                        SourceBindingMatchField("OrigER", "Site"),
+                    )
+                ),
+            ),
+        ),
+    )
+    dna_metadata = {
+        "Plate": "plate1",
+        "Well": "A14",
+        "Site": "1",
+        "ChannelNumber": "1",
+    }
+    er_metadata = {
+        "Plate": "plate1",
+        "Well": "A14",
+        "Site": "1",
+        "ChannelNumber": "2",
+    }
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(dna_virtual_path,),
+        current_step_input_files=(dna_virtual_path,),
+        step_input_source_paths={
+            dna_virtual_path: dna_real_path,
+            er_virtual_path: er_real_path,
+        },
+        source_metadata_by_path={
+            dna_virtual_path: dna_metadata,
+            dna_real_path: dna_metadata,
+            dna_archive_en_path: dna_metadata,
+            dna_archive_es_path: dna_metadata,
+            er_virtual_path: er_metadata,
+            er_real_path: er_metadata,
+            er_archive_en_path: er_metadata,
+            er_archive_es_path: er_metadata,
+        },
+        pipeline_input_files=(
+            dna_archive_en_path,
+            dna_archive_es_path,
+            dna_real_path,
+            er_archive_en_path,
+            er_archive_es_path,
+            er_real_path,
+        ),
+        pipeline_input_backend="memory",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id="A14",
+        axis_component="site",
+        axis_component_value="1",
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(FileManagerStub()),
+        filemanager=FileManagerStub(),
+    )
+
+    dna_plane_index = adapter.source_binding_axis_plane_index(("OrigDNA",))
+    dna_candidate_context = adapter.source_binding_plane_candidate_context("OrigDNA")
+    er_plane_index = adapter.source_binding_axis_plane_index(("OrigER",))
+    er_candidate_context = adapter.source_binding_plane_candidate_context("OrigER")
+
+    assert dna_candidate_context is not None
+    assert dna_candidate_context.axis_candidates[dna_plane_index].path == dna_virtual_path
+    assert er_candidate_context is not None
+    assert er_candidate_context.axis_candidates[er_plane_index].path == er_virtual_path
 
 
 def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unprojected():
@@ -3069,6 +3255,66 @@ def test_current_source_object_labels_project_source_binding_axis_without_plane_
     np.testing.assert_array_equal(
         object_label_dense_array(projected),
         np.asarray([[0, 0], [0, 2]], dtype=np.int32),
+    )
+
+
+def test_current_source_object_labels_project_duplicate_source_stack_by_provenance():
+    virtual_path = "A14_s001_w4_z001_t001.tif"
+    real_path = "/plate/images_Illum-corrected/plate1_A14_site1_Ch4.tif"
+    archive_en_path = (
+        "/plate/Archive_EN/images_Illum-corrected/plate1_A14_site1_Ch4.tif"
+    )
+    archive_es_path = (
+        "/plate/Archive_ES/images_Illum-corrected/plate1_A14_site1_Ch4.tif"
+    )
+    archive_pt_path = (
+        "/plate/Archive_PT/images_Illum-corrected/plate1_A14_site1_Ch4.tif"
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id="A14",
+        axis_component="site",
+        axis_component_value="1",
+        source_binding_context=SourceBindingRuntimeContext(
+            step_input_source_paths={virtual_path: real_path},
+        ),
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=np.asarray(
+            (
+                [[1, 0], [0, 0]],
+                [[0, 2], [0, 0]],
+                [[0, 0], [3, 0]],
+                [[0, 0], [0, 4]],
+            ),
+            dtype=np.int32,
+        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        channel_source_paths=(
+            real_path,
+            archive_en_path,
+            archive_es_path,
+            archive_pt_path,
+        ),
+        source_image_names=(
+            "OrigActin_Golgi_Membrane",
+            "OrigActin_Golgi_Membrane",
+            "OrigActin_Golgi_Membrane",
+            "OrigActin_Golgi_Membrane",
+        ),
+        source_image_name="OrigActin_Golgi_Membrane",
+    )
+
+    projected = CurrentSourceObjectLabelPayloadProjection(
+        adapter,
+        current_image=np.zeros((2, 2), dtype=np.float32),
+    ).project(labels)
+
+    np.testing.assert_array_equal(
+        object_label_dense_array(projected),
+        np.asarray([[1, 0], [0, 0]], dtype=np.int32),
     )
 
 
@@ -4939,15 +5185,17 @@ def test_adapter_batch_child_count_lookup_uses_parent_row_domain():
         object_id_field="object_label",
     )
 
-    values_by_object = adapter.measurement_values_for_label_slice_batch(
-        {
+    values_by_object = ObjectLabelMeasurementSliceBatchResolver(
+        adapter=adapter,
+        requests={
             "PH3": ObjectLabelMeasurementSliceRequest(
                 feature_name="Children_PH3_Count",
                 labels=labels,
             )
         },
         feature_name="Children_PH3_Count",
-    )
+        group_key=None,
+    ).resolve()
 
     np.testing.assert_allclose(values_by_object["PH3"][0], [2.0, 5.0])
 

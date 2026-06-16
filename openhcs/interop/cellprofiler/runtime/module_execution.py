@@ -276,8 +276,10 @@ from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerImageNumberResolver,
     CellProfilerRuntimeAdapter,
     CurrentSourcePayloadPlaneSelector,
+    ObjectLabelMeasurementSliceBatchResolver,
     ObjectLabelMeasurementSliceRequest,
     PipelineStartSourceFileLoader,
+    RuntimeArtifactRecordResolver,
     SourceBindingResolver,
 )
 
@@ -4560,12 +4562,12 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
             )
             for binding in self.bindings
         }
-        vectors = self.bindings[
-            0
-        ].request.adapter.measurement_values_for_label_slice_batch(
-            requests,
+        vectors = ObjectLabelMeasurementSliceBatchResolver(
+            adapter=self.bindings[0].request.adapter,
+            requests=requests,
             feature_name=feature_name,
-        )
+            group_key=None,
+        ).resolve()
         return tuple(
             CellProfilerMeasurementVector(
                 ObjectMeasurementVectorDomain(
@@ -6860,11 +6862,13 @@ class DeclaredMeasurementInputSelection:
             return cached
         tables: list[MeasurementTable] = []
         for spec in self.measurement_specs:
-            for record in self.request.adapter._resolve_runtime_records(
+            for record in RuntimeArtifactRecordResolver(
+                adapter=self.request.adapter,
                 name=spec.name,
                 kind=ArtifactKind.MEASUREMENTS,
+                group_key=None,
                 current_image=None,
-            ):
+            ).resolve():
                 table = MeasurementTable.from_runtime_value(record.value)
                 tables.append(table)
         resolved = tuple(tables)
