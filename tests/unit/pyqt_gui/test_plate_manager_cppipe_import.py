@@ -12,6 +12,9 @@ from openhcs.pyqt_gui.widgets.plate_manager import (
     PlateManagerWidget,
     ROOT_SCOPE_ID,
 )
+from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerDeletionWorkflow,
+)
 from tests.unit.pyqt_gui.test_plate_manager_widget import (
     PlateManagerServiceStub,
     QtApplicationHarness,
@@ -207,6 +210,95 @@ def test_plate_manager_refresh_preserves_selection_without_reemitting_plate_sele
 
         assert emissions == []
     finally:
+        close_widget(widget)
+        ObjectStateRegistry.clear()
+
+
+def test_plate_manager_delete_selected_cppipe_selects_remaining_scope(
+    tmp_path: Path,
+) -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    service_adapter = PlateManagerServiceStub()
+    ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
+    widget = PlateManagerWidget(service_adapter)
+    plate_root = tmp_path / "BeginnerSegmentation"
+    plate_root.mkdir()
+    start_cppipe = plate_root / "segmentation_start.cppipe"
+    final_cppipe = plate_root / "segmentation_final.cppipe"
+    start_cppipe.write_text("Version:5", encoding="utf-8")
+    final_cppipe.write_text("Version:5", encoding="utf-8")
+
+    try:
+        widget.add_plate_callback([plate_root])
+        start_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            start_cppipe,
+        ).scope_id
+        final_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            final_cppipe,
+        ).scope_id
+        emissions = []
+        widget.plate_selected.connect(emissions.append)
+
+        widget.selected_plate_path = final_scope
+        PlateManagerDeletionWorkflow(widget).delete(
+            [PlateManagerRow.from_scope(final_scope)]
+        )
+
+        remaining_scope_ids = [row.scope_id for row in widget.plates]
+        assert remaining_scope_ids == [start_scope]
+        assert widget.selected_plate_path == start_scope
+        assert emissions == [start_scope]
+    finally:
+        close_widget(widget)
+        ObjectStateRegistry.clear()
+
+
+def test_plate_manager_delete_action_moves_pipeline_editor_to_remaining_cppipe(
+    tmp_path: Path,
+) -> None:
+    from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    service_adapter = PlateManagerServiceStub()
+    ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
+    widget = PlateManagerWidget(service_adapter)
+    editor = PipelineEditorWidget(service_adapter)
+    widget.pipeline_editor = editor
+    widget.plate_selected.connect(editor.set_current_plate)
+    plate_root = tmp_path / "BeginnerSegmentation"
+    plate_root.mkdir()
+    start_cppipe = plate_root / "segmentation_start.cppipe"
+    final_cppipe = plate_root / "segmentation_final.cppipe"
+    start_cppipe.write_text("Version:5", encoding="utf-8")
+    final_cppipe.write_text("Version:5", encoding="utf-8")
+
+    try:
+        widget.add_plate_callback([plate_root])
+        start_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            start_cppipe,
+        ).scope_id
+        final_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            final_cppipe,
+        ).scope_id
+
+        assert widget.selected_plate_path == final_scope
+        assert editor.current_plate == final_scope
+
+        widget.action_delete()
+
+        assert [row.scope_id for row in widget.plates] == [start_scope]
+        assert widget.selected_plate_path == start_scope
+        assert editor.current_plate == start_scope
+    finally:
+        editor.close()
         close_widget(widget)
         ObjectStateRegistry.clear()
 

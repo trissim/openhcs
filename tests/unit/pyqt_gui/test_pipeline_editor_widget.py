@@ -92,6 +92,23 @@ def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
     widget.close()
 
 
+def test_pipeline_editor_clear_selection_does_not_require_plate_scope() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+
+    try:
+        widget.set_current_plate("")
+        widget.update_item_list()
+
+        assert widget.current_plate == ""
+        assert widget.pipeline_steps == []
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
 def test_pipeline_editor_time_travel_restore_broadcasts_restored_pipeline() -> None:
     restored_steps = [FunctionStep(name="First"), FunctionStep(name="Second")]
 

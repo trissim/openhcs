@@ -1353,6 +1353,8 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
     def _normalize_step_scope_tokens(self, register: bool = True) -> None:
         """Ensure all steps have tokens and are registered."""
+        if not self.current_plate:
+            return
         plate_scope = self._require_current_plate_scope()
         ScopeTokenService.seed_from_objects(plate_scope, self.pipeline_steps)
         if not register:

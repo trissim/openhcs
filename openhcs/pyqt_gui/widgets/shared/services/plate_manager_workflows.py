@@ -303,9 +303,12 @@ class PlateManagerDeletionWorkflow(ManagerDeletionWorkflow):
 
         root_state = self.manager._ensure_root_state()
         current_paths = root_orchestrator_scope_ids(root_state)
+        remaining_paths = [
+            path for path in current_paths if path not in paths_to_delete
+        ]
         root_state.update_parameter(
             "orchestrator_scope_ids",
-            [path for path in current_paths if path not in paths_to_delete],
+            remaining_paths,
         )
 
         for path in paths_to_delete:
@@ -321,6 +324,26 @@ class PlateManagerDeletionWorkflow(ManagerDeletionWorkflow):
                 del self.manager.plate_configs[path_str]
                 logger.debug("Deleted plate_configs entry for: %s", path)
 
-        if self.manager.selected_plate_path in paths_to_delete:
-            self.manager.selected_plate_path = ""
-            self.manager.plate_selected.emit("")
+        next_selection = self._selection_after_delete(
+            previous_selection=self.manager.selected_plate_path,
+            deleted_paths=paths_to_delete,
+            remaining_paths=remaining_paths,
+        )
+        if next_selection is None:
+            return
+        self.manager.selected_plate_path = next_selection
+        self.manager.plate_selected.emit(next_selection)
+
+    def _selection_after_delete(
+        self,
+        *,
+        previous_selection: str,
+        deleted_paths: set[str],
+        remaining_paths: list[str],
+    ) -> str | None:
+        if previous_selection and previous_selection not in deleted_paths:
+            if previous_selection in remaining_paths:
+                return None
+        if remaining_paths:
+            return remaining_paths[0]
+        return ""

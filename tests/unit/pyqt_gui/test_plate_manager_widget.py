@@ -72,6 +72,12 @@ class PlateManagerServiceStub:
     def get_event_bus(self) -> GlobalEventBus:
         return self.event_bus
 
+    def execute_async_operation(self, operation):
+        return operation()
+
+    def show_error_dialog(self, message: str) -> None:
+        self.last_error_message = message
+
 
 class PlateManagerWidgetTestHarness:
     """Nominal owner for headless PlateManager test setup."""
