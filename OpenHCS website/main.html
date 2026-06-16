@@ -1,32 +1,58 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="description" content="OpenHCS — The open-standard framework for high-content screening. Transform raw multi-well plate data from ImageXpress and Opera Phenix into actionable biological insights."/>
+<meta name="color-scheme" content="dark"/>
+<meta property="og:title" content="OpenHCS"/>
+<meta property="og:description" content="The open-standard framework for high-content screening. Transform raw multi-well plate data into actionable biological insights."/>
+<meta property="og:type" content="website"/>
+<meta property="og:url" content="https://openhcs.dev"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="OpenHCS"/>
+<meta name="twitter:description" content="The open-standard framework for high-content screening."/>
 <title>OpenHCS</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232563eb'/%3E%3Ctext x='50' y='65' font-family='system-ui,sans-serif' font-size='40' font-weight='bold' fill='white' text-anchor='middle'%3EOH%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://fonts.googleapis.com">
+<link rel="dns-prefetch" href="https://fonts.gstatic.com">
+<link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&family=Space+Grotesk:wght@300;400;700&family=42dot+Sans:wght@400&family=JetBrains+Mono:wght@400&display=swap">
 <link rel="stylesheet" href="globals.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<a href="#main-content" class="skip-link">Skip to main content</a>
 <div class="html-body">
 <header class="top-navigation-bar">
 <div class="container-20">
 <div class="div-2">
 <a href="#" class="text-5" aria-label="OpenHCS home">OpenHCS</a>
 </div>
-<nav class="container-21" aria-label="Primary">
-<div class="div-2">
-<a href="#platform" class="text-6">Platform</a>
-</div>
-<div class="link-margin">
-<a href="#features" class="text-wrapper-2">Features</a>
-</div>
-<div class="link-margin">
-<a href="#installation" class="text-wrapper-2">Docs</a>
-</div>
-</nav>
+            <nav class="container-21" aria-label="Primary">
+                <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true">
+                <label for="nav-toggle" class="hamburger" aria-label="Toggle navigation menu" tabindex="0">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </label>
+                <div class="nav-links">
+                    <div class="div-2">
+                        <a href="#platform" class="text-6">Platform</a>
+                    </div>
+                    <div class="link-margin">
+                        <a href="#features" class="text-wrapper-2">Features</a>
+                    </div>
+                    <div class="link-margin">
+                        <a href="https://openhcs.readthedocs.io/en/latest/" class="text-wrapper-2" target="_blank" rel="noopener">Docs</a>
+                    </div>
+                </div>
+            </nav>
 </div>
 </header>
-<main class="main">
+<main id="main-content" class="main">
 <section class="hero-section" aria-labelledby="hero-title">
 <div class="overlay-blur" aria-hidden="true"></div>
 <div class="div">
@@ -39,9 +65,9 @@
 <button class="button" type="button" aria-label="Get Started">
 <span class="text-wrapper">Get Started</span>
 </button>
-<button class="div-wrapper" type="button" aria-label="View Docs">
+<a class="div-wrapper" href="https://openhcs.readthedocs.io/en/latest/" target="_blank" rel="noopener" aria-label="View Docs">
 <span class="text-2">View Docs</span>
-</button>
+</a>
 </div>
 </section>
 <section class="section-capabilities" id="platform" aria-labelledby="platform-title">
@@ -76,9 +102,9 @@
 </div>
 </div>
 </div>
-<div class="container-7" aria-hidden="true">
-<div class="gradient-blur"></div>
-<div class="background-border"></div>
+<div class="container-7">
+<div class="gradient-blur" aria-hidden="true"></div>
+<img class="background-border" src="https://placehold.co/600x400/0c0e16/b4c5ff?text=Bioimaging+Workflow&font=inter" alt="Bioimaging workflow visualization" loading="lazy">
 </div>
 </div>
 </section>
@@ -96,7 +122,7 @@
 <p class="text-wrapper-5">Handle multi-terabyte datasets with multi-level tiling and real-time panning.</p>
 </div>
 </div>
-<div class="background" aria-hidden="true"></div>
+<img class="background" src="https://placehold.co/800x429/0c0e16/b4c5ff?text=Image+Viewer&font=inter" alt="High-resolution image viewer interface" loading="lazy">
 </article>
 <article class="real-time">
 <div class="horizontal-border">
@@ -108,7 +134,7 @@
 </div>
 </div>
 <div class="container-wrapper">
-<div class="container-9" aria-hidden="true"></div>
+<img class="container-9" src="https://placehold.co/800x360/0c0e16/b4c5ff?text=Real-time+Pipelines&font=inter" alt="Real-time pipeline visualization" loading="lazy">
 </div>
 </article>
 <article class="history-slider">
@@ -122,7 +148,7 @@
 </div>
 </div>
 </div>
-<div class="background-2" aria-hidden="true"></div>
+<img class="background-2" src="https://placehold.co/1200x403/0c0e16/b4c5ff?text=History+Slider&font=inter" alt="Analysis history comparison view" loading="lazy">
 </article>
 </div>
 </section>
@@ -154,7 +180,7 @@
 <div class="container-6">
 <div class="container-13"><div class="text-wrapper-8">2</div></div>
 <div class="container-14">
-<pre><p class="pip-install-openhcs"><span class="span">pip </span> <span class="text-wrapper-10">  install openhcs[gui,viz,gpu]</span></p></pre>
+<pre><p class="pip-install-openhcs"><span class="span">pip</span> <span class="text-wrapper-10">install openhcs[gui,viz,gpu]</span></p></pre>
 </div>
 </div>
 <div class="container-6">
@@ -201,14 +227,14 @@
 </div>
 <address class="overlay-border">
 <div class="link-wrapper">
-<a class="link" href="mailto:emailadress@gmail.com" aria-label="Send email to emailadress@gmail.com">
-<span class="text-wrapper-14">emailadress@gmail.com</span>
+<a class="link" href="mailto:tristan.simas@mail.mcgill.ca" aria-label="Send email to OpenHCS">
+<span class="text-wrapper-14">tristan.simas@mail.mcgill.ca</span>
 </a>
 </div>
 <div class="vertical-divider" aria-hidden="true"></div>
 <div class="link-wrapper">
-<a class="link" href="https://github.com/openhcs" aria-label="Visit github.com/openhcs">
-<span class="text-wrapper-14">github.com/openhcs</span>
+<a class="link" href="https://github.com/OpenHCSDev/openhcs" aria-label="Visit github.com/OpenHCSDev/openhcs">
+<span class="text-wrapper-14">github.com/OpenHCSDev/openhcs</span>
 </a>
 </div>
 </address>
@@ -229,9 +255,9 @@
 <div class="text-wrapper-17">Resources</div>
 </div>
 <div class="list">
-<div class="div-wrapper-2"><a href="#installation" class="text-wrapper-5">Documentation</a></div>
-<div class="div-wrapper-2"><a href="https://github.com/openhcs" class="text-wrapper-5">GitHub Repository</a></div>
-<div class="div-wrapper-2"><a href="#features" class="text-wrapper-5">API Reference</a></div>
+<div class="div-wrapper-2"><a href="https://openhcs.readthedocs.io/en/latest/" class="text-wrapper-5" target="_blank" rel="noopener">Documentation</a></div>
+<div class="div-wrapper-2"><a href="https://github.com/OpenHCSDev/openhcs" class="text-wrapper-5">GitHub Repository</a></div>
+<div class="div-wrapper-2"><a href="https://openhcs.readthedocs.io/en/latest/api/index.html" class="text-wrapper-5" target="_blank" rel="noopener">API Reference</a></div>
 </div>
 </nav>
 </div>

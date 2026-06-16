@@ -1,19 +1,116 @@
-@import url("https://cdnjs.cloudflare.com/ajax/libs/meyer-reset/2.0/reset.min.css");
-@import url("https://fonts.googleapis.com/css?family=Geist:400,600|Space+Grotesk:300,400,700|42dot+Sans:400|JetBrains+Mono:400");
+/* Minimal reset (meyer-reset v2 inlined to eliminate extra request) */
+html, body, div, span, applet, object, iframe,
+h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+a, abbr, acronym, address, big, cite, code,
+del, dfn, em, img, ins, kbd, q, s, samp,
+small, strike, strong, sub, sup, tt, var,
+b, u, i, center,
+dl, dt, dd, ol, ul, li,
+fieldset, form, label, legend,
+table, caption, tbody, tfoot, thead, tr, th, td,
+article, aside, canvas, details, embed,
+figure, figcaption, footer, header, hgroup,
+menu, nav, output, ruby, section, summary,
+time, mark, audio, video {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  font: inherit;
+  vertical-align: baseline;
+}
+article, aside, details, figcaption, figure, footer, header, hgroup, menu, nav, section {
+  display: block;
+}
+body {
+  line-height: 1;
+}
+ol, ul {
+  list-style: none;
+}
+blockquote, q {
+  quotes: none;
+}
+blockquote:before, blockquote:after, q:before, q:after {
+  content: '';
+  content: none;
+}
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+:root {
+  color-scheme: dark;
+  --color-bg-page: #11131b;
+  --color-bg-dark: #0c0e16;
+  --color-bg-card: #282a3280;
+  --color-bg-section: #191b2380;
+  --color-bg-terminal-head: #32343d;
+  --color-bg-overlay: #b4c5ff1a;
+  --color-bg-btn: #2563eb;
+  --color-bg-btn-hover: #1d4ed8;
+  --color-text-primary: #e1e2ed;
+  --color-text-secondary: #c3c6d7;
+  --color-text-accent: #b4c5ff;
+  --color-text-btn: #eeefff;
+  --color-text-terminal-blue: #0267b8;
+  --color-border: #434655;
+  --color-border-nav: #4346554c;
+  --color-border-footer: #43465533;
+  --color-dot-red: #ffb4ab;
+  --color-dot-orange: #ffb596;
+  --color-dot-blue: #a4c9ff;
+  --color-gradient-start: rgba(180,197,255,1);
+  --color-gradient-end: rgba(255,181,150,1);
+  --font-body: "Geist", Helvetica;
+  --font-heading: "Space Grotesk", Helvetica;
+  --font-mono: "JetBrains Mono", Helvetica;
+  --font-label: "42dot Sans", Helvetica;
+  --radius-btn: 12px;
+  --radius-card: 16px;
+  --radius-full: 9999px;
+  --content-max: 1280px;
+  --content-narrow: 896px;
+  --transition-fast: 160ms ease;
+}
+
 * {
   -webkit-font-smoothing: antialiased;
   box-sizing: border-box;
 }
-html,
-body {
+
+html {
+  scroll-behavior: smooth;
+}
+
+html, body {
   margin: 0px;
   height: 100%;
 }
-/* a blue color as a generic focus style */
+
 button:focus-visible {
-  outline: 2px solid #4a90e2 !important;
-  outline: -webkit-focus-ring-color auto 5px !important;
+  outline: 2px solid #4a90e2;
+  outline-offset: 2px;
 }
+
 a {
   text-decoration: none;
+}
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  z-index: 100;
+  padding: 8px 16px;
+  background: var(--color-bg-btn);
+  color: var(--color-text-btn);
+  font-family: var(--font-body);
+  font-size: 14px;
+  text-decoration: none;
+  transition: top 160ms ease;
+}
+.skip-link:focus {
+  top: 0;
 }
