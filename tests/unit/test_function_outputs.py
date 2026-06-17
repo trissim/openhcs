@@ -2,7 +2,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 
 from openhcs.constants.constants import Backend
 from openhcs.core.runtime_values import ImagePayloadMetadata, image_payload_with_context
@@ -130,15 +129,27 @@ def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
     assert kwargs["producer_identity"].output_key == "main"
 
 
-def test_stream_outputs_rejects_unidentified_image_stack():
-    path = "/tmp/output/A01_s1_w1.tif"
-    payload = np.ones((2, 3, 4, 3), dtype=np.uint8)
-    filemanager = FileManagerStub({path: payload})
-    context = context_stub(filemanager)
-    plan = function_step_plan(path, "OverlayObjects")
+def test_stream_outputs_keeps_unidentified_stack_as_single_payload_with_path_metadata():
+    class ParserStub:
+        def parse_filename(self, name):
+            assert name == "A01_s1_w1.tif"
+            return {"well": "A01", "site": "1", "channel": "1"}
 
-    with pytest.raises(ValueError, match="requires per-slice component metadata"):
-        StreamOutputsAuthority.stream_outputs(context, plan)
+    path = "/tmp/output/A01_s1_w1.tif"
+    payload = np.ones((8, 520, 696), dtype=np.uint16)
+    filemanager = FileManagerStub({path: payload})
+    context = context_stub(filemanager, ParserStub())
+    plan = function_step_plan(path, "IdentifyPrimaryObjects")
+
+    StreamOutputsAuthority.stream_outputs(context, plan)
+
+    [(streamed_data, streamed_paths, backend, kwargs)] = filemanager.saved_batches
+    assert streamed_paths == [path]
+    assert backend == "napari_stream"
+    np.testing.assert_array_equal(streamed_data[0], payload)
+    assert kwargs["component_metadata_by_path"] == (
+        {"well": "A01", "site": "1", "channel": "1"},
+    )
 
 
 def test_stream_outputs_keeps_main_stream_with_adapter_managed_artifact_outputs():
