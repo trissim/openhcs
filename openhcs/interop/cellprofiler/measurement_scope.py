@@ -23,7 +23,6 @@ class CellProfilerMeasurementTargetScope(str, Enum):
 
 def coerce_cellprofiler_measurement_target_scope(
     value: CellProfilerMeasurementTargetScope | str | None,
-    *,
     default: CellProfilerMeasurementTargetScope,
 ) -> CellProfilerMeasurementTargetScope:
     """Coerce an invocation value into a closed measurement target scope."""
@@ -52,7 +51,6 @@ CELLPROFILER_MEASUREMENT_SCOPE_SELECTIONS = MappingProxyType(
 
 def cellprofiler_measurement_scope_selection(
     value: CellProfilerMeasurementTargetScope | str | None,
-    *,
     default: MeasurementScopeSelection,
 ) -> MeasurementScopeSelection:
     """Coerce a CellProfiler target-scope value into OpenHCS measurement scopes."""
@@ -60,6 +58,6 @@ def cellprofiler_measurement_scope_selection(
         return default
     target_scope = coerce_cellprofiler_measurement_target_scope(
         value,
-        default=CellProfilerMeasurementTargetScope.BOTH,
+        CellProfilerMeasurementTargetScope.BOTH,
     )
     return CELLPROFILER_MEASUREMENT_SCOPE_SELECTIONS[target_scope]

@@ -65,13 +65,30 @@ class MemoryConversion:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceSliceUnstackRequest:
-    """Nominal request for unstacking output against source-slice shape domains."""
+class ImageStackUnstackRequest:
+    """Shared request fields and layout dispatch for image-stack unstacking."""
 
     array: ImageStackData
-    source_slice_shapes: Sequence[tuple[int, ...]]
     memory_type: str
     gpu_id: int
+
+    def layout_slices(
+        self,
+        layout_source: ImageStackData | None = None,
+    ) -> tuple[ImageStackSliceData, ...]:
+        layout_value = self.array if layout_source is None else layout_source
+        return ImageStackLayout.for_stack(layout_value).unstack(
+            array=self.array,
+            memory_type=self.memory_type,
+            gpu_id=self.gpu_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSliceUnstackRequest(ImageStackUnstackRequest):
+    """Nominal request for unstacking output against source-slice shape domains."""
+
+    source_slice_shapes: Sequence[tuple[int, ...]]
 
     def slices(self) -> list[ImageStackSliceData]:
         output_shape = tuple(np.shape(self.array))
@@ -83,11 +100,17 @@ class SourceSliceUnstackRequest:
                     gpu_id=self.gpu_id,
                 ).materialize()
             ]
-        return ImageStackLayout.for_stack(self.array).unstack(
-            array=self.array,
-            memory_type=self.memory_type,
-            gpu_id=self.gpu_id,
-        )
+        return list(self.layout_slices())
+
+
+@dataclass(frozen=True, slots=True)
+class ImageStackLayoutUnstackRequest(ImageStackUnstackRequest):
+    """Nominal request for unstacking with an optional layout source."""
+
+    layout_source: ImageStackData | None = None
+
+    def slices(self) -> tuple[ImageStackSliceData, ...]:
+        return self.layout_slices(self.layout_source)
 
 
 class MemoryConversionSource(Enum):

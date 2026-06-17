@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Mapping, Sequence
+from typing import Any, ClassVar, Mapping, Protocol, Sequence, runtime_checkable
 
 from metaclass_registry import AutoRegisterMeta
 import psutil
@@ -55,6 +55,14 @@ logger = logging.getLogger(__name__)
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 _PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
 PatternCollection = list[Any] | dict[Any, list[Any]]
+
+
+@runtime_checkable
+class SourceWorkspaceMetadataLoader(Protocol):
+    """Metadata-handler capability required for virtual source workspaces."""
+
+    def _load_metadata_dict(self, plate_path: str) -> Mapping[str, Any]:
+        """Return persisted OpenHCS plate metadata."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +179,10 @@ class SourceWorkspaceAnchorProjection:
     metadata_by_path: Mapping[str, Mapping[str, Any]]
 
     @classmethod
+    def empty(cls) -> "SourceWorkspaceAnchorProjection":
+        return cls(paths_by_virtual_path={}, metadata_by_path={})
+
+    @classmethod
     def from_openhcs_metadata(
         cls,
         metadata: Mapping[str, Any],
@@ -179,7 +191,7 @@ class SourceWorkspaceAnchorProjection:
 
         subdirectories = metadata.get(FIELDS.SUBDIRECTORIES)
         if not isinstance(subdirectories, Mapping):
-            return cls(paths_by_virtual_path={}, metadata_by_path={})
+            return cls.empty()
 
         paths_by_virtual_path: dict[str, str] = {}
         metadata_by_path: dict[str, Mapping[str, Any]] = {}
@@ -205,6 +217,21 @@ class SourceWorkspaceAnchorProjection:
         return cls(
             paths_by_virtual_path=paths_by_virtual_path,
             metadata_by_path=metadata_by_path,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceWorkspaceAnchorProjectionLoader:
+    """Load virtual source-workspace anchor metadata for handlers that own it."""
+
+    metadata_handler: SourceWorkspaceMetadataLoader
+    plate_path: str
+
+    def projection(self) -> SourceWorkspaceAnchorProjection:
+        if not isinstance(self.metadata_handler, SourceWorkspaceMetadataLoader):
+            return SourceWorkspaceAnchorProjection.empty()
+        return SourceWorkspaceAnchorProjection.from_openhcs_metadata(
+            self.metadata_handler._load_metadata_dict(self.plate_path)
         )
 
 
@@ -727,10 +754,11 @@ class FunctionStepExecutor:
         """Return declared source workspace views used by anchor policies."""
 
         if self._source_workspace_anchor_projection is None:
-            metadata_handler = self.context.microscope_handler.metadata_handler
-            metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
             self._source_workspace_anchor_projection = (
-                SourceWorkspaceAnchorProjection.from_openhcs_metadata(metadata)
+                SourceWorkspaceAnchorProjectionLoader(
+                    self.context.microscope_handler.metadata_handler,
+                    self.context.plate_path,
+                ).projection()
             )
         return self._source_workspace_anchor_projection
 

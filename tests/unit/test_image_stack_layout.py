@@ -217,10 +217,10 @@ def test_image_stack_layout_unstacks_result_matching_source_volume_as_single_sli
     volume = np.zeros((3, 4, 5), dtype=np.uint16)
 
     observed = SourceSliceUnstackRequest(
-        volume,
-        (tuple(volume.shape),),
-        MEMORY_TYPE_NUMPY,
-        0,
+        array=volume,
+        source_slice_shapes=(tuple(volume.shape),),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
     ).slices()
 
     assert len(observed) == 1
@@ -233,10 +233,10 @@ def test_image_stack_layout_unstacks_masked_volume_stack_payload_with_slice_cont
     payload = MaskedImagePayload(data=stack, mask=mask)
 
     observed = SourceSliceUnstackRequest(
-        payload,
-        ((3, 4, 5),),
-        MEMORY_TYPE_NUMPY,
-        0,
+        array=payload,
+        source_slice_shapes=((3, 4, 5),),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
     ).slices()
 
     assert len(observed) == 1

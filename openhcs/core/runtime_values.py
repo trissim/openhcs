@@ -1865,6 +1865,12 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelValue):
     def dtype(self) -> Any:
         return self.labels.dtype
 
+    def max(self) -> np.generic:
+        labels = np.asarray(self.labels)
+        if labels.size == 0:
+            raise ValueError("ObjectLabelPayload.max requires non-empty labels.")
+        return labels.max()
+
     def __array__(self, dtype: Any | None = None) -> Any:
         import numpy as np
 
@@ -5509,20 +5515,7 @@ class DenseObjectLabelSliceStack:
         slice_count: int,
         dtype: object | None = None,
     ) -> "DenseObjectLabelSliceStack | None":
-        label_array = object_label_dense_array(payload, dtype=dtype)
-        if label_array.ndim == 3 and label_array.shape[0] == slice_count:
-            return cls(
-                np.ascontiguousarray(label_array),
-                payload=payload,
-                preserves_payload_domain=isinstance(payload, ObjectLabelValue),
-            )
-        if label_array.ndim == 2:
-            return cls(
-                np.ascontiguousarray(
-                    np.broadcast_to(label_array, (slice_count, *label_array.shape))
-                )
-            )
-        return None
+        return DenseObjectLabelSliceStackRequest(payload, slice_count, dtype).stack()
 
     def slice(self, slice_index: int) -> object:
         labels = self.labels[slice_index]
@@ -5535,6 +5528,34 @@ class DenseObjectLabelSliceStack:
                 slice_index,
             )
         return labels
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelSliceStackRequest:
+    """Typed request for projecting dense labels onto a fixed slice axis."""
+
+    payload: object
+    slice_count: int
+    dtype: object | None = None
+
+    def stack(self) -> DenseObjectLabelSliceStack | None:
+        label_array = object_label_dense_array(self.payload, dtype=self.dtype)
+        if label_array.ndim == 3 and label_array.shape[0] == self.slice_count:
+            return DenseObjectLabelSliceStack(
+                np.ascontiguousarray(label_array),
+                payload=self.payload,
+                preserves_payload_domain=isinstance(self.payload, ObjectLabelValue),
+            )
+        if label_array.ndim == 2:
+            return DenseObjectLabelSliceStack(
+                np.ascontiguousarray(
+                    np.broadcast_to(
+                        label_array,
+                        (self.slice_count, *label_array.shape),
+                    )
+                )
+            )
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -5554,27 +5575,12 @@ class DenseObjectLabelPlaneDomainStack:
         allow_single_plane: bool = False,
         collapse_repeated: bool = False,
     ) -> "DenseObjectLabelPlaneDomainStack | None":
-        if not isinstance(payload, ObjectLabelValue):
-            return None
-        if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
-            return None
-        labels = object_label_dense_array(payload, dtype=dtype)
-        if not isinstance(labels, np.ndarray):
-            return None
-        stack_labels, object_id_domains = cls._project_measurement_stack(
+        return DenseObjectLabelPlaneDomainStackRequest(
             payload,
-            labels,
-            collapse_repeated=collapse_repeated,
-        )
-        if stack_labels is None or (
-            len(object_id_domains) <= 1 and not allow_single_plane
-        ):
-            return None
-        return cls(
-            labels=np.ascontiguousarray(stack_labels),
-            payload=payload,
-            object_id_domains=object_id_domains,
-        )
+            dtype,
+            allow_single_plane,
+            collapse_repeated,
+        ).stack()
 
     @staticmethod
     def _project_measurement_stack(
@@ -5697,6 +5703,41 @@ class DenseObjectLabelPlaneDomainStack:
                 scope=ObjectLabelDomainScope.PAYLOAD,
                 declared_object_ids=self.object_id_domains[plane_index],
             ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelPlaneDomainStackRequest:
+    """Typed request for object-label planes with distinct measurement domains."""
+
+    payload: object
+    dtype: object | None = None
+    allow_single_plane: bool = False
+    collapse_repeated: bool = False
+
+    def stack(self) -> DenseObjectLabelPlaneDomainStack | None:
+        if not isinstance(self.payload, ObjectLabelValue):
+            return None
+        if self.payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return None
+        labels = object_label_dense_array(self.payload, dtype=self.dtype)
+        if not isinstance(labels, np.ndarray):
+            return None
+        stack_labels, object_id_domains = (
+            DenseObjectLabelPlaneDomainStack._project_measurement_stack(
+                self.payload,
+                labels,
+                collapse_repeated=self.collapse_repeated,
+            )
+        )
+        if stack_labels is None or (
+            len(object_id_domains) <= 1 and not self.allow_single_plane
+        ):
+            return None
+        return DenseObjectLabelPlaneDomainStack(
+            labels=np.ascontiguousarray(stack_labels),
+            payload=self.payload,
+            object_id_domains=object_id_domains,
         )
 
 

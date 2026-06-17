@@ -2756,10 +2756,10 @@ class PatternGroupRuntime:
         processed_data = image_payload_data(processed_stack)
         try:
             output_slices = SourceSliceUnstackRequest(
-                processed_data,
-                loaded.source_slice_shapes,
-                self.plan.output_memory_type,
-                self.plan.device_id,
+                array=processed_data,
+                source_slice_shapes=loaded.source_slice_shapes,
+                memory_type=self.plan.output_memory_type,
+                gpu_id=self.plan.device_id,
             ).slices()
         except ValueError as exc:
             output_shape = np.shape(processed_data)
