@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate import ObjectState, ObjectStateEditSession
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.widgets.step_parameter_editor import StepParameterEditorWidget
+    from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
 
 logger = logging.getLogger(__name__)
+
+
+def _require_function_step(value, *, label: str) -> FunctionStep:
+    if not isinstance(value, FunctionStep):
+        raise TypeError(f"{label} must be a FunctionStep, got {type(value).__name__}")
+    return value
 
 
 @dataclass(slots=True)
@@ -18,51 +29,61 @@ class DualEditorSession:
     """Own step/function-editor synchronization for a dual editor instance."""
 
     editing_step: FunctionStep
-    step_editor: Any | None = None
-    func_editor: Any | None = None
+    step_editor: "StepParameterEditorWidget | None" = None
+    func_editor: "FunctionListEditorWidget | None" = None
 
-    def current_function_spec(self) -> Any:
+    def object_session(self) -> ObjectStateEditSession[FunctionStep]:
+        """Return the generic ObjectState edit boundary for this step window."""
+
+        return ObjectStateEditSession(
+            state_provider=lambda: self.step_state,
+            fallback_object=self.editing_step,
+            expected_type=FunctionStep,
+        )
+
+    def current_function_spec(self) -> FunctionSpec:
         """Return the live function spec from ObjectState, falling back to the clone."""
-        state = self.step_state
-        if state is not None and "func" in state.parameters:
-            return state.parameters["func"]
+        object_session = self.object_session()
+        if object_session.has_parameter("func"):
+            return cast(FunctionSpec, object_session.parameter_value("func"))
         return self.editing_step.func
 
-    def current_source_bindings(self) -> Any:
+    def current_source_bindings(self):
         """Return live source bindings from ObjectState, falling back to the clone."""
-        state = self.step_state
-        if state is not None and "source_bindings" in state.parameters:
-            return state.parameters["source_bindings"]
+        object_session = self.object_session()
+        if object_session.has_parameter("source_bindings"):
+            return object_session.parameter_value("source_bindings")
         return self.editing_step.source_bindings
 
-    def current_function_pattern(self) -> Any:
+    def current_function_pattern(self) -> FunctionSpec:
         """Return the function editor pattern through the nominal transport authority."""
         if self.func_editor is None:
             return self.normalize_function_spec(self.editing_step.func)
         return self.normalize_function_spec(self.func_editor.current_pattern)
 
-    def normalize_function_spec(self, func_spec: Any) -> Any:
+    def normalize_function_spec(self, func_spec: FunctionSpec) -> FunctionSpec:
         """Normalize a function spec through the transport authority."""
-        return FunctionStepTransportAuthority.normalize_function_spec(func_spec)
+        return cast(
+            FunctionSpec,
+            FunctionStepTransportAuthority.normalize_function_spec(func_spec),
+        )
 
     @property
-    def step_state(self) -> Any | None:
+    def step_state(self) -> ObjectState | None:
         if self.step_editor is None:
             return None
         return self.step_editor.state
 
-    def step_state_values(self) -> dict[str, Any]:
-        """Return current values from the known step editor state."""
-        state = self.step_state
-        if state is None:
-            return {}
-        return state.get_current_values()
+    def apply_function_spec_to_state(self, func_spec: FunctionSpec) -> FunctionSpec:
+        """Normalize and apply the function spec through the ObjectState boundary."""
 
-    def apply_step_state_to_step(self) -> None:
-        """Apply the step editor's nominal state to the editable step object."""
-        for param_name, value in self.step_state_values().items():
-            object.__setattr__(self.editing_step, param_name, value)
-            logger.debug("Applied %s=%r to editing step", param_name, value)
+        normalized = self.normalize_function_spec(func_spec)
+        object_session = self.object_session()
+        if object_session.has_parameter("func"):
+            object_session.update_parameter("func", normalized)
+        else:
+            self.editing_step.func = normalized
+        return normalized
 
     def sync_function_editor_from_step(self) -> bool:
         """Refresh the function editor from its authoritative ObjectState context."""
@@ -72,7 +93,7 @@ class DualEditorSession:
         self.func_editor.refresh_from_context()
         return True
 
-    def apply_current_function_pattern(self) -> tuple[bool, Any]:
+    def apply_current_function_pattern(self) -> tuple[bool, FunctionSpec]:
         """Apply the current function editor pattern to step and ObjectState."""
         current_pattern = self.current_function_pattern()
         logger.debug(
@@ -81,29 +102,20 @@ class DualEditorSession:
             current_pattern,
         )
 
-        state = self.step_state
+        object_session = self.object_session()
         state_func = (
-            state.parameters.get("func")
-            if state is not None and "func" in state.parameters
-            else None
+            object_session.parameter_value("func")
+            if object_session.has_parameter("func")
+            else self.editing_step.func
         )
-        step_func = self.editing_step.func
-        if state_func == current_pattern and step_func == current_pattern:
+        if state_func == current_pattern:
             logger.debug("[FUNC_PATTERN] Ignoring no-op function pattern update")
             return False, current_pattern
 
         with ObjectStateRegistry.atomic("edit func"):
-            if step_func != current_pattern:
-                self.editing_step.func = current_pattern
-            if (
-                state is not None
-                and "func" in state.parameters
-                and state_func != current_pattern
-            ):
-                state.update_parameter("func", current_pattern)
-                logger.debug(
-                    "Updated ObjectState 'func' parameter for real-time preview"
-                )
+            self.apply_function_spec_to_state(current_pattern)
+            state = self.step_state
+            if state is not None:
                 logger.debug(
                     "[FUNC_PATTERN] ObjectState dirty_fields after update: %s",
                     state.dirty_fields,
@@ -111,7 +123,7 @@ class DualEditorSession:
         return True, current_pattern
 
     @staticmethod
-    def callable_from_function_spec(func_spec: Any) -> Callable | None:
+    def callable_from_function_spec(func_spec: FunctionSpec) -> Callable | None:
         """Return the first callable represented by a FunctionStep function spec."""
         if callable(func_spec):
             return func_spec
@@ -128,7 +140,7 @@ class DualEditorFunctionPatternController:
 
     session: DualEditorSession
     detect_changes: Callable[[], None]
-    refresh_artifact_contract_preview: Callable[[Any], None]
+    refresh_artifact_contract_preview: Callable[[FunctionSpec], None]
 
     def handle_change(self) -> None:
         changed, current_pattern = self.session.apply_current_function_pattern()

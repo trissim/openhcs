@@ -23,8 +23,11 @@ class AgentContractName(Enum):
     UI_ACTION_INVOKE_RESULT = "UiActionInvokeResult"
     UI_WINDOW_CATALOG = "UiWindowCatalog"
     UI_WINDOW_FOCUS_RESULT = "UiWindowFocusResult"
+    UI_WINDOW_NAVIGATE_RESULT = "UiWindowNavigateResult"
+    UI_WINDOW_SNAPSHOT_RESULT = "UiWindowSnapshotResult"
     UI_OBJECT_STATE_SCOPE_CATALOG = "UiObjectStateScopeCatalog"
     UI_SNAPSHOT_RESTORE_RESULT = "UiSnapshotRestoreResult"
+    VIEWER_WINDOW_SNAPSHOT_RESULT = "ViewerWindowSnapshotResult"
 
 
 class MutatingCapabilityNamePolicy:
@@ -343,6 +346,19 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         output_type="RuntimeExecutionStatus",
     ),
     AgentCapabilitySpec(
+        name="openhcs_viewer_snapshot_window",
+        kind=CapabilityKind.TOOL,
+        title="Snapshot viewer window",
+        description="Captures a running OpenHCS viewer window, such as Napari, through its ZMQ control socket.",
+        service="viewer_window",
+        side_effects=("writes_agent_output_file",),
+        runtime_requirements=("running_openhcs_viewer_server",),
+        data_exposure=("viewer_screenshot", "local_output_path"),
+        security_requirements=("agent_path_policy",),
+        input_type="ViewerWindowSnapshotRequest",
+        output_type=AgentContractName.VIEWER_WINDOW_SNAPSHOT_RESULT.value,
+    ),
+    AgentCapabilitySpec(
         name="openhcs_ui_list_bridges",
         kind=CapabilityKind.TOOL,
         title="List UI bridges",
@@ -435,6 +451,31 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         security_requirements=("ui_bridge_auth_token",),
         input_type="UiWindowFocusRequest",
         output_type=AgentContractName.UI_WINDOW_FOCUS_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_ui_navigate_window",
+        kind=CapabilityKind.TOOL,
+        title="Navigate UI window",
+        description="Opens or focuses one ObjectState-backed UI window scope and reveals an optional field path or item id.",
+        service="ui_bridge",
+        side_effects=("changes_running_ui_focus", "may_open_running_ui_window"),
+        runtime_requirements=("running_openhcs_ui_bridge",),
+        security_requirements=("ui_bridge_auth_token",),
+        input_type="UiWindowNavigateRequest",
+        output_type=AgentContractName.UI_WINDOW_NAVIGATE_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_ui_snapshot_window",
+        kind=CapabilityKind.TOOL,
+        title="Snapshot UI window",
+        description="Captures one running UI window or visible Qt top-level dialog to a PNG resource path.",
+        service="ui_bridge",
+        side_effects=("writes_agent_output_file",),
+        runtime_requirements=("running_openhcs_ui_bridge",),
+        data_exposure=("ui_screenshot", "local_output_path"),
+        security_requirements=("ui_bridge_auth_token", "agent_path_policy"),
+        input_type="UiWindowSnapshotRequest",
+        output_type=AgentContractName.UI_WINDOW_SNAPSHOT_RESULT.value,
     ),
     AgentCapabilitySpec(
         name="openhcs_ui_list_object_state_scopes",

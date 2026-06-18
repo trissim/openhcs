@@ -14,6 +14,7 @@ from openhcs.agent.services import (
     PipelineAuthoringService,
     RuntimeServerService,
     UiBridgeService,
+    ViewerWindowService,
 )
 
 
@@ -30,6 +31,7 @@ class OpenHCSAgentContext:
     execution_service: ExecutionSessionService | None = None
     runtime_server_service: RuntimeServerService | None = None
     ui_bridge_service: UiBridgeService | None = None
+    viewer_window_service: ViewerWindowService | None = None
 
     def __post_init__(self) -> None:
         if self.pipeline_service is None:
@@ -49,6 +51,8 @@ class OpenHCSAgentContext:
             self.runtime_server_service = RuntimeServerService()
         if self.ui_bridge_service is None:
             self.ui_bridge_service = UiBridgeService()
+        if self.viewer_window_service is None:
+            self.viewer_window_service = ViewerWindowService()
 
 
 def create_agent_context() -> OpenHCSAgentContext:

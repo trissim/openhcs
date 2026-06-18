@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
@@ -25,6 +25,11 @@ UiBridgeProvider: TypeAlias = (
     | UiActionProviderABC
     | UiWindowProviderABC
     | UiObjectStateScopeProviderABC
+)
+DynamicProviderT = TypeVar(
+    "DynamicProviderT",
+    UiCodeDocumentProviderABC,
+    UiWindowProviderABC,
 )
 
 
@@ -142,10 +147,13 @@ class UiBridgeSurfaceRegistry:
         )
 
     def code_document_provider(self, document_id: str) -> UiCodeDocumentProviderABC:
-        try:
+        if document_id in self._code_document_providers:
             return self._code_document_providers[document_id]
-        except KeyError as exc:
-            raise KeyError(f"Unknown UI code document: {document_id}") from exc
+        return self._dynamic_provider(
+            self._code_document_providers,
+            document_id,
+            unknown_message=f"Unknown UI code document: {document_id}",
+        )
 
     def state_surface_provider(self, surface_id: str) -> UiStateSurfaceProviderABC:
         try:
@@ -160,10 +168,11 @@ class UiBridgeSurfaceRegistry:
             raise KeyError(f"Unknown UI action provider: {widget_id}") from exc
 
     def window_provider(self, window_id: str) -> UiWindowProviderABC:
-        for provider in self._window_providers.values():
-            if provider.handles(window_id):
-                return provider
-        raise KeyError(f"Unknown UI window: {window_id}")
+        return self._dynamic_provider(
+            self._window_providers,
+            window_id,
+            unknown_message=f"Unknown UI window: {window_id}",
+        )
 
     def code_document_providers(self) -> tuple[UiCodeDocumentProviderABC, ...]:
         return tuple(self._code_document_providers.values())
@@ -181,6 +190,18 @@ class UiBridgeSurfaceRegistry:
         self,
     ) -> tuple[UiObjectStateScopeProviderABC, ...]:
         return tuple(self._object_state_scope_providers.values())
+
+    @staticmethod
+    def _dynamic_provider(
+        providers: dict[str, DynamicProviderT],
+        surface_id: str,
+        *,
+        unknown_message: str,
+    ) -> DynamicProviderT:
+        for provider in providers.values():
+            if provider.handles(surface_id):
+                return provider
+        raise KeyError(unknown_message)
 
     @staticmethod
     def _register_unique(

@@ -46,6 +46,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
@@ -70,6 +74,8 @@ class UiBridgeOperationName(str, Enum):
     INVOKE_ACTION = "invoke_action"
     LIST_WINDOWS = "list_windows"
     FOCUS_WINDOW = "focus_window"
+    NAVIGATE_WINDOW = "navigate_window"
+    SNAPSHOT_WINDOW = "snapshot_window"
     LIST_OBJECT_STATE_SCOPES = "list_object_state_scopes"
     VALIDATE_DOCUMENT = "validate_document"
     APPLY_DOCUMENT = "apply_document"
@@ -86,6 +92,8 @@ UiBridgeOperationRequestPayload = (
     | UiStateSurfaceRequest
     | UiActionInvokeRequest
     | UiWindowFocusRequest
+    | UiWindowNavigateRequest
+    | UiWindowSnapshotRequest
     | UiObjectStateScopeListRequest
     | UiCodeDocumentValidationRequest
     | UiCodeDocumentApplyRequest
@@ -230,7 +238,7 @@ class UiBridgeControlClient:
     ) -> JsonObject:
         import zmq
 
-        context = zmq.Context()
+        context = zmq.Context.instance()
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)
         socket.setsockopt(zmq.RCVTIMEO, connection.timeout_ms)
@@ -241,7 +249,6 @@ class UiBridgeControlClient:
             response = socket.recv_json()
         finally:
             socket.close(linger=0)
-            context.term()
         if not isinstance(response, Mapping):
             raise TypeError(f"UI bridge response must be a JSON object, got {type(response).__name__}")
         return dict(response)
@@ -381,6 +388,30 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowFocusResult, payload)
+
+    def navigate_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        payload = self._client.request(
+            connection,
+            UiBridgeOperationName.NAVIGATE_WINDOW,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(UiWindowNavigateResult, payload)
+
+    def snapshot_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowSnapshotRequest,
+    ) -> UiWindowSnapshotResult:
+        payload = self._client.request(
+            connection,
+            UiBridgeOperationName.SNAPSHOT_WINDOW,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(UiWindowSnapshotResult, payload)
 
     def validate_document(
         self,

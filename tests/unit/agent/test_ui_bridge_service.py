@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from openhcs.agent.dto.common import SCHEMA_VERSION
+from openhcs.agent.dto.common import AgentResourceRef, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
     UiActionIdentity,
@@ -50,6 +50,13 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
+    UiWindowIdentity,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowOpenPolicy,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
+    UiWindowSummary,
 )
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
@@ -57,6 +64,10 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeService,
 )
 from openhcs.agent.serialization import to_jsonable
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 
 
 DOCUMENT_ID = UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value
@@ -66,6 +77,7 @@ PLATE_SCOPE_ID = "plate-1"
 PLATE_NAME = "plate 1"
 BRIDGE_ID = "bridge-1"
 AUTH_TOKEN = "secret"
+WINDOW_ID = "main"
 PLATE_MANAGER_STATE_PAYLOAD_SCHEMA = "openhcs.ui.plate_manager_state.v1"
 
 
@@ -141,6 +153,9 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
     def __init__(self) -> None:
         self.connections: list[UiBridgeConnectionSpec] = []
         self.restore_requests: list[UiSnapshotRestoreRequest] = []
+        self.scope_requests: list[UiObjectStateScopeListRequest] = []
+        self.navigate_requests: list[UiWindowNavigateRequest] = []
+        self.snapshot_requests: list[UiWindowSnapshotRequest] = []
 
     def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
         self.connections.append(connection)
@@ -249,12 +264,60 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             focused=False,
         )
 
+    def navigate_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        self.connections.append(connection)
+        self.navigate_requests.append(request)
+        return UiWindowNavigateResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            focused=True,
+            navigated=request.field_path is not None or request.item_id is not None,
+            created=False,
+        )
+
+    def snapshot_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowSnapshotRequest,
+    ) -> UiWindowSnapshotResult:
+        self.connections.append(connection)
+        self.snapshot_requests.append(request)
+        return UiWindowSnapshotResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            captured=True,
+            resource=AgentResourceRef(
+                uri="file:///tmp/openhcs-window.png",
+                title="Main window",
+                mime_type="image/png",
+                path="/tmp/openhcs-window.png",
+                size_bytes=123,
+                sha256="abc123",
+            ),
+            summary=UiWindowSummary(
+                schema_version=SCHEMA_VERSION,
+                identity=UiWindowIdentity(window_id=request.window_id),
+                title="Main window",
+                window_kind="embedded",
+                visible=True,
+                focusable=True,
+            ),
+            width=320,
+            height=200,
+            snapshot=request.snapshot,
+        )
+
     def list_object_state_scopes(
         self,
         connection: UiBridgeConnectionSpec,
         request: UiObjectStateScopeListRequest,
     ) -> UiObjectStateScopeCatalog:
         self.connections.append(connection)
+        self.scope_requests.append(request)
         return UiObjectStateScopeCatalog(
             schema_version=SCHEMA_VERSION,
             object_state_token=1,
@@ -536,6 +599,14 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
         ),
         connection,
     )
+    object_state_scopes = service.list_object_state_scopes(
+        UiObjectStateScopeListRequest(
+            include_fields=True,
+            field_limit=25,
+            field_offset=5,
+        ),
+        connection,
+    )
     validation = service.validate_document(
         UiCodeDocumentValidationRequest(
             document_id=DOCUMENT_ID,
@@ -557,6 +628,14 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
     assert state_catalog.surfaces[0].surface_id == STATE_SURFACE_ID
     assert state.payload["rows"][0]["status_prefix"] == "✓ Init"
     assert polled_state.unchanged is True
+    assert object_state_scopes.object_state_token == 1
+    assert gateway.scope_requests == [
+        UiObjectStateScopeListRequest(
+            include_fields=True,
+            field_limit=25,
+            field_offset=5,
+        )
+    ]
     assert validation.valid is True
     assert apply_result.applied is True
     assert operation.status == "complete"
@@ -595,3 +674,41 @@ def test_restore_request_preserves_confirmation_and_auto_branch(monkeypatch, tmp
     assert result.restored is True
     assert gateway.restore_requests[0].confirmation_is_required() is False
     assert gateway.restore_requests[0].allow_auto_branch is True
+
+
+def test_snapshot_window_forwards_request_and_resource(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+    gateway = _FakeUiBridgeGateway()
+    service = UiBridgeService(gateway=gateway)
+    connection = service.connection_from_args(port=9999, auth_token="token")
+
+    result = service.snapshot_window(
+        UiWindowSnapshotRequest(
+            window_id=WINDOW_ID,
+            snapshot=WindowSnapshotCaptureSpec(
+                output_dir_path=str(tmp_path),
+                capture_scope=WindowSnapshotCaptureScope.WINDOW,
+            ),
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+        ),
+        connection,
+    )
+
+    assert result.captured is True
+    assert result.resource is not None
+    assert result.resource.mime_type == "image/png"
+    assert result.width == 320
+    assert result.height == 200
+    assert result.snapshot is not None
+    assert result.snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+    assert gateway.snapshot_requests == [
+        UiWindowSnapshotRequest(
+            window_id=WINDOW_ID,
+            snapshot=WindowSnapshotCaptureSpec(
+                output_dir_path=str(tmp_path),
+                capture_scope=WindowSnapshotCaptureScope.WINDOW,
+            ),
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+        ),
+    ]
+    assert gateway.connections[-1].auth_token == "token"

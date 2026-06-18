@@ -8,9 +8,12 @@ import hashlib
 import threading
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from typing import ClassVar
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
@@ -56,6 +59,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
 )
 from openhcs.agent.services.ui_bridge_service import UiBridgeGatewayABC
 from openhcs.config_framework.object_state import ObjectStateRegistry
@@ -415,10 +422,66 @@ class UiBridgeMutationOutcome:
 
     @staticmethod
     def from_result(
-        result: UiCodeDocumentApplyResult | UiSnapshotRestoreResult,
+        result: UiActionInvokeResult | UiCodeDocumentApplyResult | UiSnapshotRestoreResult,
     ) -> str:
-        if isinstance(result, UiCodeDocumentApplyResult):
-            return result.outcome
+        return UiBridgeMutationOutcomeProjector.for_result_type(type(result)).outcome(result)
+
+
+class UiBridgeMutationOutcomeProjector(ABC, metaclass=AutoRegisterMeta):
+    """Nominal outcome projection for one bridge mutation result DTO family."""
+
+    __registry_key__ = "result_type"
+    __skip_if_no_key__ = True
+    result_type: ClassVar[type | None] = None
+
+    @classmethod
+    def for_result_type(
+        cls,
+        result_type: type,
+    ) -> "UiBridgeMutationOutcomeProjector":
+        return cls.__registry__[result_type]()
+
+    @abstractmethod
+    def outcome(
+        self,
+        result: UiActionInvokeResult | UiCodeDocumentApplyResult | UiSnapshotRestoreResult,
+    ) -> str:
+        raise NotImplementedError
+
+
+class UiActionInvokeOutcomeProjector(UiBridgeMutationOutcomeProjector):
+    """Outcome projection for dispatched widget actions."""
+
+    result_type = UiActionInvokeResult
+
+    def outcome(
+        self,
+        result: UiActionInvokeResult | UiCodeDocumentApplyResult | UiSnapshotRestoreResult,
+    ) -> str:
+        return result.status
+
+
+class UiCodeDocumentApplyOutcomeProjector(UiBridgeMutationOutcomeProjector):
+    """Outcome projection for code-document apply mutations."""
+
+    result_type = UiCodeDocumentApplyResult
+
+    def outcome(
+        self,
+        result: UiActionInvokeResult | UiCodeDocumentApplyResult | UiSnapshotRestoreResult,
+    ) -> str:
+        return result.outcome
+
+
+class UiSnapshotRestoreOutcomeProjector(UiBridgeMutationOutcomeProjector):
+    """Outcome projection for ObjectState restore mutations."""
+
+    result_type = UiSnapshotRestoreResult
+
+    def outcome(
+        self,
+        result: UiActionInvokeResult | UiCodeDocumentApplyResult | UiSnapshotRestoreResult,
+    ) -> str:
         if result.restored:
             return "restored"
         return "not_restored"
@@ -871,11 +934,6 @@ class UiAgentBridgeService:
                 ),
             )
 
-    def focus_window(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
-        return self._dispatcher.call(
-            lambda: self._window_provider(request.window_id).focus(request)
-        )
-
         try:
             return self._dispatcher.call(
                 lambda: self._mutation_gate.run(
@@ -889,6 +947,27 @@ class UiAgentBridgeService:
                 request,
                 AgentError.from_exception("ui_bridge_busy", exc),
             )
+
+    def focus_window(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
+        return self._dispatcher.call(
+            lambda: self._window_provider(request.window_id).focus(request)
+        )
+
+    def navigate_window(
+        self,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        return self._dispatcher.call(
+            lambda: self._window_provider(request.window_id).navigate(request)
+        )
+
+    def snapshot_window(
+        self,
+        request: UiWindowSnapshotRequest,
+    ) -> UiWindowSnapshotResult:
+        return self._dispatcher.call(
+            lambda: self._window_provider(request.window_id).snapshot(request)
+        )
 
     def validate_document(
         self,
@@ -1087,6 +1166,22 @@ class InProcessUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowFocusResult:
         del connection
         return self._bridge.focus_window(request)
+
+    def navigate_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        del connection
+        return self._bridge.navigate_window(request)
+
+    def snapshot_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowSnapshotRequest,
+    ) -> UiWindowSnapshotResult:
+        del connection
+        return self._bridge.snapshot_window(request)
 
     def validate_document(
         self,

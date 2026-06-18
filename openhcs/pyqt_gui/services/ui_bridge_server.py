@@ -56,6 +56,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
@@ -109,6 +113,7 @@ UiBridgeOperationDispatchResult = (
     | UiActionInvokeResult
     | UiWindowCatalog
     | UiWindowFocusResult
+    | UiWindowNavigateResult
     | UiObjectStateScopeCatalog
     | UiSnapshotCatalog
     | UiSnapshotRestoreResult
@@ -454,6 +459,32 @@ class UiBridgeFocusWindowOperation(UiBridgeRequestOperation):
         )
 
 
+class UiBridgeNavigateWindowOperation(UiBridgeRequestOperation):
+    operation = UiBridgeOperationName.NAVIGATE_WINDOW
+
+    def execute(
+        self,
+        dispatcher: "UiBridgeRequestDispatcher",
+        request: UiBridgeRequestEnvelope,
+    ) -> UiWindowNavigateResult:
+        return dispatcher.bridge.navigate_window(
+            dispatcher.request_payload(UiWindowNavigateRequest, request)
+        )
+
+
+class UiBridgeSnapshotWindowOperation(UiBridgeRequestOperation):
+    operation = UiBridgeOperationName.SNAPSHOT_WINDOW
+
+    def execute(
+        self,
+        dispatcher: "UiBridgeRequestDispatcher",
+        request: UiBridgeRequestEnvelope,
+    ) -> UiWindowSnapshotResult:
+        return dispatcher.bridge.snapshot_window(
+            dispatcher.request_payload(UiWindowSnapshotRequest, request)
+        )
+
+
 class UiBridgeListObjectStateScopesOperation(UiBridgeRequestOperation):
     operation = UiBridgeOperationName.LIST_OBJECT_STATE_SCOPES
 
@@ -674,6 +705,8 @@ class UiBridgeRequestDispatcher:
                 "ui_state_surfaces",
                 "ui_actions",
                 "ui_windows",
+                "ui_window_navigation",
+                "ui_window_snapshots",
                 "objectstate_scopes",
                 "objectstate_snapshots",
                 "objectstate_branches",

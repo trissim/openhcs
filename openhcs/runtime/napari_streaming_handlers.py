@@ -17,17 +17,19 @@ from polystore.streaming_constants import StreamingDataType
 
 from openhcs.runtime.viewer_protocol import (
     NapariLayerKind,
-    ViewerComponentValueOrdering,
+)
+from openhcs.runtime.viewer_component_system import (
+    ComponentMap,
+    ComponentValue,
+    ComponentValues,
+    ViewerComponentCoordinateAuthority,
+    ViewerLayerAxisProjection,
 )
 
 
 logger = logging.getLogger(__name__)
 
 
-ComponentValue: TypeAlias = str | int | float | bool | tuple | None
-ComponentMap: TypeAlias = dict[str, ComponentValue]
-ComponentValues: TypeAlias = dict[str, list[ComponentValue]]
-ComponentDomainKey: TypeAlias = str | tuple[str, ...] | tuple[str, tuple[str, ...]]
 LayerKwargValue: TypeAlias = str | int | float | bool | tuple | list | dict | None
 LayerDataPayload: TypeAlias = np.ndarray | list | tuple | str | int | float | bool | None
 DimensionLabelMap: TypeAlias = dict[str, list[str]]
@@ -39,8 +41,24 @@ class NapariLayerHandle(ABC):
     """Nominal marker for concrete layer objects returned by a Napari viewer."""
 
 
+class NapariLayerSelectionController(ABC):
+    """Minimal layer-selection contract used by OpenHCS streaming."""
+
+    @property
+    @abstractmethod
+    def active(self) -> NapariLayerHandle | None:
+        """Return the currently selected Napari layer."""
+
+    @active.setter
+    @abstractmethod
+    def active(self, layer: NapariLayerHandle | None) -> None:
+        """Set the currently selected Napari layer."""
+
+
 class NapariLayerCollection(ABC):
     """Minimal layer collection contract used by OpenHCS streaming."""
+
+    selection: NapariLayerSelectionController
 
     @abstractmethod
     def remove(self, layer: NapariLayerHandle) -> None:
@@ -55,6 +73,7 @@ class NapariDimsController(ABC):
     """Subset of napari dims state mutated by streaming updates."""
 
     axis_labels: tuple[str, ...]
+    ndim: int
 
 
 class NapariViewerLayerCreator(ABC):
@@ -113,20 +132,42 @@ class NapariTimerHandle(ABC):
 
 
 @dataclass(frozen=True, slots=True)
+class NapariStreamLayerAddress:
+    """Component/path/data-type identity for one staged stream payload."""
+
+    components: ComponentMap
+    path: str
+    stream_layer_data_type: StreamingDataType
+
+    def with_components(self, components: ComponentMap) -> "NapariStreamLayerAddress":
+        """Return the same payload address after component normalization."""
+        return NapariStreamLayerAddress(
+            components=components,
+            path=self.path,
+            stream_layer_data_type=self.stream_layer_data_type,
+        )
+
+    def same_layer_slot(self, other: "NapariStreamLayerAddress") -> bool:
+        """Return whether two payloads replace the same component/data-type slot."""
+        return (
+            self.components == other.components
+            and self.stream_layer_data_type == other.stream_layer_data_type
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class NapariStreamLayerItem:
     """One component-addressed payload staged for a Napari layer update."""
 
     data: LayerDataPayload
-    components: ComponentMap
-    path: str
-    data_type: StreamingDataType
+    address: NapariStreamLayerAddress
 
 
 @dataclass(frozen=True, slots=True)
 class NapariStreamingDataTypeHandler:
     """Layer-building behavior for one streaming data type."""
 
-    data_type: StreamingDataType
+    handled_stream_data_type: StreamingDataType
     build_nd_data: Callable[..., LayerDataPayload]
     create_layer: Callable[..., NapariLayerHandle]
 
@@ -149,17 +190,17 @@ def build_napari_streaming_data_type_handlers(
     """Build the canonical StreamingDataType handler table for Napari viewers."""
     return {
         StreamingDataType.IMAGE: NapariStreamingDataTypeHandler(
-            data_type=StreamingDataType.IMAGE,
+            handled_stream_data_type=StreamingDataType.IMAGE,
             build_nd_data=build_image_data,
             create_layer=create_image_layer,
         ),
         StreamingDataType.SHAPES: NapariStreamingDataTypeHandler(
-            data_type=StreamingDataType.SHAPES,
+            handled_stream_data_type=StreamingDataType.SHAPES,
             build_nd_data=build_shapes_data,
             create_layer=create_shapes_layer,
         ),
         StreamingDataType.POINTS: NapariStreamingDataTypeHandler(
-            data_type=StreamingDataType.POINTS,
+            handled_stream_data_type=StreamingDataType.POINTS,
             build_nd_data=build_points_data,
             create_layer=create_points_layer,
         ),
@@ -168,11 +209,13 @@ def build_napari_streaming_data_type_handlers(
 
 def napari_streaming_data_type_handler(
     handlers: NapariStreamingDataTypeHandlers,
-    data_type: StreamingDataType | str,
+    stream_layer_data_type: StreamingDataType | str,
 ) -> NapariStreamingDataTypeHandler:
     """Return the handler for one streaming data type, failing loudly if absent."""
     resolved_data_type = (
-        StreamingDataType(data_type) if isinstance(data_type, str) else data_type
+        StreamingDataType(stream_layer_data_type)
+        if isinstance(stream_layer_data_type, str)
+        else stream_layer_data_type
     )
     try:
         return handlers[resolved_data_type]
@@ -190,55 +233,17 @@ class NapariLayerUpdateRequest:
     layers: dict[str, NapariLayerHandle]
     route_key: str
     layer_name: str
-    layer_kind: NapariLayerKind
     data: LayerDataPayload
     layer_kwargs: Mapping[str, LayerKwargValue]
-
-
-@dataclass(frozen=True, slots=True)
-class NapariLayerLogPolicy:
-    """Creation-log policy for one Napari layer kind."""
-
-    layer_kind: NapariLayerKind
-    count_data: bool
-
-    def log_created(self, request: NapariLayerUpdateRequest) -> None:
-        if self.count_data:
-            count = len(request.data)
-            logger.info(
-                "🔬 NAPARI PROCESS: Created %s layer %s with %d %s",
-                request.layer_kind.value,
-                request.layer_name,
-                count,
-                request.layer_kind.value,
-            )
-            return
-        logger.info(
-            "🔬 NAPARI PROCESS: Created %s layer %s",
-            request.layer_kind.value,
-            request.layer_name,
-        )
-
-
-def napari_layer_log_policies() -> dict[NapariLayerKind, NapariLayerLogPolicy]:
-    """Build exhaustive creation-log policies for Napari layer kinds."""
-    policies = {
-        NapariLayerKind.IMAGE: NapariLayerLogPolicy(NapariLayerKind.IMAGE, False),
-        NapariLayerKind.SHAPES: NapariLayerLogPolicy(NapariLayerKind.SHAPES, True),
-        NapariLayerKind.POINTS: NapariLayerLogPolicy(NapariLayerKind.POINTS, True),
-    }
-    if set(policies) != set(NapariLayerKind):
-        missing = set(NapariLayerKind) - set(policies)
-        raise ValueError(f"Missing Napari layer log policies for {missing!r}.")
-    return policies
 
 
 class NapariLayerCreatePolicy(ABC, metaclass=AutoRegisterMeta):
     """Create one concrete Napari layer for a typed layer kind."""
 
-    __registry_key__ = "layer_kind"
+    __registry_key__ = "NAPARI_LAYER_KIND"
     __skip_if_no_key__ = True
-    layer_kind: ClassVar[NapariLayerKind | None] = None
+    NAPARI_LAYER_KIND: ClassVar[NapariLayerKind | None] = None
+    LOG_CREATED_ITEM_COUNT: ClassVar[bool] = False
 
     @classmethod
     def for_layer_kind(
@@ -251,12 +256,38 @@ class NapariLayerCreatePolicy(ABC, metaclass=AutoRegisterMeta):
     def create(self, request: NapariLayerUpdateRequest) -> NapariLayerHandle:
         """Create the layer described by request."""
 
+    @classmethod
+    def registered_layer_kind(cls) -> NapariLayerKind:
+        """Return the registered Napari layer kind for this policy class."""
+        if cls.NAPARI_LAYER_KIND is None:
+            raise ValueError(f"{cls.__name__} is not registered for a Napari layer kind.")
+        return cls.NAPARI_LAYER_KIND
+
+    def log_created(self, request: NapariLayerUpdateRequest) -> None:
+        """Log creation of the layer described by request."""
+        layer_kind = self.registered_layer_kind()
+        if self.LOG_CREATED_ITEM_COUNT:
+            count = len(request.data)
+            logger.info(
+                "🔬 NAPARI PROCESS: Created %s layer %s with %d %s",
+                layer_kind.value,
+                request.layer_name,
+                count,
+                layer_kind.value,
+            )
+            return
+        logger.info(
+            "🔬 NAPARI PROCESS: Created %s layer %s",
+            layer_kind.value,
+            request.layer_name,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class NapariImageLayerCreatePolicy(NapariLayerCreatePolicy):
     """Create image layers through the declared viewer API."""
 
-    layer_kind = NapariLayerKind.IMAGE
+    NAPARI_LAYER_KIND = NapariLayerKind.IMAGE
 
     def create(self, request: NapariLayerUpdateRequest) -> NapariLayerHandle:
         return request.viewer.add_image(
@@ -270,7 +301,8 @@ class NapariImageLayerCreatePolicy(NapariLayerCreatePolicy):
 class NapariShapesLayerCreatePolicy(NapariLayerCreatePolicy):
     """Create shapes layers through the declared viewer API."""
 
-    layer_kind = NapariLayerKind.SHAPES
+    NAPARI_LAYER_KIND = NapariLayerKind.SHAPES
+    LOG_CREATED_ITEM_COUNT = True
 
     def create(self, request: NapariLayerUpdateRequest) -> NapariLayerHandle:
         return request.viewer.add_shapes(
@@ -284,7 +316,8 @@ class NapariShapesLayerCreatePolicy(NapariLayerCreatePolicy):
 class NapariPointsLayerCreatePolicy(NapariLayerCreatePolicy):
     """Create points layers through the declared viewer API."""
 
-    layer_kind = NapariLayerKind.POINTS
+    NAPARI_LAYER_KIND = NapariLayerKind.POINTS
+    LOG_CREATED_ITEM_COUNT = True
 
     def create(self, request: NapariLayerUpdateRequest) -> NapariLayerHandle:
         return request.viewer.add_points(
@@ -307,6 +340,7 @@ class NapariImageColormapPolicy:
     """Formal default for image layer colormap."""
 
     DEFAULT = "gray"
+    COLOR_CHANNEL_COUNTS = frozenset({3, 4})
 
     @classmethod
     def colormap(cls, colormap: str | None) -> str:
@@ -314,31 +348,110 @@ class NapariImageColormapPolicy:
             return cls.DEFAULT
         return colormap
 
+    @classmethod
+    def layer_kwargs(
+        cls,
+        image_data: LayerDataPayload,
+        colormap: str | None,
+    ) -> dict[str, LayerKwargValue]:
+        if cls.is_rgb(image_data):
+            return {"rgb": True}
+        return {"colormap": cls.colormap(colormap)}
+
+    @classmethod
+    def is_rgb(cls, image_data: LayerDataPayload) -> bool:
+        shape = tuple(int(dimension) for dimension in np.shape(image_data))
+        return len(shape) >= 3 and shape[-1] in cls.COLOR_CHANNEL_COUNTS
+
+
+@dataclass(frozen=True, slots=True)
+class NapariLayerSelectionSnapshot:
+    """Selection state before an automatic layer replacement."""
+
+    active_layer: NapariLayerHandle | None
+    replacing_active_layer: bool
+
+
+class NapariLayerSelectionAuthority:
+    """Preserve user layer selection across automatic streaming updates."""
+
+    @classmethod
+    def capture(
+        cls,
+        viewer: NapariViewerLayerCreator,
+        replaced_layer: NapariLayerHandle | None,
+    ) -> NapariLayerSelectionSnapshot:
+        active_layer = cls._active_layer(viewer)
+        return NapariLayerSelectionSnapshot(
+            active_layer=active_layer,
+            replacing_active_layer=active_layer is not None
+            and active_layer is replaced_layer,
+        )
+
+    @classmethod
+    def restore(
+        cls,
+        viewer: NapariViewerLayerCreator,
+        snapshot: NapariLayerSelectionSnapshot,
+        replacement_layer: NapariLayerHandle,
+    ) -> None:
+        if snapshot.active_layer is None:
+            return
+        if snapshot.replacing_active_layer:
+            cls._set_active_layer(viewer, replacement_layer)
+            return
+        if snapshot.active_layer in viewer.layers:
+            cls._set_active_layer(viewer, snapshot.active_layer)
+
+    @staticmethod
+    def _active_layer(
+        viewer: NapariViewerLayerCreator,
+    ) -> NapariLayerHandle | None:
+        return viewer.layers.selection.active
+
+    @staticmethod
+    def _set_active_layer(
+        viewer: NapariViewerLayerCreator,
+        layer: NapariLayerHandle,
+    ) -> None:
+        viewer.layers.selection.active = layer
+
 
 class NapariLayerUpdateAuthority:
     """Owns create-or-replace mechanics for Napari streaming layers."""
 
     def __init__(self) -> None:
-        self._log_policies = napari_layer_log_policies()
         validate_napari_layer_create_policies()
 
-    def create_or_update(self, request: NapariLayerUpdateRequest) -> NapariLayerHandle:
+    def create_or_update(
+        self,
+        policy: NapariLayerCreatePolicy,
+        request: NapariLayerUpdateRequest,
+    ) -> NapariLayerHandle:
         existing_layer = self._existing_layer(request)
+        selection = NapariLayerSelectionAuthority.capture(
+            request.viewer,
+            existing_layer,
+        )
+        layer_kind = policy.registered_layer_kind()
         if existing_layer is not None:
             request.viewer.layers.remove(existing_layer)
             request.layers.pop(request.route_key, None)
             logger.info(
                 "🔬 NAPARI PROCESS: Removed existing %s layer %s for route %s",
-                request.layer_kind.value,
+                layer_kind.value,
                 request.layer_name,
                 request.route_key,
             )
 
-        new_layer = NapariLayerCreatePolicy.for_layer_kind(
-            request.layer_kind
-        ).create(request)
+        new_layer = policy.create(request)
         request.layers[request.route_key] = new_layer
-        self._log_created_layer(request)
+        NapariLayerSelectionAuthority.restore(
+            request.viewer,
+            selection,
+            new_layer,
+        )
+        policy.log_created(request)
         return new_layer
 
     def create_or_update_image(
@@ -350,23 +463,34 @@ class NapariLayerUpdateAuthority:
         image_data: LayerDataPayload,
         colormap: str | None,
         axis_labels: tuple[str, ...] | None = None,
+        translate: tuple[float, ...] | None = None,
     ) -> NapariLayerHandle:
+        layer_kwargs = NapariImageColormapPolicy.layer_kwargs(
+            image_data,
+            colormap,
+        )
+        if axis_labels is not None:
+            layer_kwargs["axis_labels"] = axis_labels
+        if translate is not None:
+            layer_kwargs["translate"] = translate
+
         layer = self.create_or_update(
+            NapariLayerCreatePolicy.for_layer_kind(NapariLayerKind.IMAGE),
             NapariLayerUpdateRequest(
                 viewer=viewer,
                 layers=layers,
                 route_key=route_key,
                 layer_name=layer_name,
-                layer_kind=NapariLayerKind.IMAGE,
                 data=image_data,
-                layer_kwargs={
-                    "colormap": NapariImageColormapPolicy.colormap(colormap)
-                },
+                layer_kwargs=layer_kwargs,
             )
         )
         if axis_labels is not None:
-            viewer.dims.axis_labels = axis_labels
-            logger.info("🔬 NAPARI PROCESS: Set viewer.dims.axis_labels=%s", axis_labels)
+            logger.info(
+                "🔬 NAPARI PROCESS: Route %s carries layer-local axis_labels=%s",
+                route_key,
+                axis_labels,
+            )
         return layer
 
     def create_or_update_shapes(
@@ -380,12 +504,12 @@ class NapariLayerUpdateAuthority:
         properties: dict,
     ) -> NapariLayerHandle:
         return self.create_or_update(
+            NapariLayerCreatePolicy.for_layer_kind(NapariLayerKind.SHAPES),
             NapariLayerUpdateRequest(
                 viewer=viewer,
                 layers=layers,
                 route_key=route_key,
                 layer_name=layer_name,
-                layer_kind=NapariLayerKind.SHAPES,
                 data=shapes_data,
                 layer_kwargs={
                     "shape_type": shape_types,
@@ -405,20 +529,24 @@ class NapariLayerUpdateAuthority:
         layer_name: str,
         points_data: LayerDataPayload,
         properties: dict,
+        translate: tuple[float, ...] | None = None,
     ) -> NapariLayerHandle:
+        layer_kwargs = {
+            "properties": properties,
+            "face_color": "green",
+            "size": 3,
+        }
+        if translate is not None:
+            layer_kwargs["translate"] = translate
         return self.create_or_update(
+            NapariLayerCreatePolicy.for_layer_kind(NapariLayerKind.POINTS),
             NapariLayerUpdateRequest(
                 viewer=viewer,
                 layers=layers,
                 route_key=route_key,
                 layer_name=layer_name,
-                layer_kind=NapariLayerKind.POINTS,
                 data=points_data,
-                layer_kwargs={
-                    "properties": properties,
-                    "face_color": "green",
-                    "size": 3,
-                },
+                layer_kwargs=layer_kwargs,
             )
         )
 
@@ -433,22 +561,92 @@ class NapariLayerUpdateAuthority:
             return layer
         return None
 
-    def _log_created_layer(self, request: NapariLayerUpdateRequest) -> None:
-        self._log_policies[request.layer_kind].log_created(request)
+@dataclass(slots=True)
+class NapariDimensionLayerState:
+    """Semantic dimension-label state for one streamed Napari layer."""
+
+    labels: DimensionLabelMap
+    presentation: "NapariAxisPresentation | None" = None
+
+    @classmethod
+    def empty(cls) -> "NapariDimensionLayerState":
+        return cls(labels={})
+
+    @property
+    def stack_axes(self) -> tuple[str, ...]:
+        if self.presentation is None:
+            return ()
+        return self.presentation.axis_projection.projected_axis_components
+
+    @property
+    def axis_labels(self) -> tuple[str, ...]:
+        if self.presentation is None:
+            return ()
+        return self.presentation.axis_labels
+
+    @property
+    def axis_offsets(self) -> tuple[int, ...]:
+        if self.presentation is None:
+            return ()
+        return self.presentation.axis_projection.axis_offsets
+
+
+@dataclass(frozen=True, slots=True)
+class NapariAxisPresentation:
+    """Layer-local axis semantics projected into the viewer coordinate space."""
+
+    layer_key: str
+    axis_projection: ViewerLayerAxisProjection
+    payload_axis_labels: tuple[str, ...] = ()
+
+    @property
+    def axis_labels(self) -> tuple[str, ...]:
+        return tuple(
+            [
+                *self.axis_projection.projected_axis_components,
+                *self.payload_axis_labels,
+                "y",
+                "x",
+            ]
+        )
+
+    @classmethod
+    def from_projection(
+        cls,
+        *,
+        layer_key: str,
+        projection: ViewerLayerAxisProjection,
+        payload_axis_labels: tuple[str, ...] = (),
+    ) -> "NapariAxisPresentation":
+        return cls(
+            layer_key=layer_key,
+            axis_projection=projection,
+            payload_axis_labels=payload_axis_labels,
+        )
+
+    def label_index(self, viewer_step: int, axis_index: int) -> int:
+        return viewer_step - self.axis_projection.axis_offset(axis_index)
 
 
 @dataclass(slots=True)
-class NapariLayerStateStore:
+class NapariLayerRouteStateStore:
     """Own per-layer Napari runtime state that must stay keyed together."""
 
     layers: dict[str, NapariLayerHandle]
     layer_titles: dict[str, str]
-    dimension_labels: dict[str, DimensionLabelMap]
-    pending_updates: dict[str, NapariTimerHandle]
+    layer_dimension_states: dict[str, NapariDimensionLayerState]
+    layer_pending_updates: dict[str, NapariTimerHandle]
+    active_dimension_label_route: str | None
 
     @classmethod
-    def empty(cls) -> "NapariLayerStateStore":
-        return cls(layers={}, layer_titles={}, dimension_labels={}, pending_updates={})
+    def empty(cls) -> "NapariLayerRouteStateStore":
+        return cls(
+            layers={},
+            layer_titles={},
+            layer_dimension_states={},
+            layer_pending_updates={},
+            active_dimension_label_route=None,
+        )
 
     def set_title(self, layer_key: str, title: str) -> None:
         self.layer_titles[layer_key] = title
@@ -465,31 +663,40 @@ class NapariLayerStateStore:
     def purge_route(self, layer_key: str) -> None:
         self.layers.pop(layer_key, None)
         self.layer_titles.pop(layer_key, None)
-        self.dimension_labels.pop(layer_key, None)
-        self.pending_updates.pop(layer_key, None)
+        self.layer_dimension_states.pop(layer_key, None)
+        self.layer_pending_updates.pop(layer_key, None)
+        if self.active_dimension_label_route == layer_key:
+            self.active_dimension_label_route = None
 
-    def labels_for(self, layer_key: str) -> DimensionLabelMap:
-        if layer_key not in self.dimension_labels:
-            return {}
-        return self.dimension_labels[layer_key]
+    def dimension_state_for(self, layer_key: str) -> NapariDimensionLayerState:
+        if layer_key not in self.layer_dimension_states:
+            return NapariDimensionLayerState.empty()
+        return self.layer_dimension_states[layer_key]
 
-    def set_labels(self, layer_key: str, labels: DimensionLabelMap) -> None:
-        self.dimension_labels[layer_key] = labels
+    def set_dimension_state(
+        self,
+        layer_key: str,
+        state: NapariDimensionLayerState,
+    ) -> None:
+        self.layer_dimension_states[layer_key] = state
+
+    def set_active_dimension_label_route(self, layer_key: str) -> None:
+        self.active_dimension_label_route = layer_key
 
     def cancel_pending_update(self, layer_key: str) -> bool:
-        if layer_key not in self.pending_updates:
+        if layer_key not in self.layer_pending_updates:
             return False
-        timer = self.pending_updates[layer_key]
+        timer = self.layer_pending_updates[layer_key]
         timer.stop()
         return True
 
     def set_pending_update(self, layer_key: str, timer: NapariTimerHandle) -> None:
-        self.pending_updates[layer_key] = timer
+        self.layer_pending_updates[layer_key] = timer
 
     def pop_pending_update(self, layer_key: str) -> NapariTimerHandle | None:
-        if layer_key not in self.pending_updates:
+        if layer_key not in self.layer_pending_updates:
             return None
-        return self.pending_updates.pop(layer_key)
+        return self.layer_pending_updates.pop(layer_key)
 
     def has_layer(self, layer_key: str) -> bool:
         return layer_key in self.layers
@@ -502,35 +709,76 @@ class NapariLayerStateStore:
 
 
 @dataclass(slots=True)
-class NapariComponentMetadataNormalizer:
-    """Normalize component metadata before Napari stack indexing."""
+class NapariComponentGroupStore:
+    """Own accumulated stream items by Napari layer route."""
 
-    indexed_components: frozenset[str] = frozenset(
-        {"site", "channel", "z_index", "timepoint"}
-    )
+    groups: dict[str, list["NapariStreamLayerItem"]] = field(default_factory=dict)
 
-    def normalize(self, components: ComponentMap) -> ComponentMap:
-        return {
-            component: self.normalize_value(component, value)
-            for component, value in components.items()
-        }
+    def items_for(self, layer_key: str) -> list["NapariStreamLayerItem"]:
+        if layer_key not in self.groups:
+            self.groups[layer_key] = []
+        return self.groups[layer_key]
 
-    def normalize_value(self, component: str, value: ComponentValue) -> ComponentValue:
-        if component not in self.indexed_components:
-            return value
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped and stripped.lstrip("+-").isdigit():
-                return int(stripped)
-        return value
+    def existing_items_for(
+        self,
+        layer_key: str,
+    ) -> list["NapariStreamLayerItem"] | None:
+        if layer_key not in self.groups:
+            return None
+        return self.groups[layer_key]
+
+    def item_count(self, layer_key: str) -> int:
+        items = self.existing_items_for(layer_key)
+        if items is None:
+            return 0
+        return len(items)
+
+    def purge(self, layer_key: str) -> None:
+        self.groups.pop(layer_key, None)
+
+    def clear(self) -> None:
+        self.groups.clear()
+
+    def __len__(self) -> int:
+        return len(self.groups)
+
+    def __iter__(self):
+        return iter(self.groups)
+
+
+@dataclass(slots=True)
+class NapariLayerBatchDebouncePolicy:
+    """Shared debounce policy for Napari layer updates and batch processors."""
+
+    delay_ms: int = 1000
+    max_wait_ms: int = 5000
+
+    def start_timer(self, timer: NapariTimerHandle) -> None:
+        timer.start(self.delay_ms)
+
+    def create_processor(
+        self,
+        *,
+        napari_server: "NapariServerDisplayProtocol",
+        batch_size: int | None,
+    ) -> "NapariBatchProcessor":
+        from polystore.streaming.receivers.napari import NapariBatchProcessor
+
+        return NapariBatchProcessor(
+            napari_server=napari_server,
+            batch_size=batch_size,
+            debounce_delay_ms=self.delay_ms,
+            max_debounce_wait_ms=self.max_wait_ms,
+        )
 
 
 @dataclass(slots=True)
 class NapariBatchProcessorStore:
     """Own lazy NapariBatchProcessor instances by layer key."""
 
-    debounce_delay_ms: int
-    max_debounce_wait_ms: int = 5000
+    debounce_policy: NapariLayerBatchDebouncePolicy = field(
+        default_factory=NapariLayerBatchDebouncePolicy
+    )
     processors: dict[str, "NapariBatchProcessor"] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -543,13 +791,9 @@ class NapariBatchProcessorStore:
     ) -> "NapariBatchProcessor":
         with self.lock:
             if layer_key not in self.processors:
-                from polystore.streaming.receivers.napari import NapariBatchProcessor
-
-                self.processors[layer_key] = NapariBatchProcessor(
+                self.processors[layer_key] = self.debounce_policy.create_processor(
                     napari_server=napari_server,
                     batch_size=batch_size,
-                    debounce_delay_ms=self.debounce_delay_ms,
-                    max_debounce_wait_ms=self.max_debounce_wait_ms,
                 )
                 logger.info(
                     "NapariViewerServer: Created batch processor for layer '%s' with batch_size=%s",
@@ -557,95 +801,6 @@ class NapariBatchProcessorStore:
                     batch_size,
                 )
             return self.processors[layer_key]
-
-
-@dataclass(slots=True)
-class NapariComponentValueDomain:
-    """Store observed component values for keyed streaming domains."""
-
-    values_by_key: dict[ComponentDomainKey, dict[str, set[ComponentValue]]] = field(
-        default_factory=dict
-    )
-
-    def update(
-        self,
-        domain_key: ComponentDomainKey,
-        stack_components: Sequence[str],
-        layer_items: Sequence[NapariStreamLayerItem],
-    ) -> None:
-        if domain_key not in self.values_by_key:
-            self.values_by_key[domain_key] = {
-                comp: set() for comp in stack_components
-            }
-
-        observed_values = self.values_by_key[domain_key]
-        for item in layer_items:
-            components = item.components
-            for comp in stack_components:
-                if comp in components:
-                    observed_values[comp].add(components[comp])
-
-    def values_for(
-        self,
-        domain_key: ComponentDomainKey,
-        stack_components: Sequence[str],
-    ) -> ComponentValues:
-        if domain_key not in self.values_by_key:
-            return {comp: [] for comp in stack_components}
-
-        return {
-            comp: sorted(values, key=ViewerComponentValueOrdering.key)
-            for comp, values in self.values_by_key[domain_key].items()
-        }
-
-
-@dataclass(slots=True)
-class NapariComponentValueTracker:
-    """Track observed component values for one streamed Napari route."""
-
-    domain: NapariComponentValueDomain = field(default_factory=NapariComponentValueDomain)
-
-    def update(
-        self,
-        route_key: str,
-        stack_components: Sequence[str],
-        layer_items: Sequence[NapariStreamLayerItem],
-    ) -> None:
-        self.domain.update(
-            self._domain_key(route_key, stack_components),
-            stack_components,
-            layer_items,
-        )
-
-    def values_for(self, route_key: str, stack_components: Sequence[str]) -> ComponentValues:
-        return self.domain.values_for(
-            self._domain_key(route_key, stack_components),
-            stack_components,
-        )
-
-    @staticmethod
-    def _domain_key(
-        route_key: str,
-        stack_components: Sequence[str],
-    ) -> tuple[str, tuple[str, ...]]:
-        return (route_key, tuple(stack_components))
-
-
-@dataclass(slots=True)
-class NapariDisplayAxisDomain:
-    """Track the shared viewer axis domain for one stack-component layout."""
-
-    domain: NapariComponentValueDomain = field(default_factory=NapariComponentValueDomain)
-
-    def update(
-        self,
-        stack_components: Sequence[str],
-        layer_items: Sequence[NapariStreamLayerItem],
-    ) -> None:
-        self.domain.update(tuple(stack_components), stack_components, layer_items)
-
-    def values_for(self, stack_components: Sequence[str]) -> ComponentValues:
-        return self.domain.values_for(tuple(stack_components), stack_components)
 
 
 class NapariShapeKind(Enum):
@@ -658,11 +813,22 @@ class NapariShapeKind(Enum):
 
 @dataclass(frozen=True, slots=True)
 class NapariShapePaintContext:
-    """Mutable label-array position passed to shape painters."""
+    """Mutable label volume position passed to shape painters."""
 
-    labels_array: np.ndarray
+    target_label_volume: np.ndarray
     indices: tuple[int, ...]
     label_id: int
+
+    @property
+    def spatial_shape(self) -> tuple[int, int]:
+        return (
+            int(self.target_label_volume.shape[-2]),
+            int(self.target_label_volume.shape[-1]),
+        )
+
+    def paint_pixels(self, rows: np.ndarray, columns: np.ndarray) -> None:
+        target_indices = self.indices + (rows, columns)
+        self.target_label_volume[target_indices] = self.label_id
 
 
 class NapariShapeLabelRasterizer:
@@ -684,9 +850,10 @@ class NapariShapeLabelRasterizer:
         self,
         *,
         layer_items: Sequence[NapariStreamLayerItem],
-        stack_components: Sequence[str],
-        component_values: ComponentValues,
+        axis_projection: ViewerLayerAxisProjection,
     ) -> np.ndarray:
+        projected_axis_components = axis_projection.projected_axis_components
+        component_values = axis_projection.component_values
         logger.info("🔬 NAPARI PROCESS: Building ROI stack with global component values")
         for component, values in component_values.items():
             logger.info("🔬 NAPARI PROCESS:   %s: %s", component, values)
@@ -700,27 +867,27 @@ class NapariShapeLabelRasterizer:
 
         image_shape = self._image_shape(layer_items)
         nd_shape = [
-            *(len(component_values[component]) for component in stack_components),
+            *(len(component_values[component]) for component in projected_axis_components),
             *image_shape,
         ]
-        labels_array = np.zeros(nd_shape, dtype=np.uint16)
+        label_volume = np.zeros(nd_shape, dtype=np.uint16)
 
         label_id = 1
         for item in layer_items:
-            indices = self._component_indices(item, stack_components, component_values)
+            indices = self._component_indices(item, projected_axis_components, component_values)
             for shape_dict in item.data:
                 shape_kind = NapariShapeKind(str(shape_dict["type"]))
                 label_id = self._paint_routes[shape_kind](
                     shape_dict,
-                    NapariShapePaintContext(labels_array, indices, label_id),
+                    NapariShapePaintContext(label_volume, indices, label_id),
                 )
 
         logger.info(
             "🔬 NAPARI PROCESS: Created labels array with shape %s and %d labels",
-            labels_array.shape,
+            label_volume.shape,
             label_id - 1,
         )
-        return labels_array
+        return label_volume
 
     def _image_shape(
         self,
@@ -782,13 +949,13 @@ class NapariShapeLabelRasterizer:
     def _component_indices(
         self,
         item: NapariStreamLayerItem,
-        stack_components: Sequence[str],
+        projected_axis_components: Sequence[str],
         component_values: ComponentValues,
     ) -> tuple[int, ...]:
-        components = item.components
+        components = item.address.components
         return tuple(
             self._component_index(component, components, component_values)
-            for component in stack_components
+            for component in projected_axis_components
         )
 
     def _component_index(
@@ -797,29 +964,12 @@ class NapariShapeLabelRasterizer:
         components: Mapping[str, ComponentValue],
         component_values: ComponentValues,
     ) -> int:
-        values = component_values[component]
-        if not values:
-            return 0
-        if component not in components:
-            logger.warning(
-                "🔬 NAPARI PROCESS: Shape item missing stack component %s; "
-                "placing on first %s plane.",
-                component,
-                component,
-            )
-            return 0
-        value = components[component]
-        if value in values:
-            return values.index(value)
-        logger.warning(
-            "🔬 NAPARI PROCESS: Shape item has %s=%r outside stack values %s; "
-            "placing on first %s plane.",
-            component,
-            value,
-            values,
-            component,
+        return ViewerComponentCoordinateAuthority.index(
+            components=components,
+            component_values=component_values,
+            component=component,
+            context="Napari shape item",
         )
-        return 0
 
     def _paint_polygon(
         self,
@@ -832,10 +982,9 @@ class NapariShapeLabelRasterizer:
         rr, cc = draw.polygon(
             coords[:, 0],
             coords[:, 1],
-            shape=context.labels_array.shape[-2:],
+            shape=context.spatial_shape,
         )
-        full_indices = context.indices + (rr, cc)
-        context.labels_array[full_indices] = context.label_id
+        context.paint_pixels(rr, cc)
         return context.label_id + 1
 
     def _paint_path(
@@ -849,15 +998,15 @@ class NapariShapeLabelRasterizer:
 
         rr = coords[:, 0].astype(int)
         cc = coords[:, 1].astype(int)
+        max_row, max_column = context.spatial_shape
         valid = (
             (rr >= 0)
-            & (rr < context.labels_array.shape[-2])
+            & (rr < max_row)
             & (cc >= 0)
-            & (cc < context.labels_array.shape[-1])
+            & (cc < max_column)
         )
         rr, cc = rr[valid], cc[valid]
-        full_indices = context.indices + (rr, cc)
-        context.labels_array[full_indices] = context.label_id
+        context.paint_pixels(rr, cc)
         return context.label_id + 1
 
     def _skip_points(

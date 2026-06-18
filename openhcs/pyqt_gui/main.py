@@ -839,7 +839,10 @@ class OpenHCSMainWindow(QMainWindow):
             dirty_states: List of (scope_id, ObjectState) tuples with unsaved changes
             triggering_scope: Scope that triggered the snapshot (for logging only)
         """
-        from pyqt_reactive.services.window_manager import WindowManager
+        from pyqt_reactive.services.scope_window_navigation import (
+            ScopeWindowNavigationService,
+        )
+        from pyqt_reactive.services.window_navigation import WindowNavigationRequest
 
         logger.debug(
             f"⏱️ TIME_TRAVEL_CALLBACK: triggering_scope={triggering_scope!r} dirty_count={len(dirty_states)}"
@@ -854,34 +857,20 @@ class OpenHCSMainWindow(QMainWindow):
             field_path = (
                 request.target.to_field_path() if request.target is not None else None
             )
-            if WindowManager.is_open(request.scope_id):
-                self._select_tab_for_time_travel(request.scope_id, request.target)
-                # Window exists - focus and navigate to dirty field
-                WindowManager.focus_and_navigate(
-                    request.scope_id,
+            result = ScopeWindowNavigationService.navigate(
+                WindowNavigationRequest(
+                    scope_id=request.scope_id,
+                    object_state=request.object_state,
                     field_path=field_path,
+                    create_if_missing=True,
                 )
-            else:
-                # Create new window
-                from pyqt_reactive.services.scope_window_factory import WindowFactory
-
-                window = WindowFactory.create_window_for_scope(
-                    request.scope_id,
-                    request.object_state,
+            )
+            if result.created:
+                logger.info(
+                    f"⏱️ TIME_TRAVEL: Reopened window for dirty state: {request.scope_id}"
                 )
-                if window:
-                    logger.info(
-                        f"⏱️ TIME_TRAVEL: Reopened window for dirty state: {request.scope_id}"
-                    )
-                    self._select_tab_for_time_travel(
-                        request.scope_id,
-                        request.target,
-                    )
-                    if field_path:
-                        WindowManager.focus_and_navigate(
-                            request.scope_id,
-                            field_path=field_path,
-                        )
+            if result.window is not None:
+                self._select_tab_for_time_travel(request.scope_id, request.target)
 
     def _build_time_travel_window_requests(
         self,

@@ -16,6 +16,14 @@ from openhcs.agent.services.function_catalog_service import FunctionCatalogServi
 from openhcs.agent.services.llm_context_service import AgentAuthoringContextService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
 from openhcs.agent.services.runtime_server_service import RuntimeServerService
+from openhcs.agent.services.viewer_window_service import (
+    ViewerWindowGatewayABC,
+    ViewerWindowService,
+)
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
 
@@ -164,6 +172,38 @@ class _FakeRuntimeServerGateway:
         )
 
 
+class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
+    def __init__(self) -> None:
+        self.requests = []
+
+    def snapshot_window(self, request):
+        self.requests.append(request)
+        return {
+            "status": "success",
+            "viewer": {
+                "type": "napari",
+                "title": "OpenHCS Napari Viewer",
+            },
+            "width": 640,
+            "height": 480,
+            "snapshot": request.snapshot.to_wire_payload().as_dict(),
+            "resource": {
+                "uri": "file:///tmp/napari.png",
+                "title": "OpenHCS Napari Viewer",
+                "mime_type": "image/png",
+                "path": "/tmp/napari.png",
+                "size_bytes": 456,
+                "sha256": "def456",
+            },
+        }
+
+
+class _MalformedViewerWindowGateway(ViewerWindowGatewayABC):
+    def snapshot_window(self, request):
+        del request
+        return {"status": "error"}
+
+
 def test_function_catalog_search_and_describe_use_registry_ids(monkeypatch):
     catalog = _catalog(monkeypatch)
 
@@ -221,6 +261,51 @@ def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypat
 
     assert page.items[0].function_id == "test:sample_gaussian_filter"
     assert phrase_page.items[0].function_id == "test:sample_gaussian_filter"
+
+
+def test_viewer_window_service_snapshots_running_viewer():
+    gateway = _FakeViewerWindowGateway()
+    service = ViewerWindowService(gateway=gateway)
+
+    result = service.snapshot_window(
+        port=5584,
+        snapshot=WindowSnapshotCaptureSpec(
+            output_dir_path="/tmp/openhcs-mcp-window-snapshots",
+            capture_scope=WindowSnapshotCaptureScope.WINDOW,
+        ),
+    )
+
+    assert result.captured is True
+    assert result.connection.port == 5584
+    assert result.viewer is not None
+    assert result.viewer.viewer_type == "napari"
+    assert result.viewer.title == "OpenHCS Napari Viewer"
+    assert result.resource is not None
+    assert result.resource.mime_type == "image/png"
+    assert result.width == 640
+    assert result.height == 480
+    assert result.snapshot is not None
+    assert result.snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+    assert (
+        gateway.requests[0].snapshot.output_dir_path
+        == "/tmp/openhcs-mcp-window-snapshots"
+    )
+    assert gateway.requests[0].snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+
+
+def test_viewer_window_service_reports_malformed_viewer_response():
+    result = ViewerWindowService(
+        gateway=_MalformedViewerWindowGateway()
+    ).snapshot_window(
+        port=5584,
+        snapshot=WindowSnapshotCaptureSpec(
+            output_dir_path="/tmp/openhcs-mcp-window-snapshots",
+            capture_scope=WindowSnapshotCaptureScope.WIDGET,
+        ),
+    )
+
+    assert result.captured is False
+    assert result.errors[0].code == "viewer_window_snapshot_response_invalid"
 
 
 def test_config_service_reflects_pipeline_schema_without_materializing_lazy_values():

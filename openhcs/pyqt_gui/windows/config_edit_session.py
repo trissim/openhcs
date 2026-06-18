@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Type
+from typing import Generic, TypeVar
 
 from openhcs.config_framework import is_global_config_type
 from openhcs.config_framework.global_config import (
@@ -14,35 +14,43 @@ from openhcs.config_framework.global_config import (
     set_saved_global_config,
 )
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate import ObjectStateEditSession
 
 logger = logging.getLogger(__name__)
 
 
+ConfigT = TypeVar("ConfigT")
+
+
 @dataclass(slots=True)
-class ConfigEditSession:
+class ConfigEditSession(Generic[ConfigT]):
     """Own non-visual config edit state for ConfigWindow."""
 
-    config_class: Type
+    config_class: type[ConfigT]
     state: ObjectState
-    original_config: Any
+    original_config: ConfigT
     global_context_dirty: bool = False
     saving: bool = False
-    _original_global_config_snapshot: Any = field(init=False, repr=False)
+    _original_global_config_snapshot: ConfigT | None = field(init=False, repr=False)
+    _object_session: ObjectStateEditSession[ConfigT] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._original_global_config_snapshot = (
-            copy.deepcopy(self.original_config)
-            if self.is_global_config
-            else None
+        self._original_global_config_snapshot = None
+        if self.is_global_config:
+            self._original_global_config_snapshot = copy.deepcopy(self.original_config)
+        self._object_session = ObjectStateEditSession(
+            state_provider=lambda: self.state,
+            fallback_object=self.original_config,
+            expected_type=self.config_class,
         )
 
     @property
     def is_global_config(self) -> bool:
         return is_global_config_type(self.config_class)
 
-    def to_object(self) -> Any:
+    def to_object(self) -> ConfigT:
         """Reconstruct the current config object from ObjectState storage."""
-        return self.state.to_object()
+        return self._object_session.to_object()
 
     def begin_save_callback(self, window_id: int) -> None:
         self.saving = True
@@ -58,7 +66,7 @@ class ConfigEditSession:
             return
         self.global_context_dirty = True
 
-    def apply_code_edit_context(self, new_config: Any) -> None:
+    def apply_code_edit_context(self, new_config: ConfigT) -> None:
         """Apply immediate thread-local context updates for edited code."""
         if not self.is_global_config:
             return
@@ -66,7 +74,7 @@ class ConfigEditSession:
         self.global_context_dirty = True
         logger.debug("Updated thread-local %s context", self.config_class.__name__)
 
-    def publish_saved_global_config(self, new_config: Any) -> None:
+    def publish_saved_global_config(self, new_config: ConfigT) -> None:
         """Publish a saved global config to the saved/live thread-local stores."""
         if not self.is_global_config:
             return

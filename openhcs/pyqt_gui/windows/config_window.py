@@ -7,7 +7,6 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 
 import logging
 import dataclasses
-import os
 from typing import Type, Any, Callable, Optional, Dict
 
 from PyQt6.QtWidgets import (
@@ -41,21 +40,26 @@ from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMix
 from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton, HelpContext
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
+from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
     BaseFormDialog,
     DirtyWindowPresentation,
-    DirtyWindowPresenter,
     FormWindowActionHeader,
     HeaderAction,
     HeaderActionGroup,
+    ManagedWindowActionCapabilities,
+    ManagedStateRestorePolicy,
 )
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.windows.config_edit_session import ConfigEditSession
-import openhcs.serialization.pycodify_formatters  # noqa: F401
-from pycodify import Assignment, generate_python_source
+from openhcs.pyqt_gui.services.pycodified_window_code_document import (
+    ExternalCodeEditorPreference,
+    PycodifiedObjectCodeDocumentDriver,
+    PycodifiedObjectDocumentSpec,
+)
 from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 
@@ -218,7 +222,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     # Signals
     config_saved = pyqtSignal(object)  # saved config
     config_cancelled = pyqtSignal()
-    changes_detected = pyqtSignal(bool)  # has_changes
 
     def __init__(
         self,
@@ -248,16 +251,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self.on_save_callback = on_save_callback
         self.scope_id = scope_id  # Store scope_id for passing to form_manager
 
-        # Flag to prevent refresh during save operation
-        self.restore_descendants_on_close = True
-
-        # Change tracking
-        self.has_changes = False
+        self.state_restore_policy = ManagedStateRestorePolicy()
 
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
-        self._dirty_presenter = DirtyWindowPresenter()
         self.tree_helper = ConfigHierarchyTreeHelper()
 
         # NOTE: init_scope_border() will be called AFTER setup_ui() creates the widgets
@@ -303,12 +301,25 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             and self.scope_id not in (None, "")
             and self.state.has_delegate
         ):
-            self.restore_descendants_on_close = False
+            self.state_restore_policy = ManagedStateRestorePolicy(
+                propagate_descendants=False
+            )
 
         self._config_session = ConfigEditSession(
             config_class=self.config_class,
             state=self.state,
             original_config=current_config,
+        )
+        self._code_document_driver = PycodifiedObjectCodeDocumentDriver(
+            spec=PycodifiedObjectDocumentSpec(
+                assignment_name="config",
+                title=f"View/Edit {self.config_class.__name__}",
+                header="# Configuration Code",
+                expected_type=self.config_class,
+            ),
+            current_object=self._current_config_for_code_document,
+            apply_object=self._apply_config_from_code_document,
+            before_read=self._refresh_code_document_context,
         )
 
         # CRITICAL: Config window manages its own scroll area, so tell form_manager NOT to create one
@@ -336,9 +347,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self._dirty_title_callback = self._update_window_title_dirty_marker
         self.state.on_state_changed(self._dirty_title_callback)
 
-        # Change detection
-        self.changes_detected.connect(self.on_changes_detected)
-
         # Setup UI
         self.setup_ui()
 
@@ -355,50 +363,43 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         """Return root form managers for BaseFormDialog change detection."""
         return (self.form_manager,) if self.form_manager is not None else ()
 
-    def _update_window_title_dirty_marker(self) -> None:
-        """Update window title with dirty marker and signature diff underline.
+    def window_code_document_driver(self) -> WindowCodeDocumentDriver | None:
+        """Expose this config window's pycodified code-mode document."""
+        return self._code_document_driver
 
-        Two orthogonal visual semantics:
-        - Asterisk (*): unsaved raw edits (parameters != saved_parameters)
-        - Underline: signature diff (raw != signature default)
-        """
-        is_dirty = bool(self.state.is_raw_dirty)
-        has_sig_diff = bool(self.state.signature_diff_fields)
-        if self._header_label is None or self._save_button is None:
-            return
-
-        self._dirty_presenter.apply(
-            window=self,
-            header_label=self._header_label,
-            save_button=self._save_button,
-            presentation=DirtyWindowPresentation(
-                window_title=self._base_window_title,
-                header_text=f"Configure {self.config_class.__name__}",
-                save_label="Save",
-                is_dirty=is_dirty,
-                has_signature_diff=has_sig_diff,
-                mark_save_label_dirty=False,
-            ),
+    def managed_window_action_capabilities(
+        self,
+    ) -> ManagedWindowActionCapabilities:
+        """Expose config-window save/cancel semantics to agent actions."""
+        return ManagedWindowActionCapabilities(
+            save_and_close=True,
+            save_without_close=True,
+            discard_and_close=True,
         )
 
-    def detect_changes(self):
-        """Detect if changes have been made using ObjectState's dirty tracking.
+    def agent_save_managed_window(self, *, close_window: bool) -> None:
+        """Save through the same workflow as the visible Save button."""
+        self.save_config(close_window=close_window)
 
-        This replaces old snapshot-based approach with ObjectState's built-in
-        dirty tracking, which automatically detects changes to any parameter
-        (including nested fields) by comparing current values to saved baseline.
-        """
-        # Use ObjectState's dirty tracking instead of custom snapshot comparison
-        has_changes = bool(self.state.is_raw_dirty) if self.state else False
+    def dirty_window_widgets(self) -> tuple[QLabel, QPushButton] | None:
+        if self._header_label is None or self._save_button is None:
+            return None
+        return self._header_label, self._save_button
 
-        if has_changes != self.has_changes:
-            self.has_changes = has_changes
-            self.changes_detected.emit(has_changes)
+    def dirty_window_presentation(self) -> DirtyWindowPresentation:
+        """Build config-window dirty/signature presentation."""
+        return DirtyWindowPresentation(
+            window_title=self._base_window_title,
+            header_text=f"Configure {self.config_class.__name__}",
+            save_label="Save",
+            is_dirty=self.dirty_state.is_dirty,
+            has_signature_diff=self.dirty_state.has_signature_diff,
+            mark_save_label_dirty=False,
+        )
 
-    def on_changes_detected(self, has_changes: bool):
-        """Handle changes detection."""
-        del has_changes
-        self._update_window_title_dirty_marker()
+    def _update_window_title_dirty_marker(self) -> None:
+        """Update config dirty/signature markers."""
+        self.apply_dirty_window_presentation()
 
     def setup_ui(self):
         """Setup the user interface."""
@@ -593,7 +594,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         # Style tree selection with scope accent
         tree_style = self.get_scope_tree_selection_stylesheet()
         if tree_style and self.tree_widget is not None:
-            current_style = self.tree_widget.styleSheet() or ""
+            current_style = self.tree_widget.styleSheet()
             self.tree_widget.setStyleSheet(f"{current_style}\n{tree_style}")
 
         # Style help button with scope accent color
@@ -740,11 +741,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
             self._config_session.publish_saved_global_config(new_config)
 
-            # UNIFIED: Both paths share same logic, differ only in whether to close window
-            if close_window:
-                self.accept()  # Marks saved + unregisters + cleans up + closes
-            else:
-                self.mark_saved_and_refresh_all()  # Marks saved + refreshes, but stays open
+            self.finish_managed_save(close_window=close_window)
 
         except Exception as e:
             logger.error(f"Failed to save configuration: {e}")
@@ -755,33 +752,14 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def _view_code(self):
         """Open code editor to view/edit the configuration as Python code."""
         try:
-            # CRITICAL: Refresh with live context BEFORE getting current values
-            # This ensures code editor shows unsaved changes from other open windows
-            # Example: GlobalPipelineConfig editor open with unsaved zarr_config changes
-            #          → PipelineConfig code editor should show those live zarr_config values
-            ParameterOpsService().refresh_with_live_context(self.form_manager)
-
-            # Get current config using to_object() to reconstruct nested structure from flat storage
-            current_config = self._config_session.to_object()
-
-            # Generate code using existing function
-            python_code = generate_python_source(
-                Assignment("config", current_config),
-                header="# Configuration Code",
-                clean_mode=True,
-            )
-
-            # Launch editor
+            document = self._code_document_driver.read_document()
             editor_service = SimpleCodeEditorService(self)
-            use_external = os.environ.get(
-                "OPENHCS_USE_EXTERNAL_EDITOR", ""
-            ).lower() in ("1", "true", "yes")
 
             editor_service.edit_code(
-                initial_content=python_code,
-                title=f"View/Edit {self.config_class.__name__}",
+                initial_content=document.source,
+                title=document.title,
                 callback=self._handle_edited_config_code,
-                use_external=use_external,
+                use_external=ExternalCodeEditorPreference.use_external_editor(),
                 code_type="config",
                 code_data={"config_class": self.config_class, "clean_mode": True},
             )
@@ -793,31 +771,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def _handle_edited_config_code(self, edited_code: str):
         """Handle edited configuration code from the code editor."""
         try:
-            # SIMPLIFIED: Just exec with patched constructors
-            # The patched constructors preserve None vs concrete distinction in raw field values
-            # No need to parse code - just inspect raw values after exec
-            namespace = {}
-
-            with CodeEditorFormUpdater.patch_lazy_constructors():
-                exec(edited_code, namespace)
-
-            new_config = namespace.get("config")
-            if not new_config:
-                raise ValueError("No 'config' variable found in edited code")
-
-            if not isinstance(new_config, self.config_class):
-                raise ValueError(
-                    f"Expected {self.config_class.__name__}, got {type(new_config).__name__}"
-                )
-
-            # Update current config
-            self.current_config = new_config
-
-            # For PipelineConfig: no context update is needed here. The
-            # orchestrator applies pipeline config in the save callback.
-            self._config_session.apply_code_edit_context(new_config)
-            self._update_form_from_config(new_config)
-
+            self._code_document_driver.apply_source(edited_code)
             logger.info("Updated config from edited code")
 
         except Exception as e:
@@ -825,6 +779,20 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             QMessageBox.critical(
                 self, "Code Edit Error", f"Failed to apply edited code:\n{e}"
             )
+
+    def _refresh_code_document_context(self) -> None:
+        """Refresh live context before rendering this config as source."""
+        ParameterOpsService().refresh_with_live_context(self.form_manager)
+
+    def _current_config_for_code_document(self):
+        """Return the current config object reconstructed from ObjectState."""
+        return self._config_session.to_object()
+
+    def _apply_config_from_code_document(self, new_config) -> None:
+        """Apply a parsed code-mode config through the normal form path."""
+        self.current_config = new_config
+        self._config_session.apply_code_edit_context(new_config)
+        self._update_form_from_config(new_config)
 
     def _on_global_config_field_changed(self, param_name: str, value: Any):
         """Track that global config has unsaved changes.

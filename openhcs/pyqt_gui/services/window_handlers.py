@@ -8,7 +8,10 @@ import logging
 from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtWidgets import QWidget
-from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
+from pyqt_reactive.services.scope_window_factory import (
+    ScopeWindowCreationRequest,
+    ScopeWindowRegistry,
+)
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 
 if TYPE_CHECKING:
@@ -28,10 +31,10 @@ class OpenHCSWindowCreationAuthority:
     """Nominal owner for OpenHCS scope-to-window construction."""
 
     def create_global_config_window(
-        self, scope_id: str, object_state=None
+        self,
+        request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create GlobalPipelineConfig editor window."""
-        del object_state
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
         from openhcs.core.config import GlobalPipelineConfig
         from openhcs.config_framework.global_config import (
@@ -51,28 +54,30 @@ class OpenHCSWindowCreationAuthority:
             config_class=GlobalPipelineConfig,
             current_config=current_config,
             on_save_callback=handle_save,
-            scope_id=scope_id,
+            scope_id=request.scope_id,
         )
         self._show_window(window)
         return window
 
     def create_plates_root_window(
-        self, scope_id: str, object_state=None
+        self,
+        request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Root plate list state - no window to create."""
-        del scope_id, object_state
+        del request
         logger.debug("[WINDOW_FACTORY] Skipping window creation for __plates__ scope")
         return None
 
     def create_plate_config_window(
-        self, scope_id: str, object_state=None
+        self,
+        request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create PipelineConfig editor window for a plate."""
-        del object_state
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
         from openhcs.core.config import PipelineConfig
         from objectstate import ObjectStateRegistry
 
+        scope_id = request.scope_id
         state = ObjectStateRegistry.get_by_scope(scope_id)
         if state is None:
             logger.warning("No orchestrator found for scope: %s", scope_id)
@@ -104,12 +109,14 @@ class OpenHCSWindowCreationAuthority:
         return window
 
     def create_step_editor_window(
-        self, scope_id: str, object_state: Optional["ObjectState"] = None
+        self,
+        request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create DualEditorWindow for step or function scope."""
         from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
         from objectstate import ObjectStateRegistry
 
+        scope_id = request.scope_id
         editor_scope = StepEditorScope.parse(scope_id)
 
         plate_manager = self._plate_manager()
@@ -125,7 +132,7 @@ class OpenHCSWindowCreationAuthority:
             )
             return None
 
-        step = self._resolve_step(editor_scope, object_state)
+        step = self._resolve_step(editor_scope, request.object_state)
         if step is None:
             logger.warning("Could not find step for scope: %s", scope_id)
             return None

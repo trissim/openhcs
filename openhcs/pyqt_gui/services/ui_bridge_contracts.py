@@ -33,6 +33,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
 )
 
 
@@ -49,6 +53,10 @@ class UiCodeDocumentProviderABC(ABC):
     """Provider contract for one UI-owned code document."""
 
     identity: "UiCodeDocumentProviderIdentity"
+
+    def handles(self, document_id: str) -> bool:
+        """Return whether this provider owns a document id."""
+        return self.identity.document_id == document_id
 
     @abstractmethod
     def summary(self) -> UiCodeDocumentSummary:
@@ -120,6 +128,14 @@ class UiWindowProviderABC(ABC):
 
     @abstractmethod
     def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def navigate(self, request: UiWindowNavigateRequest) -> UiWindowNavigateResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
         raise NotImplementedError
 
 

@@ -17,6 +17,7 @@ from zmqruntime.execution import ExecutionClient
 
 from zmqruntime.transport import coerce_transport_mode
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.debug import DebugExecutionConfig
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_signature import (
@@ -398,7 +399,7 @@ class ZMQClientResponseView:
             raise RuntimeError("Accepted execution response has null execution_id")
         return str(value)
 
-class ZMQExecutionClient(ExecutionClient):
+class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
     """ZMQ client for OpenHCS pipeline execution with progress streaming."""
 
     def __init__(
@@ -448,41 +449,11 @@ class ZMQExecutionClient(ExecutionClient):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        debug_session_id: str,
-        snapshot_store_ref: str | None = None,
-        snapshot_store_backend: str | None = None,
-        command_type=None,
-        selected_source_group: str | None = None,
-        pause_step_indices=(),
-        start_step_index: int = 0,
-        start_after_invocation_key: str | None = None,
-        replay_mode=None,
+        debug_config: DebugExecutionConfig,
     ):
-        from openhcs.core.debug import DebugCommandType, DebugExecutionConfig, DebugReplayMode
-
         config_params_boundary = ZMQConfigParamsBoundary.from_optional(
             submission.config_params
-        ).with_updates(
-            DebugExecutionConfig(
-                debug_session_id=debug_session_id,
-                snapshot_store_ref=snapshot_store_ref,
-                snapshot_store_backend=snapshot_store_backend,
-                command_type=(
-                    DebugCommandType.RUN
-                    if command_type is None
-                    else DebugCommandType(command_type)
-                ),
-                selected_source_group=selected_source_group,
-                pause_step_indices=tuple(pause_step_indices),
-                start_step_index=start_step_index,
-                start_after_invocation_key=start_after_invocation_key,
-                replay_mode=(
-                    DebugReplayMode.WARM_ARTIFACT
-                    if replay_mode is None
-                    else DebugReplayMode(replay_mode)
-                ),
-            ).to_config_params()
-        )
+        ).with_updates(debug_config.to_config_params())
         return self.submit_execution(
             submission.with_config_params(config_params_boundary.params).to_task()
         )

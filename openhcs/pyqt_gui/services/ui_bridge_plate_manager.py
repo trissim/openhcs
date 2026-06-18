@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from abc import ABC
 from dataclasses import replace
 
-from metaclass_registry import AutoRegisterMeta
 from openhcs.agent.dto.common import AgentError, AgentWarning, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
@@ -46,7 +44,6 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     APPLY_TIME_TRAVEL_OPT_IN_GUARD,
     CONFIRMATION_REQUIRED_GUARD,
     UiBridgeGuardPolicy,
-    UiBridgeRegistryKeyMixin,
     UiActionProviderABC,
     UiActionProviderIdentity,
     UiBridgeSnapshotProviderABC,
@@ -59,7 +56,10 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
     UiBridgeRegistrationContext,
 )
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerAction
+from openhcs.pyqt_gui.widgets.plate_manager import (
+    EmptyPlateSelectionPolicy,
+    PlateManagerAction,
+)
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     dispatch_widget_action,
 )
@@ -111,23 +111,6 @@ PLATE_MANAGER_ACTION_SIDE_EFFECTS = {
 }
 
 
-class PlateManagerBridgeProviderBase(
-    UiBridgeRegistryKeyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Shared PlateManager provider state for UI bridge surfaces."""
-
-    def __init__(
-        self,
-        manager,
-        *,
-        snapshot_provider: UiBridgeSnapshotProviderABC,
-    ) -> None:
-        self._manager = manager
-        self._snapshot_provider = snapshot_provider
-
-
 class PlateManagerBridgeProviderSet(UiBridgeProviderSetABC):
     """Register all PlateManager surfaces with a UI bridge registry."""
 
@@ -152,18 +135,26 @@ class PlateManagerBridgeProviderSet(UiBridgeProviderSetABC):
         context.registry.register_action_provider(
             PlateManagerActionProvider(
                 self._manager,
-                snapshot_provider=context.snapshot_provider,
             )
         )
 
 
+def bind_snapshot_backed_provider(
+    provider,
+    manager,
+    *,
+    snapshot_provider: UiBridgeSnapshotProviderABC,
+) -> None:
+    """Bind shared state for providers that publish snapshot-backed data."""
+    provider._manager = manager
+    provider._snapshot_provider = snapshot_provider
+
+
 class PlateManagerOrchestratorCodeDocumentProvider(
-    PlateManagerBridgeProviderBase,
     UiCodeDocumentProviderABC,
 ):
     """Plate-manager orchestrator config provider backed by code mode."""
 
-    registry_key = UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value
     identity = PLATE_MANAGER_ORCHESTRATOR_IDENTITY
 
     def __init__(
@@ -173,7 +164,11 @@ class PlateManagerOrchestratorCodeDocumentProvider(
         snapshot_provider: UiBridgeSnapshotProviderABC,
         execution_service: UiCodeDocumentExecutionService | None = None,
     ) -> None:
-        super().__init__(manager, snapshot_provider=snapshot_provider)
+        bind_snapshot_backed_provider(
+            self,
+            manager,
+            snapshot_provider=snapshot_provider,
+        )
         self._execution_service = execution_service or UiCodeDocumentExecutionService()
 
     def summary(self) -> UiCodeDocumentSummary:
@@ -198,7 +193,7 @@ class PlateManagerOrchestratorCodeDocumentProvider(
         try:
             context = self._manager.orchestrator_code_document_context(
                 selection_mode=selection_mode,
-                empty_selection_policy="error",
+                empty_selection_policy=EmptyPlateSelectionPolicy.FALL_BACK_TO_ALL,
             )
         except Exception as exc:
             return self._document_error(
@@ -387,12 +382,10 @@ class PlateManagerOrchestratorCodeDocumentProvider(
 
 
 class PlateManagerStateSurfaceProvider(
-    PlateManagerBridgeProviderBase,
     UiStateSurfaceProviderABC,
 ):
     """Pollable PlateManager state provider backed by the shared UI projection."""
 
-    registry_key = UiStateSurfaceId.PLATE_MANAGER.value
     identity = PLATE_MANAGER_STATE_IDENTITY
 
     def __init__(
@@ -402,7 +395,11 @@ class PlateManagerStateSurfaceProvider(
         snapshot_provider: UiBridgeSnapshotProviderABC,
         projection_service: PlateManagerStateProjectionService | None = None,
     ) -> None:
-        super().__init__(manager, snapshot_provider=snapshot_provider)
+        bind_snapshot_backed_provider(
+            self,
+            manager,
+            snapshot_provider=snapshot_provider,
+        )
         self._projection_service = (
             projection_service or PlateManagerStateProjectionService()
         )
@@ -522,13 +519,14 @@ class PlateManagerStateSurfaceProvider(
 
 
 class PlateManagerActionProvider(
-    PlateManagerBridgeProviderBase,
     UiActionProviderABC,
 ):
     """PlateManager action provider backed by the widget's declared action routes."""
 
-    registry_key = PLATE_MANAGER_ACTION_PROVIDER_IDENTITY.widget_id
     identity = PLATE_MANAGER_ACTION_PROVIDER_IDENTITY
+
+    def __init__(self, manager) -> None:
+        self._manager = manager
 
     def catalog(self) -> UiActionCatalog:
         return UiActionCatalog(

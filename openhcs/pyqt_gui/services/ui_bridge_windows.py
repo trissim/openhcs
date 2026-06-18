@@ -2,23 +2,50 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from enum import Enum
+from typing import TYPE_CHECKING, ClassVar, TypeAlias
 
-from PyQt6.QtWidgets import QWidget
+from metaclass_registry import AutoRegisterMeta
+from PyQt6.QtWidgets import QApplication, QWidget
+from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
+from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
 from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.services.window_navigation import WindowNavigationRequest
+from pyqt_reactive.widgets.shared import (
+    BaseFormDialog,
+    ManagedWindowActionCapabilities,
+)
 
-from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
+from openhcs.agent.dto.common import AgentError, AgentResourceRef, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
+    UiActionCatalog,
+    UiActionIdentity,
+    UiActionInvocationStatus,
+    UiActionInvokeRequest,
+    UiActionInvokeResult,
+    UiActionSummary,
+    UiMutationReceipt,
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowIdentity,
     UiWindowManagerScope,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
     UiWindowSummary,
 )
+from openhcs.runtime.qt_window_snapshot import (
+    QtWindowSnapshotRequest,
+    QtWindowSnapshotService,
+)
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
+    UiActionProviderABC,
+    UiActionProviderIdentity,
     UiWindowProviderABC,
     UiWindowProviderIdentity,
 )
@@ -35,9 +62,145 @@ WindowRouteCollection: TypeAlias = (
     tuple["EmbeddedWindowRoute", ...] | tuple["ManagedWindowRoute", ...]
 )
 MAIN_WINDOW_PROVIDER_ID = "main_window.windows"
+QT_TOP_LEVEL_PROVIDER_ID = "qt_top_level.windows"
 EMBEDDED_WINDOW_KIND = "embedded"
 MANAGED_WINDOW_KIND = "managed"
 DYNAMIC_SCOPE_WINDOW_KIND = "scope"
+QT_TOP_LEVEL_WINDOW_KIND = "qt_top_level"
+QT_TOP_LEVEL_WINDOW_ID_PREFIX = "qt_top_level:"
+MANAGED_WINDOW_ACTION_WIDGET_ID = "managed_window"
+MANAGED_WINDOW_ACTIONS_TITLE = "Managed window actions"
+
+
+class ManagedWindowAction(str, Enum):
+    """Agent-visible actions shared by managed form windows."""
+
+    SAVE_AND_CLOSE = "save_and_close"
+    SAVE_WITHOUT_CLOSE = "save_without_close"
+    DISCARD_AND_CLOSE = "discard_and_close"
+
+
+MANAGED_WINDOW_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity(
+    action_id="managed_window.actions",
+    widget_id=MANAGED_WINDOW_ACTION_WIDGET_ID,
+    title=MANAGED_WINDOW_ACTIONS_TITLE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedWindowActionSpec:
+    """Closed action semantics for one managed-window agent action."""
+
+    action: ManagedWindowAction
+    title: str
+    side_effects: tuple[str, ...]
+    is_supported: Callable[[ManagedWindowActionCapabilities], bool]
+    dispatch: Callable[[BaseFormDialog], None]
+
+
+def _supports_save_and_close(
+    capabilities: ManagedWindowActionCapabilities,
+) -> bool:
+    return capabilities.save_and_close
+
+
+def _supports_save_without_close(
+    capabilities: ManagedWindowActionCapabilities,
+) -> bool:
+    return capabilities.save_without_close
+
+
+def _supports_discard_and_close(
+    capabilities: ManagedWindowActionCapabilities,
+) -> bool:
+    return capabilities.discard_and_close
+
+
+def _dispatch_save_and_close(window: BaseFormDialog) -> None:
+    window.agent_save_managed_window(close_window=True)
+
+
+def _dispatch_save_without_close(window: BaseFormDialog) -> None:
+    window.agent_save_managed_window(close_window=False)
+
+
+def _dispatch_discard_and_close(window: BaseFormDialog) -> None:
+    window.agent_discard_and_close_managed_window()
+
+
+MANAGED_WINDOW_ACTION_SPECS = (
+    ManagedWindowActionSpec(
+        action=ManagedWindowAction.SAVE_AND_CLOSE,
+        title="Save and close",
+        side_effects=("saves_window_state", "closes_window"),
+        is_supported=_supports_save_and_close,
+        dispatch=_dispatch_save_and_close,
+    ),
+    ManagedWindowActionSpec(
+        action=ManagedWindowAction.SAVE_WITHOUT_CLOSE,
+        title="Save without closing",
+        side_effects=("saves_window_state",),
+        is_supported=_supports_save_without_close,
+        dispatch=_dispatch_save_without_close,
+    ),
+    ManagedWindowActionSpec(
+        action=ManagedWindowAction.DISCARD_AND_CLOSE,
+        title="Discard changes and close",
+        side_effects=("discards_unsaved_window_state", "closes_window"),
+        is_supported=_supports_discard_and_close,
+        dispatch=_dispatch_discard_and_close,
+    ),
+)
+MANAGED_WINDOW_ACTION_SPEC_BY_ACTION = {
+    spec.action: spec for spec in MANAGED_WINDOW_ACTION_SPECS
+}
+
+
+@dataclass(frozen=True, slots=True)
+class WindowProjectionTarget:
+    """Resolved Qt widget plus its agent-facing summary."""
+
+    widget: QWidget
+    summary: UiWindowSummary
+
+
+class MainWindowContextFactoryMixin:
+    """Construct registry leaves from an optional OpenHCS main-window context."""
+
+    @classmethod
+    def create(cls, main_window: "OpenHCSMainWindow | None"):
+        return cls(main_window)
+
+
+class WindowCatalogProjectionABC(
+    MainWindowContextFactoryMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Projection surface shared by concrete UI window providers."""
+
+    __registry_key__ = "projection_id"
+    __skip_if_no_key__ = True
+
+    projection_id: ClassVar[str | None] = None
+
+    @classmethod
+    def for_projection_id(
+        cls,
+        projection_id: str,
+        main_window: "OpenHCSMainWindow | None",
+    ) -> "WindowCatalogProjectionABC":
+        return cls.__registry__[projection_id].create(main_window)
+
+    @abstractmethod
+    def summaries(self) -> tuple[UiWindowSummary, ...]:
+        """Return the windows currently visible through this projection."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def handles(self, window_id: str) -> bool:
+        """Return whether this projection owns a window id."""
+        raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +225,11 @@ class EmbeddedWindowRoute(FocusableWindowRouteMixin):
     title: str
     widget_supplier: Callable[[], QWidget]
 
+    def widget(self) -> QWidget:
+        return self.widget_supplier()
+
     def summary(self) -> UiWindowSummary:
-        widget = self.widget_supplier()
+        widget = self.widget()
         scope = UiWindowManagerScope.from_identity(self.identity)
         return UiWindowSummary(
             schema_version=SCHEMA_VERSION,
@@ -82,6 +248,16 @@ class ManagedWindowRoute(FocusableWindowRouteMixin):
 
     identity: UiWindowIdentity
     title: str
+
+    def widget(self, create_if_missing: bool) -> QWidget | None:
+        scope = UiWindowManagerScope.from_identity(self.identity)
+        window = WindowManager.get_window(scope.value)
+        if window is not None:
+            return window
+        if not create_if_missing:
+            return None
+        self.focus_action()
+        return WindowManager.get_window(scope.value)
 
     def summary(self) -> UiWindowSummary:
         scope = UiWindowManagerScope.from_identity(self.identity)
@@ -246,13 +422,161 @@ class DynamicScopeWindowProjection:
         )
 
 
-class UiWindowProjectionService:
+class QtTopLevelWindowProjection(WindowCatalogProjectionABC):
+    """Project visible Qt top-level windows that are not WindowManager scopes."""
+
+    projection_id = QT_TOP_LEVEL_PROVIDER_ID
+
+    def __init__(
+        self,
+        main_window: "OpenHCSMainWindow | None",
+    ) -> None:
+        del main_window
+
+    def summaries(self) -> tuple[UiWindowSummary, ...]:
+        excluded_widgets = self._excluded_widgets()
+        return tuple(
+            self.summary(widget)
+            for widget in self._top_level_widgets()
+            if widget not in excluded_widgets
+        )
+
+    def handles(self, window_id: str) -> bool:
+        return self.target(UiWindowIdentity(window_id=window_id)) is not None
+
+    def target(self, identity: UiWindowIdentity) -> WindowProjectionTarget | None:
+        for widget in self._top_level_widgets():
+            if self._identity(widget) == identity:
+                return WindowProjectionTarget(widget=widget, summary=self.summary(widget))
+        return None
+
+    def focus(self, identity: UiWindowIdentity) -> UiWindowSummary | None:
+        target = self.target(identity)
+        if target is None:
+            return None
+        target.widget.show()
+        target.widget.raise_()
+        target.widget.activateWindow()
+        return self.summary(target.widget)
+
+    @classmethod
+    def summary(cls, widget: QWidget) -> UiWindowSummary:
+        identity = cls._identity(widget)
+        return UiWindowSummary(
+            schema_version=SCHEMA_VERSION,
+            identity=identity,
+            title=cls._title(widget),
+            window_kind=QT_TOP_LEVEL_WINDOW_KIND,
+            visible=widget.isVisible(),
+            focusable=True,
+            manager_scope=None,
+        )
+
+    @staticmethod
+    def _top_level_widgets() -> tuple[QWidget, ...]:
+        application = QApplication.instance()
+        if application is None:
+            return ()
+        del application
+        return tuple(
+            widget
+            for widget in QApplication.topLevelWidgets()
+            if widget.isWindow() and widget.isVisible()
+        )
+
+    @staticmethod
+    def _excluded_widgets() -> frozenset[QWidget]:
+        widgets: set[QWidget] = set()
+        for scope_id in WindowManager.get_open_scopes():
+            widget = WindowManager.get_window(scope_id)
+            if widget is not None:
+                widgets.add(widget.window())
+        return frozenset(widgets)
+
+    @staticmethod
+    def _identity(widget: QWidget) -> UiWindowIdentity:
+        return UiWindowIdentity(
+            window_id=f"{QT_TOP_LEVEL_WINDOW_ID_PREFIX}{int(widget.winId())}"
+        )
+
+    @staticmethod
+    def _title(widget: QWidget) -> str:
+        title = widget.windowTitle()
+        if title:
+            return title
+        return type(widget).__name__
+
+
+class UiWindowSnapshotResultFactory:
+    """Build UI bridge screenshot results from resolved Qt window targets."""
+
+    def __init__(self) -> None:
+        self._snapshotter = QtWindowSnapshotService()
+
+    def capture(
+        self,
+        request: UiWindowSnapshotRequest,
+        target: WindowProjectionTarget,
+    ) -> UiWindowSnapshotResult:
+        try:
+            snapshot = self._snapshotter.capture(
+                QtWindowSnapshotRequest(
+                    widget=target.widget,
+                    capture=request.snapshot,
+                    subject_id=request.window_id,
+                    title=target.summary.title,
+                )
+            )
+        except Exception as exc:
+            return self.error(
+                request,
+                AgentError.from_exception("ui_window_snapshot_failed", exc),
+                summary=target.summary,
+            )
+        return UiWindowSnapshotResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            captured=True,
+            resource=AgentResourceRef(
+                uri=snapshot.uri,
+                title=snapshot.title,
+                mime_type=snapshot.mime_type,
+                path=snapshot.path,
+                size_bytes=snapshot.size_bytes,
+                sha256=snapshot.sha256,
+            ),
+            summary=target.summary,
+            width=snapshot.width,
+            height=snapshot.height,
+            snapshot=snapshot.capture,
+        )
+
+    @staticmethod
+    def error(
+        request: UiWindowSnapshotRequest,
+        error: AgentError,
+        *,
+        summary: UiWindowSummary | None = None,
+    ) -> UiWindowSnapshotResult:
+        return UiWindowSnapshotResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            captured=False,
+            summary=summary,
+            errors=(error,),
+        )
+
+
+class UiWindowProjectionService(WindowCatalogProjectionABC):
     """Project the main-window/WindowManager window graph into agent DTOs."""
+
+    projection_id = MAIN_WINDOW_PROVIDER_ID
 
     def __init__(self, main_window: "OpenHCSMainWindow") -> None:
         self._embedded = EmbeddedWindowProjection(main_window)
         self._managed = ManagedWindowProjection(main_window)
         self._dynamic = DynamicScopeWindowProjection()
+        self._snapshot_results = UiWindowSnapshotResultFactory()
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
         route_index = self._route_index()
@@ -271,7 +595,9 @@ class UiWindowProjectionService:
             return True
         if route_index.managed_route(identity) is not None:
             return True
-        return identity.window_id in WindowManager.get_open_scopes()
+        if identity.window_id in WindowManager.get_open_scopes():
+            return True
+        return ScopeWindowRegistry.find_handler(identity.window_id) is not None
 
     def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
         identity = request.as_window_identity()
@@ -281,7 +607,7 @@ class UiWindowProjectionService:
             return self._focused_result(request, embedded_route.focus())
 
         managed_route = route_index.managed_route(identity)
-        if managed_route is not None and request.create_if_missing:
+        if managed_route is not None and request.open_policy.create_if_missing:
             return self._focused_result(request, managed_route.focus())
 
         scope = UiWindowManagerScope.from_identity(identity)
@@ -303,6 +629,113 @@ class UiWindowProjectionService:
             ),
         )
 
+    def navigate(
+        self,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        identity = request.as_window_identity()
+        route_index = self._route_index()
+        embedded_route = route_index.embedded_route(identity)
+        if embedded_route is not None:
+            return self._navigate_result(
+                request,
+                focused=True,
+                created=False,
+                navigated=False,
+                summary=embedded_route.focus(),
+            )
+
+        managed_route = route_index.managed_route(identity)
+        if managed_route is not None and request.open_policy.create_if_missing:
+            return self._navigate_result(
+                request,
+                focused=True,
+                created=False,
+                navigated=False,
+                summary=managed_route.focus(),
+            )
+
+        result = ScopeWindowNavigationService.navigate(
+            WindowNavigationRequest(
+                scope_id=identity.window_id,
+                item_id=request.item_id,
+                field_path=request.field_path,
+                create_if_missing=request.open_policy.create_if_missing,
+            )
+        )
+        if result.focused:
+            return self._navigate_result(
+                request,
+                focused=True,
+                created=result.created,
+                navigated=result.navigated,
+                summary=self._dynamic.summary(identity),
+            )
+
+        return UiWindowNavigateResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=identity.window_id,
+            focused=False,
+            navigated=False,
+            created=result.created,
+            errors=(
+                AgentError(
+                    code="unknown_ui_window",
+                    message=f"Unknown or closed UI window: {identity.window_id!r}",
+                ),
+            ),
+        )
+
+    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
+        identity = request.as_window_identity()
+        target = self._target(
+            identity,
+            create_if_missing=request.open_policy.create_if_missing,
+        )
+        if target is None:
+            return self._snapshot_results.error(
+                request,
+                AgentError(
+                    code="unknown_ui_window",
+                    message=f"Unknown or closed UI window: {identity.window_id!r}",
+                ),
+            )
+        return self._snapshot_results.capture(request, target)
+
+    def _target(
+        self,
+        identity: UiWindowIdentity,
+        *,
+        create_if_missing: bool,
+    ) -> WindowProjectionTarget | None:
+        route_index = self._route_index()
+        embedded_route = route_index.embedded_route(identity)
+        if embedded_route is not None:
+            return WindowProjectionTarget(
+                widget=embedded_route.widget(),
+                summary=embedded_route.summary(),
+            )
+
+        managed_route = route_index.managed_route(identity)
+        if managed_route is not None:
+            managed_widget = managed_route.widget(create_if_missing=create_if_missing)
+            if managed_widget is not None:
+                return WindowProjectionTarget(
+                    widget=managed_widget,
+                    summary=managed_route.summary(),
+                )
+            return None
+
+        scope = UiWindowManagerScope.from_identity(identity)
+        scope_widget = WindowManager.get_window(scope.value)
+        if scope_widget is not None:
+            return WindowProjectionTarget(
+                widget=scope_widget,
+                summary=self._dynamic.summary(identity),
+            )
+
+        return None
+
     def _route_index(self) -> WindowRouteIndex:
         embedded_routes = self._embedded.routes()
         return WindowRouteIndex(
@@ -322,17 +755,44 @@ class UiWindowProjectionService:
             summary=summary,
         )
 
+    @staticmethod
+    def _navigate_result(
+        request: UiWindowNavigateRequest,
+        *,
+        focused: bool,
+        created: bool,
+        navigated: bool,
+        summary: UiWindowSummary,
+    ) -> UiWindowNavigateResult:
+        return UiWindowNavigateResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            focused=focused,
+            created=created,
+            navigated=navigated,
+            summary=summary,
+        )
 
-class MainWindowBridgeWindowProvider(UiWindowProviderABC):
-    """Window provider backed by the main-window composition root."""
 
-    identity = UiWindowProviderIdentity(
-        provider_id=MAIN_WINDOW_PROVIDER_ID,
-        title="Main window windows",
-    )
+class WindowProjectionProviderBase(
+    MainWindowContextFactoryMixin,
+    UiWindowProviderABC,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Common provider behavior for one window projection."""
 
-    def __init__(self, main_window: "OpenHCSMainWindow") -> None:
-        self._projection = UiWindowProjectionService(main_window)
+    __registry_key__ = "provider_id"
+    __skip_if_no_key__ = True
+
+    provider_id: ClassVar[str | None] = None
+
+    @classmethod
+    def registered_types(cls) -> tuple[type["WindowProjectionProviderBase"], ...]:
+        return tuple(cls.__registry__.values())
+
+    def __init__(self, projection: WindowCatalogProjectionABC) -> None:
+        self._projection = projection
 
     def catalog(self) -> UiWindowCatalog:
         return UiWindowCatalog(
@@ -343,8 +803,248 @@ class MainWindowBridgeWindowProvider(UiWindowProviderABC):
     def handles(self, window_id: str) -> bool:
         return self._projection.handles(window_id)
 
+
+class MainWindowBridgeWindowProvider(WindowProjectionProviderBase):
+    """Window provider backed by the main-window composition root."""
+
+    provider_id = MAIN_WINDOW_PROVIDER_ID
+    identity = UiWindowProviderIdentity(
+        provider_id=MAIN_WINDOW_PROVIDER_ID,
+        title="Main window windows",
+    )
+
+    def __init__(self, main_window: "OpenHCSMainWindow") -> None:
+        super().__init__(
+            WindowCatalogProjectionABC.for_projection_id(
+                MAIN_WINDOW_PROVIDER_ID,
+                main_window,
+            )
+        )
+
     def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
         return self._projection.focus(request)
+
+    def navigate(self, request: UiWindowNavigateRequest) -> UiWindowNavigateResult:
+        return self._projection.navigate(request)
+
+    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
+        return self._projection.snapshot(request)
+
+
+class QtTopLevelWindowBridgeProvider(WindowProjectionProviderBase):
+    """Window provider for visible Qt top-level windows outside WindowManager."""
+
+    provider_id = QT_TOP_LEVEL_PROVIDER_ID
+    identity = UiWindowProviderIdentity(
+        provider_id=QT_TOP_LEVEL_PROVIDER_ID,
+        title="Qt top-level windows",
+    )
+
+    def __init__(self, main_window: "OpenHCSMainWindow | None") -> None:
+        del main_window
+        super().__init__(
+            WindowCatalogProjectionABC.for_projection_id(
+                QT_TOP_LEVEL_PROVIDER_ID,
+                None,
+            )
+        )
+        self._snapshot_results = UiWindowSnapshotResultFactory()
+
+    def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
+        summary = self._projection.focus(request.as_window_identity())
+        if summary is not None:
+            return UiWindowFocusResult(
+                schema_version=SCHEMA_VERSION,
+                window_id=request.window_id,
+                focused=True,
+                summary=summary,
+            )
+        return UiWindowFocusResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            focused=False,
+            errors=(
+                AgentError(
+                    code="unknown_ui_window",
+                    message=f"Unknown or closed UI window: {request.window_id!r}",
+                ),
+            ),
+        )
+
+    def navigate(self, request: UiWindowNavigateRequest) -> UiWindowNavigateResult:
+        focus_result = self.focus(
+            UiWindowFocusRequest(
+                window_id=request.window_id,
+                open_policy=request.open_policy,
+            )
+        )
+        return UiWindowNavigateResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            focused=focus_result.focused,
+            navigated=False,
+            created=False,
+            summary=focus_result.summary,
+            errors=focus_result.errors,
+            warnings=focus_result.warnings,
+        )
+
+    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
+        target = self._projection.target(request.as_window_identity())
+        if target is None:
+            return self._snapshot_results.error(
+                request,
+                AgentError(
+                    code="unknown_ui_window",
+                    message=f"Unknown or closed UI window: {request.window_id!r}",
+                ),
+            )
+        return self._snapshot_results.capture(request, target)
+
+
+class ManagedWindowActionProvider(UiActionProviderABC):
+    """Action provider for generic WindowManager-managed form windows."""
+
+    identity = MANAGED_WINDOW_ACTION_PROVIDER_IDENTITY
+
+    def catalog(self) -> UiActionCatalog:
+        return UiActionCatalog(
+            schema_version=SCHEMA_VERSION,
+            actions=tuple(self.summary(spec.action.value) for spec in MANAGED_WINDOW_ACTION_SPECS),
+        )
+
+    def summary(self, action_id: str) -> UiActionSummary:
+        spec = self._spec(action_id)
+        target_scope_ids = self._target_scope_ids(spec)
+        return UiActionSummary(
+            schema_version=SCHEMA_VERSION,
+            identity=UiActionIdentity(
+                widget_id=self.identity.widget_id,
+                action_id=spec.action.value,
+            ),
+            title=spec.title,
+            enabled=bool(target_scope_ids),
+            invocation_mode="sync",
+            side_effects=spec.side_effects,
+            confirmation_required=True,
+            selection_mode="targeted",
+            current_selection_count=len(target_scope_ids),
+            target_scope_ids=target_scope_ids,
+        )
+
+    def invoke(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:
+        try:
+            spec = self._spec(request.action_id)
+            target_scope_id = self._single_target_scope_id(request)
+            window = self._target_window(target_scope_id, spec)
+        except Exception as exc:
+            return self._invoke_error(
+                request,
+                AgentError.from_exception("managed_window_action_rejected", exc),
+            )
+
+        if request.confirmation_is_required():
+            return self._invoke_error(
+                request,
+                AgentError(
+                    code="confirmation_required",
+                    message=(
+                        "Managed-window actions save, discard, or close UI state; "
+                        "set require_confirmation=False to dispatch one."
+                    ),
+                ),
+            )
+
+        try:
+            spec.dispatch(window)
+        except Exception as exc:
+            return self._invoke_error(
+                request,
+                AgentError.from_exception("managed_window_action_failed", exc),
+            )
+
+        return UiActionInvokeResult(
+            schema_version=SCHEMA_VERSION,
+            identity=UiActionIdentity(
+                widget_id=self.identity.widget_id,
+                action_id=spec.action.value,
+            ),
+            status=UiActionInvocationStatus.ACCEPTED.value,
+            receipt=UiMutationReceipt(
+                request_token=request.request_token,
+                accepted=True,
+            ),
+            target_scope_ids=request.selected_scope_ids,
+        )
+
+    @staticmethod
+    def _spec(action_id: str) -> ManagedWindowActionSpec:
+        action = ManagedWindowAction(action_id)
+        return MANAGED_WINDOW_ACTION_SPEC_BY_ACTION[action]
+
+    @staticmethod
+    def _single_target_scope_id(request: UiActionInvokeRequest) -> str:
+        target_scope_ids = request.selected_scope_ids
+        if len(target_scope_ids) != 1:
+            raise ValueError(
+                "Managed-window actions require exactly one target_scope_ids entry."
+            )
+        return target_scope_ids[0]
+
+    @staticmethod
+    def _target_window(
+        scope_id: str,
+        spec: ManagedWindowActionSpec,
+    ) -> BaseFormDialog:
+        window = WindowManager.get_window(scope_id)
+        if not isinstance(window, BaseFormDialog):
+            raise ValueError(f"Window scope is not a managed form window: {scope_id!r}")
+        capabilities = window.managed_window_action_capabilities()
+        if not spec.is_supported(capabilities):
+            raise ValueError(
+                f"Window does not support {spec.action.value!r}: {scope_id!r}"
+            )
+        return window
+
+    @classmethod
+    def _target_scope_ids(
+        cls,
+        spec: ManagedWindowActionSpec,
+    ) -> tuple[str, ...]:
+        return tuple(
+            scope_id
+            for scope_id in WindowManager.get_open_scopes()
+            if cls._window_supports_action(WindowManager.get_window(scope_id), spec)
+        )
+
+    @staticmethod
+    def _window_supports_action(
+        window: QWidget | None,
+        spec: ManagedWindowActionSpec,
+    ) -> bool:
+        if not isinstance(window, BaseFormDialog):
+            return False
+        return spec.is_supported(window.managed_window_action_capabilities())
+
+    def _invoke_error(
+        self,
+        request: UiActionInvokeRequest,
+        error: AgentError,
+    ) -> UiActionInvokeResult:
+        return UiActionInvokeResult(
+            schema_version=SCHEMA_VERSION,
+            identity=UiActionIdentity(
+                widget_id=request.widget_id,
+                action_id=request.action_id,
+            ),
+            status=UiActionInvocationStatus.REJECTED.value,
+            receipt=UiMutationReceipt(
+                request_token=request.request_token,
+                accepted=False,
+            ),
+            target_scope_ids=request.selected_scope_ids,
+            errors=(error,),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,6 +1055,8 @@ class MainWindowBridgeProviderSet(UiBridgeProviderSetABC):
     registry_key = MAIN_WINDOW_PROVIDER_ID
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
-        context.registry.register_window_provider(
-            MainWindowBridgeWindowProvider(self.main_window)
-        )
+        for provider_type in WindowProjectionProviderBase.registered_types():
+            context.registry.register_window_provider(
+                provider_type.create(self.main_window)
+            )
+        context.registry.register_action_provider(ManagedWindowActionProvider())

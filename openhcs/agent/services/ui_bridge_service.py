@@ -9,6 +9,7 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum
+from functools import singledispatch
 from os import environ
 from pathlib import Path
 from typing import ClassVar
@@ -63,6 +64,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
     UiWindowFocusRequest,
     UiWindowFocusResult,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
 )
 
 
@@ -170,6 +175,22 @@ class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
         connection: UiBridgeConnectionSpec,
         request: UiWindowFocusRequest,
     ) -> UiWindowFocusResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def navigate_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def snapshot_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowSnapshotRequest,
+    ) -> UiWindowSnapshotResult:
         raise NotImplementedError
 
     @abstractmethod
@@ -315,6 +336,20 @@ class UnavailableUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowFocusResult:
         raise UiBridgeGatewayUnavailableError
 
+    def navigate_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowNavigateRequest,
+    ) -> UiWindowNavigateResult:
+        raise UiBridgeGatewayUnavailableError
+
+    def snapshot_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowSnapshotRequest,
+    ) -> UiWindowSnapshotResult:
+        raise UiBridgeGatewayUnavailableError
+
     def validate_document(
         self,
         connection: UiBridgeConnectionSpec,
@@ -409,6 +444,32 @@ class UiBridgeGatewayResponseError(RuntimeError, UiBridgeGatewayErrorABC):
     def agent_errors(self, fallback_code: str) -> tuple[AgentError, ...]:
         del fallback_code
         return self.errors
+
+
+@singledispatch
+def ui_bridge_gateway_errors(
+    exception: Exception,
+    fallback_code: str,
+) -> tuple[AgentError, ...]:
+    """Project gateway exceptions into agent-facing errors."""
+
+    return (AgentError.from_exception(fallback_code, exception),)
+
+
+@ui_bridge_gateway_errors.register
+def _unavailable_gateway_errors(
+    exception: UiBridgeGatewayUnavailableError,
+    fallback_code: str,
+) -> tuple[AgentError, ...]:
+    return exception.agent_errors(fallback_code)
+
+
+@ui_bridge_gateway_errors.register
+def _response_gateway_errors(
+    exception: UiBridgeGatewayResponseError,
+    fallback_code: str,
+) -> tuple[AgentError, ...]:
+    return exception.agent_errors(fallback_code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1125,6 +1186,38 @@ class UiBridgeService:
                 self._gateway_errors("ui_bridge_unavailable", exc),
             )
 
+    def navigate_window(
+        self,
+        request: UiWindowNavigateRequest,
+        connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+    ) -> UiWindowNavigateResult:
+        resolution = self._resolve(connection)
+        if not resolution.ok:
+            return self._window_navigate_error(request, resolution.errors)
+        try:
+            return self._gateway.navigate_window(resolution.connection, request)
+        except Exception as exc:
+            return self._window_navigate_error(
+                request,
+                self._gateway_errors("ui_bridge_unavailable", exc),
+            )
+
+    def snapshot_window(
+        self,
+        request: UiWindowSnapshotRequest,
+        connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+    ) -> UiWindowSnapshotResult:
+        resolution = self._resolve(connection)
+        if not resolution.ok:
+            return self._window_snapshot_error(request, resolution.errors)
+        try:
+            return self._gateway.snapshot_window(resolution.connection, request)
+        except Exception as exc:
+            return self._window_snapshot_error(
+                request,
+                self._gateway_errors("ui_bridge_unavailable", exc),
+            )
+
     def validate_document(
         self,
         request: UiCodeDocumentValidationRequest,
@@ -1401,6 +1494,32 @@ class UiBridgeService:
         )
 
     @staticmethod
+    def _window_navigate_error(
+        request: UiWindowNavigateRequest,
+        errors: tuple[AgentError, ...],
+    ) -> UiWindowNavigateResult:
+        return UiWindowNavigateResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            focused=False,
+            navigated=False,
+            created=False,
+            errors=errors,
+        )
+
+    @staticmethod
+    def _window_snapshot_error(
+        request: UiWindowSnapshotRequest,
+        errors: tuple[AgentError, ...],
+    ) -> UiWindowSnapshotResult:
+        return UiWindowSnapshotResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            captured=False,
+            errors=errors,
+        )
+
+    @staticmethod
     def _object_state_scope_catalog_error(
         errors: tuple[AgentError, ...],
     ) -> UiObjectStateScopeCatalog:
@@ -1439,9 +1558,7 @@ class UiBridgeService:
 
     @staticmethod
     def _gateway_errors(code: str, exception: Exception) -> tuple[AgentError, ...]:
-        if isinstance(exception, UiBridgeGatewayErrorABC):
-            return exception.agent_errors(code)
-        return (AgentError.from_exception(code, exception),)
+        return ui_bridge_gateway_errors(exception, code)
 
 
 def _env_text(name: str) -> str | None:

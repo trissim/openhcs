@@ -12,12 +12,14 @@ from openhcs.core.selection import (
 )
 from openhcs.agent.dto.common import (
     AgentError,
+    AgentResourceRef,
     AgentResultEnvelope,
     AgentTimedStatusEnvelope,
     AgentWarning,
     JsonObject,
     JsonValue,
 )
+from openhcs.runtime.window_snapshot import WindowSnapshotCaptureSpec
 from openhcs.agent.dto.execution import (
     ExecutionConnectionProjection,
     ExecutionConnectionSpec,
@@ -96,6 +98,15 @@ class UiWidgetIdentity:
     widget_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class UiSemanticAddress:
+    """Stable semantic address shared by ObjectState, windows, and code surfaces."""
+
+    object_state_scope_id: str
+    field_path: str
+    window_id: str | None = None
+
+
 @dataclass(frozen=True, kw_only=True)
 class UiActionIdentity(UiWidgetIdentity):
     action_id: str
@@ -119,6 +130,13 @@ class UiObjectStateScopeIdentity:
 @dataclass(frozen=True, slots=True)
 class UiObjectStateScopeVisibility:
     include_system_scopes: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldListOptions:
+    include_fields: bool = False
+    field_limit: int = 200
+    field_offset: int = 0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -662,14 +680,82 @@ class UiWindowCatalog(AgentResultEnvelope):
 
 
 @dataclass(frozen=True, slots=True)
-class UiWindowFocusRequest(UiWindowIdentity):
+class UiWindowOpenPolicy:
+    """Policy for materializing a UI window before operating on it."""
+
     create_if_missing: bool = True
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWindowOperationRequest(UiWindowIdentity):
+    """Shared request contract for operations against a UI window."""
+
+    open_policy: UiWindowOpenPolicy
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWindowFocusRequest(UiWindowOperationRequest):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class UiWindowFocusResult(AgentResultEnvelope, UiWindowIdentity):
     focused: bool
     summary: UiWindowSummary | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWindowNavigateRequest(UiWindowOperationRequest):
+    item_id: str | None = None
+    field_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiWindowNavigateResult(AgentResultEnvelope, UiWindowIdentity):
+    focused: bool
+    navigated: bool
+    created: bool
+    summary: UiWindowSummary | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWindowSnapshotRequest(UiWindowOperationRequest):
+    snapshot: WindowSnapshotCaptureSpec
+
+
+@dataclass(frozen=True, slots=True)
+class UiWindowSnapshotResult(AgentResultEnvelope, UiWindowIdentity):
+    captured: bool
+    resource: AgentResourceRef | None = None
+    summary: UiWindowSummary | None = None
+    width: int | None = None
+    height: int | None = None
+    snapshot: WindowSnapshotCaptureSpec | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldProvenance:
+    """Resolved source address for an inherited ObjectState field."""
+
+    source_scope_id: str | None
+    source_type: str | None
+    source_field_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldSummary:
+    """Field-level ObjectState semantics without exposing raw field values."""
+
+    schema_version: str
+    address: UiSemanticAddress
+    field_name: str
+    container_path: str
+    raw_value_type: str
+    resolved_value_type: str | None
+    dirty: bool
+    signature_diff: bool
+    last_changed: bool
+    provenance: UiObjectStateFieldProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -682,6 +768,8 @@ class UiObjectStateScopeSummary:
     signature_diff_field_count: int
     last_changed_field: str | None = None
     registered: bool = True
+    fields: tuple[UiObjectStateFieldSummary, ...] = ()
+    field_page: UiCatalogPageMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -696,7 +784,22 @@ class UiObjectStateScopeCatalog(AgentResultEnvelope):
 
 @dataclass(frozen=True, slots=True)
 class UiObjectStateScopeListRequest(UiObjectStateScopeVisibility):
-    pass
+    include_fields: bool = False
+    field_limit: int = 200
+    field_offset: int = 0
+
+    @classmethod
+    def from_visibility_options(
+        cls,
+        visibility: UiObjectStateScopeVisibility,
+        field_options: UiObjectStateFieldListOptions,
+    ) -> "UiObjectStateScopeListRequest":
+        return cls(
+            include_system_scopes=visibility.include_system_scopes,
+            include_fields=field_options.include_fields,
+            field_limit=field_options.field_limit,
+            field_offset=field_options.field_offset,
+        )
 
 
 @dataclass(frozen=True, slots=True)

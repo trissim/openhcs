@@ -11,6 +11,8 @@ from pyqt_reactive.services.function_navigation import (
     is_function_field_path,
 )
 
+from openhcs.config_framework.object_state import ObjectState
+
 FUNCTION_STEP_SCOPE_PREFIX = "functionstep_"
 FIELD_PATH_TARGET_KIND: Literal["field_path"] = "field_path"
 FUNCTION_TOKEN_TARGET_KIND: Literal["function_token"] = "function_token"
@@ -46,7 +48,7 @@ class TimeTravelWindowRequest:
     """Window request derived from one or more time-travel state changes."""
 
     scope_id: str
-    object_state: object
+    object_state: ObjectState
     target: TimeTravelNavigationTarget | None
 
     def replace_target(
@@ -58,6 +60,14 @@ class TimeTravelWindowRequest:
             object_state=self.object_state,
             target=target,
         )
+
+
+@dataclass(frozen=True)
+class TimeTravelSourceScope:
+    """Changed scope plus the semantic scope that triggered time-travel."""
+
+    changed_scope_id: str
+    triggering_scope: str | None
 
 
 def parse_function_scope_ref(scope_id: str) -> FunctionScopeRef | None:
@@ -104,7 +114,7 @@ def resolve_fallback_field_path(
     candidates = [field for field in dirty_fields if isinstance(field, str)]
     if not candidates:
         return None
-    sorted_fields = sorted(candidates, key=_dirty_field_sort_key)
+    sorted_fields = sorted(candidates, key=DirtyFieldSortKeyAuthority.sort_key)
     return sorted_fields[0]
 
 
@@ -122,11 +132,7 @@ def should_replace_navigation_target(
     return candidate_target.is_function_target
 
 
-def should_include_time_travel_scope(
-    *,
-    changed_scope_id: str,
-    triggering_scope: str | None,
-) -> bool:
+def should_include_time_travel_scope(scope: TimeTravelSourceScope) -> bool:
     """Return whether a changed scope belongs to the active time-travel edit.
 
     ObjectState snapshots capture the whole registry, so old dirty states can
@@ -134,20 +140,35 @@ def should_include_time_travel_scope(
     the semantic mutation owner when history provides one instead of reopening
     every dirty ObjectState in the registry.
     """
-    if triggering_scope is None:
+    if scope.triggering_scope is None:
         return True
 
-    if changed_scope_id == triggering_scope:
+    if scope.changed_scope_id == scope.triggering_scope:
         return True
 
-    if changed_scope_id.startswith(f"{triggering_scope}::"):
+    if scope.changed_scope_id.startswith(f"{scope.triggering_scope}::"):
         return True
 
-    function_scope = parse_function_scope_ref(changed_scope_id)
-    return function_scope is not None and function_scope.step_scope_id == triggering_scope
+    function_scope = parse_function_scope_ref(scope.changed_scope_id)
+    return (
+        function_scope is not None
+        and function_scope.step_scope_id == scope.triggering_scope
+    )
 
 
-def _dirty_field_sort_key(field: str) -> tuple[int, int, str]:
-    """Sort key prioritizing root function field then deeper paths."""
-    function_rank = 0 if field == FUNCTION_FIELD_ROOT else 1
-    return (function_rank, -field.count("."), field)
+class DirtyFieldSortKeyAuthority:
+    """Classify dirty fields for deterministic time-travel navigation."""
+
+    FUNCTION_ROOT_RANK = 0
+    FIELD_PATH_RANK = 1
+
+    @classmethod
+    def sort_key(cls, field: str) -> tuple[int, int, str]:
+        function_rank = cls.function_field_rank(field)
+        return (function_rank, -field.count("."), field)
+
+    @classmethod
+    def function_field_rank(cls, field: str) -> int:
+        if field == FUNCTION_FIELD_ROOT:
+            return cls.FUNCTION_ROOT_RANK
+        return cls.FIELD_PATH_RANK

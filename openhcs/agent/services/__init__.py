@@ -10,3 +10,4 @@ from openhcs.agent.services.llm_context_service import AgentAuthoringContextServ
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
 from openhcs.agent.services.runtime_server_service import RuntimeServerService
 from openhcs.agent.services.ui_bridge_service import UiBridgeService
+from openhcs.agent.services.viewer_window_service import ViewerWindowService

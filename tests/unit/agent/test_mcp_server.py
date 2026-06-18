@@ -52,6 +52,7 @@ def test_mcp_server_exposes_execution_session_tools():
     assert "openhcs_submit_compile" in tool_names
     assert "openhcs_submit_pipeline_execution" in tool_names
     assert "openhcs_get_execution_status" in tool_names
+    assert "openhcs_viewer_snapshot_window" in tool_names
 
 
 def test_mcp_server_exposes_ui_bridge_tools():
@@ -72,5 +73,6 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert "openhcs_ui_get_state_surface" in tool_names
     assert "openhcs_ui_get_code_document" in tool_names
     assert "openhcs_ui_apply_code_document" in tool_names
+    assert "openhcs_ui_snapshot_window" in tool_names
     assert "openhcs_ui_restore_snapshot" in tool_names
     assert "openhcs_ui_get_operation_status" in tool_names

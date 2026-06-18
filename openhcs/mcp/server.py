@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Self
 
 from openhcs.agent.capabilities import get_capability_registry
@@ -19,6 +20,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentRequest,
     UiCodeDocumentValidationRequest,
     UiMutationRequestToken,
+    UiObjectStateFieldListOptions,
     UiObjectStateScopeListRequest,
     UiObjectStateScopeVisibility,
     UiSnapshotListRequest,
@@ -26,6 +28,9 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceRequest,
     UiTimeTravelHeadRequest,
     UiWindowFocusRequest,
+    UiWindowNavigateRequest,
+    UiWindowOpenPolicy,
+    UiWindowSnapshotRequest,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.execution_session_service import (
@@ -33,7 +38,14 @@ from openhcs.agent.services.execution_session_service import (
 )
 from openhcs.core.selection import SelectedScopeIdsArgument
 from openhcs.mcp.context import OpenHCSAgentContext, create_agent_context
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
+
+
+DEFAULT_MCP_WINDOW_SNAPSHOT_DIR = Path("/tmp/openhcs-mcp-window-snapshots")
 
 
 def build_server(context: OpenHCSAgentContext | None = None):
@@ -347,6 +359,30 @@ def build_server(context: OpenHCSAgentContext | None = None):
         )
 
     @server.tool()
+    def openhcs_viewer_snapshot_window(
+        port: int,
+        output_dir_path: str | None = None,
+        host: str = "localhost",
+        transport_mode: str | None = None,
+        capture_scope: str = "widget",
+        timeout_ms: int = 5000,
+    ) -> dict:
+        """Capture a running viewer window, such as Napari, to a PNG resource path."""
+        resolved_output_dir = _writable_output_dir(ctx, output_dir_path)
+        return to_jsonable(
+            ctx.viewer_window_service.snapshot_window(
+                port=port,
+                snapshot=WindowSnapshotCaptureSpec(
+                    output_dir_path=str(resolved_output_dir),
+                    capture_scope=WindowSnapshotCaptureScope(capture_scope),
+                ),
+                host=host,
+                transport_mode=transport_mode,
+                timeout_ms=timeout_ms,
+            )
+        )
+
+    @server.tool()
     def openhcs_ui_list_bridges() -> dict:
         """List live local OpenHCS UI bridge descriptors."""
         return to_jsonable(ctx.ui_bridge_service.list_bridges())
@@ -447,7 +483,58 @@ def build_server(context: OpenHCSAgentContext | None = None):
             ctx.ui_bridge_service.focus_window(
                 UiWindowFocusRequest(
                     window_id=window_id,
-                    create_if_missing=create_if_missing,
+                    open_policy=UiWindowOpenPolicy(
+                        create_if_missing=create_if_missing
+                    ),
+                ),
+                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
+            )
+        )
+
+    @server.tool()
+    def openhcs_ui_navigate_window(
+        window_id: str,
+        field_path: str | None = None,
+        item_id: str | None = None,
+        create_if_missing: bool = True,
+        connection: dict | None = None,
+    ) -> dict:
+        """Open/focus a UI window scope and reveal an optional field or item."""
+        return to_jsonable(
+            ctx.ui_bridge_service.navigate_window(
+                UiWindowNavigateRequest(
+                    window_id=window_id,
+                    field_path=field_path,
+                    item_id=item_id,
+                    open_policy=UiWindowOpenPolicy(
+                        create_if_missing=create_if_missing
+                    ),
+                ),
+                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
+            )
+        )
+
+    @server.tool()
+    def openhcs_ui_snapshot_window(
+        window_id: str,
+        output_dir_path: str | None = None,
+        capture_scope: str = "widget",
+        create_if_missing: bool = False,
+        connection: dict | None = None,
+    ) -> dict:
+        """Capture one UI bridge window to a PNG resource path."""
+        resolved_output_dir = _writable_output_dir(ctx, output_dir_path)
+        return to_jsonable(
+            ctx.ui_bridge_service.snapshot_window(
+                UiWindowSnapshotRequest(
+                    window_id=window_id,
+                    snapshot=WindowSnapshotCaptureSpec(
+                        output_dir_path=str(resolved_output_dir),
+                        capture_scope=WindowSnapshotCaptureScope(capture_scope),
+                    ),
+                    open_policy=UiWindowOpenPolicy(
+                        create_if_missing=create_if_missing
+                    ),
                 ),
                 UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
             )
@@ -456,15 +543,24 @@ def build_server(context: OpenHCSAgentContext | None = None):
     @server.tool()
     def openhcs_ui_list_object_state_scopes(
         scope_visibility: dict | None = None,
+        include_fields: bool = False,
+        field_limit: int = 200,
+        field_offset: int = 0,
         connection: dict | None = None,
     ) -> dict:
-        """List ObjectState scopes visible to the running UI bridge."""
+        """List ObjectState scopes, optionally including field-level semantic addresses."""
         visibility = UiObjectStateScopeVisibilityToolArgs.from_mapping(
             scope_visibility
         )
         return to_jsonable(
             ctx.ui_bridge_service.list_object_state_scopes(
-                visibility.object_state_scope_list_request(),
+                visibility.object_state_scope_list_request(
+                    field_options=UiObjectStateFieldListOptions(
+                        include_fields=include_fields,
+                        field_limit=field_limit,
+                        field_offset=field_offset,
+                    ),
+                ),
                 UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
             )
         )
@@ -753,9 +849,14 @@ class UiObjectStateScopeVisibilityToolArgs:
             return cls(UiObjectStateScopeVisibility())
         return cls(UiObjectStateScopeVisibility(include_system_scopes=value_from_mapping))
 
-    def object_state_scope_list_request(self) -> UiObjectStateScopeListRequest:
-        return UiObjectStateScopeListRequest(
-            include_system_scopes=self._visibility.include_system_scopes
+    def object_state_scope_list_request(
+        self,
+        *,
+        field_options: UiObjectStateFieldListOptions = UiObjectStateFieldListOptions(),
+    ) -> UiObjectStateScopeListRequest:
+        return UiObjectStateScopeListRequest.from_visibility_options(
+            self._visibility,
+            field_options,
         )
 
     def snapshot_list_request(self) -> UiSnapshotListRequest:
@@ -780,6 +881,17 @@ class UiObjectStateScopeVisibilityToolArgs:
             confirmation_requirement=confirmation_requirement,
             allow_auto_branch=allow_auto_branch,
         )
+
+
+def _writable_output_dir(
+    context: OpenHCSAgentContext,
+    output_dir_path: str | None,
+) -> Path:
+    if output_dir_path is None:
+        requested = DEFAULT_MCP_WINDOW_SNAPSHOT_DIR
+    else:
+        requested = Path(output_dir_path)
+    return context.path_policy.assert_writable(requested)
 
 
 def main() -> None:

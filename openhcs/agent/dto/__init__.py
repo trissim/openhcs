@@ -10,6 +10,10 @@ from openhcs.agent.dto.common import (
     JsonValue,
     RenderedSource,
 )
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 from openhcs.agent.dto.authoring import AuthoringContext
 from openhcs.agent.dto.architecture import (
     ArchitectureTopic,
@@ -43,6 +47,11 @@ from openhcs.agent.dto.pipeline import (
     PipelineRef,
     PipelineSpec,
     PipelineValidationResult,
+)
+from openhcs.agent.dto.viewer import (
+    ViewerWindowDescriptor,
+    ViewerWindowSnapshotRequest,
+    ViewerWindowSnapshotResult,
 )
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
@@ -83,6 +92,9 @@ from openhcs.agent.dto.ui_bridge import (
     UiMutationReceipt,
     UiMutationRequestToken,
     UiMutationRequestTokenCarrier,
+    UiObjectStateFieldListOptions,
+    UiObjectStateFieldProvenance,
+    UiObjectStateFieldSummary,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeIdentity,
     UiObjectStateScopeListRequest,
@@ -97,6 +109,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceIdentity,
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
+    UiSemanticAddress,
     UiSnapshotCatalog,
     UiSnapshotListRequest,
     UiSnapshotRef,
@@ -110,5 +123,11 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowFocusResult,
     UiWindowIdentity,
     UiWindowManagerScope,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowOpenPolicy,
+    UiWindowOperationRequest,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
     UiWindowSummary,
 )

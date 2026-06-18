@@ -8,16 +8,40 @@ import platform
 import re
 import subprocess
 import sys
-import textwrap
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from typing import Any, Mapping
+from typing import ClassVar, TypeAlias, cast
 
+from openhcs.core.config import TransportMode as ViewerTransportMode
+from openhcs.core.streaming_config_factory import (
+    StreamingViewerRuntimeConfig,
+)
+from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
+from polystore.streaming.viewer_transport import ViewerTransportEndpoint
+from zmqruntime.config import TransportMode as ZMQTransportMode, ZMQConfig
+from zmqruntime.streaming import VisualizerProcessManager
+
+
+ViewerScalar: TypeAlias = str | int | float | bool | None
+ViewerComponentValue: TypeAlias = ViewerScalar | tuple[ViewerScalar, ...]
+NaturalTokenKey: TypeAlias = tuple[int, int | str]
+NaturalTextKey: TypeAlias = tuple[NaturalTokenKey, ...]
+ComponentValueSortKey: TypeAlias = tuple[int, int | float | NaturalTextKey, str, str]
+ComponentTupleSortKey: TypeAlias = tuple[ComponentValueSortKey, ...]
+ViewerHeartbeatValue: TypeAlias = str | bool | int | float | None
+ViewerProcess: TypeAlias = BaseProcess | subprocess.Popen[bytes]
+ViewerLaunchLiteral: TypeAlias = str | int | float | bool | None
+ViewerControlWireValue: TypeAlias = (
+    ViewerScalar
+    | tuple["ViewerControlWireValue", ...]
+    | list["ViewerControlWireValue"]
+    | dict[str, "ViewerControlWireValue"]
+)
 
 
 class ViewerType(Enum):
@@ -27,6 +51,23 @@ class ViewerType(Enum):
     NAPARI = "napari"
 
 
+class ViewerPersistenceMode(Enum):
+    """Viewer lifecycle ownership mode derived from streaming persistence."""
+
+    PERSISTENT = "persistent"
+    NON_PERSISTENT = "non-persistent"
+
+    @classmethod
+    def from_flag(cls, persistent: bool) -> "ViewerPersistenceMode":
+        return VIEWER_PERSISTENCE_MODE_BY_FLAG[persistent]
+
+
+VIEWER_PERSISTENCE_MODE_BY_FLAG: Mapping[bool, ViewerPersistenceMode] = {
+    True: ViewerPersistenceMode.PERSISTENT,
+    False: ViewerPersistenceMode.NON_PERSISTENT,
+}
+
+
 class ViewerProtocolStatus(Enum):
     """Control/ack status values shared by viewer servers."""
 
@@ -34,13 +75,82 @@ class ViewerProtocolStatus(Enum):
     ERROR = "error"
 
 
+class ViewerControlResponseField(str, Enum):
+    """Wire fields shared by viewer control-message responses."""
+
+    STATUS = "status"
+    TYPE = "type"
+    MESSAGE = "message"
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerControlResponse:
+    """Typed view of a viewer control-message response."""
+
+    payload: Mapping[str, ViewerControlWireValue]
+
+    @property
+    def status(self) -> ViewerProtocolStatus:
+        status_value = self.payload.get(ViewerControlResponseField.STATUS.value)
+        if status_value is None:
+            raise ValueError("Viewer control response is missing a status field.")
+        return ViewerProtocolStatus(str(status_value))
+
+    def succeeded(self) -> bool:
+        return self.status is ViewerProtocolStatus.SUCCESS
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerControlReplyHeader:
+    """Shared status/type/message header for viewer control replies."""
+
+    status: ViewerProtocolStatus
+    response_type: str | None = None
+    message: str | None = None
+
+    def to_wire_mapping(self) -> dict[str, ViewerControlWireValue]:
+        payload: dict[str, ViewerControlWireValue] = {
+            ViewerControlResponseField.STATUS.value: self.status.value,
+        }
+        if self.response_type is not None:
+            payload[ViewerControlResponseField.TYPE.value] = self.response_type
+        if self.message is not None:
+            payload[ViewerControlResponseField.MESSAGE.value] = self.message
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerControlReplyPayload:
+    """Wire payload for a viewer control-message reply."""
+
+    header: ViewerControlReplyHeader
+    fields: Mapping[str, ViewerControlWireValue] = field(default_factory=dict)
+
+    def to_wire_mapping(self) -> dict[str, ViewerControlWireValue]:
+        payload = self.header.to_wire_mapping()
+        payload.update(self.fields)
+        return payload
+
+
+class ViewerBatchWireField(str, Enum):
+    """Wire fields shared by batched viewer stream messages."""
+
+    TYPE = "type"
+    IMAGES = "images"
+    DISPLAY_CONFIG = "display_config"
+    COMPONENT_NAMES_METADATA = "component_names_metadata"
+    COMPONENT_VALUE_DOMAIN = "component_value_domain"
+
+
 class ViewerComponentValueOrdering:
     """Canonical ordering for viewer component values and stack coordinates."""
 
     NATURAL_TOKEN_PATTERN = re.compile(r"(\d+)")
+    INTEGER_PATTERN = re.compile(r"^[+-]?\d+$")
+    FLOAT_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 
     @classmethod
-    def key(cls, value: object) -> tuple[object, ...]:
+    def key(cls, value: ViewerComponentValue) -> ComponentValueSortKey:
         numeric_value = cls.numeric_value(value)
         if numeric_value is not None:
             return (0, numeric_value, type(value).__name__, str(value))
@@ -49,11 +159,11 @@ class ViewerComponentValueOrdering:
         return (1, cls.natural_text_key(text), type(value).__name__, text)
 
     @classmethod
-    def tuple_key(cls, values: tuple[object, ...]) -> tuple[tuple[object, ...], ...]:
+    def tuple_key(cls, values: tuple[ViewerComponentValue, ...]) -> ComponentTupleSortKey:
         return tuple(cls.key(value) for value in values)
 
-    @staticmethod
-    def numeric_value(value: object) -> int | float | None:
+    @classmethod
+    def numeric_value(cls, value: ViewerComponentValue) -> int | float | None:
         if isinstance(value, bool):
             return None
         if isinstance(value, int):
@@ -66,16 +176,14 @@ class ViewerComponentValueOrdering:
         text = value.strip()
         if not text:
             return None
-        try:
+        if cls.INTEGER_PATTERN.fullmatch(text):
             return int(text)
-        except ValueError:
-            try:
-                return float(text)
-            except ValueError:
-                return None
+        if cls.FLOAT_PATTERN.fullmatch(text):
+            return float(text)
+        return None
 
     @classmethod
-    def natural_text_key(cls, text: str) -> tuple[tuple[int, object], ...]:
+    def natural_text_key(cls, text: str) -> NaturalTextKey:
         return tuple(
             (0, int(token)) if token.isdecimal() else (1, token.casefold())
             for token in cls.NATURAL_TOKEN_PATTERN.split(text)
@@ -102,10 +210,10 @@ class ViewerProcessPlatform(Enum):
     def current(cls) -> "ViewerProcessPlatform":
         if sys.platform == cls.WINDOWS.value:
             return cls.WINDOWS
-        return VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME.get(
-            platform.system(),
-            cls.OTHER,
-        )
+        system_name = platform.system()
+        if system_name in VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME:
+            return VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME[system_name]
+        return cls.OTHER
 
 
 class NapariLayerKind(Enum):
@@ -119,21 +227,84 @@ class NapariLayerKind(Enum):
 class FijiPayloadKind(Enum):
     """Payload strings sent to the Fiji viewer process."""
 
-    IMAGE = "image"
-    ROIS = "rois"
+    IMAGE = ("image", StreamingDataType.IMAGE, True)
+    ROIS = ("rois", StreamingDataType.ROIS, False)
 
-    @property
-    def streaming_data_type(self) -> StreamingDataType:
-        if self is FijiPayloadKind.IMAGE:
-            return StreamingDataType.IMAGE
-        return StreamingDataType.ROIS
+    def __init__(
+        self,
+        wire_value: str,
+        streaming_data_type: StreamingDataType,
+        uses_shared_memory: bool,
+    ) -> None:
+        self.wire_value = wire_value
+        self.streaming_data_type = streaming_data_type
+        self.uses_shared_memory = uses_shared_memory
 
     @classmethod
-    def from_payload(cls, payload: object) -> "FijiPayloadKind | None":
-        try:
-            return cls(str(payload))
-        except ValueError:
+    def from_payload(cls, payload: str | None) -> "FijiPayloadKind | None":
+        if payload is None:
             return None
+        wire_value = str(payload)
+        if wire_value in FIJI_PAYLOAD_KIND_BY_WIRE_VALUE:
+            return FIJI_PAYLOAD_KIND_BY_WIRE_VALUE[wire_value]
+        return None
+
+
+FIJI_PAYLOAD_KIND_BY_WIRE_VALUE: Mapping[str, FijiPayloadKind] = {
+    kind.wire_value: kind for kind in FijiPayloadKind
+}
+
+
+class ViewerHeartbeatField(Enum):
+    """Fields owned by OpenHCS viewer heartbeat payloads."""
+
+    VIEWER = "viewer"
+    OPENHCS = "openhcs"
+    SERVER = "server"
+    MEMORY_MB = "memory_mb"
+    CPU_PERCENT = "cpu_percent"
+
+
+@dataclass(slots=True)
+class ViewerHeartbeatPayload:
+    """Nominal heartbeat payload builder around the ZMQ server pong mapping."""
+
+    values: dict[str, ViewerHeartbeatValue] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        response: Mapping[str, ViewerHeartbeatValue],
+    ) -> "ViewerHeartbeatPayload":
+        return cls(dict(response))
+
+    def set_field(
+        self,
+        field_name: ViewerHeartbeatField,
+        value: ViewerHeartbeatValue,
+    ) -> None:
+        self.values[field_name.value] = value
+
+    def mark_viewer(self, viewer_type: ViewerType, server_name: str) -> None:
+        self.set_field(ViewerHeartbeatField.VIEWER, viewer_type.value)
+        self.set_field(ViewerHeartbeatField.OPENHCS, True)
+        self.set_field(ViewerHeartbeatField.SERVER, server_name)
+
+    def add_process_metrics(self) -> None:
+        import psutil
+
+        process = psutil.Process(os.getpid())
+        self.set_field(
+            ViewerHeartbeatField.MEMORY_MB,
+            process.memory_info().rss / 1024 / 1024,
+        )
+        self.set_field(
+            ViewerHeartbeatField.CPU_PERCENT,
+            process.cpu_percent(interval=0),
+        )
+
+    def to_dict(self) -> dict[str, ViewerHeartbeatValue]:
+        return dict(self.values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,27 +314,32 @@ class ViewerHeartbeatDescriptor:
     viewer_type: ViewerType
     server_name: str
 
-    def apply_to(self, response: dict[str, Any]) -> dict[str, Any]:
-        response["viewer"] = self.viewer_type.value
-        response["openhcs"] = True
-        response["server"] = self.server_name
-        self._add_process_metrics(response)
-        return response
-
-    @staticmethod
-    def _add_process_metrics(response: dict[str, Any]) -> None:
+    def apply_to(
+        self,
+        response: Mapping[str, ViewerHeartbeatValue],
+    ) -> dict[str, ViewerHeartbeatValue]:
+        heartbeat = ViewerHeartbeatPayload.from_mapping(response)
+        heartbeat.mark_viewer(self.viewer_type, self.server_name)
         try:
-            import psutil
-
-            process = psutil.Process(os.getpid())
-            response["memory_mb"] = process.memory_info().rss / 1024 / 1024
-            response["cpu_percent"] = process.cpu_percent(interval=0)
+            heartbeat.add_process_metrics()
         except Exception:
             pass
+        return heartbeat.to_dict()
 
 
 NAPARI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.NAPARI, "NapariViewer")
 FIJI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.FIJI, "FijiViewerServer")
+
+
+@dataclass(frozen=True, slots=True)
+class NapariViewerServerRequest:
+    """Nominal launch request consumed by the Napari viewer server."""
+
+    port: int
+    viewer_title: str
+    replace_layers: bool = False
+    log_file_path: str | None = None
+    transport_mode: ViewerTransportMode = ViewerTransportMode.IPC
 
 
 VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME: Mapping[str, ViewerProcessPlatform] = {
@@ -173,129 +349,294 @@ VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME: Mapping[str, ViewerProcessPlatform] = {
 
 
 @dataclass(frozen=True, slots=True)
-class NapariViewerServerRequest:
-    """Shared request fields for constructing a Napari viewer server process."""
+class ViewerRuntimeEndpoint:
+    """OpenHCS viewer endpoint projected onto zmqruntime primitives."""
 
-    port: int
-    viewer_title: str
-    replace_layers: bool
-    log_file_path: str | None
-    transport_mode: object
+    transport: ViewerTransportEndpoint
+    config: ZMQConfig
 
-    @classmethod
-    def from_legacy_signature(
-        cls,
-        port: int,
-        viewer_title: str,
-        replace_layers: bool = False,
-        log_file_path: str | None = None,
-        transport_mode: object | None = None,
-    ) -> "NapariViewerServerRequest":
-        return cls(
-            port=port,
-            viewer_title=viewer_title,
-            replace_layers=replace_layers,
-            log_file_path=log_file_path,
-            transport_mode=transport_mode,
+    @property
+    def port(self) -> int:
+        return self.transport.port
+
+    @property
+    def host(self) -> str:
+        return self.transport.host
+
+    @property
+    def mode(self) -> ViewerTransportMode:
+        return self.transport.transport_mode
+
+    @property
+    def zmq_transport_mode(self) -> ZMQTransportMode:
+        from zmqruntime.transport import coerce_transport_mode
+
+        zmq_mode = coerce_transport_mode(self.mode)
+        if zmq_mode is None:
+            raise ValueError(f"Unsupported viewer transport mode: {self.mode!r}")
+        return zmq_mode
+
+    @property
+    def control_port(self) -> int:
+        from zmqruntime.transport import get_control_port
+
+        return get_control_port(self.port, self.config)
+
+    def data_url(self) -> str:
+        from zmqruntime.transport import get_zmq_transport_url
+
+        return get_zmq_transport_url(
+            self.port,
+            host=self.host,
+            mode=self.zmq_transport_mode,
+            config=self.config,
         )
 
+    def control_url(self) -> str:
+        from zmqruntime.transport import get_control_url
+
+        return get_control_url(
+            self.port,
+            self.zmq_transport_mode,
+            host=self.host,
+            config=self.config,
+        )
+
+    def in_use(self) -> bool:
+        from zmqruntime.transport import is_port_in_use
+
+        return is_port_in_use(
+            self.port,
+            self.zmq_transport_mode,
+            host=self.host,
+            config=self.config,
+        )
+
+    def ping(
+        self,
+        *,
+        timeout_ms: int,
+        require_ready: bool,
+    ) -> bool:
+        from zmqruntime.transport import ping_control_port
+
+        return ping_control_port(
+            self.port,
+            self.zmq_transport_mode,
+            host=self.host,
+            config=self.config,
+            timeout_ms=timeout_ms,
+            require_ready=require_ready,
+        )
+
+    def wait_ready(self, *, timeout: float, require_ready: bool = True) -> bool:
+        from zmqruntime.transport import wait_for_server_ready
+
+        return wait_for_server_ready(
+            self.port,
+            self.zmq_transport_mode,
+            host=self.host,
+            config=self.config,
+            timeout=timeout,
+            require_ready=require_ready,
+        )
+
+    def release_bound_ports(self) -> None:
+        if self.zmq_transport_mode is ZMQTransportMode.IPC:
+            from zmqruntime.transport import remove_ipc_socket
+
+            remove_ipc_socket(self.port, self.config)
+            remove_ipc_socket(self.control_port, self.config)
+            return
+
+        from zmqruntime.server import ZMQServer
+
+        ZMQServer.kill_processes_on_port(self.port)
+        ZMQServer.kill_processes_on_port(self.control_port)
+
 
 @dataclass(frozen=True, slots=True)
-class NapariViewerProcessEntrypoint:
-    """Generate the explicit Python entrypoint for a detached Napari process."""
+class DetachedViewerPythonExpression:
+    """One expression allowed in generated detached-viewer Python."""
 
-    request: NapariViewerServerRequest
-    python_path_root: Path
-    entry_module: str = "openhcs.runtime.napari_viewer_server"
-    entry_function: str = "run_napari_viewer_process_from_legacy_signature"
-
-    def python_code(self) -> str:
-        transport_name = self.request.transport_mode.name
-        return textwrap.dedent(
-            f"""
-            import os
-            import sys
-
-            if hasattr(os, "setsid"):
-                try:
-                    os.setsid()
-                except OSError:
-                    pass
-
-            sys.path.insert(0, {str(self.python_path_root)!r})
-
-            try:
-                from {self.entry_module} import {self.entry_function}
-                from openhcs.core.config import TransportMode
-
-                transport_mode = TransportMode.{transport_name}
-                {self.entry_function}(
-                    {self.request.port!r},
-                    {self.request.viewer_title!r},
-                    {self.request.replace_layers!r},
-                    {self.request.log_file_path!r},
-                    transport_mode,
-                )
-            except Exception as error:
-                import logging
-                import traceback
-
-                logger = logging.getLogger("openhcs.runtime.napari_detached")
-                logger.error("Detached napari error: %s", error)
-                logger.error(traceback.format_exc())
-                sys.exit(1)
-            """
-        ).strip()
-
-
-@dataclass(frozen=True, slots=True)
-class NapariDetachedProcessRequest:
-    """Authoritative detached launch request for a Napari viewer process."""
-
-    server_request: NapariViewerServerRequest
-    log_file: Path
-    cwd: Path = field(default_factory=Path.cwd)
+    source: str
 
     @classmethod
-    def from_legacy_signature(
+    def literal(cls, value: ViewerLaunchLiteral) -> "DetachedViewerPythonExpression":
+        return cls(repr(value))
+
+    @classmethod
+    def symbol(cls, name: str) -> "DetachedViewerPythonExpression":
+        if not name.isidentifier():
+            raise ValueError(f"Detached viewer symbol is not a valid identifier: {name!r}")
+        return cls(name)
+
+
+@dataclass(frozen=True, slots=True)
+class DetachedViewerPythonArguments:
+    """Nominal argument list for detached-viewer entrypoint code generation."""
+
+    expressions: tuple[DetachedViewerPythonExpression, ...] = ()
+
+    @classmethod
+    def from_literals(
         cls,
-        port: int,
-        viewer_title: str,
-        replace_layers: bool = False,
-        transport_mode: object | None = None,
+        *values: ViewerLaunchLiteral,
+    ) -> "DetachedViewerPythonArguments":
+        return cls(tuple(DetachedViewerPythonExpression.literal(value) for value in values))
+
+    def append(
+        self,
+        *expressions: DetachedViewerPythonExpression,
+    ) -> "DetachedViewerPythonArguments":
+        return type(self)((*self.expressions, *expressions))
+
+    def render(self) -> str:
+        return ",\n".join(expression.source for expression in self.expressions)
+
+
+@dataclass(frozen=True, slots=True)
+class DetachedViewerLaunchRequest:
+    """Authoritative detached launch request for a viewer process."""
+
+    viewer_type: ViewerType
+    port: int
+    python_code: str
+    log_file: Path
+    cwd: Path = field(default_factory=Path.cwd)
+    env: Mapping[str, str] | None = None
+    platform: ViewerProcessPlatform = field(
+        default_factory=ViewerProcessPlatform.current
+    )
+
+    @classmethod
+    def log_file_for(
+        cls,
         *,
-        cwd: Path | None = None,
+        viewer_type: ViewerType,
+        port: int,
         log_dir: Path | None = None,
-    ) -> "NapariDetachedProcessRequest":
-        launch_cwd = Path.cwd() if cwd is None else cwd
+    ) -> Path:
         launch_log_dir = (
             Path.home() / ".local" / "share" / "openhcs" / "logs"
             if log_dir is None
             else log_dir
         )
-        log_file = launch_log_dir / f"napari_detached_port_{port}.log"
-        server_request = NapariViewerServerRequest.from_legacy_signature(
-            port,
-            viewer_title,
-            replace_layers,
-            str(log_file),
-            transport_mode,
-        )
-        return cls(server_request=server_request, log_file=log_file, cwd=launch_cwd)
+        return launch_log_dir / f"{viewer_type.value}_detached_port_{port}.log"
 
-    def to_process_request(self) -> "DetachedViewerProcessRequest":
-        entrypoint = NapariViewerProcessEntrypoint(
-            request=self.server_request,
-            python_path_root=self.cwd,
-        )
-        return DetachedViewerProcessRequest(
-            python_code=entrypoint.python_code(),
-            log_file=self.log_file,
-            cwd=self.cwd,
+    def command(self) -> list[str]:
+        return [sys.executable, "-c", self.python_code]
+
+    def launch(self) -> subprocess.Popen[bytes]:
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        launch_env = dict(os.environ if self.env is None else self.env)
+        ViewerQtEnvironmentPolicy(self.platform).apply_to(launch_env)
+        log_handle = self.log_file.open("w")
+        if self.platform is ViewerProcessPlatform.WINDOWS:
+            return subprocess.Popen(
+                self.command(),
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.DETACHED_PROCESS,
+                env=launch_env,
+                cwd=str(self.cwd),
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+            )
+        return subprocess.Popen(
+            self.command(),
+            env=launch_env,
+            cwd=str(self.cwd),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
 
-    def launch(self) -> subprocess.Popen:
-        return self.to_process_request().launch()
+
+@dataclass(frozen=True, slots=True)
+class DetachedViewerServerEntrypointSpec:
+    """Declared server function used to launch one detached viewer family."""
+
+    viewer_type: ViewerType
+    module_name: str
+    function_name: str
+    extra_imports: tuple[str, ...] = ()
+
+    def log_file_for(self, port: int) -> Path:
+        return DetachedViewerLaunchRequest.log_file_for(
+            viewer_type=self.viewer_type,
+            port=port,
+        )
+
+    def python_code(
+        self,
+        python_path_root: Path,
+        *,
+        transport_mode: ViewerTransportMode,
+        arguments: DetachedViewerPythonArguments,
+    ) -> str:
+        transport_name = transport_mode.name
+        rendered_arguments = arguments.render()
+        call_arguments = "\n".join(
+            f"    {line}" for line in rendered_arguments.splitlines()
+        )
+        lines = [
+            "import os",
+            "import sys",
+            "",
+            'if os.name == "posix":',
+            "    try:",
+            "        os.setsid()",
+            "    except OSError:",
+            "        pass",
+            "",
+            f"sys.path.insert(0, {str(python_path_root)!r})",
+            "",
+            "try:",
+            f"    from {self.module_name} import {self.function_name}",
+            "    from openhcs.core.config import TransportMode",
+        ]
+        lines.extend(f"    {extra_import}" for extra_import in self.extra_imports)
+        lines.extend(
+            [
+                "",
+                f"    transport_mode = TransportMode.{transport_name}",
+                f"    {self.function_name}(",
+                call_arguments,
+                "    )",
+                "except Exception as error:",
+                "    import logging",
+                "    import traceback",
+                "",
+                '    logger = logging.getLogger("openhcs.runtime.detached_viewer")',
+                '    logger.error("Detached viewer error: %s", error)',
+                "    logger.error(traceback.format_exc())",
+                "    sys.exit(1)",
+            ]
+        )
+        return "\n".join(lines)
+
+    def launch_request(
+        self,
+        *,
+        port: int,
+        transport_mode: ViewerTransportMode,
+        arguments: DetachedViewerPythonArguments,
+        log_file: Path,
+        cwd: Path | None = None,
+    ) -> DetachedViewerLaunchRequest:
+        if cwd is None:
+            cwd = Path.cwd()
+        return DetachedViewerLaunchRequest(
+            viewer_type=self.viewer_type,
+            port=port,
+            python_code=self.python_code(
+                cwd,
+                transport_mode=transport_mode,
+                arguments=arguments,
+            ),
+            log_file=log_file,
+            cwd=cwd,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,51 +682,13 @@ class ViewerQtEnvironmentPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class DetachedViewerProcessRequest:
-    """Launch request for a detached Python viewer process."""
-
-    python_code: str
-    log_file: Path
-    cwd: Path = field(default_factory=lambda: Path.cwd())
-    env: Mapping[str, str] | None = None
-    platform: ViewerProcessPlatform = field(
-        default_factory=ViewerProcessPlatform.current
-    )
-
-    def launch(self) -> subprocess.Popen:
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
-        launch_env = dict(os.environ if self.env is None else self.env)
-        ViewerQtEnvironmentPolicy(self.platform).apply_to(launch_env)
-        log_handle = self.log_file.open("w")
-        command = [sys.executable, "-c", self.python_code]
-        if self.platform is ViewerProcessPlatform.WINDOWS:
-            return subprocess.Popen(
-                command,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.DETACHED_PROCESS,
-                env=launch_env,
-                cwd=str(self.cwd),
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-            )
-        return subprocess.Popen(
-            command,
-            env=launch_env,
-            cwd=str(self.cwd),
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class ViewerProcessHandle:
     """Nominal adapter over multiprocessing and subprocess viewer handles."""
 
-    process: BaseProcess | subprocess.Popen
+    process: ViewerProcess
 
     @classmethod
-    def from_process(cls, process: object) -> "ViewerProcessHandle":
+    def from_process(cls, process: ViewerProcess) -> "ViewerProcessHandle":
         if isinstance(process, (BaseProcess, subprocess.Popen)):
             return cls(process)
         raise TypeError(f"Unsupported viewer process handle: {type(process)!r}")
@@ -396,7 +699,9 @@ class ViewerProcessHandle:
 
     @property
     def pid_label(self) -> str:
-        return str(self.pid) if self.pid is not None else "unknown"
+        if self.pid is None:
+            return "unknown"
+        return str(self.pid)
 
     def is_alive(self) -> bool:
         if isinstance(self.process, BaseProcess):
@@ -493,10 +798,7 @@ VIEWER_CONTROL_PING_POLICIES: Mapping[
 class ViewerControlPingRequest:
     """Typed control-port ping request for viewer readiness checks."""
 
-    port: int
-    transport_mode: object
-    config: object
-    host: str = "localhost"
+    endpoint: ViewerRuntimeEndpoint
     timeout_ms: int = 500
     require_ready: bool = True
 
@@ -505,40 +807,223 @@ class ViewerControlPingRequest:
         cls,
         *,
         mode: ViewerControlPingMode,
-        port: int,
-        transport_mode: object,
-        config: object,
+        endpoint: ViewerRuntimeEndpoint,
     ) -> "ViewerControlPingRequest":
         policy = VIEWER_CONTROL_PING_POLICIES[mode]
         return cls(
-            port=port,
-            transport_mode=transport_mode,
-            config=config,
+            endpoint=endpoint,
             timeout_ms=policy.timeout_ms,
             require_ready=policy.require_ready,
         )
 
-    def check(self) -> bool:
-        from zmqruntime.transport import ping_control_port
+@dataclass(frozen=True, slots=True)
+class ViewerControlMessageRequest:
+    """Typed REQ/REP control-message request shared by viewer visualizers."""
 
-        return ping_control_port(
-            self.port,
-            self.transport_mode,
-            host=self.host,
-            config=self.config,
-            timeout_ms=self.timeout_ms,
-            require_ready=self.require_ready,
-        )
+    endpoint: ViewerRuntimeEndpoint
+    message_type: str
+    timeout: float = 2.0
+
+    def send(self) -> ViewerControlResponse:
+        import pickle
+
+        import zmq
+
+        context = None
+        socket = None
+        try:
+            context = zmq.Context()
+            socket = context.socket(zmq.REQ)
+            socket.setsockopt(zmq.LINGER, 0)
+            socket.setsockopt(zmq.RCVTIMEO, int(self.timeout * 1000))
+            socket.connect(self.endpoint.control_url())
+            socket.send(
+                pickle.dumps(
+                    {ViewerControlResponseField.TYPE.value: self.message_type}
+                )
+            )
+            payload = pickle.loads(socket.recv())
+            if not isinstance(payload, Mapping):
+                raise TypeError(
+                    "Viewer control response must be a mapping, "
+                    f"got {type(payload).__name__}."
+                )
+            return ViewerControlResponse(
+                cast(Mapping[str, ViewerControlWireValue], payload)
+            )
+        finally:
+            if socket is not None:
+                socket.close()
+            if context is not None:
+                context.term()
 
 
-class ManagedViewerLifecycleMixin(ABC):
+class ManagedViewerLifecycleMixin(
+    VisualizerProcessManager,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Shared liveness property for viewer process managers."""
 
-    viewer_process_label = "viewer"
+    __registry_key__ = "viewer_type"
+    __skip_if_no_key__ = True
+
+    __registry__: ClassVar[dict[str, type["ManagedViewerLifecycleMixin"]]]
+    viewer_type: ClassVar[str | None] = None
+    viewer_process_label: ClassVar[str] = "viewer"
+    detached_server_entrypoint: ClassVar[DetachedViewerServerEntrypointSpec]
+
+    def __init__(
+        self,
+        *,
+        runtime_config: StreamingViewerRuntimeConfig,
+        transport_config: ZMQConfig,
+    ) -> None:
+        super().__init__(port=runtime_config.transport_endpoint.port)
+        self.persistent: bool = runtime_config.persistent
+        self.lifecycle_presentation = runtime_config.presentation
+        self.runtime_endpoint = ViewerRuntimeEndpoint(
+            transport=runtime_config.transport_endpoint,
+            config=transport_config,
+        )
+        self.lifecycle_state: ViewerLifecycleState = ViewerLifecycleState.stopped()
+
+    @property
+    def required_port(self) -> int:
+        port = self.port
+        if port is None:
+            raise RuntimeError("OpenHCS streaming viewers require a configured port.")
+        return port
+
+    @property
+    def persistence_mode(self) -> ViewerPersistenceMode:
+        return ViewerPersistenceMode.from_flag(self.persistent)
+
+    @property
+    def persistence_label(self) -> str:
+        return self.persistence_mode.value
+
+    @property
+    def viewer_title(self) -> str:
+        return self.lifecycle_presentation.title
 
     @abstractmethod
+    def start_viewer(self, async_mode: bool = False) -> None:
+        """Start the concrete viewer server process."""
+
+    @abstractmethod
+    def detached_server_arguments(
+        self,
+        *,
+        log_file: Path,
+    ) -> DetachedViewerPythonArguments:
+        """Return entrypoint arguments for this concrete viewer server."""
+
     def check_connected_viewer(self) -> bool:
         """Return whether an externally-owned viewer is still responsive."""
+        request = ViewerControlPingRequest.from_mode(
+            mode=ViewerControlPingMode.QUICK,
+            endpoint=self.runtime_endpoint,
+        )
+        return request.endpoint.ping(
+            timeout_ms=request.timeout_ms,
+            require_ready=request.require_ready,
+        )
+
+    def existing_viewer_is_ready(self) -> bool:
+        request = ViewerControlPingRequest.from_mode(
+            mode=ViewerControlPingMode.EXISTING_VIEWER,
+            endpoint=self.runtime_endpoint,
+        )
+        return request.endpoint.ping(
+            timeout_ms=request.timeout_ms,
+            require_ready=request.require_ready,
+        )
+
+    def wait_for_ready(self, timeout: float = 10.0) -> bool:
+        """Implement VisualizerProcessManager readiness through the viewer endpoint."""
+        return self.runtime_endpoint.wait_ready(
+            timeout=timeout,
+            require_ready=True,
+        )
+
+    def detached_launch_request(self) -> DetachedViewerLaunchRequest:
+        port = self.required_port
+        log_file = self.detached_server_entrypoint.log_file_for(port)
+        return self.detached_server_entrypoint.launch_request(
+            port=port,
+            transport_mode=self.runtime_endpoint.mode,
+            arguments=self.detached_server_arguments(log_file=log_file),
+            log_file=log_file,
+        )
+
+    def launch_detached_viewer(self) -> subprocess.Popen[bytes]:
+        launch_request = self.detached_launch_request()
+        process = launch_request.launch()
+        logging.getLogger(type(self).__module__).info(
+            "%s detached process started (PID: %s), logging to %s",
+            self.viewer_process_label,
+            process.pid,
+            launch_request.log_file,
+        )
+        return process
+
+    def get_launch_command(self) -> list[str]:
+        return self.detached_launch_request().command()
+
+    def get_launch_env(self) -> dict[str, str]:
+        return ViewerQtEnvironmentPolicy().apply_to(dict(os.environ))
+
+    def start(self, detached: bool = True) -> subprocess.Popen[bytes]:
+        self.start_viewer(async_mode=False)
+        if self.process is None:
+            raise RuntimeError(f"{self.viewer_process_label} viewer process failed to start.")
+        return self.process
+
+    @property
+    def process_pid_label(self) -> str:
+        process = self.process
+        if process is None:
+            return "unknown"
+        return ViewerProcessHandle.from_process(process).pid_label
+
+    def send_control_message(self, message_type: str, timeout: float = 2.0) -> bool:
+        if not self.is_running:
+            logging.getLogger(type(self).__module__).warning(
+                "%s viewer cannot send %s - viewer not running",
+                self.viewer_process_label,
+                message_type,
+            )
+            return False
+
+        try:
+            response = ViewerControlMessageRequest(
+                endpoint=self.runtime_endpoint,
+                message_type=message_type,
+                timeout=timeout,
+            ).send()
+            if response.succeeded():
+                logging.getLogger(type(self).__module__).info(
+                    "%s viewer acknowledged %s",
+                    self.viewer_process_label,
+                    message_type,
+                )
+                return True
+            logging.getLogger(type(self).__module__).warning(
+                "%s viewer failed %s: %s",
+                self.viewer_process_label,
+                message_type,
+                response.payload,
+            )
+            return False
+        except Exception as error:
+            logging.getLogger(type(self).__module__).warning(
+                "%s viewer failed to send %s: %s",
+                self.viewer_process_label,
+                message_type,
+                error,
+            )
+            return False
 
     @property
     def is_running(self) -> bool:
@@ -589,65 +1074,27 @@ class ChannelColormapPolicy:
         default_factory=lambda: {1: "green", 2: "red"}
     )
 
-    def colormap(self, channel_value: object) -> str | None:
-        try:
-            channel_number = int(channel_value)
-        except (TypeError, ValueError):
+    def colormap(self, channel_value: ViewerComponentValue) -> str | None:
+        channel_number = self._channel_number(channel_value)
+        if channel_number is None:
             return None
         return self.colors_by_channel.get(channel_number)
 
-
-@dataclass(frozen=True, slots=True)
-class ComponentDimensionLabelPolicy:
-    """Build human-readable dimension labels for viewer component axes."""
-
-    abbreviations: Mapping[str, str] = field(
-        default_factory=lambda: {
-            "channel": "Ch",
-            "z_index": "Z",
-            "timepoint": "T",
-            "site": "Site",
-            "well": "Well",
-        }
-    )
-    metadata_formatters: Mapping[str, Callable[[object, object], str]] = field(
-        default_factory=lambda: {
-            "channel": lambda value, name: f"Ch{value}: {name}",
-            "well": lambda _value, name: str(name),
-        }
-    )
-
-    def labels_for(
-        self,
-        *,
-        component: str,
-        values: Iterable[object],
-        metadata: Mapping[str, object],
-    ) -> list[str]:
-        return [
-            self.label_for(component=component, value=value, metadata=metadata)
-            for value in values
-        ]
-
-    def label_for(
-        self,
-        *,
-        component: str,
-        value: object,
-        metadata: Mapping[str, object],
-    ) -> str:
-        metadata_name = metadata.get(str(value))
-        if metadata_name and str(metadata_name).lower() != "none":
-            return self._metadata_label(component, value, metadata_name)
-        return f"{self.abbreviations.get(component, component)} {value}"
-
-    def _metadata_label(
-        self,
-        component: str,
-        value: object,
-        metadata_name: object,
-    ) -> str:
-        formatter = self.metadata_formatters.get(component)
-        if formatter is not None:
-            return formatter(value, metadata_name)
-        return f"{component.title()} {value}: {metadata_name}"
+    @staticmethod
+    def _channel_number(channel_value: ViewerComponentValue) -> int | None:
+        if (
+            channel_value is None
+            or isinstance(channel_value, bool)
+            or isinstance(channel_value, tuple)
+        ):
+            return None
+        if isinstance(channel_value, int):
+            return channel_value
+        if isinstance(channel_value, float):
+            if channel_value.is_integer():
+                return int(channel_value)
+            return None
+        stripped = channel_value.strip()
+        if stripped and stripped.lstrip("+-").isdigit():
+            return int(stripped)
+        return None
