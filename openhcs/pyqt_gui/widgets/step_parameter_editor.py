@@ -594,10 +594,6 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         """Save step settings to .step file (mirrors Textual TUI)."""
         self.step_settings_files.save_step_settings()
 
-    def get_current_step(self) -> FunctionStep:
-        """Get the current step with all parameter values."""
-        return self.step
-
     def update_step(self, step: FunctionStep):
         """Update the step and refresh the form."""
         self.step = step
