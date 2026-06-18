@@ -8,6 +8,10 @@ Drafted 2026-06-16 as a focused addendum to
 This document investigates how OpenHCS should expose its capabilities to agents
 through MCP. It is not an implementation.
 
+Concrete implementation guidance lives in:
+
+- `docs/plans/openhcs_mcp_implementation_blueprint_20260616.md`
+
 ## Question
 
 What API should OpenHCS expose to an agent through MCP, and how do we expose it
@@ -125,6 +129,12 @@ The MCP API should be a semantic projection:
 - internal authority owns behavior;
 - `openhcs.agent` service owns policy and DTO projection;
 - `openhcs.mcp` owns protocol registration and transport details.
+
+Important correction: this does not mean agents cannot use core OpenHCS APIs.
+They should be able to use `FunctionStep`, `GlobalPipelineConfig`,
+`PipelineConfig`, and `PipelineOrchestrator` semantics. The boundary is that
+they use those semantics through stable DTOs, config schemas, pipeline specs, and
+orchestrator session handles rather than through arbitrary Python object access.
 
 ## Proposed Exposition Architecture
 
@@ -469,7 +479,7 @@ decorators.
 
 ## What Not To Expose
 
-Do not expose these as first-class MCP API:
+Do not expose these as raw first-class MCP API:
 
 - `PipelineOrchestrator` object methods;
 - `FileManager` or `StorageRegistry`;
@@ -486,6 +496,10 @@ Do not expose these as first-class MCP API:
 
 Expose projections instead:
 
+- `FunctionStepSpec` and `PipelineSpec` for step/pipeline authoring;
+- `ConfigSchema`, `ConfigPatch`, and `ConfigRef` for
+  `GlobalPipelineConfig`/`PipelineConfig`;
+- `OrchestratorSessionRef` for controlled `PipelineOrchestrator` lifecycle;
 - plate probe summary;
 - workspace preparation summary;
 - generated pipeline artifact ref;

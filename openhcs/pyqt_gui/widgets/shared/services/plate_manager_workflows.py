@@ -36,23 +36,30 @@ class PlateManagerCodeNamespaceField(str, Enum):
 
     GLOBAL_CONFIG = "global_config"
     PER_PLATE_CONFIGS = "per_plate_configs"
-    LEGACY_PIPELINE_CONFIG = "pipeline_config"
     PIPELINE_DATA = "pipeline_data"
     PLATE_PATHS = "plate_paths"
 
 
 @dataclass(frozen=True, slots=True)
-class PlateManagerCodeNamespace:
-    """Nominal payload produced by executed plate-manager code."""
+class PlateManagerOrchestratorCodePayload:
+    """Authoritative payload for plate-manager orchestrator code documents."""
 
     plate_paths: tuple[str, ...]
     pipeline_data: dict[str, list[FunctionStep]]
-    global_config: GlobalPipelineConfig | None = None
+    global_pipeline_config: GlobalPipelineConfig | None = None
     per_plate_configs: dict[str, PipelineConfig] | None = None
-    legacy_pipeline_config: PipelineConfig | None = None
 
     @classmethod
-    def from_namespace(cls, namespace: dict) -> "PlateManagerCodeNamespace | None":
+    def from_namespace(
+        cls,
+        namespace: dict,
+    ) -> "PlateManagerOrchestratorCodePayload | None":
+        if "pipeline_config" in namespace:
+            raise ValueError(
+                "pipeline_config is not a plate-manager code document field; "
+                "use per_plate_configs keyed by plate path."
+            )
+
         plate_paths_field = PlateManagerCodeNamespaceField.PLATE_PATHS.value
         pipeline_data_field = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
         if plate_paths_field not in namespace or pipeline_data_field not in namespace:
@@ -69,18 +76,11 @@ class PlateManagerCodeNamespace:
         per_plate_configs = namespace.get(
             PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value
         )
-        legacy_pipeline_config = namespace.get(
-            PlateManagerCodeNamespaceField.LEGACY_PIPELINE_CONFIG.value
-        )
 
         if global_config is not None and not isinstance(
             global_config, GlobalPipelineConfig
         ):
             raise TypeError("global_config must be a GlobalPipelineConfig.")
-        if legacy_pipeline_config is not None and not isinstance(
-            legacy_pipeline_config, PipelineConfig
-        ):
-            raise TypeError("pipeline_config must be a PipelineConfig.")
         if per_plate_configs is not None:
             per_plate_configs = {
                 str(plate_path): pipeline_config
@@ -95,10 +95,24 @@ class PlateManagerCodeNamespace:
         return cls(
             plate_paths=plate_paths,
             pipeline_data=pipeline_data,
-            global_config=global_config,
+            global_pipeline_config=global_config,
             per_plate_configs=per_plate_configs,
-            legacy_pipeline_config=legacy_pipeline_config,
         )
+
+    def to_namespace(self) -> dict:
+        namespace = {
+            PlateManagerCodeNamespaceField.PLATE_PATHS.value: list(self.plate_paths),
+            PlateManagerCodeNamespaceField.PIPELINE_DATA.value: self.pipeline_data,
+        }
+        if self.global_pipeline_config is not None:
+            namespace[PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value] = (
+                self.global_pipeline_config
+            )
+        if self.per_plate_configs is not None:
+            namespace[PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value] = (
+                self.per_plate_configs
+            )
+        return namespace
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,22 +127,17 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         return None
 
     def apply_namespace(self, namespace: dict) -> bool:
-        payload = PlateManagerCodeNamespace.from_namespace(namespace)
+        payload = PlateManagerOrchestratorCodePayload.from_namespace(namespace)
         if payload is None:
             return False
 
         self.ensure_plate_entries(list(payload.plate_paths))
 
-        if payload.global_config is not None:
-            self.apply_global_config(payload.global_config)
+        if payload.global_pipeline_config is not None:
+            self.apply_global_config(payload.global_pipeline_config)
 
         if payload.per_plate_configs is not None:
             self.apply_per_plate_configs(payload.per_plate_configs)
-        elif payload.legacy_pipeline_config is not None:
-            self.apply_legacy_pipeline_config(
-                payload.legacy_pipeline_config,
-                list(payload.plate_paths),
-            )
 
         self.apply_pipeline_data(payload.pipeline_data)
         return True
@@ -219,33 +228,16 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
                 last_pipeline_config
             )
 
-    def apply_legacy_pipeline_config(
-        self,
-        pipeline_config: PipelineConfig,
-        plate_paths: list[str],
-    ) -> None:
-        GuiEventBusBroadcaster(self.manager.event_bus).config_changed(pipeline_config)
-        for plate_path in plate_paths:
-            orchestrator = ObjectStateRegistry.get_object(plate_path)
-            if not orchestrator:
-                continue
-            orchestrator.apply_pipeline_config(pipeline_config)
-            effective_config = orchestrator.get_effective_config()
-            self.manager.orchestrator_config_changed.emit(
-                str(plate_path),
-                effective_config,
-            )
-            logger.debug("Applied tier 3 pipeline config to orchestrator: %s", plate_path)
-
     def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
-        if self.manager.pipeline_editor is None:
+        plate_pipeline_editor = self.manager.plate_pipeline_editor
+        if plate_pipeline_editor is None:
             logger.warning("No pipeline editor available to update pipeline data")
             self.manager.pipeline_data_changed.emit()
             return
 
-        current_plate = self.manager.pipeline_editor.current_plate
+        current_plate = plate_pipeline_editor.current_plate
         for plate_path, pipeline_steps in pipeline_data.items():
-            self.manager.pipeline_editor.update_pipeline_for_plate(
+            plate_pipeline_editor.update_pipeline_for_plate(
                 plate_path,
                 pipeline_steps,
             )
@@ -258,9 +250,9 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
             if plate_path != current_plate:
                 continue
-            self.manager.pipeline_editor.pipeline_steps = pipeline_steps
-            self.manager.pipeline_editor.update_item_list()
-            self.manager.pipeline_editor.pipeline_changed.emit(pipeline_steps)
+            plate_pipeline_editor.pipeline_steps = pipeline_steps
+            plate_pipeline_editor.update_item_list()
+            plate_pipeline_editor.pipeline_changed.emit(pipeline_steps)
             GuiEventBusBroadcaster(self.manager.event_bus).pipeline_changed(
                 pipeline_steps
             )

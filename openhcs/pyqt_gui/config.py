@@ -7,11 +7,30 @@ Configuration is intended to be immutable and provided as Python objects.
 """
 
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, Callable
+import os
+from dataclasses import dataclass, field, replace
+from typing import Optional, Dict, Callable
 from enum import Enum
 
+from zmqruntime.transport import get_default_transport_mode
+
+from openhcs.agent.dto.execution import ExecutionConnectionSpec
+from openhcs.core.config import GlobalPipelineConfig
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_AGENT_UI_BRIDGE_TRANSPORT = get_default_transport_mode().value
+
+
+GUIPluginSettingValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | tuple["GUIPluginSettingValue", ...]
+    | dict[str, "GUIPluginSettingValue"]
+)
 
 
 # ============================================================================
@@ -293,6 +312,96 @@ class ProgressUIConfig:
 
 
 @dataclass(frozen=True)
+class AgentUiBridgeDescriptorPaths:
+    """Descriptor path inputs requested by GUI configuration/environment."""
+
+    directory_path: str | None = None
+    explicit_file_path: str | None = None
+
+
+class AgentUiBridgeConnectionAuthority:
+    """Validation and environment projection for UI bridge connection config."""
+
+    @staticmethod
+    def require_port(connection: ExecutionConnectionSpec) -> int:
+        if connection.port is None:
+            raise ValueError("Agent UI bridge connection config requires an explicit port.")
+        return connection.port
+
+
+@dataclass(frozen=True)
+class AgentUiBridgeConfig:
+    """Configuration for the local agent/MCP bridge into the running PyQt UI."""
+
+    enabled: bool = False
+    connection: ExecutionConnectionSpec = field(
+        default_factory=lambda: ExecutionConnectionSpec(
+            host="127.0.0.1",
+            port=7888,
+            transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
+        )
+    )
+    timeout_ms: int = 5000
+    descriptor_paths: AgentUiBridgeDescriptorPaths = field(
+        default_factory=AgentUiBridgeDescriptorPaths
+    )
+    max_code_document_bytes: int = 2_000_000
+    max_request_bytes: int = 4_000_000
+    max_response_bytes: int = 4_000_000
+    confirmation_timeout_ms: int = 30_000
+    require_confirmation_for_mutations: bool = True
+    allow_unsafe_code_documents: bool = False
+
+    @classmethod
+    def from_environment(
+        cls,
+        base: "AgentUiBridgeConfig | None" = None,
+    ) -> "AgentUiBridgeConfig":
+        base = base or cls()
+        return cls(
+            enabled=EnvironmentValueAuthority.boolean(
+                "OPENHCS_ENABLE_UI_BRIDGE",
+                base.enabled,
+            ),
+            connection=ExecutionConnectionSpec(
+                host=EnvironmentValueAuthority.text(
+                    "OPENHCS_UI_BRIDGE_HOST",
+                    base.connection.host,
+                ),
+                port=EnvironmentValueAuthority.integer(
+                    "OPENHCS_UI_BRIDGE_PORT",
+                    AgentUiBridgeConnectionAuthority.require_port(base.connection),
+                ),
+                transport_mode=EnvironmentValueAuthority.text(
+                    "OPENHCS_UI_BRIDGE_TRANSPORT_MODE",
+                    base.connection.transport_mode,
+                ),
+                persistent=base.connection.persistent,
+            ),
+            timeout_ms=EnvironmentValueAuthority.integer(
+                "OPENHCS_UI_BRIDGE_TIMEOUT_MS",
+                base.timeout_ms,
+            ),
+            descriptor_paths=AgentUiBridgeDescriptorPaths(
+                directory_path=EnvironmentValueAuthority.optional_text(
+                    "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
+                    base.descriptor_paths.directory_path,
+                ),
+                explicit_file_path=EnvironmentValueAuthority.optional_text(
+                    "OPENHCS_UI_BRIDGE_DESCRIPTOR",
+                    base.descriptor_paths.explicit_file_path,
+                ),
+            ),
+            max_code_document_bytes=base.max_code_document_bytes,
+            max_request_bytes=base.max_request_bytes,
+            max_response_bytes=base.max_response_bytes,
+            confirmation_timeout_ms=base.confirmation_timeout_ms,
+            require_confirmation_for_mutations=base.require_confirmation_for_mutations,
+            allow_unsafe_code_documents=base.allow_unsafe_code_documents,
+        )
+
+
+@dataclass(frozen=True)
 class PyQtGUIConfig:
     """
     Root configuration object for the PyQt GUI application.
@@ -309,6 +418,9 @@ class PyQtGUIConfig:
 
     progress: ProgressUIConfig = field(default_factory=ProgressUIConfig)
     """Configuration for progress UI update coalescing."""
+
+    agent_bridge: AgentUiBridgeConfig = field(default_factory=AgentUiBridgeConfig)
+    """Configuration for the local agent/MCP bridge into the running UI."""
 
     window: WindowConfig = field(default_factory=WindowConfig)
     """Configuration for main window behavior."""
@@ -327,8 +439,29 @@ class PyQtGUIConfig:
     """Check for application updates on startup."""
 
     # Future extension points
-    plugin_settings: Dict[str, Any] = field(default_factory=dict)
+    plugin_settings: Dict[str, GUIPluginSettingValue] = field(default_factory=dict)
     """Settings for GUI plugins and extensions."""
+
+
+@dataclass(frozen=True)
+class PyQtGuiRuntimeContext:
+    """Startup-resolved GUI runtime context shared by app and main window."""
+
+    config: PyQtGUIConfig
+    pipeline_runtime: GlobalPipelineConfig = field(default_factory=GlobalPipelineConfig)
+
+    @property
+    def bridge_config(self) -> AgentUiBridgeConfig:
+        return self.config.agent_bridge
+
+    def widget_config(self) -> PyQtGUIConfig:
+        return self.config
+
+    def with_pipeline_runtime(
+        self,
+        pipeline_runtime: GlobalPipelineConfig,
+    ) -> "PyQtGuiRuntimeContext":
+        return replace(self, pipeline_runtime=pipeline_runtime)
 
 
 # --- Default Configuration Providers ---
@@ -367,12 +500,55 @@ def get_default_pyqt_gui_config() -> PyQtGUIConfig:
     logger.debug("Initializing with default PyQtGUIConfig.")
     return PyQtGUIConfig(
         performance_monitor=_DEFAULT_PERFORMANCE_MONITOR_CONFIG,
+        agent_bridge=AgentUiBridgeConfig.from_environment(),
         window=_DEFAULT_WINDOW_CONFIG,
         style=_DEFAULT_STYLE_CONFIG,
         logging=_DEFAULT_LOGGING_CONFIG,
         enable_debug_mode=False,
         check_for_updates=True,
     )
+
+
+class EnvironmentValueAuthority:
+    """Typed access rules for PyQt GUI environment overrides."""
+
+    @staticmethod
+    def text(name: str, default: str) -> str:
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return default
+        return value
+
+    @staticmethod
+    def optional_text(name: str, default: str | None) -> str | None:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        if value == "":
+            return None
+        return value
+
+    @staticmethod
+    def integer(name: str, default: int) -> int:
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return default
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer.") from exc
+
+    @staticmethod
+    def boolean(name: str, default: bool) -> bool:
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return default
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{name} must be a boolean value.")
 
 
 def create_high_performance_config() -> PyQtGUIConfig:

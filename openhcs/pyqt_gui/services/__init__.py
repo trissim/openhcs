@@ -7,8 +7,10 @@ replacing prompt_toolkit dependencies with Qt equivalents.
 
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.async_service_bridge import AsyncServiceBridge
+from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
 
 __all__ = [
-    "PyQtServiceAdapter", 
-    "AsyncServiceBridge"
+    "PyQtServiceAdapter",
+    "AsyncServiceBridge",
+    "UiAgentBridgeService",
 ]

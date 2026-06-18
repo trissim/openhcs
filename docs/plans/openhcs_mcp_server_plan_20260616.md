@@ -12,6 +12,10 @@ Detailed API exposition guidance lives in:
 
 - `docs/plans/openhcs_mcp_api_exposition_investigation_20260616.md`
 
+Concrete implementation guidance lives in:
+
+- `docs/plans/openhcs_mcp_implementation_blueprint_20260616.md`
+
 The current worktree is actively being refactored in parallel, so this plan
 anchors to the stable headless contracts rather than PyQt workflow internals.
 

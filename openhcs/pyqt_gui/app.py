@@ -20,6 +20,7 @@ from polystore.filemanager import FileManager
 from objectstate import spawn_thread_with_context
 
 from pyqt_reactive.utils.scroll_filter import install_shift_wheel_scrolling
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 
 logger = logging.getLogger(__name__)
@@ -34,14 +35,17 @@ class OpenHCSPyQtApp(QApplication):
     """
 
     def __init__(
-        self, argv: list, global_config: Optional[GlobalPipelineConfig] = None
+        self,
+        argv: list,
+        *,
+        runtime_context: PyQtGuiRuntimeContext,
     ):
         """
         Initialize the OpenHCS PyQt6 application.
 
         Args:
             argv: Command line arguments
-            global_config: Global configuration (uses default if None)
+            runtime_context: Startup-resolved GUI runtime context
         """
         super().__init__(argv)
 
@@ -57,8 +61,7 @@ class OpenHCSPyQtApp(QApplication):
         self.setOrganizationName("OpenHCS Development Team")
         self.setOrganizationDomain("openhcs.org")
 
-        # Global configuration
-        self.global_config = global_config or GlobalPipelineConfig()
+        self.runtime_context = runtime_context
 
         # Shared components
         self.storage_registry = storage_registry
@@ -72,6 +75,10 @@ class OpenHCSPyQtApp(QApplication):
 
         # Install global Shift+Wheel horizontal scrolling
         self._scroll_filter = install_shift_wheel_scrolling(self)
+
+    @property
+    def pipeline_runtime_config(self) -> GlobalPipelineConfig:
+        return self.runtime_context.pipeline_runtime
         logger.debug("Installed global Shift+Wheel horizontal scrolling")
 
         logger.info("OpenHCS PyQt6 application initialized")
@@ -118,16 +125,16 @@ class OpenHCSPyQtApp(QApplication):
         from openhcs.core.config import GlobalPipelineConfig
 
         # Set for editing (UI placeholders) - this uses threading.local() storage
-        set_global_config_for_editing(GlobalPipelineConfig, self.global_config)
+        set_global_config_for_editing(GlobalPipelineConfig, self.pipeline_runtime_config)
 
         # ALSO ensure context for orchestrator creation (required by orchestrator.__init__)
-        ensure_global_config_context(GlobalPipelineConfig, self.global_config)
+        ensure_global_config_context(GlobalPipelineConfig, self.pipeline_runtime_config)
 
         # Register GlobalPipelineConfig ObjectState (singleton, persists for app lifetime)
         # This is the root of the ObjectState hierarchy
         # scope_id="" (empty string) for global scope - visible to all orchestrators
         global_state = ObjectState(
-            object_instance=self.global_config,
+            object_instance=self.pipeline_runtime_config,
             scope_id="",  # Empty string = global scope
         )
         ObjectStateRegistry.register(global_state, _skip_snapshot=True)
@@ -165,7 +172,9 @@ class OpenHCSPyQtApp(QApplication):
             Created main window
         """
         if self.main_window is None:
-            self.main_window = OpenHCSMainWindow(self.global_config)
+            self.main_window = OpenHCSMainWindow(
+                runtime_context=self.runtime_context,
+            )
 
             # Connect application-level signals
             self.main_window.config_changed.connect(self.on_config_changed)
@@ -194,7 +203,7 @@ class OpenHCSPyQtApp(QApplication):
         Args:
             new_config: New global configuration
         """
-        self.global_config = new_config
+        self.runtime_context = self.runtime_context.with_pipeline_runtime(new_config)
         logger.info("Global configuration updated")
 
     def handle_exception(self, exc_type, exc_value, exc_traceback):

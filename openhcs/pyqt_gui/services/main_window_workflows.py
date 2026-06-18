@@ -4,17 +4,158 @@ from __future__ import annotations
 
 import gc
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from collections.abc import Mapping
+from typing import Callable, TYPE_CHECKING
 
-from PyQt6.QtWidgets import QApplication, QDialog, QProgressBar, QWidget
+from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtWidgets import QApplication, QDialog, QProgressBar, QSplitter, QWidget
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.pyqt_gui.services.window_config import WindowSpec
 from pyqt_reactive.services.window_manager import WindowManager
 
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
+
 logger = logging.getLogger(__name__)
+
+
+class SignalConnectionSurface(ABC):
+    @abstractmethod
+    def connect(self, callback) -> None:
+        raise NotImplementedError
+
+
+class SignalEmissionSurface(ABC):
+    @abstractmethod
+    def emit(self, value) -> None:
+        raise NotImplementedError
+
+
+class MainWindowPersistenceSurface(ABC):
+    @abstractmethod
+    def save_window_state(self) -> None:
+        raise NotImplementedError
+
+
+class ConfigChangeSurface(ABC):
+    @abstractmethod
+    def on_config_changed(self, new_config: GlobalPipelineConfig) -> None:
+        raise NotImplementedError
+
+
+class PipelineEditorWorkflowSurface(ConfigChangeSurface):
+    pipeline_steps: list
+    pipeline_changed: SignalEmissionSurface
+    plate_manager: "PlateManagerWorkflowSurface"
+
+    @abstractmethod
+    def set_current_plate(self, plate_path: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_item_list(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_button_states(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def load_pipeline_from_file(self, file_path: Path) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_pipeline_to_file(self, file_path: Path) -> None:
+        raise NotImplementedError
+
+
+class PlateManagerWorkflowSurface(ConfigChangeSurface):
+    plate_selected: SignalConnectionSurface
+    orchestrator_config_changed: SignalConnectionSurface
+    selected_plate_path: str | None
+
+    @abstractmethod
+    def set_pipeline_editor(
+        self,
+        pipeline_editor: PipelineEditorWorkflowSurface,
+    ) -> None:
+        raise NotImplementedError
+
+
+class QtShortcutSequenceAuthority:
+    """Convert Qt key events into configured shortcut strings."""
+
+    _KEY_NAMES = {
+        Qt.Key.Key_Z: "Z",
+        Qt.Key.Key_Y: "Y",
+    }
+
+    @classmethod
+    def from_event(cls, event) -> str | None:
+        if event.type() != QEvent.Type.KeyPress:
+            return None
+        key_name = cls._key_name(event.key())
+        if key_name is None:
+            return None
+        return cls._modifier_prefix(event.modifiers()) + key_name
+
+    @classmethod
+    def _key_name(cls, key: int) -> str | None:
+        if key in cls._KEY_NAMES:
+            return cls._KEY_NAMES[key]
+        return None
+
+    @staticmethod
+    def _modifier_prefix(modifiers) -> str:
+        parts: list[str] = []
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            parts.append("Ctrl")
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            parts.append("Shift")
+        if modifiers & Qt.KeyboardModifier.AltModifier:
+            parts.append("Alt")
+        if not parts:
+            return ""
+        return "+".join(parts) + "+"
+
+
+class CodeEditorFocusAuthority:
+    """Decide whether global shortcuts should yield to a focused code editor."""
+
+    @staticmethod
+    def allows_global_time_travel() -> bool:
+        from PyQt6.Qsci import QsciScintilla
+
+        widget = QApplication.focusWidget()
+        while widget is not None:
+            if isinstance(widget, QsciScintilla):
+                return False
+            widget = widget.parentWidget()
+        return True
+
+
+class TimeTravelShortcutEventFilter(QObject):
+    """Qt event filter that routes configured shortcuts to time-travel actions."""
+
+    def __init__(self, actions: Mapping[str, Callable[[], None]]) -> None:
+        super().__init__()
+        self._actions = dict(actions)
+
+    def eventFilter(self, obj, event):
+        del obj
+        sequence = QtShortcutSequenceAuthority.from_event(event)
+        if sequence is None:
+            return False
+        if sequence not in self._actions:
+            return False
+        if not CodeEditorFocusAuthority.allows_global_time_travel():
+            return False
+        self._actions[sequence]()
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,9 +218,9 @@ class MainWindowEmbeddedWidgets:
     plate_manager: QWidget | None = None
     pipeline_editor: QWidget | None = None
     zmq_manager: QWidget | None = None
-    left_splitter: Any | None = None
-    main_splitter: Any | None = None
-    top_splitter: Any | None = None
+    left_splitter: QSplitter | None = None
+    main_splitter: QSplitter | None = None
+    top_splitter: QSplitter | None = None
 
     def require_plate_manager(self) -> QWidget:
         if self.plate_manager is None:
@@ -125,7 +266,7 @@ class MainWindowEmbeddedWidgets:
             widget.show()
 
     @staticmethod
-    def _set_splitter_ratios(splitter: Any | None, ratios: tuple[float, float]) -> None:
+    def _set_splitter_ratios(splitter: QSplitter | None, ratios: tuple[float, float]) -> None:
         if splitter is None:
             return
         sizes = splitter.sizes()
@@ -138,7 +279,11 @@ class MainWindowEmbeddedWidgets:
 class MainWindowWidgetConnector:
     """Owns cross-widget wiring between plate and pipeline widgets."""
 
-    def connect(self, plate_manager: Any, pipeline_editor: Any) -> None:
+    def connect(
+        self,
+        plate_manager: PlateManagerWorkflowSurface,
+        pipeline_editor: PipelineEditorWorkflowSurface,
+    ) -> None:
         plate_manager.plate_selected.connect(pipeline_editor.set_current_plate)
         plate_manager.orchestrator_config_changed.connect(
             pipeline_editor.on_orchestrator_config_changed
@@ -156,8 +301,8 @@ class MainWindowWidgetConnector:
 class MainWindowPipelineActions:
     """File-menu actions for the embedded pipeline editor."""
 
-    main_window: Any
-    pipeline_editor: Any
+    main_window: QWidget
+    pipeline_editor: PipelineEditorWorkflowSurface
 
     def new_pipeline(self) -> None:
         self.pipeline_editor.pipeline_steps = []
@@ -176,10 +321,12 @@ class MainWindowPipelineActions:
                 "",
                 "Function Files (*.func);;CellProfiler Pipelines (*.cppipe);;All Files (*)",
             )
-            file_path = Path(selected) if selected else None
+            if selected:
+                file_path = Path(selected)
+            else:
+                return
 
-        if file_path is not None:
-            self.pipeline_editor.load_pipeline_from_file(file_path)
+        self.pipeline_editor.load_pipeline_from_file(file_path)
 
     def save_pipeline(self, selected_path: Path | None = None) -> None:
         file_path = selected_path
@@ -192,20 +339,23 @@ class MainWindowPipelineActions:
                 "pipeline.func",
                 "Function Files (*.func);;All Files (*)",
             )
-            file_path = Path(selected) if selected else None
+            if selected:
+                file_path = Path(selected)
+            else:
+                return
 
-        if file_path is not None:
-            self.pipeline_editor.save_pipeline_to_file(file_path)
+        self.pipeline_editor.save_pipeline_to_file(file_path)
 
 
 @dataclass(frozen=True, slots=True)
 class MainWindowLifecycleWorkflow:
     """Main-window lifecycle behavior that spans multiple child widgets."""
 
-    main_window: Any
+    main_window: MainWindowPersistenceSurface
     embedded_widgets: MainWindowEmbeddedWidgets
     floating_windows: dict[str, QWidget]
     status_progress_bar: QProgressBar
+    ui_bridge_lifecycle: "MainWindowUiBridgeLifecycle"
 
     def propagate_config(self, new_config: GlobalPipelineConfig) -> None:
         self.embedded_widgets.require_plate_manager().on_config_changed(new_config)
@@ -223,6 +373,8 @@ class MainWindowLifecycleWorkflow:
         self.status_progress_bar.setVisible(False)
 
     def close(self) -> None:
+        self.ui_bridge_lifecycle.close()
+
         logger.info("Stopping system monitor...")
         system_monitor = self.embedded_widgets.require_system_monitor()
         system_monitor.stop_monitoring()
@@ -253,6 +405,26 @@ class MainWindowLifecycleWorkflow:
         self.main_window.save_window_state()
         QApplication.processEvents()
         gc.collect()
+
+
+@dataclass(slots=True)
+class MainWindowUiBridgeLifecycle:
+    """Mutable owner for the optional main-window UI bridge server."""
+
+    server: "UiBridgeControlServer | None" = None
+
+    def set_server(self, server: "UiBridgeControlServer") -> None:
+        self.server = server
+
+    def close(self) -> None:
+        if self.server is None:
+            return
+        try:
+            self.server.stop()
+        except Exception as exc:
+            logger.warning("Error stopping UI bridge server: %s", exc)
+        finally:
+            self.server = None
 
 
 @dataclass(frozen=True, slots=True)

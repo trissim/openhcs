@@ -14,6 +14,7 @@ import platform
 from pathlib import Path
 from enum import Enum
 from typing import Callable, Optional
+from dataclasses import dataclass
 
 # CRITICAL: Check for SILENT mode BEFORE any OpenHCS imports
 # This prevents logger output during module imports
@@ -35,6 +36,7 @@ except ImportError:
     
 
 from openhcs.pyqt_gui.app import OpenHCSPyQtApp
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_pyqt_gui_config
 from pyqt_reactive.utils.window_utils import install_global_window_bounds_filter
 
 
@@ -51,13 +53,19 @@ class QtPlatformSystem(Enum):
 
     MACOS = "Darwin"
     LINUX = "Linux"
+    DEFAULT = "default"
 
     @classmethod
-    def from_current(cls) -> Optional["QtPlatformSystem"]:
-        try:
-            return cls(platform.system())
-        except ValueError:
-            return None
+    def from_current(cls) -> "QtPlatformSystem":
+        current_system = platform.system()
+        for platform_system in (cls.MACOS, cls.LINUX):
+            if current_system == platform_system.value:
+                return platform_system
+        return cls.DEFAULT
+
+    @property
+    def uses_default_qt_platform(self) -> bool:
+        return self is QtPlatformSystem.DEFAULT
 
 
 def _setup_macos_qt_platform() -> None:
@@ -97,6 +105,68 @@ QT_PLATFORM_SETUP: dict[QtPlatformSystem, Callable[[], None]] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class GuiLogLevelRequest:
+    """Resolved logging mode requested by the GUI launcher."""
+
+    setup_level: str
+    disable_all: bool
+
+
+class GuiLogLevel(Enum):
+    """Closed GUI launcher log-level axis."""
+
+    DEBUG = ("DEBUG", logging.DEBUG, "DEBUG", False)
+    INFO = ("INFO", logging.INFO, "INFO", False)
+    WARNING = ("WARNING", logging.WARNING, "WARNING", False)
+    ERROR = ("ERROR", logging.ERROR, "ERROR", False)
+    SILENT = ("SILENT", logging.ERROR, "ERROR", True)
+
+    @property
+    def cli_value(self) -> str:
+        return self.value[0]
+
+    @property
+    def logging_level(self) -> int:
+        return self.value[1]
+
+    @property
+    def setup_level(self) -> str:
+        return self.value[2]
+
+    @property
+    def disable_all(self) -> bool:
+        return self.value[3]
+
+    @classmethod
+    def choices(cls) -> tuple[str, ...]:
+        return tuple(log_level.cli_value for log_level in cls)
+
+    @classmethod
+    def default(cls) -> "GuiLogLevel":
+        return cls.INFO
+
+    @classmethod
+    def from_argument(cls, value: str | None) -> "GuiLogLevel":
+        if value is None:
+            return cls.default()
+        return cls.from_text(value)
+
+    @classmethod
+    def from_text(cls, value: str) -> "GuiLogLevel":
+        normalized = value.upper()
+        for log_level in cls:
+            if log_level.cli_value == normalized:
+                return log_level
+        raise ValueError(f"Unsupported GUI log level: {value}")
+
+    def request(self) -> GuiLogLevelRequest:
+        return GuiLogLevelRequest(
+            setup_level=self.setup_level,
+            disable_all=self.disable_all,
+        )
+
+
 def setup_qt_platform():
     """Setup Qt platform for different environments (macOS, Linux, WSL2, Windows)."""
     # Check if QT_QPA_PLATFORM is already set
@@ -105,7 +175,7 @@ def setup_qt_platform():
         return
 
     platform_system = QtPlatformSystem.from_current()
-    if platform_system is None:
+    if platform_system.uses_default_qt_platform:
         # Windows and other platforms do not need QT_QPA_PLATFORM set.
         logging.debug(f"Platform {platform.system()} - using default Qt platform")
         return
@@ -132,7 +202,7 @@ def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None, disa
         logging.getLogger("openhcs").setLevel(logging.CRITICAL + 1)
         return
 
-    log_level_obj = getattr(logging, log_level.upper())
+    log_level_obj = GuiLogLevel.from_text(log_level).logging_level
 
     # Create logs directory
     log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
@@ -196,8 +266,7 @@ Examples:
     
     parser.add_argument(
         '--log-level',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'SILENT'],
-        default='INFO',
+        choices=GuiLogLevel.choices(),
         help='Set logging level (default: INFO). Use SILENT to disable all logging.'
     )
 
@@ -313,8 +382,12 @@ def main():
     args = parse_arguments()
 
     # Setup logging
-    disable_all = (args.log_level == 'SILENT')
-    setup_logging(args.log_level if args.log_level != 'SILENT' else 'ERROR', args.log_file, disable_all=disable_all)
+    log_level_request = GuiLogLevel.from_argument(args.log_level).request()
+    setup_logging(
+        log_level_request.setup_level,
+        args.log_file,
+        disable_all=log_level_request.disable_all,
+    )
 
     logging.info("Starting OpenHCS PyQt6 GUI...")
     logging.info(f"Python version: {sys.version}")
@@ -331,6 +404,10 @@ def main():
 
         # Load configuration
         config = load_configuration(args.config)
+        runtime_context = PyQtGuiRuntimeContext(
+            get_default_pyqt_gui_config(),
+            pipeline_runtime=config,
+        )
 
         # Apply command line overrides
         if args.no_gpu:
@@ -345,7 +422,7 @@ def main():
 
         # Create and run application
         logging.info("Initializing PyQt6 application...")
-        app = OpenHCSPyQtApp(sys.argv, config)
+        app = OpenHCSPyQtApp(sys.argv, runtime_context=runtime_context)
         install_global_window_bounds_filter(app)  # install once, early
         
         logging.info("Starting application event loop...")

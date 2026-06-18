@@ -142,6 +142,11 @@ fiji = [
     "scyjava>=1.9.1",
 ]
 
+# Model Context Protocol server
+mcp = [
+    "mcp>=1.0",
+]
+
 # Bio-Formats HCS reader integration
 bioformats = [
     "pyimagej>=1.4.1",
@@ -246,6 +251,9 @@ all = [
     "pyimagej>=1.4.1",
     "scyjava>=1.9.1",
 
+    # MCP
+    "mcp>=1.0",
+
     # GPU
     "torch>=2.6.0,<2.8.0",
     "torchvision>=0.21.0,<0.23.0",
@@ -275,6 +283,7 @@ openhcs-gui = "openhcs.pyqt_gui.__main__:main"
 
 # Utility scripts
 openhcs-recache = "openhcs.utils.recache_function_registry:main"
+openhcs-mcp = "openhcs.mcp.server:main"
 
 [tool.setuptools]
 # Automatically find all packages under openhcs/
