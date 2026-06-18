@@ -436,12 +436,12 @@ def build_server(context: OpenHCSAgentContext | None = None):
         widget_id: str,
         action_id: str,
         target_scope_ids: list[str] | None = None,
-        observed_state_revision_token: str | None = None,
+        observed_selection_revision_token: str | None = None,
         request_token: str | None = None,
         require_confirmation: bool = True,
         connection: dict | None = None,
     ) -> dict:
-        """Dispatch one UI action and return a bridge receipt; poll state surfaces for workflow progress."""
+        """Dispatch one UI action using the selection token from openhcs_ui_list_actions."""
         selected_scope_ids = SelectedScopeIdsArgument.from_optional_iterable(
             target_scope_ids
         )
@@ -451,7 +451,7 @@ def build_server(context: OpenHCSAgentContext | None = None):
                     widget_id=widget_id,
                     action_id=action_id,
                     selected_scope_ids=selected_scope_ids.selected_scope_ids,
-                    observed_state_revision_token=observed_state_revision_token,
+                    observed_selection_revision_token=observed_selection_revision_token,
                     request_token=UiMutationRequestToken(request_token),
                     confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
                         require_confirmation

@@ -280,26 +280,32 @@ class UiBridgeConnectionSpec(
             defaults = cls()
         connection = fields.connection
         connection_fields = set(fields.connection_fields)
+
+        def connection_field(field_name: str, field_value, default_value):
+            if connection is not None and field_name in connection_fields:
+                return field_value
+            return default_value
+
         return cls(
-            host=(
-                connection.host
-                if connection is not None and "host" in connection_fields
-                else defaults.host
+            host=connection_field(
+                "host",
+                connection.host if connection is not None else None,
+                defaults.host,
             ),
-            port=(
-                connection.port
-                if connection is not None and "port" in connection_fields
-                else defaults.port
+            port=connection_field(
+                "port",
+                connection.port if connection is not None else None,
+                defaults.port,
             ),
-            transport_mode=(
-                connection.transport_mode
-                if connection is not None and "transport_mode" in connection_fields
-                else defaults.transport_mode
+            transport_mode=connection_field(
+                "transport_mode",
+                connection.transport_mode if connection is not None else None,
+                defaults.transport_mode,
             ),
-            persistent=(
-                connection.persistent
-                if connection is not None and "persistent" in connection_fields
-                else defaults.persistent
+            persistent=connection_field(
+                "persistent",
+                connection.persistent if connection is not None else None,
+                defaults.persistent,
             ),
             timeout_ms=(
                 fields.timeout_ms if fields.timeout_ms is not None else defaults.timeout_ms
@@ -611,6 +617,7 @@ class UiActionSummary(SelectionModeCarrier):
     confirmation_required: bool = False
     current_selection_count: int = 0
     target_scope_ids: tuple[str, ...] = ()
+    selection_revision_token: str | None = None
     related_state_surface_ids: tuple[str, ...] = ()
 
 
@@ -630,7 +637,7 @@ class UiActionInvokeRequest(
     UiBridgeConfirmationRequirementCarrier,
     UiMutationRequestTokenCarrier,
 ):
-    observed_state_revision_token: str | None = None
+    observed_selection_revision_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

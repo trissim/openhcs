@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from openhcs.agent.dto.ui_bridge import (
+    UiActionInvokeRequest,
     UiBridgeConfirmationRequirement,
     UiBridgeConnectionSpec,
     UiCodeDocumentApplyRequest,
@@ -38,6 +39,10 @@ from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
     ManagerExecutionState,
+)
+from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerAction
+from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
+    WidgetActionRoute,
 )
 
 
@@ -128,6 +133,19 @@ class FakeOperations:
         ObjectStateRegistry.increment_token()
 
 
+@dataclass(frozen=True, slots=True)
+class FakeButton:
+    enabled: bool = True
+
+    def isEnabled(self) -> bool:
+        return self.enabled
+
+
+class FakeServiceAdapter:
+    def execute_async_operation(self, operation):
+        raise AssertionError(f"Unexpected async operation in test: {operation!r}")
+
+
 class InlineDispatcher:
     def call(self, callback, *, timeout_ms: int = 5000):
         del timeout_ms
@@ -135,6 +153,16 @@ class InlineDispatcher:
 
 
 class FakePlateManager:
+    BUTTON_CONFIGS = [
+        ("Code", PlateManagerAction.CODE_PLATE.value, "Generate Python code"),
+    ]
+    ACTION_ROUTES = {
+        PlateManagerAction.CODE_PLATE: WidgetActionRoute(
+            PlateManagerAction.CODE_PLATE,
+            lambda widget: widget.action_code_plate,
+        ),
+    }
+
     def __init__(
         self,
         *,
@@ -153,6 +181,11 @@ class FakePlateManager:
         self.plate_compile_pending = set()
         self.plate_compiled_data = {}
         self.execution_server_info = None
+        self.service_adapter = FakeServiceAdapter()
+        self.buttons = {
+            PlateManagerAction.CODE_PLATE.value: FakeButton(),
+        }
+        self.code_action_count = 0
 
     def get_selected_items(self):
         return list(self.selected)
@@ -181,6 +214,9 @@ class FakePlateManager:
 
     def code_document_execution_operations(self) -> FakeOperations:
         return self.operations
+
+    def action_code_plate(self) -> None:
+        self.code_action_count += 1
 
 
 @pytest.fixture(autouse=True)
@@ -268,6 +304,39 @@ def test_plate_manager_state_surface_projects_runtime_row_status() -> None:
     assert row["compile_pending"] is True
     assert row["selected"] is True
     assert poll_state.unchanged is True
+
+
+def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
+    manager = FakePlateManager(
+        selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+    )
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    action = bridge.list_actions().actions[0]
+    accepted = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=action.identity.widget_id,
+            action_id=action.identity.action_id,
+            selected_scope_ids=action.target_scope_ids,
+            observed_selection_revision_token=action.selection_revision_token,
+        )
+    )
+    stale = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=action.identity.widget_id,
+            action_id=action.identity.action_id,
+            selected_scope_ids=action.target_scope_ids,
+            observed_selection_revision_token="stale-token",
+        )
+    )
+
+    assert action.selection_revision_token
+    assert accepted.status == "accepted"
+    assert accepted.selection_revision_token == action.selection_revision_token
+    assert manager.code_action_count == 1
+    assert stale.status == "rejected"
+    assert stale.errors
+    assert stale.errors[0].code == "stale_ui_action_revision"
 
 
 def test_validation_rejects_side_effecting_source_before_execution() -> None:

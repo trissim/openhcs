@@ -554,6 +554,7 @@ class PlateManagerActionProvider(
             selection_mode="selected",
             current_selection_count=len(selected_scope_ids),
             target_scope_ids=selected_scope_ids,
+            selection_revision_token=self._selection_revision_token(),
             related_state_surface_ids=PLATE_MANAGER_ACTION_STATE_SURFACES,
         )
 
@@ -626,7 +627,7 @@ class PlateManagerActionProvider(
                 code="stale_ui_action_selection",
                 message="Requested target scopes do not match current PlateManager selection.",
             )
-        observed_revision = request.observed_state_revision_token
+        observed_revision = request.observed_selection_revision_token
         current_revision = self._selection_revision_token()
         if observed_revision is not None and observed_revision != current_revision:
             return AgentError(
