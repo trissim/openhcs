@@ -48,7 +48,7 @@ from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMix
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
-from pyqt_reactive.theming import ColorScheme, ColorSchemeResolution, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
 from openhcs.pyqt_gui.services.pycodified_window_code_document import (
@@ -223,9 +223,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         super().__init__(parent)
 
         # Initialize color scheme and GUI config
-        self.color_scheme = ColorSchemeResolution(color_scheme).resolve()
+        self.theme = WidgetTheme.from_optional(color_scheme)
         self.gui_config = StepEditorGuiConfigRequest(gui_config).resolve()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
         self._render_header = render_header
         self._button_style = button_style  # Store centralized button style
 
@@ -326,7 +325,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         # Context hierarchy: GlobalPipelineConfig (thread-local) -> PipelineConfig (context_obj) -> Step (overlay)
         config = FormManagerConfig(
             parent=self,  # Pass self as parent widget
-            color_scheme=self.color_scheme,  # Pass color scheme for consistent theming
+            color_scheme=self.theme.scheme,  # Pass color scheme for consistent theming
             use_scroll_area=False,  # Step editor manages its own scroll area
             scope_accent_color=scope_accent_color,  # Pass scope accent color from parent window
             scope_step_index=self.step_index,  # Align scope styling with pipeline order
@@ -523,7 +522,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         if self._render_header:
             header_widget = FormWindowActionHeader(
                 title_text="Step Parameters",
-                title_color=self.color_scheme.to_hex(self.color_scheme.text_accent),
+                title_color=self.theme.scheme.to_hex(self.theme.scheme.text_accent),
                 action_groups=[
                     HeaderActionGroup(
                         "group_step_actions",
@@ -552,16 +551,16 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         layout.addWidget(body_parts.body_widget, 1)
 
         # Apply tree widget styling (matches config window)
-        self.setStyleSheet(self.style_generator.generate_tree_widget_style())
+        self.setStyleSheet(self.theme.styles.generate_tree_widget_style())
 
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.style_generator.require_config_button_style(self._button_style)
+            return self.theme.styles.require_config_button_style(self._button_style)
 
-        return """
+        return f"""
             QPushButton {
-                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.input_bg)};
                 color: white;
                 border: none;
                 border-radius: 3px;
@@ -569,10 +568,10 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.button_hover_bg)};
             }
             QPushButton:pressed {
-                background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.button_pressed_bg)};
             }
         """
 

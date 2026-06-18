@@ -35,7 +35,7 @@ from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-from pyqt_reactive.theming import ColorScheme, ColorSchemeResolution, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.widgets.shared import (
     BaseFormDialog,
     DirtyWindowPresentation,
@@ -174,9 +174,8 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
         self.state_restore_policy = ManagedStateRestorePolicy()
 
-        # Initialize color scheme and style generator
-        self.color_scheme = ColorSchemeResolution(color_scheme).resolve()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
+        # Initialize theme surface
+        self.theme = WidgetTheme.from_optional(color_scheme)
         self.tree_helper = ConfigHierarchyTreeHelper()
 
         # NOTE: init_scope_border() will be called AFTER setup_ui() creates the widgets
@@ -247,7 +246,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         config = FormManagerConfig(
             parent=None,
             scope_id=self.scope_id,
-            color_scheme=self.color_scheme,
+            color_scheme=self.theme.scheme,
             scope_accent_color=self._scope_accent_color,
         )
         # Provide canonical dotted `field_id` for this root form
@@ -335,7 +334,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(4)
 
-        button_styles = self.style_generator.generate_config_button_styles()
+        button_styles = self.theme.styles.generate_config_button_styles()
         title_text = f"Configure {self.config_class.__name__}"
 
         reset_button = QPushButton("Reset to Defaults")
@@ -355,7 +354,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             self._help_btn = HelpButton(
                 help_context=HelpContext(
                     help_target=self.config_class,
-                    color_scheme=self.color_scheme,
+                    color_scheme=self.theme.scheme,
                     scope_accent_color=self._scope_accent_color,
                 ),
                 text="Help",
@@ -400,7 +399,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
         header_widget = FormWindowActionHeader(
             title_text=title_text,
-            title_color=self.color_scheme.to_hex(self.color_scheme.text_accent),
+            title_color=self.theme.scheme.to_hex(self.theme.scheme.text_accent),
             action_groups=action_groups,
             stay_priority=["group_save", "group_help", "group_reset"],
             right_aligned_group_ids=["group_save"],
@@ -432,9 +431,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
         # Apply centralized styling (config window style includes tree styling now)
         self.setStyleSheet(
-            self.style_generator.generate_config_window_style()
+            self.theme.styles.generate_config_window_style()
             + "\n"
-            + self.style_generator.generate_tree_widget_style()
+            + self.theme.styles.generate_tree_widget_style()
         )
 
         # CRITICAL: Initialize scope-based border styling AFTER widgets are created
