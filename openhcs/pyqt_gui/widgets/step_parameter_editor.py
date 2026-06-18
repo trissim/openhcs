@@ -7,9 +7,7 @@ Handles FunctionStep parameter editing with nested dataclass support.
 
 import logging
 import dataclasses
-import os
-from enum import Enum
-from typing import Any, Optional, Union, get_args, get_origin
+from typing import Optional, Union, get_args, get_origin
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -18,8 +16,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QLabel,
-    QScrollArea,
-    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
 )
@@ -35,31 +31,37 @@ from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.source_bindings_view import SchemaContextSourceInventoryProvider
 from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
-from pyqt_reactive.widgets.shared.config_hierarchy_tree import ConfigHierarchyTreeHelper
-from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
+from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
+    ConfigHierarchyTreeHelper,
+    ConfigTreeItemPayload,
+    activate_config_tree_item,
+)
+from pyqt_reactive.widgets.shared.detachable_action_bar import (
+    DetachableActionBar,
+    DetachableActionBarHost,
+)
+from pyqt_reactive.widgets.shared.scrollable_form_body import create_scrollable_form_body
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
+from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
+from openhcs.pyqt_gui.services.pycodified_window_code_document import (
+    ExternalCodeEditorPreference,
+    PycodifiedObjectCodeDocumentDriver,
+    PycodifiedObjectDocumentSpec,
+)
 
 # REMOVED: LazyDataclassFactory import - no longer needed since step editor
 # uses existing lazy dataclass instances from the step
 from pyqt_reactive.forms.parameter_type_utils import ParameterTypeUtils
 from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
-import openhcs.serialization.pycodify_formatters  # noqa: F401
-from pycodify import Assignment, generate_python_source
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 
 logger = logging.getLogger(__name__)
-
-
-class TreeItemType(str, Enum):
-    """Hierarchy tree item types handled by the step parameter editor."""
-    DATACLASS = "dataclass"
-    INHERITANCE_LINK = "inheritance_link"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,11 +131,8 @@ class StepSettingsFileController:
                 step_data = pickle.load(handle)
 
             for param_name, value in step_data.items():
-                try:
-                    self.editor.form_manager.update_parameter(param_name, value)
-                    setattr(self.editor.step, param_name, value)
-                except AttributeError:
-                    pass
+                self.editor.form_manager.update_parameter(param_name, value)
+            self.editor.step = self.editor.state.to_object()
 
             self.editor.form_manager._refresh_all_placeholders()
             logger.debug("Loaded %d parameters from %s", len(step_data), file_path.name)
@@ -162,31 +161,7 @@ class StepSettingsFileController:
                 )
 
 
-def _activate_dataclass_tree_item(
-    editor: "StepParameterEditorWidget", data: dict
-) -> None:
-    field_path = data.get("field_path") or data.get("field_name")
-    if field_path:
-        editor._scroll_to_section(field_path)
-
-
-def _activate_inheritance_link_tree_item(
-    editor: "StepParameterEditorWidget", data: dict
-) -> None:
-    target_class = data.get("target_class")
-    if target_class:
-        field_name = editor._find_field_for_class(target_class)
-        if field_name:
-            editor._scroll_to_section(field_name)
-
-
-TREE_ITEM_ACTIVATION_HANDLERS = {
-    TreeItemType.DATACLASS: _activate_dataclass_tree_item,
-    TreeItemType.INHERITANCE_LINK: _activate_inheritance_link_tree_item,
-}
-
-
-class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
+class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QWidget):
     """
     Step parameter editor using dynamic form generation.
 
@@ -245,12 +220,9 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         self.header_label: Optional[QLabel] = None
 
         # Create action buttons container (always, for external access)
-        self._action_buttons_container = QWidget()
-        self._action_buttons_container.setObjectName("step_action_buttons_container")
-        self._action_buttons_layout = QHBoxLayout(self._action_buttons_container)
-        self._action_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        self._action_buttons_layout.setSpacing(2)
-        self._action_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._action_buttons_container = DetachableActionBar(
+            object_name="step_action_buttons_container"
+        )
         self.step_settings_files = StepSettingsFileController(self)
 
         code_btn = QPushButton("Code")
@@ -258,7 +230,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         code_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
         code_btn.setStyleSheet(self._get_button_style())
         code_btn.clicked.connect(self.view_step_code)
-        self._action_buttons_layout.addWidget(code_btn)
+        self._action_buttons_container.add_button(code_btn)
 
         # Live placeholder updates not yet ready - disable for now
         self._step_editor_coordinator = None
@@ -268,20 +240,50 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         #     self._step_editor_coordinator = ContextEventCoordinator()
         #     logger.debug("🔍 STEP EDITOR: Created step-editor-specific coordinator for live step parameter updates")
 
+        # ObjectState MUST be registered by PipelineEditorWidget when step was added.
+        logger.debug(
+            "🔍 STEP_EDITOR: Looking up ObjectState for scope_id=%s",
+            self.scope_id,
+        )
+        registered_states = ObjectStateRegistry.get_all()
+        logger.debug(
+            "🔍 STEP_EDITOR: Registry has %d scopes",
+            len(registered_states),
+        )
+        self.state = (
+            ObjectStateRegistry.get_by_scope(self.scope_id) if self.scope_id else None
+        )
+
+        if self.state is None:
+            raise RuntimeError(
+                f"ObjectState not found for scope_id={self.scope_id}. "
+                f"PipelineEditor must register the step before opening the editor. "
+                f"Registry has: {[s.scope_id for s in ObjectStateRegistry.get_all()]}"
+            )
+
+        logger.debug(
+            "🔍 STEP_EDITOR: Using REGISTERED ObjectState, params=%s",
+            list(self.state.parameters.keys()),
+        )
+        state_values = self.state.get_current_values()
+
         # Analyze AbstractStep signature to get all inherited parameters (mirrors Textual TUI)
         # Auto-detection correctly identifies constructors and includes all parameters
         param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
 
-        # Get current parameter values from step instance
-        parameters = {}
+        # Get current parameter values from ObjectState, the editor model.
         parameter_types = {}
-        param_defaults = {}
         self._step_level_configs = {}
 
         for name, info in param_info.items():
             # All AbstractStep parameters are relevant for editing
             # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
-            current_value = self.step.__dict__.get(name, info.default_value)
+            if name not in state_values:
+                raise RuntimeError(
+                    f"ObjectState for scope_id={self.scope_id} is missing "
+                    f"step parameter {name!r}"
+                )
+            current_value = state_values[name]
 
             # CRITICAL FIX: For lazy dataclass parameters, leave current_value as None
             # This allows the UI to show placeholders and use lazy resolution properly
@@ -290,13 +292,9 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
             ):
                 # Don't create concrete instances - leave as None for placeholder resolution
                 # The UI will handle lazy resolution and show appropriate placeholders
-                param_defaults[name] = None
                 # Mark this as a step-level config for special handling
                 self._step_level_configs[name] = True
-            else:
-                param_defaults[name] = info.default_value
 
-            parameters[name] = current_value
             parameter_types[name] = info.param_type
 
         # Track dataclass-backed parameters for the hierarchy tree
@@ -310,32 +308,6 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         # CRITICAL FIX: Use pipeline_config as context_obj (parent for inheritance)
         # The step is the overlay (what's being edited), not the parent context
         # Context hierarchy: GlobalPipelineConfig (thread-local) -> PipelineConfig (context_obj) -> Step (overlay)
-        # Look up ObjectState from registry using scope_id
-        # ObjectState MUST be registered by PipelineEditorWidget when step was added
-        logger.debug(
-            f"🔍 STEP_EDITOR: Looking up ObjectState for scope_id={self.scope_id}"
-        )
-        registered_states = ObjectStateRegistry.get_all()
-        logger.debug(
-            "🔍 STEP_EDITOR: Registry has %d scopes",
-            len(registered_states),
-        )
-        self.state = (
-            ObjectStateRegistry.get_by_scope(self.scope_id) if self.scope_id else None
-        )
-
-        if self.state is None:
-            # FAIL LOUD: The step MUST be registered by PipelineEditor before opening the editor
-            raise RuntimeError(
-                f"ObjectState not found for scope_id={self.scope_id}. "
-                f"PipelineEditor must register the step before opening the editor. "
-                f"Registry has: {[s.scope_id for s in ObjectStateRegistry.get_all()]}"
-            )
-
-        logger.debug(
-            f"🔍 STEP_EDITOR: Using REGISTERED ObjectState, params={list(self.state.parameters.keys())}"
-        )
-
         config = FormManagerConfig(
             parent=self,  # Pass self as parent widget
             color_scheme=self.color_scheme,  # Pass color scheme for consistent theming
@@ -347,6 +319,17 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         self.form_manager = ParameterFormManager(
             state=self.state,  # ObjectState (MODEL) from registry
             config=config,  # Pass configuration object
+        )
+        self._code_document_driver = PycodifiedObjectCodeDocumentDriver(
+            spec=PycodifiedObjectDocumentSpec(
+                assignment_name="step",
+                title=f"Edit Step: {self.step.name}",
+                header="# Function Step",
+                expected_type=FunctionStep,
+            ),
+            current_object=self._current_step_for_code_document,
+            apply_object=self._apply_step_from_code_document,
+            before_read=self._refresh_code_document_context,
         )
         self.hierarchy_tree = None
         self.content_splitter = None
@@ -363,7 +346,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
         logger.debug(
             "Step parameter editor initialized for step: %s",
-            self.step.__dict__.get("name", "Unknown"),
+            self.step.name,
         )
 
     def apply_scope_color_scheme(self, scheme) -> None:
@@ -372,6 +355,10 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         )
 
         apply_scope_color_scheme_to_widget_tree(self.form_manager, scheme)
+
+    def code_document_driver(self) -> WindowCodeDocumentDriver:
+        """Return this step editor's pycodified code-mode document driver."""
+        return self._code_document_driver
 
     def apply_source_bindings_preview_context(self) -> None:
         """Pass imported pipeline source-schema context to source-binding editors."""
@@ -455,9 +442,6 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         """Return dataclass-based parameters for building the hierarchy tree."""
         dataclass_params = {}
         for field_name, param_type in parameter_types.items():
-            if field_name == "func":
-                continue
-
             obj_type = self._extract_dataclass_from_param_type(param_type)
             if obj_type is not None:
                 dataclass_params[field_name] = obj_type
@@ -491,34 +475,30 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         if not self._tree_dataclass_params:
             return None
 
-        # Pass form_manager as flash_manager - tree reads from SAME _flash_colors dict as groupboxes
-        # ONE source of truth: form_manager already subscribes to ObjectState.on_resolved_changed
-        # Pass state for automatic dirty tracking subscription (handled by helper)
-        tree = self.tree_helper.create_tree_widget(
-            flash_manager=self.form_manager,
+        return self.tree_helper.create_tree_from_mapping(
+            dataclass_params=self._tree_dataclass_params,
+            form_manager=self.form_manager,
             state=self.state,
             strip_config_suffix=True,
+            on_item_double_clicked=self._on_tree_item_double_clicked,
         )
-        self.tree_helper.populate_from_mapping(tree, self._tree_dataclass_params)
-
-        # Initialize dirty styling AFTER population (when _field_to_item is filled)
-        self.tree_helper.initialize_dirty_styling()
-
-        # Register tree repaint callback so flash animation triggers tree repaint
-        self.form_manager.register_repaint_callback(lambda: tree.viewport().update())
-
-        tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
-        return tree
 
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """Scroll to the associated form section when a tree item is activated."""
         data = item.data(0, Qt.ItemDataRole.UserRole)
-        if not data or data.get("ui_hidden"):
+        if data is None:
             return
 
-        handler = TREE_ITEM_ACTIVATION_HANDLERS.get(TreeItemType(data.get("type")))
-        if handler is not None:
-            handler(self, data)
+        if not isinstance(data, ConfigTreeItemPayload):
+            raise TypeError(
+                "Config tree item data must be ConfigTreeItemPayload; got "
+                f"{type(data).__name__}."
+            )
+        activate_config_tree_item(
+            data,
+            scroll_to_section=self._scroll_to_section,
+            field_for_class=self._find_field_for_class,
+        )
 
     def _find_field_for_class(self, target_class) -> Optional[str]:
         """Locate the parameter field that edits the given dataclass."""
@@ -559,59 +539,22 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
             # No header layout added, so buttons remain in _action_buttons_container
             pass
 
-        # Scrollable parameter form (matches config window pattern)
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self.scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        # No explicit styling - let it inherit from parent
-
-        # Add form manager directly to scroll area (like config window)
-        self.scroll_area.setWidget(self.form_manager)
         hierarchy_tree = self._create_configuration_tree()
-        if hierarchy_tree:
-            splitter = QSplitter(Qt.Orientation.Horizontal)
-            splitter.setChildrenCollapsible(True)  # CRITICAL: Allow tree to collapse
-            splitter.setHandleWidth(5)  # Make handle more visible
-            splitter.addWidget(hierarchy_tree)
-            splitter.addWidget(self.scroll_area)
-            splitter.setSizes([280, 720])
-            layout.addWidget(splitter, 1)
-            self.hierarchy_tree = hierarchy_tree
-            self.content_splitter = splitter
-
-            # Install collapsible splitter helper for double-click toggle
-            self.splitter_helper = CollapsibleSplitterHelper(
-                splitter, left_panel_index=0
-            )
-            self.splitter_helper.set_initial_size(280)
-        else:
-            layout.addWidget(self.scroll_area)
-            self.hierarchy_tree = None
-            self.content_splitter = None
+        body_parts = create_scrollable_form_body(
+            form_widget=self.form_manager,
+            tree_widget=hierarchy_tree,
+            tree_initial_size=280,
+            form_initial_size=720,
+            parent=self,
+        )
+        self.scroll_area = body_parts.scroll_area
+        self.hierarchy_tree = hierarchy_tree
+        self.content_splitter = body_parts.splitter
+        self.splitter_helper = body_parts.splitter_helper
+        layout.addWidget(body_parts.body_widget, 1)
 
         # Apply tree widget styling (matches config window)
         self.setStyleSheet(self.style_generator.generate_tree_widget_style())
-
-    def get_action_buttons(self) -> Optional[QWidget]:
-        """Get the action buttons container for external placement.
-
-        This method allows parent windows (e.g., DualEditorWindow) to
-        extract and reposition action buttons without modifying this widget's
-        internal structure.
-
-        Returns:
-            QWidget: Container widget with action buttons (Code, Load, Save).
-                      Returns None if header is rendered (buttons are in use).
-        """
-        if self._render_header:
-            # Header is rendered, buttons are in use internally
-            return None
-        return self._action_buttons_container
 
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
@@ -642,50 +585,17 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         # Connect form manager parameter changes
         self.form_manager.parameter_changed.connect(self._handle_parameter_change)
 
-    def _handle_parameter_change(self, param_name: str, value: Any):
+    def _handle_parameter_change(self, param_name: str, value):
         """Handle parameter change from form manager (mirrors Textual TUI).
 
         Args:
             param_name: Full path like "FunctionStep.processing_config.group_by" or "FunctionStep.name"
             value: New value
         """
+        del value
         try:
-            # Extract leaf field name from full path
-            # "FunctionStep.processing_config.group_by" -> "group_by"
-            # "FunctionStep.name" -> "name"
-            path_parts = param_name.split(".")
-            if len(path_parts) > 1:
-                # Remove type name prefix
-                path_parts = path_parts[1:]
-
-            # For nested fields, the form manager already updated self.step via _mark_parents_modified
-            # For top-level fields, we need to update self.step
-            if len(path_parts) == 1:
-                leaf_field = path_parts[0]
-
-                # Get the properly converted value from state
-                # The state handles all type conversions including List[Enum]
-                final_value = self.state.get_current_values().get(leaf_field, value)
-
-                # CRITICAL FIX: For function parameters, use fresh imports to avoid unpicklable registry wrappers
-                if leaf_field == "func" and callable(final_value):
-                    try:
-                        import importlib
-
-                        module = importlib.import_module(final_value.__module__)
-                        final_value = getattr(module, final_value.__name__)
-                    except Exception:
-                        pass  # Use original if refresh fails
-
-                # Update step attribute
-                setattr(self.step, leaf_field, final_value)
-                logger.debug(f"Updated step parameter {leaf_field}={final_value}")
-            else:
-                # Nested field - already updated by _mark_parents_modified
-                logger.debug(
-                    f"Nested field {'.'.join(path_parts)} already updated by dispatcher"
-                )
-
+            self.step = self.state.to_object()
+            logger.debug("Synchronized step from ObjectState after %s", param_name)
             self.step_parameter_changed.emit()
 
         except Exception as e:
@@ -707,53 +617,29 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         """Update the step and refresh the form."""
         self.step = step
 
-        # Update form manager with new values
-        for param_name in self.form_manager.parameters.keys():
-            current_value = self.step.__dict__.get(param_name)
-            self.form_manager.update_parameter(param_name, current_value)
+        CodeEditorFormUpdater.update_form_from_instance(
+            self.form_manager,
+            step,
+            broadcast_callback=None,
+        )
+        self.step = self.state.to_object()
 
         logger.debug(
             "Updated step parameter editor for step: %s",
-            self.step.__dict__.get("name", "Unknown"),
+            self.step.name,
         )
 
     def view_step_code(self):
         """View the complete FunctionStep as Python code."""
         try:
-            # CRITICAL: Refresh with live context BEFORE getting current values
-            # This ensures code editor shows unsaved changes from other open windows
-            ParameterOpsService().refresh_with_live_context(self.form_manager)
-
-            # Get current step from state using to_object() to properly reconstruct nested dataclasses
-            # NOTE: get_current_values() returns flat dotted paths which can't be passed to FunctionStep(**kwargs)
-            # to_object() reconstructs proper nested structure from flat storage
-            current_step = self.state.to_object()
-
-            # CRITICAL: Get func from parent dual editor's function list editor if available
-            # The func is managed by to Function Pattern tab in the dual editor
-            parent_window = self.window()
-            func = parent_window.func_editor.current_pattern
-            current_step.func = func
-            logger.debug(f"Using live func from function list editor: {func}")
-
-            # Generate code using existing pattern
-            python_code = generate_python_source(
-                Assignment("step", current_step),
-                header="# Function Step",
-                clean_mode=True,
-            )
-
-            # Launch editor
+            document = self._code_document_driver.read_document()
             editor_service = SimpleCodeEditorService(self)
-            use_external = os.environ.get(
-                "OPENHCS_USE_EXTERNAL_EDITOR", ""
-            ).lower() in ("1", "true", "yes")
 
             editor_service.edit_code(
-                initial_content=python_code,
-                title=f"Edit Step: {current_step.name}",
+                initial_content=document.source,
+                title=document.title,
                 callback=self._handle_edited_step_code,
-                use_external=use_external,
+                use_external=ExternalCodeEditorPreference.use_external_editor(),
                 code_type="step",
                 code_data={"clean_mode": True},
             )
@@ -768,43 +654,40 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
     def _handle_edited_step_code(self, edited_code: str) -> None:
         """Handle the edited step code from code editor."""
         try:
-            # SIMPLIFIED: Just exec with patched constructors
-            # The patched constructors preserve None vs concrete distinction in raw field values
-            # No need to parse code - just inspect raw values after exec
-            namespace = {}
-            with CodeEditorFormUpdater.patch_lazy_constructors():
-                exec(edited_code, namespace)
-
-            new_step = namespace.get("step")
-            if not new_step:
-                raise ValueError("No 'step' variable found in edited code")
-
-            # Update step object
-            self.step = new_step
-
-            # IMPORTANT:
-            # Do NOT block cross-window updates here. We want code-mode edits
-            # to behave like a sequence of normal widget edits so that
-            # FieldChangeDispatcher emits the same parameter_changed and
-            # context_value_changed signals as manual interaction.
-            CodeEditorFormUpdater.update_form_from_instance(
-                self.form_manager,
-                new_step,
-                broadcast_callback=None,
-            )
-
-            # CRITICAL: Update function list editor if we're inside a dual editor window
-            parent_window = self.window()
-            func_editor = parent_window.func_editor
-            func_editor._initialize_pattern_data(new_step.func)
-            func_editor._populate_function_list()
-            logger.debug(f"Updated function list editor with new func: {new_step.func}")
-
-            # Notify parent window that step parameters changed
-            self.step_parameter_changed.emit()
-
-            logger.info(f"Updated step from code editor: {new_step.name}")
+            self._code_document_driver.apply_source(edited_code)
+            logger.info("Updated step from code editor: %s", self.step.name)
 
         except Exception as e:
             logger.error(f"Failed to apply edited step code: {e}")
             raise
+
+    def _refresh_code_document_context(self) -> None:
+        """Refresh live context before rendering this step as source."""
+        ParameterOpsService().refresh_with_live_context(self.form_manager)
+
+    def _current_step_for_code_document(self) -> FunctionStep:
+        """Return the current step with the live function-pattern tab applied."""
+        current_step = self.state.to_object()
+        parent_window = self.window()
+        func = parent_window.func_editor.current_pattern
+        current_step.func = func
+        logger.debug("Using live func from function list editor: %r", func)
+        return current_step
+
+    def _apply_step_from_code_document(self, new_step: FunctionStep) -> None:
+        """Apply a parsed code-mode step through the normal form path."""
+        self.step = new_step
+
+        CodeEditorFormUpdater.update_form_from_instance(
+            self.form_manager,
+            new_step,
+            broadcast_callback=None,
+        )
+
+        parent_window = self.window()
+        func_editor = parent_window.func_editor
+        func_editor._initialize_pattern_data(new_step.func)
+        func_editor._populate_function_list()
+        logger.debug("Updated function list editor with new func: %r", new_step.func)
+
+        self.step_parameter_changed.emit()

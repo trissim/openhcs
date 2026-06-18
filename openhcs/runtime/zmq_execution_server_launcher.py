@@ -16,6 +16,14 @@ from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
 
 logger = logging.getLogger(__name__)
 
+LOG_LEVEL_BY_NAME = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
 
 def main():
     """Main entry point for server launcher."""
@@ -45,7 +53,7 @@ def main():
         "--log-level",
         type=str,
         default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        choices=tuple(LOG_LEVEL_BY_NAME),
         help="Logging level (default: INFO)",
     )
 
@@ -53,7 +61,7 @@ def main():
 
     # Configure logging with the specified level
     # CRITICAL: Must force reconfigure root logger - basicConfig() does nothing if already configured
-    log_level = getattr(logging, args.log_level.upper())
+    log_level = LOG_LEVEL_BY_NAME[args.log_level.upper()]
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
 

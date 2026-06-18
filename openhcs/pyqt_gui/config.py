@@ -47,6 +47,9 @@ class Shortcut:
     description: str  # Human-readable description
 
 
+ShortcutItem = tuple[str, Shortcut]
+
+
 @dataclass(frozen=True)
 class ShortcutConfig:
     """
@@ -93,6 +96,23 @@ class ShortcutConfig:
 
     # Application
     quit_app: Shortcut = Shortcut("Ctrl+Q", "close", "Quit Application")
+
+    def shortcut_items(self) -> tuple[ShortcutItem, ...]:
+        """Return shortcuts in the declaration order used by menus and help."""
+        return (
+            ("time_travel_back", self.time_travel_back),
+            ("time_travel_forward", self.time_travel_forward),
+            ("time_travel_to_head", self.time_travel_to_head),
+            ("show_plate_manager", self.show_plate_manager),
+            ("show_pipeline_editor", self.show_pipeline_editor),
+            ("show_image_browser", self.show_image_browser),
+            ("show_log_viewer", self.show_log_viewer),
+            ("show_zmq_server_manager", self.show_zmq_server_manager),
+            ("show_configuration", self.show_configuration),
+            ("show_synthetic_plate_generator", self.show_synthetic_plate_generator),
+            ("show_help", self.show_help),
+            ("quit_app", self.quit_app),
+        )
 
 
 # Global shortcut config instance

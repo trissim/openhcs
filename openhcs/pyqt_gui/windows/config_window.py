@@ -13,16 +13,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QPushButton,
     QLabel,
-    QScrollArea,
     QWidget,
-    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
-    QLineEdit,
-    QSpinBox,
-    QDoubleSpinBox,
-    QCheckBox,
-    QComboBox,
     QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
@@ -33,15 +26,16 @@ from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, For
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
     ConfigHierarchyTreeHelper,
-    ConfigTreeItemKind,
     ConfigTreeItemPayload,
+    activate_config_tree_item,
 )
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
-from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton, HelpContext
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
+from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
+from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
@@ -52,6 +46,7 @@ from pyqt_reactive.widgets.shared import (
     HeaderActionGroup,
     ManagedWindowActionCapabilities,
     ManagedStateRestorePolicy,
+    create_scrollable_form_body,
 )
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.windows.config_edit_session import ConfigEditSession
@@ -126,82 +121,6 @@ class ConfigWindowStateResolver:
                 f"{type(state.saved_object).__name__} at scope {self.scope_id!r}."
             )
         return state
-
-
-class ConfigWidgetValueProjection:
-    """Project nullable config values into concrete Qt widget values."""
-
-    EMPTY_SPIN_VALUE = 0
-    EMPTY_DOUBLE_SPIN_VALUE = 0.0
-    EMPTY_LINE_EDIT_TEXT = ""
-
-    @classmethod
-    def checkbox_value(cls, value: Any) -> bool:
-        return bool(value)
-
-    @classmethod
-    def spin_box_value(cls, value: Any) -> int:
-        if value is None:
-            return cls.EMPTY_SPIN_VALUE
-        return int(value)
-
-    @classmethod
-    def double_spin_box_value(cls, value: Any) -> float:
-        if value is None:
-            return cls.EMPTY_DOUBLE_SPIN_VALUE
-        return float(value)
-
-    @classmethod
-    def line_edit_text(cls, value: Any) -> str:
-        if value is None:
-            return cls.EMPTY_LINE_EDIT_TEXT
-        return str(value)
-
-
-def _handle_dataclass_tree_item(
-    window: "ConfigWindow",
-    payload: ConfigTreeItemPayload,
-) -> None:
-    if payload.navigation_path:
-        window._scroll_to_section(payload.navigation_path)
-        logger.debug("Navigating to section: %s", payload.navigation_path)
-        return
-
-    class_name = payload.class_obj.__name__ if payload.class_obj else "Unknown"
-    logger.debug("Double-clicked on root dataclass: %s", class_name)
-
-
-def _handle_inheritance_link_tree_item(
-    window: "ConfigWindow",
-    payload: ConfigTreeItemPayload,
-) -> None:
-    target_class = payload.target_class
-    if target_class is None:
-        return
-
-    field_name = window._find_field_for_class(target_class)
-    if field_name:
-        window._scroll_to_section(field_name)
-        logger.debug(
-            "Navigating to inherited section: %s (class: %s)",
-            field_name,
-            target_class.__name__,
-        )
-        return
-
-    logger.warning("Could not find field for class %s", target_class.__name__)
-
-
-CONFIG_TREE_ITEM_HANDLERS: dict[
-    ConfigTreeItemKind,
-    Callable[["ConfigWindow", ConfigTreeItemPayload], None],
-] = {
-    ConfigTreeItemKind.DATACLASS: _handle_dataclass_tree_item,
-    ConfigTreeItemKind.INHERITANCE_LINK: _handle_inheritance_link_tree_item,
-}
-
-
-# Infrastructure classes removed - functionality migrated to ParameterFormManager service layer
 
 
 class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
@@ -486,39 +405,26 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self._header_label = header_widget.header_label
         self._layout.addWidget(header_widget)
 
-        # Create splitter with tree view on left and form on right
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.setChildrenCollapsible(True)  # Allow collapsing to 0
-        self.splitter.setHandleWidth(5)  # Make handle more visible
-
-        # Left panel - Inheritance hierarchy tree
-        self.tree_widget = self._create_inheritance_tree()
-        self.splitter.addWidget(self.tree_widget)
-
-        # Right panel - Parameter form with scroll area
-        # Always use scroll area for consistent navigation behavior
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        self.tree_widget = self.tree_helper.create_tree_from_root_dataclass(
+            root_dataclass=self.config_class,
+            form_manager=self.form_manager,
+            state=self.state,
+            strip_config_suffix=True,
+            on_item_double_clicked=self._on_tree_item_double_clicked,
         )
-        self.scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        body_parts = create_scrollable_form_body(
+            form_widget=self.form_manager,
+            tree_widget=self.tree_widget,
+            tree_initial_size=300,
+            form_initial_size=700,
+            parent=self,
         )
-        self.scroll_area.setWidget(self.form_manager)
-        self.splitter.addWidget(self.scroll_area)
-
-        # Set splitter proportions (30% tree, 70% form)
-        self.splitter.setSizes([300, 700])
-
-        # Install collapsible splitter helper for double-click toggle
-        self.splitter_helper = CollapsibleSplitterHelper(
-            self.splitter, left_panel_index=0
-        )
-        self.splitter_helper.set_initial_size(300)
+        self.scroll_area = body_parts.scroll_area
+        self.splitter = body_parts.splitter
+        self.splitter_helper = body_parts.splitter_helper
 
         # Add splitter with stretch factor so it expands to fill available space
-        self._layout.addWidget(self.splitter, 1)  # stretch factor = 1
+        self._layout.addWidget(body_parts.body_widget, 1)
 
         # Apply centralized styling (config window style includes tree styling now)
         self.setStyleSheet(
@@ -601,29 +507,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         if self._help_btn is not None:
             self._help_btn.set_scope_accent_color(accent_color)
 
-    def _create_inheritance_tree(self) -> QTreeWidget:
-        """Create tree widget showing inheritance hierarchy for navigation."""
-        # Pass form_manager as flash_manager - tree reads from SAME _flash_colors dict as groupboxes
-        # ONE source of truth: form_manager already subscribes to ObjectState.on_resolved_changed
-        # Pass state for automatic dirty tracking subscription (handled by helper)
-        tree = self.tree_helper.create_tree_widget(
-            flash_manager=self.form_manager,
-            state=self.state,
-            strip_config_suffix=True,
-        )
-        self.tree_helper.populate_from_root_dataclass(tree, self.config_class)
-
-        # Initialize dirty styling AFTER population (when _field_to_item is filled)
-        self.tree_helper.initialize_dirty_styling()
-
-        # Register tree repaint callback so flash animation triggers tree repaint
-        self.form_manager.register_repaint_callback(lambda: tree.viewport().update())
-
-        # Connect double-click to navigation
-        tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
-
-        return tree
-
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """Handle tree item double-clicks for navigation."""
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -635,14 +518,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 "Config tree item data must be ConfigTreeItemPayload; got "
                 f"{type(data).__name__}."
             )
-        payload = data
-
-        # Check if this item is ui_hidden - if so, ignore the double-click
-        if payload.ui_hidden:
-            logger.debug("Ignoring double-click on ui_hidden item")
-            return
-
-        CONFIG_TREE_ITEM_HANDLERS[payload.item_type](self, payload)
+        activate_config_tree_item(
+            data,
+            scroll_to_section=self._scroll_to_section,
+            field_for_class=self._find_field_for_class,
+        )
 
     def _find_field_for_class(self, target_class) -> str:
         """Find the field name that has the given class type (or its lazy version)."""
@@ -673,7 +553,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     # _scroll_to_section is provided by ScrollableFormMixin
 
-    def update_widget_value(self, widget: QWidget, value: Any):
+    def update_widget_value(self, widget: QWidget, value: ParameterValue | None) -> None:
         """
         Update widget value without triggering signals.
 
@@ -681,27 +561,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             widget: Widget to update
             value: New value
         """
-        # Temporarily block signals to avoid recursion
-        widget.blockSignals(True)
-
-        try:
-            if isinstance(widget, QCheckBox):
-                widget.setChecked(ConfigWidgetValueProjection.checkbox_value(value))
-            elif isinstance(widget, QSpinBox):
-                widget.setValue(ConfigWidgetValueProjection.spin_box_value(value))
-            elif isinstance(widget, QDoubleSpinBox):
-                widget.setValue(
-                    ConfigWidgetValueProjection.double_spin_box_value(value)
-                )
-            elif isinstance(widget, QComboBox):
-                for i in range(widget.count()):
-                    if widget.itemData(i) == value:
-                        widget.setCurrentIndex(i)
-                        break
-            elif isinstance(widget, QLineEdit):
-                widget.setText(ConfigWidgetValueProjection.line_edit_text(value))
-        finally:
-            widget.blockSignals(False)
+        PyQt6WidgetEnhancer.set_widget_value(widget, value)
 
     def reset_to_defaults(self):
         """Reset all parameters using centralized service with full sophistication."""

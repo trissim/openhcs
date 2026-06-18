@@ -10,7 +10,10 @@ from openhcs.pyqt_gui.services.window_handlers import (
     register_openhcs_window_handlers,
 )
 from openhcs.pyqt_gui.windows.config_window import ConfigWindowStateResolver
-from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
+from pyqt_reactive.services.scope_window_factory import (
+    ScopeWindowCreationRequest,
+    ScopeWindowRegistry,
+)
 
 
 class PipelineConfigHost:
@@ -74,7 +77,9 @@ def test_plate_config_window_factory_rejects_standalone_pipeline_config_scope() 
     scope_id = "/tmp/plate"
     ObjectStateRegistry.register(ObjectState(PipelineConfig(), scope_id=scope_id))
 
-    assert OpenHCSWindowCreationAuthority().create_plate_config_window(scope_id) is None
+    request = ScopeWindowCreationRequest(scope_id=scope_id)
+
+    assert OpenHCSWindowCreationAuthority().create_plate_config_window(request) is None
 
 
 def test_window_registry_routes_cppipe_plate_scope_to_plate_config_factory() -> None:
@@ -87,7 +92,7 @@ def test_window_registry_routes_cppipe_plate_scope_to_plate_config_factory() -> 
     handler = ScopeWindowRegistry.find_handler(scope_id)
 
     assert handler is not None
-    assert handler.__name__ == "create_plate_config_window"
+    assert handler.handler.__name__ == "create_plate_config_window"
 
 
 def test_window_registry_routes_cppipe_step_scope_to_step_editor_factory() -> None:
@@ -102,4 +107,4 @@ def test_window_registry_routes_cppipe_step_scope_to_step_editor_factory() -> No
     )
 
     assert handler is not None
-    assert handler.__name__ == "create_step_editor_window"
+    assert handler.handler.__name__ == "create_step_editor_window"
