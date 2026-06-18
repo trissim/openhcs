@@ -35,8 +35,7 @@ from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-from pyqt_reactive.theming import StyleSheetGenerator
-from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.theming import ColorScheme, ColorSchemeResolution, StyleSheetGenerator
 from pyqt_reactive.widgets.shared import (
     BaseFormDialog,
     DirtyWindowPresentation,
@@ -176,7 +175,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self.state_restore_policy = ManagedStateRestorePolicy()
 
         # Initialize color scheme and style generator
-        self.color_scheme = color_scheme or ColorScheme()
+        self.color_scheme = ColorSchemeResolution(color_scheme).resolve()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.tree_helper = ConfigHierarchyTreeHelper()
 

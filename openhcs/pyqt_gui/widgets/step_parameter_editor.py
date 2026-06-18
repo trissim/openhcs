@@ -44,8 +44,7 @@ from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMix
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme, ColorSchemeResolution, StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
 from openhcs.pyqt_gui.services.pycodified_window_code_document import (
@@ -82,6 +81,29 @@ class StepEditorGuiConfigRequest:
         if self.gui_config is not None:
             return self.gui_config
         return get_default_pyqt_gui_config()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class StepEditorStateRequest:
+    """Required ObjectState lookup for opening a step editor."""
+
+    scope_id: str | None
+
+    def resolve(self) -> ObjectState:
+        if self.scope_id is None:
+            raise RuntimeError(
+                "StepParameterEditorWidget requires a scope_id. "
+                "PipelineEditor must register the step before opening the editor."
+            )
+
+        state = ObjectStateRegistry.get_by_scope(self.scope_id)
+        if state is None:
+            raise RuntimeError(
+                f"ObjectState not found for scope_id={self.scope_id}. "
+                "PipelineEditor must register the step before opening the editor. "
+                f"Registry has: {[s.scope_id for s in ObjectStateRegistry.get_all()]}"
+            )
+        return state
 
 
 class StepSettingsFileController:
@@ -197,7 +219,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         super().__init__(parent)
 
         # Initialize color scheme and GUI config
-        self.color_scheme = color_scheme or ColorScheme()
+        self.color_scheme = ColorSchemeResolution(color_scheme).resolve()
         self.gui_config = StepEditorGuiConfigRequest(gui_config).resolve()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self._render_header = render_header
@@ -249,16 +271,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
             "🔍 STEP_EDITOR: Registry has %d scopes",
             len(registered_states),
         )
-        self.state = (
-            ObjectStateRegistry.get_by_scope(self.scope_id) if self.scope_id else None
-        )
-
-        if self.state is None:
-            raise RuntimeError(
-                f"ObjectState not found for scope_id={self.scope_id}. "
-                f"PipelineEditor must register the step before opening the editor. "
-                f"Registry has: {[s.scope_id for s in ObjectStateRegistry.get_all()]}"
-            )
+        self.state = StepEditorStateRequest(self.scope_id).resolve()
 
         logger.debug(
             "🔍 STEP_EDITOR: Using REGISTERED ObjectState, params=%s",
@@ -544,9 +557,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.style_generator.generate_config_button_styles().get(
-                self._button_style, ""
-            )
+            return self.style_generator.require_config_button_style(self._button_style)
 
         return """
             QPushButton {
