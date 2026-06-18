@@ -8,6 +8,8 @@ from enum import Enum
 from itertools import count
 from pathlib import Path
 
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import (
     ExecutionConnectionSpec,
@@ -20,9 +22,15 @@ from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
     ZMQExecutionClient,
+)
+from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
+from openhcs.runtime.zmq_pipeline_transport import (
+    PipelineStepsBoundary,
+    PipelineStepsCarrier,
 )
 
 
@@ -132,9 +140,187 @@ class ExecutionConfigBundle:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionSessionRecord:
+class PipelineIdBoundary:
+    value: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExecutionSessionCommonRequest:
+    identity: ZMQExecutionIdentity
+    global_config_id: str | None = None
+    pipeline_config_id: str | None = None
+    connection: ExecutionConnectionSpec = ExecutionConnectionSpec()
+
+
+class ExecutionPipelineSessionRequest(
+    ExecutionSessionCommonRequest,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key = None
+
+    @abstractmethod
+    def pipeline_provider(self) -> ExecutionPipelineDefinitionProvider:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedExecutionSessionInputs:
+    plate: Path
+    execution_plate: Path
+    selected_pipeline: Path | None
+    configs: ExecutionConfigBundle
+    connection: ExecutionConnectionSpec
+
+    @classmethod
+    def from_request(
+        cls,
+        *,
+        request: ExecutionSessionCommonRequest,
+        path_policy: AgentPathPolicy,
+        config_service: ConfigService,
+    ) -> "ResolvedExecutionSessionInputs":
+        plate = path_policy.assert_readable(request.identity.plate_id)
+        if request.identity.execution_plate_id is None:
+            execution_plate = plate
+        else:
+            execution_plate = path_policy.assert_readable(
+                request.identity.execution_plate_id
+            )
+        if request.identity.selected_pipeline_path is None:
+            selected_pipeline = None
+        else:
+            selected_pipeline = path_policy.assert_readable(
+                request.identity.selected_pipeline_path
+            )
+        return cls(
+            plate=plate,
+            execution_plate=execution_plate,
+            selected_pipeline=selected_pipeline,
+            configs=ExecutionConfigBundle(
+                global_pipeline=GlobalConfigSelection(
+                    request.global_config_id
+                ).resolve(config_service),
+                plate_pipeline=PipelineConfigSelection(
+                    request.pipeline_config_id
+                ).resolve(config_service),
+            ),
+            connection=request.connection,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPipelinePayload(PipelineStepsCarrier):
+    registry_key = "execution_pipeline_payload"
+
+    definition_pipeline: PipelineStepsBoundary
+    pipeline_source: str | None
+
+    @property
+    def pipeline_steps_boundary(self) -> PipelineStepsBoundary:
+        return self.definition_pipeline
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPipelineDefinition(ExecutionPipelinePayload):
+    registry_key = "execution_pipeline_definition"
+
+    pipeline_identity: PipelineIdBoundary
+
+    @property
+    def pipeline_id(self) -> str:
+        return self.pipeline_identity.value
+
+
+class ExecutionPipelineDefinitionProvider(ABC, metaclass=AutoRegisterMeta):
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key = None
+
+    @abstractmethod
+    def build(
+        self,
+        *,
+        session_id: str,
+        pipeline_service: PipelineAuthoringService,
+    ) -> ExecutionPipelineDefinition:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class DraftPipelineDefinitionProvider(ExecutionPipelineDefinitionProvider):
+    registry_key = "draft"
+    request: DraftPipelineSessionRequest
+
+    def build(
+        self,
+        *,
+        session_id: str,
+        pipeline_service: PipelineAuthoringService,
+    ) -> ExecutionPipelineDefinition:
+        return ExecutionPipelineDefinition(
+            pipeline_identity=self.request.pipeline_identity,
+            definition_pipeline=PipelineStepsBoundary(
+                pipeline_service.to_function_steps(self.request.pipeline_id)
+            ),
+            pipeline_source=None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PycodifiedSourcePipelineDefinitionProvider(ExecutionPipelineDefinitionProvider):
+    registry_key = "pycodified_source"
+    pipeline_source: str
+
+    def build(
+        self,
+        *,
+        session_id: str,
+        pipeline_service: PipelineAuthoringService,
+    ) -> ExecutionPipelineDefinition:
+        return ExecutionPipelineDefinition(
+            pipeline_identity=PipelineIdBoundary(f"pycodified-source:{session_id}"),
+            definition_pipeline=PipelineStepsBoundary([]),
+            pipeline_source=self.pipeline_source,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DraftPipelineSessionRequest(ExecutionPipelineSessionRequest):
+    registry_key = "draft"
+    pipeline_identity: PipelineIdBoundary
+
+    @property
+    def pipeline_id(self) -> str:
+        return self.pipeline_identity.value
+
+    def pipeline_provider(self) -> DraftPipelineDefinitionProvider:
+        return DraftPipelineDefinitionProvider(request=self)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PycodifiedPipelineSessionRequest(ExecutionPipelineSessionRequest):
+    registry_key = "pycodified_source"
+    pipeline_source: str
+
+    def __post_init__(self) -> None:
+        if self.identity.selected_pipeline_path is not None:
+            raise ValueError(
+                "Pycodified source sessions use pipeline_source as the selected "
+                "pipeline authority; selected_pipeline_path must be None."
+            )
+
+    def pipeline_provider(self) -> PycodifiedSourcePipelineDefinitionProvider:
+        return PycodifiedSourcePipelineDefinitionProvider(self.pipeline_source)
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionSessionRecord(ExecutionPipelinePayload):
+    registry_key = "execution_session_record"
+
     session: OrchestratorSession
-    pipeline_steps: list
     configs: ExecutionConfigBundle
 
     def submission(self, compile_artifact_id: str | None = None) -> OpenHCSExecutionSubmission:
@@ -146,6 +332,7 @@ class ExecutionSessionRecord:
             global_config=self.configs.global_pipeline,
             pipeline_config=self.configs.plate_pipeline,
             compile_artifact_id=compile_artifact_id,
+            pipeline_source=self.pipeline_source,
         )
 
 
@@ -293,6 +480,8 @@ class ExecutionSessionService:
         self._session_store = ExecutionSessionStore()
         self._job_store = ExecutionJobStore()
 
+    _DEFAULT_CONNECTION = ExecutionConnectionSpec()
+
     def create_session(
         self,
         *,
@@ -302,39 +491,60 @@ class ExecutionSessionService:
         selected_pipeline_path: str | None = None,
         global_config_id: str | None = None,
         pipeline_config_id: str | None = None,
-        connection: ExecutionConnectionSpec | None = None,
+        connection: ExecutionConnectionSpec = _DEFAULT_CONNECTION,
     ) -> OrchestratorSessionRef:
-        plate = self._path_policy.assert_readable(plate_path)
-        execution_plate = self._execution_plate_path(plate, execution_plate_path)
-        selected_pipeline = self._selected_pipeline_path(selected_pipeline_path)
-        pipeline_steps = self._pipeline_service.to_function_steps(pipeline_id)
-        global_config = GlobalConfigSelection(global_config_id).resolve(
-            self._config_service
+        return self._create_session(
+            DraftPipelineSessionRequest(
+                identity=ZMQExecutionIdentity(
+                    plate_id=plate_path,
+                    execution_plate_id=execution_plate_path,
+                    selected_pipeline_path=selected_pipeline_path,
+                ),
+                pipeline_identity=PipelineIdBoundary(pipeline_id),
+                global_config_id=global_config_id,
+                pipeline_config_id=pipeline_config_id,
+                connection=connection,
+            )
         )
-        pipeline_config = PipelineConfigSelection(pipeline_config_id).resolve(
-            self._config_service
-        )
+
+    def create_session_from_pipeline_source(
+        self,
+        request: PycodifiedPipelineSessionRequest,
+    ) -> OrchestratorSessionRef:
+        return self._create_session(request)
+
+    def _create_session(
+        self,
+        request: ExecutionPipelineSessionRequest,
+    ) -> OrchestratorSessionRef:
         session_id = self._session_store.next_id()
+        resolved = ResolvedExecutionSessionInputs.from_request(
+            request=request,
+            path_policy=self._path_policy,
+            config_service=self._config_service,
+        )
+        pipeline_definition = request.pipeline_provider().build(
+            session_id=session_id,
+            pipeline_service=self._pipeline_service,
+        )
         session = OrchestratorSession(
             schema_version=SCHEMA_VERSION,
             session_id=session_id,
             uri=ExecutionSessionStore.session_uri(session_id),
-            plate_path=str(plate),
-            execution_plate_path=str(execution_plate),
-            selected_pipeline_path=_optional_path_text(selected_pipeline),
-            pipeline_id=pipeline_id,
-            global_config_id=global_config_id,
-            pipeline_config_id=pipeline_config_id,
-            connection=connection or ExecutionConnectionSpec(),
+            plate_path=str(resolved.plate),
+            execution_plate_path=str(resolved.execution_plate),
+            selected_pipeline_path=_optional_path_text(resolved.selected_pipeline),
+            pipeline_id=pipeline_definition.pipeline_id,
+            global_config_id=request.global_config_id,
+            pipeline_config_id=request.pipeline_config_id,
+            connection=resolved.connection,
         )
         return self._session_store.store(
             ExecutionSessionRecord(
                 session=session,
-                pipeline_steps=pipeline_steps,
-                configs=ExecutionConfigBundle(
-                    global_pipeline=global_config,
-                    plate_pipeline=pipeline_config,
-                ),
+                definition_pipeline=pipeline_definition.definition_pipeline,
+                pipeline_source=pipeline_definition.pipeline_source,
+                configs=resolved.configs,
             )
         )
 
@@ -413,23 +623,11 @@ class ExecutionSessionService:
     def _job(self, job_id: str) -> ExecutionJobRecord:
         return self._job_store.job_record(job_id)
 
-    def _execution_plate_path(
-        self,
-        plate: Path,
-        execution_plate_path: str | None,
-    ) -> Path:
-        if execution_plate_path is None:
-            return plate
-        return self._path_policy.assert_readable(execution_plate_path)
-
-    def _selected_pipeline_path(self, selected_pipeline_path: str | None) -> Path | None:
-        if selected_pipeline_path is None:
-            return None
-        return self._path_policy.assert_readable(selected_pipeline_path)
-
 
 def _server_execution_id(response: JsonObject) -> str | None:
-    execution_id = response.get("execution_id")
+    if "execution_id" not in response:
+        return None
+    execution_id = response["execution_id"]
     if execution_id is None:
         return None
     return str(execution_id)

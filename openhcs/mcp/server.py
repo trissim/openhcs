@@ -28,8 +28,12 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowFocusRequest,
 )
 from openhcs.agent.serialization import to_jsonable
+from openhcs.agent.services.execution_session_service import (
+    PycodifiedPipelineSessionRequest,
+)
 from openhcs.core.selection import SelectedScopeIdsArgument
 from openhcs.mcp.context import OpenHCSAgentContext, create_agent_context
+from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
 
 def build_server(context: OpenHCSAgentContext | None = None):
@@ -220,6 +224,39 @@ def build_server(context: OpenHCSAgentContext | None = None):
                     transport_mode=transport_mode,
                     persistent=persistent,
                 ),
+            )
+        )
+
+    @server.tool()
+    def openhcs_create_orchestrator_session_from_pipeline_source(
+        plate_path: str,
+        pipeline_source: str,
+        execution_plate_path: str | None = None,
+        global_config_id: str | None = None,
+        pipeline_config_id: str | None = None,
+        host: str = "localhost",
+        port: int | None = None,
+        transport_mode: str | None = None,
+        persistent: bool = True,
+    ) -> dict:
+        """Create an execution session from pycodified OpenHCS pipeline source."""
+        return to_jsonable(
+            ctx.execution_service.create_session_from_pipeline_source(
+                PycodifiedPipelineSessionRequest(
+                    identity=ZMQExecutionIdentity(
+                        plate_id=plate_path,
+                        execution_plate_id=execution_plate_path,
+                    ),
+                    pipeline_source=pipeline_source,
+                    global_config_id=global_config_id,
+                    pipeline_config_id=pipeline_config_id,
+                    connection=ExecutionConnectionSpec(
+                        host=host,
+                        port=port,
+                        transport_mode=transport_mode,
+                        persistent=persistent,
+                    ),
+                )
             )
         )
 

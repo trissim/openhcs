@@ -7,11 +7,16 @@ from pathlib import Path
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.services.config_service import ConfigService
-from openhcs.agent.services.execution_session_service import ExecutionSessionService
+from openhcs.agent.dto.execution import ExecutionConnectionSpec
+from openhcs.agent.services.execution_session_service import (
+    ExecutionSessionService,
+    PycodifiedPipelineSessionRequest,
+)
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
 from openhcs.agent.services.llm_context_service import AgentAuthoringContextService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
 from openhcs.agent.services.runtime_server_service import RuntimeServerService
+from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
 
 def sample_processing_function(image, sigma: float = 1.0):
@@ -300,6 +305,38 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
     assert compile_status.status == "complete"
     assert fake_client.compile_submissions[0].plate_id == str(tmp_path.resolve())
     assert fake_client.execution_submissions[0].compile_artifact_id == _ExecutionTestId.COMPILE
+
+
+def test_execution_session_service_preserves_pycodified_pipeline_source(
+    monkeypatch,
+    tmp_path: Path,
+):
+    pipeline_source = "pipeline_steps = []\n"
+    fake_client = _FakeExecutionClient()
+    execution_service = ExecutionSessionService(
+        path_policy=AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        pipeline_service=PipelineAuthoringService(_catalog(monkeypatch)),
+        config_service=ConfigService(),
+        client_factory=_FakeExecutionClientFactory(fake_client),
+    )
+
+    session_ref = execution_service.create_session_from_pipeline_source(
+        PycodifiedPipelineSessionRequest(
+            identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
+            pipeline_source=pipeline_source,
+            global_config_id=None,
+            pipeline_config_id=None,
+            connection=ExecutionConnectionSpec(),
+        )
+    )
+    execution_service.submit_compile(session_ref.session_id)
+
+    submission = fake_client.compile_submissions[0]
+    assert submission.pipeline_source == pipeline_source
+    assert submission.pipeline_steps == []
 
 
 def test_runtime_server_service_reads_runtime_server_state():

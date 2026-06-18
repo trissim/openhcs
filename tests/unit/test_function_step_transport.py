@@ -43,7 +43,11 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
 )
 from openhcs.processing.materialization.core import MaterializationSpec
 from openhcs.processing.materialization.options import TiffStackOptions
-from openhcs.runtime.zmq_pipeline_transport import ZMQPipelineCodeTransport
+from openhcs.runtime.zmq_pipeline_transport import (
+    PipelineStepsBoundary,
+    ZMQPipelineCodeTransport,
+    ZMQPipelineSourcePayload,
+)
 
 
 def test_transport_authority_accepts_stripped_compiled_function_steps():
@@ -93,8 +97,10 @@ def test_zmq_pipeline_transport_source_rebinds_cellprofiler_contracts():
     )
 
     source = ZMQPipelineCodeTransport.from_pipeline_source(
-        source=pipeline_source,
-        pipeline_steps=pipeline,
+        ZMQPipelineSourcePayload(
+            source=pipeline_source,
+            source_pipeline=PipelineStepsBoundary(pipeline),
+        )
     ).source
     namespace: dict[str, object] = {}
     exec(source, namespace)
@@ -164,8 +170,10 @@ def test_zmq_pipeline_transport_preserves_explicit_lazy_processing_defaults():
     )
 
     source = ZMQPipelineCodeTransport.from_pipeline_source(
-        source=pipeline_source,
-        pipeline_steps=pipeline,
+        ZMQPipelineSourcePayload(
+            source=pipeline_source,
+            source_pipeline=PipelineStepsBoundary(pipeline),
+        )
     ).source
     namespace: dict[str, object] = {}
     exec(source, namespace)
@@ -271,8 +279,10 @@ def test_zmq_pipeline_transport_uses_source_only_cellprofiler_catalog_identity_a
     )
 
     source = ZMQPipelineCodeTransport.from_pipeline_source(
-        source=pipeline_source,
-        pipeline_steps=pipeline,
+        ZMQPipelineSourcePayload(
+            source=pipeline_source,
+            source_pipeline=PipelineStepsBoundary(pipeline),
+        )
     ).source
     namespace: dict[str, object] = {}
     exec(source, namespace)

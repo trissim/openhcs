@@ -48,6 +48,7 @@ def test_mcp_server_exposes_execution_session_tools():
     tool_names = {tool.name for tool in tools}
 
     assert "openhcs_create_orchestrator_session" in tool_names
+    assert "openhcs_create_orchestrator_session_from_pipeline_source" in tool_names
     assert "openhcs_submit_compile" in tool_names
     assert "openhcs_submit_pipeline_execution" in tool_names
     assert "openhcs_get_execution_status" in tool_names

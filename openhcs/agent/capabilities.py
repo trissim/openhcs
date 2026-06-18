@@ -265,6 +265,19 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         output_type=AgentContractName.ORCHESTRATOR_SESSION_REF.value,
     ),
     AgentCapabilitySpec(
+        name="openhcs_create_orchestrator_session_from_pipeline_source",
+        kind=CapabilityKind.TOOL,
+        title="Create source-backed orchestrator session",
+        description=(
+            "Creates an opaque execution session from exact pycodified OpenHCS "
+            "pipeline source, such as UI code-mode content."
+        ),
+        service="execution_session",
+        side_effects=("creates_in_memory_execution_session",),
+        input_type="PycodifiedPipelineSessionRequest",
+        output_type=AgentContractName.ORCHESTRATOR_SESSION_REF.value,
+    ),
+    AgentCapabilitySpec(
         name="openhcs_get_orchestrator_session",
         kind=CapabilityKind.TOOL,
         title="Get orchestrator session",
