@@ -14,7 +14,6 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QPushButton,
     QLabel,
     QTreeWidget,
@@ -38,6 +37,11 @@ from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBar,
     DetachableActionBarHost,
+)
+from pyqt_reactive.widgets.shared import (
+    FormWindowActionHeader,
+    HeaderAction,
+    HeaderActionGroup,
 )
 from pyqt_reactive.widgets.shared.scrollable_form_body import create_scrollable_form_body
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
@@ -517,25 +521,21 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
 
         # Header with controls (only if render_header=True)
         if self._render_header:
-            header_layout = QHBoxLayout()
-
-            # Header label (stored for scope accent styling)
-            self.header_label = QLabel("Step Parameters")
-            self.header_label.setStyleSheet(
-                f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;"
+            header_widget = FormWindowActionHeader(
+                title_text="Step Parameters",
+                title_color=self.color_scheme.to_hex(self.color_scheme.text_accent),
+                action_groups=[
+                    HeaderActionGroup(
+                        "group_step_actions",
+                        [HeaderAction("actions", self._action_buttons_container)],
+                    ),
+                ],
+                stay_priority=["group_step_actions"],
+                right_aligned_group_ids=["group_step_actions"],
+                parent=self,
             )
-            header_layout.addWidget(self.header_label)
-
-            header_layout.addStretch()
-
-            # Add action buttons to header
-            header_layout.addWidget(self._action_buttons_container)
-
-            layout.addLayout(header_layout)
-        else:
-            # Header not rendered - buttons are still available for external use
-            # No header layout added, so buttons remain in _action_buttons_container
-            pass
+            self.header_label = header_widget.header_label
+            layout.addWidget(header_widget)
 
         hierarchy_tree = self._create_configuration_tree()
         body_parts = create_scrollable_form_body(
