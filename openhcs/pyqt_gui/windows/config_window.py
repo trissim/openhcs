@@ -8,7 +8,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import dataclasses
 from functools import partial
-from typing import Type, Any, Callable, Optional, Dict
+from typing import Callable, Optional, Dict
 
 from PyQt6.QtWidgets import (
     QVBoxLayout,
@@ -66,13 +66,20 @@ from openhcs.core.lazy_placeholder import (
 logger = logging.getLogger(__name__)
 
 
+ConfigObject = GlobalPipelineConfig | PipelineConfig
+PLACEHOLDER_PREFIX_BY_LAZY_RESOLUTION = {
+    True: "Pipeline default",
+    False: "Default",
+}
+
+
 class ConfigWindowStateResolver:
     """Resolve the ObjectState a config window is allowed to edit."""
 
     def __init__(
         self,
-        config_class: Type,
-        current_config: Any,
+        config_class: type[ConfigObject],
+        current_config: ConfigObject,
         scope_id: Optional[str],
     ) -> None:
         self.config_class = config_class
@@ -140,9 +147,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def __init__(
         self,
-        config_class: Type,
-        current_config: Any,
-        on_save_callback: Optional[Callable] = None,
+        config_class: type[ConfigObject],
+        current_config: ConfigObject,
+        on_save_callback: Callable[[ConfigObject], None] | None = None,
         color_scheme: Optional[ColorScheme] = None,
         parent=None,
         scope_id: Optional[str] = None,
@@ -188,7 +195,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         is_lazy_dataclass = FullLazyDefaultPlaceholderService.has_lazy_resolution(
             type(current_config)
         )
-        placeholder_prefix = "Pipeline default" if is_lazy_dataclass else "Default"
+        placeholder_prefix = PLACEHOLDER_PREFIX_BY_LAZY_RESOLUTION[is_lazy_dataclass]
 
         # SIMPLIFIED: Use ParameterFormManager with dual-axis resolution
         root_field_id = type(
@@ -276,7 +283,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def form_managers(self) -> tuple[ParameterFormManager, ...]:
         """Return root form managers for BaseFormDialog change detection."""
-        return (self.form_manager,) if self.form_manager is not None else ()
+        if self.form_manager is None:
+            raise RuntimeError("ConfigWindow form manager is not initialized.")
+        return (self.form_manager,)
 
     def window_code_document_driver(self) -> WindowCodeDocumentDriver | None:
         """Expose this config window's pycodified code-mode document."""
@@ -607,17 +616,21 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         """Refresh live context before rendering this config as source."""
         ParameterOpsService().refresh_with_live_context(self.form_manager)
 
-    def _current_config_for_code_document(self):
+    def _current_config_for_code_document(self) -> ConfigObject:
         """Return the current config object reconstructed from ObjectState."""
         return self._config_session.to_object()
 
-    def _apply_config_from_code_document(self, new_config) -> None:
+    def _apply_config_from_code_document(self, new_config: ConfigObject) -> None:
         """Apply a parsed code-mode config through the normal form path."""
         self.current_config = new_config
         self._config_session.apply_code_edit_context(new_config)
         self._update_form_from_config(new_config)
 
-    def _on_global_config_field_changed(self, param_name: str, value: Any):
+    def _on_global_config_field_changed(
+        self,
+        param_name: str,
+        value: ParameterValue | None,
+    ) -> None:
         """Track that global config has unsaved changes.
 
         NOTE: LIVE thread-local is now auto-updated by ObjectState.update_parameter()
