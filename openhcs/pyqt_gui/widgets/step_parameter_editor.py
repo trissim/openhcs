@@ -7,6 +7,7 @@ Handles FunctionStep parameter editing with nested dataclass support.
 
 import logging
 import dataclasses
+from functools import partial
 from typing import Optional, Union, get_args, get_origin
 from pathlib import Path
 
@@ -33,8 +34,6 @@ from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditor
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
     ConfigHierarchyTreeHelper,
-    ConfigTreeItemPayload,
-    activate_config_tree_item,
 )
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBar,
@@ -485,28 +484,14 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
 
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """Scroll to the associated form section when a tree item is activated."""
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        if data is None:
-            return
-
-        if not isinstance(data, ConfigTreeItemPayload):
-            raise TypeError(
-                "Config tree item data must be ConfigTreeItemPayload; got "
-                f"{type(data).__name__}."
-            )
-        activate_config_tree_item(
-            data,
+        self.tree_helper.activate_item(
+            item,
             scroll_to_section=self._scroll_to_section,
-            field_for_class=self._find_field_for_class,
+            field_for_class=partial(
+                self.tree_helper.field_for_class_in_mapping,
+                self._tree_dataclass_params,
+            ),
         )
-
-    def _find_field_for_class(self, target_class) -> Optional[str]:
-        """Locate the parameter field that edits the given dataclass."""
-        for field_name, obj_type in self._tree_dataclass_params.items():
-            base_type = self.tree_helper.get_base_type(obj_type)
-            if target_class in (obj_type, base_type):
-                return field_name
-        return None
 
     # _scroll_to_section is provided by ScrollableFormMixin
 

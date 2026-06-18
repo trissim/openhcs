@@ -7,6 +7,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 
 import logging
 import dataclasses
+from functools import partial
 from typing import Type, Any, Callable, Optional, Dict
 
 from PyQt6.QtWidgets import (
@@ -26,8 +27,6 @@ from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, For
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
     ConfigHierarchyTreeHelper,
-    ConfigTreeItemPayload,
-    activate_config_tree_item,
 )
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton, HelpContext
@@ -61,9 +60,6 @@ from openhcs.config_framework.object_state import ObjectState, ObjectStateRegist
 # ❌ REMOVED: require_config_context decorator - enhanced decorator events system handles context automatically
 from openhcs.core.lazy_placeholder import (
     LazyDefaultPlaceholderService as FullLazyDefaultPlaceholderService,
-)
-from openhcs.core.lazy_placeholder_simplified import (
-    LazyDefaultPlaceholderService as SimplifiedLazyDefaultPlaceholderService,
 )
 
 
@@ -509,47 +505,14 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """Handle tree item double-clicks for navigation."""
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        if not data:
-            return
-
-        if not isinstance(data, ConfigTreeItemPayload):
-            raise TypeError(
-                "Config tree item data must be ConfigTreeItemPayload; got "
-                f"{type(data).__name__}."
-            )
-        activate_config_tree_item(
-            data,
+        self.tree_helper.activate_item(
+            item,
             scroll_to_section=self._scroll_to_section,
-            field_for_class=self._find_field_for_class,
+            field_for_class=partial(
+                self.tree_helper.field_for_class_in_dataclass_instance,
+                self.form_manager.object_instance,
+            ),
         )
-
-    def _find_field_for_class(self, target_class) -> str:
-        """Find the field name that has the given class type (or its lazy version)."""
-
-        # Get the root dataclass type
-        root_config = self.form_manager.object_instance
-        if not dataclasses.is_dataclass(root_config):
-            return None
-
-        root_type = type(root_config)
-
-        # Search through all fields to find one with matching type
-        for field in dataclasses.fields(root_type):
-            field_type = field.type
-
-            # Check if field type matches target class directly
-            if field_type == target_class:
-                return field.name
-
-            # Check if field type is a lazy version of target class
-            if SimplifiedLazyDefaultPlaceholderService.has_lazy_resolution(field_type):
-                # Get the base class of the lazy type
-                for base in field_type.__bases__:
-                    if base == target_class:
-                        return field.name
-
-        return None
 
     # _scroll_to_section is provided by ScrollableFormMixin
 
