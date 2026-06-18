@@ -128,6 +128,12 @@ class FakeOperations:
         ObjectStateRegistry.increment_token()
 
 
+class InlineDispatcher:
+    def call(self, callback, *, timeout_ms: int = 5000):
+        del timeout_ms
+        return callback()
+
+
 class FakePlateManager:
     def __init__(
         self,
@@ -367,7 +373,8 @@ def test_ui_bridge_control_server_round_trips_documents_through_descriptor(
 ) -> None:
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
     bridge = UiAgentBridgeService(
-        plate_manager=FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))
+        plate_manager=FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),)),
+        dispatcher=InlineDispatcher(),
     )
     server = UiBridgeControlServer(
         bridge,
@@ -411,7 +418,7 @@ def test_ui_bridge_control_server_round_trips_documents_through_descriptor(
 
 
 def test_ui_bridge_control_server_preserves_bad_auth_error(tmp_path: Path) -> None:
-    bridge = UiAgentBridgeService()
+    bridge = UiAgentBridgeService(dispatcher=InlineDispatcher())
     server = UiBridgeControlServer(
         bridge,
         _bridge_server_config(tmp_path),
