@@ -726,6 +726,19 @@ class UiWindowNavigateResult(AgentResultEnvelope, UiWindowIdentity):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class UiWindowCloseRequest(UiWindowIdentity):
+    """Request a normal close for one currently open UI window."""
+
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class UiWindowCloseResult(AgentResultEnvelope, UiWindowIdentity):
+    closed: bool
+    summary: UiWindowSummary | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UiWindowSnapshotRequest(UiWindowOperationRequest):
     snapshot: WindowSnapshotCaptureSpec
 

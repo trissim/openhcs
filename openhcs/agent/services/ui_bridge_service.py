@@ -62,6 +62,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiTimeTravelRuntimeState,
     UI_BRIDGE_UNKNOWN_WIDGET,
     UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowNavigateRequest,
@@ -193,6 +195,14 @@ class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
         connection: UiBridgeConnectionSpec,
         request: UiWindowNavigateRequest,
     ) -> UiWindowNavigateResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowCloseRequest,
+    ) -> UiWindowCloseResult:
         raise NotImplementedError
 
     @abstractmethod
@@ -351,6 +361,13 @@ class UnavailableUiBridgeGateway(UiBridgeGatewayABC):
         connection: UiBridgeConnectionSpec,
         request: UiWindowNavigateRequest,
     ) -> UiWindowNavigateResult:
+        raise UiBridgeGatewayUnavailableError
+
+    def close_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowCloseRequest,
+    ) -> UiWindowCloseResult:
         raise UiBridgeGatewayUnavailableError
 
     def snapshot_window(
@@ -1285,6 +1302,22 @@ class UiBridgeService:
                 self._gateway_errors("ui_bridge_unavailable", exc),
             )
 
+    def close_window(
+        self,
+        request: UiWindowCloseRequest,
+        connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+    ) -> UiWindowCloseResult:
+        resolution = self._descriptor_resolver.resolve(connection)
+        if not resolution.ok:
+            return self._window_close_error(request, resolution.errors)
+        try:
+            return self._gateway.close_window(resolution, request)
+        except Exception as exc:
+            return self._window_close_error(
+                request,
+                self._gateway_errors("ui_bridge_unavailable", exc),
+            )
+
     def snapshot_window(
         self,
         request: UiWindowSnapshotRequest,
@@ -1581,6 +1614,18 @@ class UiBridgeService:
             focused=False,
             navigated=False,
             created=False,
+            errors=errors,
+        )
+
+    @staticmethod
+    def _window_close_error(
+        request: UiWindowCloseRequest,
+        errors: tuple[AgentError, ...],
+    ) -> UiWindowCloseResult:
+        return UiWindowCloseResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            closed=False,
             errors=errors,
         )
 

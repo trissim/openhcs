@@ -28,6 +28,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotRestoreRequest,
     UiStateSurfaceRequest,
     UiTimeTravelHeadRequest,
+    UiWindowCloseRequest,
     UiWindowFocusRequest,
     UiWindowNavigateRequest,
     UiWindowOpenPolicy,
@@ -514,6 +515,19 @@ def build_server(context: OpenHCSAgentContext | None = None):
                         create_if_missing=create_if_missing
                     ),
                 ),
+                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
+            )
+        )
+
+    @server.tool()
+    def openhcs_ui_close_window(
+        window_id: str,
+        connection: dict | None = None,
+    ) -> dict:
+        """Request a normal close for one visible UI bridge window."""
+        return to_jsonable(
+            ctx.ui_bridge_service.close_window(
+                UiWindowCloseRequest(window_id=window_id),
                 UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
             )
         )

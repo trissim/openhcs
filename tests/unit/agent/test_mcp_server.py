@@ -73,6 +73,7 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert "openhcs_ui_get_state_surface" in tool_names
     assert "openhcs_ui_get_code_document" in tool_names
     assert "openhcs_ui_apply_code_document" in tool_names
+    assert "openhcs_ui_close_window" in tool_names
     assert "openhcs_ui_snapshot_window" in tool_names
     assert "openhcs_ui_restore_snapshot" in tool_names
     assert "openhcs_ui_get_operation_status" in tool_names

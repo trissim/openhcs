@@ -119,6 +119,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiTimeTravelHeadRequest,
     UiWidgetIdentity,
     UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowIdentity,

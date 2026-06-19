@@ -44,6 +44,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotRestoreResult,
     UiTimeTravelHeadRequest,
     UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowNavigateRequest,
@@ -79,6 +81,7 @@ class UiBridgeOperationName(str, Enum):
     LIST_WINDOWS = "list_windows"
     FOCUS_WINDOW = "focus_window"
     NAVIGATE_WINDOW = "navigate_window"
+    CLOSE_WINDOW = "close_window"
     SNAPSHOT_WINDOW = "snapshot_window"
     LIST_OBJECT_STATE_SCOPES = "list_object_state_scopes"
     VALIDATE_DOCUMENT = "validate_document"
@@ -97,6 +100,7 @@ UiBridgeOperationRequestPayload = (
     | UiActionInvokeRequest
     | UiWindowFocusRequest
     | UiWindowNavigateRequest
+    | UiWindowCloseRequest
     | UiWindowSnapshotRequest
     | UiObjectStateScopeListRequest
     | UiCodeDocumentValidationRequest
@@ -427,6 +431,18 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowNavigateResult, payload)
+
+    def close_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowCloseRequest,
+    ) -> UiWindowCloseResult:
+        payload = self._client.request(
+            connection,
+            UiBridgeOperationName.CLOSE_WINDOW,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(UiWindowCloseResult, payload)
 
     def snapshot_window(
         self,

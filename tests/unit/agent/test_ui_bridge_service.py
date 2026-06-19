@@ -48,6 +48,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiTimeTravelRuntimeState,
     UiTimeTravelHeadRequest,
     UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowIdentity,
@@ -155,6 +157,7 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
         self.restore_requests: list[UiSnapshotRestoreRequest] = []
         self.scope_requests: list[UiObjectStateScopeListRequest] = []
         self.navigate_requests: list[UiWindowNavigateRequest] = []
+        self.close_requests: list[UiWindowCloseRequest] = []
         self.snapshot_requests: list[UiWindowSnapshotRequest] = []
 
     def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
@@ -277,6 +280,19 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             focused=True,
             navigated=request.field_path is not None or request.item_id is not None,
             created=False,
+        )
+
+    def close_window(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWindowCloseRequest,
+    ) -> UiWindowCloseResult:
+        self.connections.append(connection)
+        self.close_requests.append(request)
+        return UiWindowCloseResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            closed=True,
         )
 
     def snapshot_window(
@@ -622,6 +638,10 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
         ),
         connection,
     )
+    close_result = service.close_window(
+        UiWindowCloseRequest(window_id=WINDOW_ID),
+        connection,
+    )
     operation = service.get_operation_status("op-1", connection)
 
     assert catalog.documents[0].current_selection_count == 1
@@ -638,6 +658,10 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
     ]
     assert validation.valid is True
     assert apply_result.applied is True
+    assert close_result.closed is True
+    assert gateway.close_requests == [
+        UiWindowCloseRequest(window_id=WINDOW_ID)
+    ]
     assert operation.status == "complete"
     assert all(sent.auth_token == "token" for sent in gateway.connections)
 

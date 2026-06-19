@@ -31,6 +31,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotRef,
     UiWidgetIdentity,
     UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowNavigateRequest,
@@ -132,6 +134,10 @@ class UiWindowProviderABC(ABC):
 
     @abstractmethod
     def navigate(self, request: UiWindowNavigateRequest) -> UiWindowNavigateResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self, request: UiWindowCloseRequest) -> UiWindowCloseResult:
         raise NotImplementedError
 
     @abstractmethod

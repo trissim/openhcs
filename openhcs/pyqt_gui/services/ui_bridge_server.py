@@ -54,6 +54,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotRestoreRequest,
     UiTimeTravelHeadRequest,
     UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
     UiWindowFocusRequest,
     UiWindowFocusResult,
     UiWindowNavigateRequest,
@@ -112,6 +114,7 @@ UiBridgeOperationDispatchResult = (
     | UiActionCatalog
     | UiActionInvokeResult
     | UiWindowCatalog
+    | UiWindowCloseResult
     | UiWindowFocusResult
     | UiWindowNavigateResult
     | UiObjectStateScopeCatalog
@@ -469,6 +472,19 @@ class UiBridgeNavigateWindowOperation(UiBridgeRequestOperation):
     ) -> UiWindowNavigateResult:
         return dispatcher.bridge.navigate_window(
             dispatcher.request_payload(UiWindowNavigateRequest, request)
+        )
+
+
+class UiBridgeCloseWindowOperation(UiBridgeRequestOperation):
+    operation = UiBridgeOperationName.CLOSE_WINDOW
+
+    def execute(
+        self,
+        dispatcher: "UiBridgeRequestDispatcher",
+        request: UiBridgeRequestEnvelope,
+    ) -> UiWindowCloseResult:
+        return dispatcher.bridge.close_window(
+            dispatcher.request_payload(UiWindowCloseRequest, request)
         )
 
 

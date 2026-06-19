@@ -22,6 +22,7 @@ class AgentContractName(Enum):
     UI_ACTION_CATALOG = "UiActionCatalog"
     UI_ACTION_INVOKE_RESULT = "UiActionInvokeResult"
     UI_WINDOW_CATALOG = "UiWindowCatalog"
+    UI_WINDOW_CLOSE_RESULT = "UiWindowCloseResult"
     UI_WINDOW_FOCUS_RESULT = "UiWindowFocusResult"
     UI_WINDOW_NAVIGATE_RESULT = "UiWindowNavigateResult"
     UI_WINDOW_SNAPSHOT_RESULT = "UiWindowSnapshotResult"
@@ -463,6 +464,18 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         security_requirements=("ui_bridge_auth_token",),
         input_type="UiWindowNavigateRequest",
         output_type=AgentContractName.UI_WINDOW_NAVIGATE_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_ui_close_window",
+        kind=CapabilityKind.TOOL,
+        title="Close UI window",
+        description="Requests a normal close for one visible UI bridge window by stable window id.",
+        service="ui_bridge",
+        side_effects=("closes_running_ui_window",),
+        runtime_requirements=("running_openhcs_ui_bridge",),
+        security_requirements=("ui_bridge_auth_token",),
+        input_type="UiWindowCloseRequest",
+        output_type=AgentContractName.UI_WINDOW_CLOSE_RESULT.value,
     ),
     AgentCapabilitySpec(
         name="openhcs_ui_snapshot_window",
