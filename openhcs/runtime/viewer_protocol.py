@@ -22,9 +22,17 @@ from openhcs.core.streaming_config_factory import (
 )
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
-from polystore.streaming.viewer_transport import ViewerTransportEndpoint
 from zmqruntime.config import TransportMode as ZMQTransportMode, ZMQConfig
 from zmqruntime.streaming import VisualizerProcessManager
+from zmqruntime.viewer_protocol import (
+    ViewerBatchContextWireField,
+    ViewerBatchWireField,
+    ViewerControlResponseField,
+    ViewerControlReplyHeader,
+    ViewerControlReplyPayload,
+    ViewerProtocolStatus,
+    ViewerTransportEndpoint,
+)
 
 
 ViewerScalar: TypeAlias = str | int | float | bool | None
@@ -68,21 +76,6 @@ VIEWER_PERSISTENCE_MODE_BY_FLAG: Mapping[bool, ViewerPersistenceMode] = {
 }
 
 
-class ViewerProtocolStatus(Enum):
-    """Control/ack status values shared by viewer servers."""
-
-    SUCCESS = "success"
-    ERROR = "error"
-
-
-class ViewerControlResponseField(str, Enum):
-    """Wire fields shared by viewer control-message responses."""
-
-    STATUS = "status"
-    TYPE = "type"
-    MESSAGE = "message"
-
-
 @dataclass(frozen=True, slots=True)
 class ViewerControlResponse:
     """Typed view of a viewer control-message response."""
@@ -98,48 +91,6 @@ class ViewerControlResponse:
 
     def succeeded(self) -> bool:
         return self.status is ViewerProtocolStatus.SUCCESS
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerControlReplyHeader:
-    """Shared status/type/message header for viewer control replies."""
-
-    status: ViewerProtocolStatus
-    response_type: str | None = None
-    message: str | None = None
-
-    def to_wire_mapping(self) -> dict[str, ViewerControlWireValue]:
-        payload: dict[str, ViewerControlWireValue] = {
-            ViewerControlResponseField.STATUS.value: self.status.value,
-        }
-        if self.response_type is not None:
-            payload[ViewerControlResponseField.TYPE.value] = self.response_type
-        if self.message is not None:
-            payload[ViewerControlResponseField.MESSAGE.value] = self.message
-        return payload
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerControlReplyPayload:
-    """Wire payload for a viewer control-message reply."""
-
-    header: ViewerControlReplyHeader
-    fields: Mapping[str, ViewerControlWireValue] = field(default_factory=dict)
-
-    def to_wire_mapping(self) -> dict[str, ViewerControlWireValue]:
-        payload = self.header.to_wire_mapping()
-        payload.update(self.fields)
-        return payload
-
-
-class ViewerBatchWireField(str, Enum):
-    """Wire fields shared by batched viewer stream messages."""
-
-    TYPE = "type"
-    IMAGES = "images"
-    DISPLAY_CONFIG = "display_config"
-    COMPONENT_NAMES_METADATA = "component_names_metadata"
-    COMPONENT_VALUE_DOMAIN = "component_value_domain"
 
 
 class ViewerComponentValueOrdering:

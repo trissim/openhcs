@@ -3,18 +3,27 @@ import sys
 
 import pytest
 
+from openhcs.core.config import TransportMode
+from openhcs.core.streaming_config_factory import (
+    StreamingViewerPresentation,
+    StreamingViewerRuntimeConfig,
+)
+from polystore.streaming.viewer_transport import ViewerTransportEndpoint
 from openhcs.runtime.viewer_protocol import (
-    NapariDetachedProcessRequest,
-    NapariViewerProcessEntrypoint,
-    NapariViewerServerRequest,
+    DetachedViewerLaunchRequest,
+    DetachedViewerPythonArguments,
+    DetachedViewerPythonExpression,
+    DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
     ViewerProcessPlatform,
     ViewerControlPingMode,
     ViewerControlPingRequest,
-    ViewerLifecycleState,
     ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
+    ViewerRuntimeEndpoint,
+    ViewerType,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 def test_viewer_process_handle_wraps_subprocess_lifecycle():
@@ -58,34 +67,55 @@ def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch
         fake_ping_control_port,
     )
 
-    assert ViewerControlPingRequest.from_mode(
+    quick_request = ViewerControlPingRequest.from_mode(
         mode=ViewerControlPingMode.QUICK,
-        port=55,
-        transport_mode="ipc",
-        config="config",
-    ).check()
-    assert ViewerControlPingRequest.from_mode(
-        mode=ViewerControlPingMode.EXISTING_VIEWER,
-        port=56,
-        transport_mode="tcp",
-        config="config",
-    ).check()
+        endpoint=ViewerRuntimeEndpoint(
+            transport=ViewerTransportEndpoint(
+                port=55,
+                host="localhost",
+                transport_mode=TransportMode.IPC,
+            ),
+            config=OPENHCS_ZMQ_CONFIG,
+        ),
+    )
+    assert quick_request.endpoint.ping(
+        timeout_ms=quick_request.timeout_ms,
+        require_ready=quick_request.require_ready,
+    )
 
+    ready_request = ViewerControlPingRequest.from_mode(
+        mode=ViewerControlPingMode.EXISTING_VIEWER,
+        endpoint=ViewerRuntimeEndpoint(
+            transport=ViewerTransportEndpoint(
+                port=56,
+                host="localhost",
+                transport_mode=TransportMode.TCP,
+            ),
+            config=OPENHCS_ZMQ_CONFIG,
+        ),
+    )
+    assert ready_request.endpoint.ping(
+        timeout_ms=ready_request.timeout_ms,
+        require_ready=ready_request.require_ready,
+    )
+
+    assert calls[0][0][1].value == "ipc"
+    assert calls[1][0][1].value == "tcp"
     assert calls == [
         (
-            (55, "ipc"),
+            calls[0][0],
             {
                 "host": "localhost",
-                "config": "config",
+                "config": OPENHCS_ZMQ_CONFIG,
                 "timeout_ms": 200,
                 "require_ready": False,
             },
         ),
         (
-            (56, "tcp"),
+            calls[1][0],
             {
                 "host": "localhost",
-                "config": "config",
+                "config": OPENHCS_ZMQ_CONFIG,
                 "timeout_ms": 500,
                 "require_ready": True,
             },
@@ -112,82 +142,97 @@ def test_viewer_qt_environment_policy_applies_platform_rows():
     assert windows_env == {}
 
 
-def test_napari_viewer_server_request_owns_legacy_signature_projection():
-    request = NapariViewerServerRequest.from_legacy_signature(
-        1234,
-        "Viewer",
-        True,
-        "/tmp/viewer.log",
-        "ipc",
+def test_detached_viewer_entrypoint_generates_public_process_call(tmp_path):
+    python_code = DetachedViewerServerEntrypointSpec(
+        viewer_type=ViewerType.NAPARI,
+        module_name="openhcs.runtime.napari_viewer_server",
+        function_name="run_napari_viewer_process",
+    ).python_code(
+        tmp_path,
+        transport_mode=TransportMode.IPC,
+        arguments=DetachedViewerPythonArguments.from_literals(
+            1234,
+            "Viewer",
+            True,
+            "/tmp/viewer.log",
+        ).append(DetachedViewerPythonExpression.symbol("transport_mode")),
     )
 
-    assert request == NapariViewerServerRequest(
-        port=1234,
-        viewer_title="Viewer",
-        replace_layers=True,
-        log_file_path="/tmp/viewer.log",
-        transport_mode="ipc",
-    )
-
-
-def test_napari_viewer_process_entrypoint_generates_public_process_call(tmp_path):
-    class FakeTransportMode:
-        name = "IPC"
-
-    request = NapariViewerServerRequest.from_legacy_signature(
-        1234,
-        "Viewer",
-        True,
-        "/tmp/viewer.log",
-        FakeTransportMode(),
-    )
-
-    python_code = NapariViewerProcessEntrypoint(
-        request=request,
-        python_path_root=tmp_path,
-    ).python_code()
-
-    assert "run_napari_viewer_process_from_legacy_signature" in python_code
+    assert "run_napari_viewer_process" in python_code
     assert "openhcs.runtime.napari_viewer_server" in python_code
     assert " import _napari_viewer_process" not in python_code
     assert str(tmp_path) in python_code
     assert "TransportMode.IPC" in python_code
+    assert 'if os.name == "posix"' in python_code
+    assert "hasattr" not in python_code
 
 
-def test_napari_detached_process_request_owns_log_and_python_command(tmp_path):
-    class FakeTransportMode:
-        name = "TCP"
-
-    launch = NapariDetachedProcessRequest.from_legacy_signature(
-        4321,
-        "Detached",
-        False,
-        FakeTransportMode(),
-        cwd=tmp_path,
+def test_detached_viewer_launch_request_owns_log_and_python_command(tmp_path):
+    spec = DetachedViewerServerEntrypointSpec(
+        viewer_type=ViewerType.NAPARI,
+        module_name="openhcs.runtime.napari_viewer_server",
+        function_name="run_napari_viewer_process",
+    )
+    log_file = DetachedViewerLaunchRequest.log_file_for(
+        viewer_type=spec.viewer_type,
+        port=4321,
         log_dir=tmp_path / "logs",
     )
-
-    process_request = launch.to_process_request()
+    launch = spec.launch_request(
+        port=4321,
+        transport_mode=TransportMode.TCP,
+        arguments=DetachedViewerPythonArguments.from_literals(
+            4321,
+            "Detached",
+            False,
+            str(log_file),
+        ).append(DetachedViewerPythonExpression.symbol("transport_mode")),
+        log_file=log_file,
+        cwd=tmp_path,
+    )
 
     assert launch.log_file == tmp_path / "logs" / "napari_detached_port_4321.log"
-    assert launch.server_request.log_file_path == str(launch.log_file)
-    assert process_request.log_file == launch.log_file
-    assert process_request.cwd == tmp_path
-    assert "TransportMode.TCP" in process_request.python_code
+    assert launch.cwd == tmp_path
+    assert "TransportMode.TCP" in launch.python_code
+    assert launch.command() == [sys.executable, "-c", launch.python_code]
 
 
 def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():
     class ExternalViewer(ManagedViewerLifecycleMixin):
         viewer_process_label = "External"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
 
         def __init__(self):
-            self.lifecycle_state = ViewerLifecycleState.stopped()
-            self.port = 42
-            self.process = None
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=True,
+                    presentation=StreamingViewerPresentation("External"),
+                ),
+                transport_config=OPENHCS_ZMQ_CONFIG,
+            )
             self.connected = True
 
         def check_connected_viewer(self) -> bool:
             return self.connected
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
 
     viewer = ExternalViewer()
     assert not viewer.is_running

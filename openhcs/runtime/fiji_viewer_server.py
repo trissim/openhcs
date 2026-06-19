@@ -20,6 +20,8 @@ from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.receivers.core import (
     DebouncedBatchEngine,
+    GroupedWindowItems,
+    WindowProjectionPayloadProvider,
 )
 from openhcs.core.config import (
     FijiDimensionMode,
@@ -30,10 +32,10 @@ from openhcs.core.config import (
 from openhcs.runtime.viewer_protocol import (
     FIJI_HEARTBEAT,
     FijiPayloadKind,
+    ViewerBatchContextWireField,
     ViewerBatchWireField,
     ViewerControlReplyHeader,
     ViewerControlReplyPayload,
-    ViewerControlWireValue,
     ViewerComponentValueOrdering,
     ViewerProtocolStatus,
 )
@@ -116,7 +118,7 @@ class FijiImagePayload:
 
 
 @dataclass(frozen=True, slots=True)
-class FijiWireItem:
+class FijiWireItem(WindowProjectionPayloadProvider):
     """Nominal Fiji stream item with all raw wire-key semantics localized."""
 
     payload: dict[str, FijiWireValue]
@@ -132,6 +134,9 @@ class FijiWireItem:
         return [cls.from_payload(payload) for payload in payloads]
 
     def raw_payload(self) -> dict[str, FijiWireValue]:
+        return self.payload
+
+    def window_projection_payload(self) -> Mapping[str, FijiWireValue]:
         return self.payload
 
     @property
@@ -848,14 +853,10 @@ class FijiWindowProcessingRequest(FijiDisplayItemContext):
 
 
 @dataclass(frozen=True, slots=True)
-class FijiControlMessageResponse:
+class FijiControlMessageResponse(ViewerControlReplyPayload):
     """Result of handling one Fiji control message."""
 
-    payload: ViewerControlReplyPayload
     shutdown_requested: bool = False
-
-    def to_wire_mapping(self) -> dict[str, ViewerControlWireValue]:
-        return self.payload.to_wire_mapping()
 
 
 class FijiControlMessagePlan:
@@ -877,12 +878,10 @@ class FijiShutdownControlPlan(FijiControlMessagePlan):
             self.wire_value,
         )
         return FijiControlMessageResponse(
-            ViewerControlReplyPayload(
-                ViewerControlReplyHeader(
-                    ViewerProtocolStatus.SUCCESS,
-                    response_type="shutdown_ack",
-                    message="Fiji viewer shutting down",
-                ),
+            ViewerControlReplyHeader(
+                ViewerProtocolStatus.SUCCESS,
+                response_type="shutdown_ack",
+                message="Fiji viewer shutting down",
             ),
             shutdown_requested=True,
         )
@@ -898,12 +897,10 @@ class FijiClearStateControlPlan(FijiControlMessagePlan):
         )
         windows.clear_dimensions_and_labels()
         return FijiControlMessageResponse(
-            ViewerControlReplyPayload(
-                ViewerControlReplyHeader(
-                    ViewerProtocolStatus.SUCCESS,
-                    response_type="clear_state_ack",
-                    message="Dimension values cleared",
-                ),
+            ViewerControlReplyHeader(
+                ViewerProtocolStatus.SUCCESS,
+                response_type="clear_state_ack",
+                message="Dimension values cleared",
             ),
         )
 
@@ -948,9 +945,7 @@ class FijiControlMessageAuthority:
         kind = FijiControlMessageKind.from_message(message)
         if kind is None:
             return FijiControlMessageResponse(
-                ViewerControlReplyPayload(
-                    ViewerControlReplyHeader(ViewerProtocolStatus.SUCCESS),
-                )
+                ViewerControlReplyHeader(ViewerProtocolStatus.SUCCESS)
             )
         return kind.plan.response(self.windows)
 
@@ -1164,12 +1159,6 @@ class FijiPayloadHandler(ABC, metaclass=AutoRegisterMeta):
         """Handle one Fiji window group for this payload kind."""
 
 
-class FijiBatchField(Enum):
-    """Wire fields required by a Fiji batch message."""
-
-    IMAGES_DIR = "images_dir"
-
-
 class FijiBatchMessageType(Enum):
     """Fiji stream message kinds accepted by this receiver."""
 
@@ -1183,11 +1172,11 @@ class FijiBatchPayloadFields:
     payload: Mapping[str, FijiWireValue]
 
     REQUIRED_FIELDS: ClassVar[
-        tuple[ViewerBatchWireField | FijiBatchField, ...]
+        tuple[ViewerBatchWireField | ViewerBatchContextWireField, ...]
     ] = (
         ViewerBatchWireField.IMAGES,
         ViewerBatchWireField.DISPLAY_CONFIG,
-        FijiBatchField.IMAGES_DIR,
+        ViewerBatchContextWireField.IMAGES_DIR,
         ViewerBatchWireField.COMPONENT_NAMES_METADATA,
         ViewerBatchWireField.COMPONENT_VALUE_DOMAIN,
     )
@@ -1198,7 +1187,7 @@ class FijiBatchPayloadFields:
 
     def required_value(
         self,
-        field: FijiBatchField | ViewerBatchWireField,
+        field: ViewerBatchContextWireField | ViewerBatchWireField,
     ) -> FijiWireValue:
         if field.value not in self.payload:
             raise ValueError(
@@ -1208,7 +1197,7 @@ class FijiBatchPayloadFields:
 
     def required_sequence(
         self,
-        field: FijiBatchField | ViewerBatchWireField,
+        field: ViewerBatchContextWireField | ViewerBatchWireField,
     ) -> Sequence[FijiWireValue]:
         value = self.required_value(field)
         if not isinstance(value, Sequence) or isinstance(value, str):
@@ -1217,7 +1206,7 @@ class FijiBatchPayloadFields:
 
     def required_mapping(
         self,
-        field: FijiBatchField | ViewerBatchWireField,
+        field: ViewerBatchContextWireField | ViewerBatchWireField,
     ) -> Mapping[str, FijiWireValue]:
         value = self.required_value(field)
         if not isinstance(value, Mapping):
@@ -1225,7 +1214,7 @@ class FijiBatchPayloadFields:
         return value
 
     def images_dir(self) -> str | None:
-        value = self.required_value(FijiBatchField.IMAGES_DIR)
+        value = self.required_value(ViewerBatchContextWireField.IMAGES_DIR)
         if value is not None and not isinstance(value, str):
             raise TypeError("Fiji batch message 'images_dir' must be a string or None.")
         return value
@@ -1248,13 +1237,11 @@ class FijiBatchPayloadFields:
 
 
 @dataclass(frozen=True, slots=True)
-class FijiBatchComponentPayloads:
+class FijiBatchComponentPayloads(FijiBatchPayloadFields):
     """Decode component-domain wire payloads from a Fiji batch message."""
 
-    fields: FijiBatchPayloadFields
-
     def component_names_metadata(self) -> ViewerComponentNameMetadata:
-        value = self.fields.required_mapping(
+        value = self.required_mapping(
             ViewerBatchWireField.COMPONENT_NAMES_METADATA
         )
         payload = ViewerComponentNameMetadataPayload.from_wire_payload(
@@ -1271,7 +1258,7 @@ class FijiBatchComponentPayloads:
 
     def component_value_domain(self) -> ViewerComponentValueDomainPayload:
         return ViewerComponentValueDomainPayload.from_wire_mapping(
-            self.fields.required_mapping(ViewerBatchWireField.COMPONENT_VALUE_DOMAIN),
+            self.required_mapping(ViewerBatchWireField.COMPONENT_VALUE_DOMAIN),
             context="Fiji component value domain",
         )
 
@@ -1283,9 +1270,8 @@ class FijiBatchWireParser:
     payload: Mapping[str, FijiWireValue]
 
     def batch_message(self) -> "FijiBatchMessage":
-        fields = FijiBatchPayloadFields(self.payload)
+        fields = FijiBatchComponentPayloads(self.payload)
         fields.validate()
-        components = FijiBatchComponentPayloads(fields)
         raw_items = fields.required_sequence(ViewerBatchWireField.IMAGES)
         display_config = FijiDisplayConfigWireAdapter.from_payload(
             fields.required_value(ViewerBatchWireField.DISPLAY_CONFIG)
@@ -1294,10 +1280,10 @@ class FijiBatchWireParser:
             items=FijiWireItem.from_payloads(raw_items),
             viewer_display_config=display_config,
             images_dir=fields.images_dir(),
-            component_names_metadata=components.component_names_metadata(),
+            component_names_metadata=fields.component_names_metadata(),
             component_axis_semantics=ViewerComponentAxisSemanticsAuthority.from_display_config(
                 ViewerObjectDisplayConfigInput(display_config),
-                components.component_value_domain(),
+                fields.component_value_domain(),
             ),
         )
 
@@ -1389,13 +1375,10 @@ class FijiPayloadKindGroups:
             )
 
 @dataclass(frozen=True, slots=True)
-class FijiWindowItemProjection:
+class FijiWindowItemProjection(GroupedWindowItems[FijiWireItem]):
     """Fiji-owned bridge from component layout to windowed item processing."""
 
-    window_components: list[str]
     coordinate_components: FijiHyperstackCoordinateComponents
-    windows: dict[str, list[FijiWireItem]]
-    fixed_window_labels: dict[str, FijiFixedLabels]
     component_value_counts: tuple[tuple[str, int], ...]
 
     @classmethod
@@ -1404,32 +1387,21 @@ class FijiWindowItemProjection:
         items: Sequence[FijiWireItem],
         component_axis_semantics: ViewerComponentAxisSemantics,
     ) -> "FijiWindowItemProjection":
-        raw_items = [item.raw_payload() for item in items]
-        item_by_payload_id = {
-            id(item.raw_payload()): item
-            for item in items
-        }
-        projection = component_axis_semantics.layout.group_window_payloads(
-            raw_items
+        projection = component_axis_semantics.layout.group_window_payload_providers(
+            items
         )
         return cls(
             window_components=projection.window_components,
+            channel_components=projection.channel_components,
+            slice_components=projection.slice_components,
+            frame_components=projection.frame_components,
             coordinate_components=FijiHyperstackCoordinateComponents(
                 channel=projection.channel_components,
                 z_axis_components=projection.slice_components,
                 frame=projection.frame_components,
             ),
-            windows={
-                window_key: [
-                    item_by_payload_id[id(raw_item)]
-                    for raw_item in raw_items_for_window
-                ]
-                for window_key, raw_items_for_window in projection.windows.items()
-            },
-            fixed_window_labels={
-                window_key: tuple(labels)
-                for window_key, labels in projection.fixed_window_labels.items()
-            },
+            windows=projection.windows,
+            fixed_window_labels=projection.fixed_window_labels,
             component_value_counts=component_axis_semantics.value_domain.component_value_counts(
                 component_axis_semantics.layout.component_order
             ),

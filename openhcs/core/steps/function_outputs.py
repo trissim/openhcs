@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
 
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
@@ -16,7 +17,6 @@ from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImagePayloadMetadataInput,
-    SourceComponentMetadata,
     image_payload_data,
     image_payload_metadata,
 )
@@ -25,17 +25,50 @@ from openhcs.core.steps.function_artifact_materialization import (
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
 )
+from openhcs.core.steps.function_output_identity import FunctionOutputParserContext
+from openhcs.core.steps.function_output_manifest import (
+    ProducedOutputSemantics,
+    StepOutputStreamIdentityAuthority,
+    step_output_manifest,
+)
 from openhcs.core.steps.function_io import (
     calculate_zarr_dimensions,
     generate_materialized_paths,
     save_materialized_data,
 )
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
+from openhcs.core.steps.stream_component_semantics import (
+    OpenHCSViewerStreamRequestAuthority,
+    OpenHCSViewerStreamSourceScope,
+    StreamComponentMetadata,
+    StreamSourceComponentMetadataItems,
+)
 
 
 logger = logging.getLogger(__name__)
 StreamPayload = ImagePayloadMetadataInput
-StreamComponentMetadata = SourceComponentMetadata | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProducedMemoryPathsAuthority:
+    """Resolve absolute memory paths produced by the current step execution."""
+
+    context: ProcessingContext
+    plan: FunctionStepExecutionPlan
+
+    def paths(self) -> list[str]:
+        return [
+            self.memory_path(record)
+            for record in step_output_manifest(self.context).produced_records_for(
+                self.plan
+            )
+        ]
+
+    def memory_path(self, record: ProducedOutputSemantics) -> str:
+        path = Path(record.output_path)
+        if path.is_absolute():
+            return str(path)
+        return str(self.plan.output_dir / record.relative_output_path)
 
 
 def finalize_function_step_outputs(
@@ -72,10 +105,9 @@ class MemoryOutputWriter:
         if self.plan.write_backend == Backend.MEMORY.value:
             return
 
-        memory_paths = self.plan.get_paths_for_axis(
-            self.plan.output_dir,
-            Backend.MEMORY.value,
-        )
+        memory_paths = ProducedMemoryPathsAuthority(self.context, self.plan).paths()
+        if not memory_paths:
+            return
         memory_data = self.context.filemanager.load_batch(
             memory_paths,
             Backend.MEMORY.value,
@@ -84,7 +116,10 @@ class MemoryOutputWriter:
             memory_paths,
             self.context.microscope_handler,
         )
-        row, col = self.context.microscope_handler.parser.extract_component_coordinates(
+        parser_context = FunctionOutputParserContext.from_processing_context(
+            self.context
+        )
+        row, col = parser_context.parser.extract_component_coordinates(
             self.plan.axis_id
         )
         self.context.filemanager.ensure_directory(
@@ -102,8 +137,8 @@ class MemoryOutputWriter:
             n_fields=n_fields,
             row=row,
             col=col,
-            parser_name=self.context.microscope_handler.parser.__class__.__name__,
-            microscope_type=self.context.microscope_handler.microscope_type,
+            parser_name=parser_context.parser_name,
+            microscope_type=parser_context.microscope_type,
         )
 
     def payloads(
@@ -127,10 +162,9 @@ class MaterializedImageOutputWriter:
         if not self.plan.has_materialized_output:
             return
 
-        memory_paths = self.plan.get_paths_for_axis(
-            self.plan.output_dir,
-            Backend.MEMORY.value,
-        )
+        memory_paths = ProducedMemoryPathsAuthority(self.context, self.plan).paths()
+        if not memory_paths:
+            return
         memory_data = self.context.filemanager.load_batch(
             memory_paths,
             Backend.MEMORY.value,
@@ -167,7 +201,8 @@ class StreamItem:
 
     data: StreamPayload
     path: str
-    component_metadata: StreamComponentMetadata
+    produced_output: ProducedOutputSemantics
+    stream_source_component_metadata: StreamComponentMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +245,7 @@ class StreamStackSliceMetadata:
         cls,
         payload_metadata: ImagePayloadMetadata,
     ) -> "StreamStackSliceMetadata":
-        return cls(tuple(payload_metadata.channel_source_component_metadata))
+        return cls(tuple(payload_metadata.source_image_provenance_planes.component_metadata))
 
     @property
     def is_complete(self) -> bool:
@@ -235,22 +270,11 @@ class StreamPathContext:
 
 
 @dataclass(frozen=True, slots=True)
-class StreamComponentMetadataResolver(StreamPathContext):
-    """Resolves source metadata for an unsplit stream item."""
-
-    payload_metadata: StreamComponentMetadata
-
-    def resolve(self) -> StreamComponentMetadata:
-        if self.payload_metadata is not None:
-            return self.payload_metadata
-        return self.context.microscope_handler.parser.parse_filename(Path(self.path).name)
-
-
-@dataclass(frozen=True, slots=True)
 class StreamPayloadItemsRequest(StreamPathContext):
     """Inputs needed to project one runtime payload into viewer stream items."""
 
     payload: StreamPayload
+    produced_output: ProducedOutputSemantics
 
     @property
     def data(self) -> StreamPayload:
@@ -273,25 +297,34 @@ class StreamPayloadItemProjection:
         payload_shape = StreamPayloadShape(data)
         stack_metadata = StreamStackSliceMetadata.from_payload_metadata(metadata)
 
-        if not payload_shape.is_semantic_stack_shape or not stack_metadata.is_complete:
+        if not payload_shape.is_semantic_stack_shape:
             return (
                 StreamItem(
                     data=data,
                     path=self.request.path,
-                    component_metadata=StreamComponentMetadataResolver(
-                        self.request.context,
-                        self.request.path,
-                        metadata.source_component_metadata,
-                    ).resolve(),
+                    produced_output=self.request.produced_output,
+                    stream_source_component_metadata=(
+                        self.request.produced_output.component_metadata
+                    ),
                 ),
             )
+
+        if not stack_metadata.is_complete:
+            logger.warning(
+                "Skipping streaming image stack without complete per-slice "
+                "component metadata: path=%r shape=%r.",
+                self.request.path,
+                payload_shape.diagnostic_shape,
+            )
+            return ()
 
         stack_metadata.validate_cardinality(payload_shape, self.request.path)
         return tuple(
             StreamItem(
                 data=data[index],
                 path=self.request.path,
-                component_metadata=metadata.for_channel(index).source_component_metadata,
+                produced_output=self.request.produced_output,
+                stream_source_component_metadata=metadata.for_source_plane(index).source_component_metadata,
             )
             for index in range(payload_shape.leading_axis_length)
         )
@@ -303,6 +336,7 @@ class StreamBatchItemProjection:
 
     payloads: list[StreamPayload]
     paths: list[str]
+    produced_outputs: tuple[ProducedOutputSemantics, ...]
     context: ProcessingContext
 
     def apply(self) -> tuple[StreamItem, ...]:
@@ -311,11 +345,26 @@ class StreamBatchItemProjection:
                 "Streaming payload/path cardinality mismatch: "
                 f"{len(self.payloads)} payloads for {len(self.paths)} paths."
             )
+        if len(self.payloads) != len(self.produced_outputs):
+            raise ValueError(
+                "Streaming payload/output-record cardinality mismatch: "
+                f"{len(self.payloads)} payloads for "
+                f"{len(self.produced_outputs)} output records."
+            )
         return tuple(
             item
-            for payload, path in zip(self.payloads, self.paths)
+            for payload, path, produced_output in zip(
+                self.payloads,
+                self.paths,
+                self.produced_outputs,
+            )
             for item in StreamPayloadItemProjection(
-                StreamPayloadItemsRequest(self.context, path, payload)
+                StreamPayloadItemsRequest(
+                    self.context,
+                    path,
+                    payload,
+                    produced_output,
+                )
             ).apply()
         )
 
@@ -325,13 +374,7 @@ class StreamOutputsAuthority:
 
     @staticmethod
     def producer_identity(plan: FunctionStepExecutionPlan) -> StreamProducerIdentity:
-        return StreamProducerIdentity.pipeline_output(
-            output_kind="main",
-            output_key="main",
-            step_name=plan.step_name,
-            pipeline_position=plan.pipeline_position,
-            step_scope_id=plan.step_scope_id,
-        )
+        return StepOutputStreamIdentityAuthority.build(plan)
 
     @staticmethod
     def stream_outputs(
@@ -339,10 +382,14 @@ class StreamOutputsAuthority:
         plan: FunctionStepExecutionPlan,
     ) -> None:
         for config_instance in plan.streaming_configs:
-            memory_paths = plan.get_paths_for_axis(
-                plan.output_dir,
-                Backend.MEMORY.value,
-            )
+            produced_outputs = step_output_manifest(context).produced_records_for(plan)
+            memory_paths = ProducedMemoryPathsAuthority(context, plan).paths()
+            if not memory_paths:
+                logger.info(
+                    "No produced image outputs to stream for step %s.",
+                    plan.step_name,
+                )
+                continue
             if plan.has_materialized_output:
                 streaming_paths = generate_materialized_paths(
                     memory_paths,
@@ -361,13 +408,27 @@ class StreamOutputsAuthority:
             stream_items = StreamBatchItemProjection(
                 streaming_payloads,
                 list(streaming_paths),
+                produced_outputs,
                 context,
             ).apply()
-            kwargs = config_instance.get_streaming_kwargs(context)
-            kwargs["producer_identity"] = StreamOutputsAuthority.producer_identity(plan)
-            kwargs["component_metadata_by_path"] = tuple(
-                item.component_metadata for item in stream_items
+            if not stream_items:
+                logger.info(
+                    "No streamable image outputs for step %s after stack projection.",
+                    plan.step_name,
+                )
+                continue
+            source_metadata_items = StreamSourceComponentMetadataItems.from_values(
+                item.stream_source_component_metadata for item in stream_items
             )
+            viewer_request = OpenHCSViewerStreamRequestAuthority.from_source_scope(
+                OpenHCSViewerStreamSourceScope.from_viewer_surface(
+                    config_instance.streaming_viewer_surface(context),
+                    context=context,
+                    producer_identity=produced_outputs[0].producer_identity,
+                    source_metadata_items=source_metadata_items,
+                )
+            )
+            kwargs = ViewerStreamBackendKwargs(viewer_request).to_kwargs()
             context.filemanager.save_batch(
                 [item.data for item in stream_items],
                 [item.path for item in stream_items],

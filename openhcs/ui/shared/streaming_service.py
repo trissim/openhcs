@@ -11,13 +11,29 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
+from typing import TYPE_CHECKING, Callable
 
 from objectstate import spawn_thread_with_context
-from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming.identity import (
+    FixedStreamProducerIdentityKind,
+    StreamProducerIdentity,
+)
+from polystore.streaming.viewer_transport import (
+    ViewerStreamBackendKwargs,
+    ViewerStreamSourceIdentity,
+    ViewerStreamSourceMetadata,
+)
+from zmqruntime.viewer_protocol import ViewerWireMapping
+
+from openhcs.core.steps.stream_component_semantics import (
+    OpenHCSViewerStreamRequestAuthority,
+)
 
 if TYPE_CHECKING:
+    from openhcs.core.config import StreamingConfig
+    from openhcs.microscopes.microscope_base import MicroscopeHandler
     from polystore.filemanager import FileManager
+    from zmqruntime.streaming import VisualizerProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,58 +48,11 @@ NAPARI_VIEWER_TOKEN = "napari"
 
 
 @dataclass(frozen=True, slots=True)
-class StreamingMetadata:
-    """Nominal metadata record passed to viewer streaming backends."""
-
-    port: int
-    host: str
-    transport_mode: object
-    display_config: object
-    microscope_handler: object
-    plate_path: Path
-    producer_identity: StreamProducerIdentity
-
-    @classmethod
-    def from_viewer_context(
-        cls,
-        *,
-        viewer,
-        config,
-        microscope_handler,
-        plate_path: Path,
-        producer_identity: StreamProducerIdentity,
-    ) -> "StreamingMetadata":
-        return cls(
-            port=viewer.port,
-            host=config.host,
-            transport_mode=config.transport_mode,
-            display_config=config,
-            microscope_handler=microscope_handler,
-            plate_path=plate_path,
-            producer_identity=producer_identity,
-        )
-
-    def to_backend_kwargs(self) -> dict[str, object]:
-        """Convert to kwargs while preserving runtime object identities."""
-
-        return {
-            "port": self.port,
-            "host": self.host,
-            "transport_mode": self.transport_mode,
-            "display_config": self.display_config,
-            "microscope_handler": self.microscope_handler,
-            "plate_path": self.plate_path,
-            "producer_identity": self.producer_identity,
-        }
-
-
-@dataclass(frozen=True, slots=True)
 class ViewerStreamingContext:
     """Shared viewer/request context for asynchronous streaming operations."""
 
-    viewer: object
-    plate_path: Path
-    config: object
+    viewer: VisualizerProcessManager
+    config: StreamingConfig
     viewer_type: ViewerType
     status_callback: Callable[[str], None]
     error_callback: Callable[[str], None]
@@ -106,53 +75,18 @@ class RoiStreamingRequest:
     roi_filenames: tuple[str, ...]
 
 
-class StreamingService:
-    """Unified service for streaming images/ROIs to viewers.
-
-    Handles all viewer communication in background threads.
-    Uses callbacks for UI thread communication (status updates, errors).
-    """
-
-    def __init__(
-        self,
-        filemanager: FileManager,
-        microscope_handler,
-        plate_path: Path,
-    ):
-        self.filemanager = filemanager
-        self.microscope_handler = microscope_handler
-        self.plate_path = plate_path
+class StreamingSourceFilenameAuthority:
+    """Resolve source-image filename candidates for streamed viewer artifacts."""
 
     @staticmethod
-    def display_name_for_viewer_type(viewer_type: str) -> str:
-        """Get display name from a viewer identity or streaming config key.
-
-        Args:
-            viewer_type: Viewer identity or registry key.
-
-        Returns:
-            Display name (e.g., 'Napari')
-        """
-        from openhcs.core.config import StreamingConfig
-
-        config_cls = StreamingConfig.__registry__.get(viewer_type)
-        if config_cls is not None:
-            viewer_name = config_cls().viewer_type
-        else:
-            viewer_name = viewer_type
-        return viewer_name.title()
-
-    _get_display_name = display_name_for_viewer_type
-
-    @staticmethod
-    def _roi_artifact_stem(filename: str) -> str:
+    def roi_artifact_stem(filename: str) -> str:
         name = Path(filename).name
         if name.lower().endswith(ROI_ARCHIVE_SUFFIX):
             return name[: -len(ROI_ARCHIVE_SUFFIX)]
         return Path(name).stem
 
     @classmethod
-    def _source_filename_candidates_for_roi(cls, filename: str) -> tuple[str, ...]:
+    def source_filename_candidates_for_roi(cls, filename: str) -> tuple[str, ...]:
         """Return plausible source-image names for an analysis ROI artifact."""
         candidates: list[str] = []
 
@@ -161,7 +95,7 @@ class StreamingService:
                 candidates.append(value)
 
         name = Path(filename).name
-        stem = cls._roi_artifact_stem(name)
+        stem = cls.roi_artifact_stem(name)
         add(name)
         add(stem)
 
@@ -187,29 +121,112 @@ class StreamingService:
 
         return tuple(candidates)
 
-    def _roi_component_metadata_by_path(
+    @staticmethod
+    def source_filename_candidates_for_image(filename: str) -> tuple[str, ...]:
+        name = Path(filename).name
+        if filename == name:
+            return (name,)
+        return (filename, name)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerStreamingSource(ViewerStreamSourceIdentity):
+    """Source authority for viewer streaming from one initialized plate."""
+
+    filemanager: FileManager
+
+    def load_image(self, filename: str, read_backend: str):
+        return self.filemanager.load(
+            str(Path(self.plate_path) / filename),
+            read_backend,
+        )
+
+    def component_metadata_by_path(
         self,
         paths: list[str],
-    ) -> dict[str, dict[str, Any]]:
+        candidate_names_for_path: Callable[[str], tuple[str, ...]],
+        artifact_label: str,
+    ) -> dict[str, ViewerWireMapping]:
         parser = self.microscope_handler.parser
-        metadata_by_path: dict[str, dict[str, Any]] = {}
+        metadata_by_path: dict[str, ViewerWireMapping] = {}
 
         for path in paths:
-            parsed: Mapping[str, Any] | None = None
-            for candidate in self._source_filename_candidates_for_roi(path):
+            parsed: ViewerWireMapping | None = None
+            for candidate in candidate_names_for_path(path):
                 parsed = parser.parse_filename(candidate)
                 if parsed is not None:
                     break
 
             if parsed is None:
                 raise ValueError(
-                    "Could not resolve source-plane metadata for ROI artifact "
-                    f"{path!r}; manual ROI streaming requires a parser-readable "
-                    "source image name or explicit metadata."
+                    "Could not resolve source-plane metadata for "
+                    f"{artifact_label} {path!r}; streaming requires explicit "
+                    "component metadata."
                 )
             metadata_by_path[path] = dict(parsed)
 
         return metadata_by_path
+
+    def image_component_metadata_by_path(
+        self,
+        paths: list[str],
+    ) -> dict[str, ViewerWireMapping]:
+        return self.component_metadata_by_path(
+            paths,
+            StreamingSourceFilenameAuthority.source_filename_candidates_for_image,
+            "image",
+        )
+
+    def roi_component_metadata_by_path(
+        self,
+        paths: list[str],
+    ) -> dict[str, ViewerWireMapping]:
+        return self.component_metadata_by_path(
+            paths,
+            StreamingSourceFilenameAuthority.source_filename_candidates_for_roi,
+            "ROI artifact",
+        )
+
+
+class StreamingService:
+    """Unified service for streaming images/ROIs to viewers.
+
+    Handles all viewer communication in background threads.
+    Uses callbacks for UI thread communication (status updates, errors).
+    """
+
+    def __init__(
+        self,
+        filemanager: FileManager,
+        microscope_handler: MicroscopeHandler,
+        plate_path: Path,
+    ):
+        self.source = ViewerStreamingSource(
+            filemanager=filemanager,
+            microscope_handler=microscope_handler,
+            plate_path=plate_path,
+        )
+
+    @staticmethod
+    def display_name_for_viewer_type(viewer_type: str) -> str:
+        """Get display name from a viewer identity or streaming config key.
+
+        Args:
+            viewer_type: Viewer identity or registry key.
+
+        Returns:
+            Display name (e.g., 'Napari')
+        """
+        from openhcs.core.config import StreamingConfig
+
+        config_cls = StreamingConfig.__registry__.get(viewer_type)
+        if config_cls is not None:
+            viewer_name = config_cls().viewer_type
+        else:
+            viewer_name = viewer_type
+        return viewer_name.title()
+
+    _get_display_name = display_name_for_viewer_type
 
     @classmethod
     def supported_viewer_types(cls):
@@ -231,7 +248,7 @@ class StreamingService:
 
     def _wait_for_viewer_ready(
         self,
-        viewer,
+        viewer: VisualizerProcessManager,
         viewer_type: ViewerType,
         num_items: int,
     ) -> None:
@@ -301,9 +318,9 @@ class StreamingService:
                     image_data_list = []
                     file_paths = []
                     for filename in chunk_filenames:
-                        image_path = context.plate_path / filename
-                        image_data = self.filemanager.load(
-                            str(image_path), request.read_backend
+                        image_data = self.source.load_image(
+                            filename,
+                            request.read_backend,
                         )
                         image_data_list.append(image_data)
                         file_paths.append(filename)
@@ -312,18 +329,24 @@ class StreamingService:
                         f"Loaded chunk {chunk_idx + 1}/{num_chunks}: {len(image_data_list)} images"
                     )
 
-                    metadata = StreamingMetadata.from_viewer_context(
-                        viewer=context.viewer,
-                        config=context.config,
-                        microscope_handler=self.microscope_handler,
-                        plate_path=context.plate_path,
-                        producer_identity=StreamProducerIdentity.manual(
-                            "selected_images"
+                    stream_request = OpenHCSViewerStreamRequestAuthority.from_source_metadata(
+                        viewer_surface=context.config.viewer_surface(self.source),
+                        producer_identity=StreamProducerIdentity.fixed_output(
+                            FixedStreamProducerIdentityKind.MANUAL,
+                            "selected_images",
                         ),
-                    ).to_backend_kwargs()
+                        source_metadata=ViewerStreamSourceMetadata(
+                            component_metadata_by_path=(
+                                self.source.image_component_metadata_by_path(file_paths)
+                            ),
+                        ),
+                    )
 
-                    self.filemanager.save_batch(
-                        image_data_list, file_paths, backend_enum.value, **metadata
+                    self.source.filemanager.save_batch(
+                        image_data_list,
+                        file_paths,
+                        backend_enum.value,
+                        **ViewerStreamBackendKwargs(stream_request).to_kwargs(),
                     )
                     logger.info(
                         f"Streamed chunk {chunk_idx + 1}/{num_chunks} to {display_name}"
@@ -375,7 +398,7 @@ class StreamingService:
                 paths: list[str] = []
 
                 for i, filename in enumerate(request.roi_filenames, 1):
-                    file_path = context.plate_path / filename
+                    file_path = Path(self.source.plate_path) / filename
                     rois = load_rois_from_zip(file_path)
                     if not rois:
                         logger.warning(f"No ROIs found in {file_path.name}")
@@ -399,23 +422,28 @@ class StreamingService:
                     len(paths),
                 )
 
-                metadata = StreamingMetadata.from_viewer_context(
-                    viewer=context.viewer,
-                    config=context.config,
-                    microscope_handler=self.microscope_handler,
-                    plate_path=context.plate_path,
-                    producer_identity=StreamProducerIdentity.manual("selected_rois"),
-                ).to_backend_kwargs()
-                metadata["component_metadata_by_path"] = (
-                    self._roi_component_metadata_by_path(paths)
+                stream_request = OpenHCSViewerStreamRequestAuthority.from_source_metadata(
+                    viewer_surface=context.config.viewer_surface(self.source),
+                    producer_identity=StreamProducerIdentity.fixed_output(
+                        FixedStreamProducerIdentityKind.MANUAL,
+                        "selected_rois",
+                    ),
+                    source_metadata=ViewerStreamSourceMetadata(
+                        component_metadata_by_path=(
+                            self.source.roi_component_metadata_by_path(paths)
+                        )
+                    ),
                 )
 
                 context.status_callback(
                     f"Streaming {len(paths)} ROI file(s) to {display_name}..."
                 )
 
-                self.filemanager.save_batch(
-                    data_list, paths, backend_enum.value, **metadata
+                self.source.filemanager.save_batch(
+                    data_list,
+                    paths,
+                    backend_enum.value,
+                    **ViewerStreamBackendKwargs(stream_request).to_kwargs(),
                 )
 
                 msg = (

@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from openhcs.core.config import (
+    FijiDimensionMode,
     FijiStreamingConfig,
+    NapariDimensionMode,
     NapariStreamingConfig,
     StreamingConfig,
 )
@@ -16,6 +18,7 @@ from openhcs.ui.shared.streaming_service import (
     StreamingService,
     ViewerStreamingContext,
 )
+from polystore.streaming.viewer_transport import ViewerStreamKwarg
 
 
 class FakeFileManager:
@@ -63,6 +66,20 @@ def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
     assert StreamingService.display_name_for_viewer_type("napari") == "Napari"
 
 
+def test_streaming_config_component_modes_apply_display_defaults() -> None:
+    assert NapariStreamingConfig().component_modes() == {
+        component: NapariDimensionMode.STACK.value
+        for component in NapariStreamingConfig.COMPONENT_ORDER
+    }
+    assert FijiStreamingConfig().component_modes() == {
+        "site": FijiDimensionMode.FRAME.value,
+        "timepoint": FijiDimensionMode.FRAME.value,
+        "channel": FijiDimensionMode.CHANNEL.value,
+        "z_index": FijiDimensionMode.SLICE.value,
+        "well": FijiDimensionMode.FRAME.value,
+    }
+
+
 def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch) -> None:
     monkeypatch.setattr(
         "openhcs.ui.shared.streaming_service.spawn_thread_with_context",
@@ -75,14 +92,23 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
 
     service = StreamingService(
         filemanager=filemanager,
-        microscope_handler=object(),
+        microscope_handler=SimpleNamespace(
+            parser=SimpleNamespace(
+                parse_filename=lambda filename: {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 1,
+                }
+                if filename == "img.tif"
+                else None
+            )
+        ),
         plate_path=Path("/plate"),
     )
     service.stream_images_async(
         ImageStreamingRequest(
             context=ViewerStreamingContext(
                 viewer=FakeViewer(),
-                plate_path=Path("/plate"),
                 config=config,
                 viewer_type=config.viewer_type,
                 status_callback=statuses.append,
@@ -97,10 +123,18 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     assert filemanager.saved_batches
     _data, _paths, backend, metadata = filemanager.saved_batches[0]
     assert backend == config.backend.value
-    assert metadata["display_config"] is config
-    assert metadata["host"] == config.host
-    assert metadata["transport_mode"] is config.transport_mode
-    assert metadata["producer_identity"].to_payload() == {
+    stream_request = metadata[ViewerStreamKwarg.STREAM_REQUEST.value]
+    assert stream_request.display_config is config
+    assert stream_request.host == config.host
+    assert stream_request.transport_mode is config.transport_mode
+    assert stream_request.source.metadata.component_metadata_by_path == {
+        "A01/img.tif": {
+            "well": "A01",
+            "site": 1,
+            "channel": 1,
+        }
+    }
+    assert stream_request.producer_identity.to_payload() == {
         "origin": "manual",
         "output_kind": "manual",
         "output_key": "selected_images",
@@ -149,7 +183,6 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
         RoiStreamingRequest(
             context=ViewerStreamingContext(
                 viewer=FakeViewer(),
-                plate_path=Path("/plate"),
                 config=config,
                 viewer_type=config.viewer_type,
                 status_callback=lambda _status: None,
@@ -161,7 +194,8 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
 
     assert filemanager.saved_batches
     _data, _paths, _backend, metadata = filemanager.saved_batches[0]
-    assert metadata["component_metadata_by_path"][roi_filename] == {
+    stream_request = metadata[ViewerStreamKwarg.STREAM_REQUEST.value]
+    assert stream_request.source.metadata.component_metadata_by_path[roi_filename] == {
         "well": "A01",
         "site": 1,
         "channel": 1,
@@ -180,6 +214,6 @@ def test_stream_rois_rejects_unresolved_source_plane_metadata() -> None:
     )
 
     with pytest.raises(ValueError, match="Could not resolve source-plane metadata"):
-        service._roi_component_metadata_by_path(
+        service.source.roi_component_metadata_by_path(
             ["nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"],
         )

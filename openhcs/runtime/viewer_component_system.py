@@ -9,6 +9,13 @@ from enum import Enum
 from typing import ClassVar, Generic, TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
+from zmqruntime.viewer_protocol import (
+    ViewerBatchDisplayPayload,
+    ViewerComponentMode,
+    ViewerDisplayConfigWireField,
+    viewer_component_mode_value,
+)
+
 from openhcs.runtime.viewer_protocol import ViewerComponentValueOrdering
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
@@ -25,13 +32,7 @@ DisplayConfigMappingValue: TypeAlias = Mapping[str, DisplayModeValue] | Sequence
 ComponentMetadataItems: TypeAlias = Sequence[Mapping[str, ComponentValue] | None]
 ComponentAxisValues: TypeAlias = Mapping[str, Sequence[ComponentValue]]
 DisplayConfigT = TypeVar("DisplayConfigT")
-
-
-class ViewerComponentLayoutField(Enum):
-    """Wire fields used by mapping-style viewer display configs."""
-
-    COMPONENT_MODES = "component_modes"
-    COMPONENT_ORDER = "component_order"
+WindowProjectionProviderT = TypeVar("WindowProjectionProviderT")
 
 
 class ViewerComponentSemanticRole(Enum):
@@ -67,13 +68,14 @@ class ViewerComponentRolePolicy:
         *,
         role: ViewerComponentSemanticRole,
         layout: "ViewerComponentLayout",
-        mode: str,
+        mode: DisplayModeValue,
     ) -> str | None:
         candidates = self._candidates(role)
+        mode_value = viewer_component_mode_value(mode)
         for component in layout.component_order:
             if component not in candidates:
                 continue
-            if layout.component_modes[component] != mode:
+            if layout.component_modes[component] != mode_value:
                 continue
             return component
         return None
@@ -153,13 +155,13 @@ class ViewerComponentLayoutMappingParser:
     ) -> "ViewerComponentLayout":
         component_modes = cls._required_value(
             mapping_display_config,
-            ViewerComponentLayoutField.COMPONENT_MODES,
+            ViewerDisplayConfigWireField.COMPONENT_MODES,
             Mapping,
             "mapping",
         )
         component_order = cls._required_value(
             mapping_display_config,
-            ViewerComponentLayoutField.COMPONENT_ORDER,
+            ViewerDisplayConfigWireField.COMPONENT_ORDER,
             Sequence,
             "sequence",
         )
@@ -173,7 +175,7 @@ class ViewerComponentLayoutMappingParser:
     @staticmethod
     def _required_value(
         mapping_display_config: Mapping[str, DisplayConfigMappingValue],
-        field_name: ViewerComponentLayoutField,
+        field_name: ViewerDisplayConfigWireField,
         expected_type: type | tuple[type, ...],
         expected_name: str,
     ) -> DisplayConfigMappingValue:
@@ -186,11 +188,8 @@ class ViewerComponentLayoutMappingParser:
 
 
 @dataclass(frozen=True, slots=True)
-class ViewerComponentLayout:
+class ViewerComponentLayout(ViewerBatchDisplayPayload):
     """Normalized component-mode layout shared by viewer receivers."""
-
-    component_modes: ComponentModeMap
-    component_order: tuple[str, ...]
 
     @classmethod
     def from_parts(
@@ -212,23 +211,29 @@ class ViewerComponentLayout:
             return str(mode.value)
         return str(mode)
 
-    def components_for_mode(self, mode: str) -> tuple[str, ...]:
-        return tuple(
-            component
-            for component in self.component_order
-            if self.component_modes[component] == mode
-        )
-
-    def component_mode_payload(self) -> dict[str, str]:
-        return dict(self.component_modes)
-
-    def group_window_payloads(self, payloads: list[dict]):
+    def group_window_sources(self, sources):
         from polystore.streaming.receivers.core import group_items_by_component_modes
 
         return group_items_by_component_modes(
-            payloads,
-            component_modes=self.component_mode_payload(),
-            component_order=list(self.component_order),
+            sources,
+            display_layout=self,
+        )
+
+    def group_window_payloads(self, payloads: Sequence[Mapping[str, ComponentWireValue]]):
+        from polystore.streaming.receivers.core import WindowProjectionSource
+
+        return self.group_window_sources(
+            WindowProjectionSource.from_wire_payloads(payloads)
+        )
+
+    def group_window_payload_providers(
+        self,
+        items: Sequence[WindowProjectionProviderT],
+    ):
+        from polystore.streaming.receivers.core import WindowProjectionSource
+
+        return self.group_window_sources(
+            WindowProjectionSource.from_payload_providers(items)
         )
 
     def component_value_counts(self, payloads: Sequence[Mapping]) -> tuple[tuple[str, int], ...]:
@@ -941,13 +946,13 @@ class ViewerRouteComponentValueTracker:
         layer_items: Sequence[ViewerComponentAddressedItem],
     ) -> None:
         self.domain.update(
-            self._domain_key(route_key, axis_components),
+            self.domain_key(route_key, axis_components),
             axis_components,
             layer_items,
         )
 
     @staticmethod
-    def _domain_key(
+    def domain_key(
         route_key: str,
         axis_components: Sequence[str],
     ) -> tuple[str, tuple[str, ...]]:
@@ -1010,44 +1015,78 @@ class ViewerLayerAxisProjectionStep:
     """Projection decision for one component axis."""
 
     component: str
-    route_values: list[ComponentValue]
-    viewer_values: list[ComponentValue]
-    declared_domain: ViewerComponentValueDomainView
+    request: "ViewerLayerAxisProjectionRequest"
 
     def projected_axis(self) -> ViewerLayerAxisProjectedComponent | None:
-        if self.collapses_to_declared_singleton():
+        coordinate_values = self.coordinate_domain_values()
+        if self.collapses_to_coordinate_singleton(coordinate_values):
             return None
-        values, offset = self.project_component_values()
+        values, offset = self.project_component_values(coordinate_values)
         return ViewerLayerAxisProjectedComponent(
             component=self.component,
             values=values,
             axis_offset=offset,
         )
 
-    def collapses_to_declared_singleton(self) -> bool:
-        if len(self.route_values) != 1 or len(self.viewer_values) > 1:
+    def collapses_to_coordinate_singleton(
+        self,
+        coordinate_values: Sequence[ComponentValue],
+    ) -> bool:
+        return len(coordinate_values) == 1
+
+    def coordinate_domain_values(self) -> list[ComponentValue]:
+        declared_values = self.request.declared_domain.required_values(self.component)
+        if len(declared_values) > 1:
+            return declared_values
+
+        viewer_values = self.request.viewer_domain.required_values(self.component)
+        if self.viewer_domain_carries_route(viewer_values):
+            return viewer_values
+
+        return declared_values
+
+    def viewer_domain_carries_route(
+        self,
+        viewer_values: Sequence[ComponentValue],
+    ) -> bool:
+        if len(viewer_values) <= 1:
             return False
-        return not self.declared_domain.has_multiple_values(self.component)
+        route_values = self.request.route_domain.required_values(self.component)
+        return all(value in viewer_values for value in route_values)
 
-    def project_component_values(self) -> tuple[list[ComponentValue], int]:
-        start_index = self.viewer_index(self.route_values[0])
-        if self.is_contiguous_subset(start_index):
-            return self.route_values, start_index
-        # Sparse routes keep the full viewer domain so array coordinates stay stable.
-        return self.viewer_values, 0
+    def project_component_values(
+        self,
+        coordinate_values: Sequence[ComponentValue],
+    ) -> tuple[list[ComponentValue], int]:
+        route_values = self.request.route_domain.required_values(self.component)
+        start_index = self.viewer_index(route_values[0], coordinate_values)
+        if self.is_contiguous_subset(start_index, route_values, coordinate_values):
+            return route_values, start_index
+        # Non-contiguous routes cannot be represented by one translated dense block.
+        # Use the full coordinate domain so each value keeps its declared index.
+        return list(coordinate_values), 0
 
-    def viewer_index(self, value: ComponentValue) -> int:
+    def viewer_index(
+        self,
+        value: ComponentValue,
+        viewer_values: Sequence[ComponentValue],
+    ) -> int:
         try:
-            return self.viewer_values.index(value)
+            return list(viewer_values).index(value)
         except ValueError as error:
             raise ValueError(
                 f"Route component value {value!r} for '{self.component}' is absent "
-                f"from viewer domain {self.viewer_values!r}."
+                f"from viewer domain {list(viewer_values)!r}."
             ) from error
 
-    def is_contiguous_subset(self, start_index: int) -> bool:
-        stop_index = start_index + len(self.route_values)
-        return self.viewer_values[start_index:stop_index] == self.route_values
+    def is_contiguous_subset(
+        self,
+        start_index: int,
+        route_values: Sequence[ComponentValue],
+        viewer_values: Sequence[ComponentValue],
+    ) -> bool:
+        stop_index = start_index + len(route_values)
+        return list(viewer_values)[start_index:stop_index] == list(route_values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1063,13 +1102,13 @@ class ViewerLayerAxisProjectionRequest:
     def from_component_values(
         cls,
         *,
-        axis_components: Sequence[str],
+        projected_axis_components: Sequence[str],
         route_component_values: ComponentValues,
         viewer_component_values: ComponentValues,
         declared_component_values: ComponentValues,
     ) -> "ViewerLayerAxisProjectionRequest":
         return cls(
-            requested_components=tuple(axis_components),
+            requested_components=tuple(projected_axis_components),
             route_domain=ViewerComponentValueDomainView(
                 route_component_values,
                 "route",
@@ -1088,11 +1127,41 @@ class ViewerLayerAxisProjectionRequest:
         return tuple(
             ViewerLayerAxisProjectionStep(
                 component=component,
-                route_values=self.route_domain.required_values(component),
-                viewer_values=self.viewer_domain.required_values(component),
-                declared_domain=self.declared_domain,
+                request=self,
             )
             for component in self.requested_components
+        )
+
+
+class ViewerLayerAxisProjectionRequestAuthority:
+    """Build viewer-axis projection requests from component-axis semantics."""
+
+    @staticmethod
+    def from_component_axis_semantics(
+        *,
+        route_key: str,
+        component_axis_semantics: ViewerComponentAxisSemantics,
+        layer_items: Sequence[ViewerComponentAddressedItem],
+        route_value_tracker: ViewerRouteComponentValueTracker,
+        display_axis_domain: ViewerDisplayAxisDomain,
+    ) -> ViewerLayerAxisProjectionRequest:
+        axis_components = component_axis_semantics.layout.components_for_mode(
+            ViewerComponentMode.STACK
+        )
+        route_value_tracker.update(route_key, axis_components, layer_items)
+        display_axis_domain.update(axis_components, layer_items)
+        return ViewerLayerAxisProjectionRequest.from_component_values(
+            projected_axis_components=axis_components,
+            route_component_values=route_value_tracker.domain.values_for(
+                route_value_tracker.domain_key(route_key, axis_components),
+                axis_components,
+            ),
+            viewer_component_values=display_axis_domain.values_for(axis_components),
+            declared_component_values=(
+                component_axis_semantics.value_domain.required_component_values(
+                    axis_components
+                )
+            ),
         )
 
 
