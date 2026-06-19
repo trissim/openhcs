@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
@@ -46,6 +47,9 @@ from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
 
 DEFAULT_MCP_WINDOW_SNAPSHOT_DIR = Path("/tmp/openhcs-mcp-window-snapshots")
+DEFAULT_MCP_UI_BRIDGE_TIMEOUT_MS = 750
+MAX_MCP_UI_BRIDGE_TIMEOUT_MS = 2_000
+MIN_MCP_UI_BRIDGE_TIMEOUT_MS = 1
 
 
 def build_server(context: OpenHCSAgentContext | None = None):
@@ -832,7 +836,34 @@ class UiBridgeConnectionToolArgs:
         )
 
     def resolve(self, context: OpenHCSAgentContext) -> UiBridgeConnectionSpec:
-        return context.ui_bridge_service.connection_from_fields(self._request)
+        return context.ui_bridge_service.connection_from_fields(
+            replace(
+                self._request,
+                timeout_ms=McpUiBridgeTimeoutPolicy.resolve(
+                    self._request.timeout_ms
+                ),
+            )
+        )
+
+
+class McpUiBridgeTimeoutPolicy:
+    """Fail-fast timeout contract for Codex-facing UI bridge tools."""
+
+    @staticmethod
+    def resolve(requested_timeout_ms: int | None) -> int:
+        if requested_timeout_ms is None:
+            return DEFAULT_MCP_UI_BRIDGE_TIMEOUT_MS
+        if requested_timeout_ms < MIN_MCP_UI_BRIDGE_TIMEOUT_MS:
+            raise ValueError(
+                "UI bridge MCP timeout must be at least "
+                f"{MIN_MCP_UI_BRIDGE_TIMEOUT_MS}ms."
+            )
+        if requested_timeout_ms > MAX_MCP_UI_BRIDGE_TIMEOUT_MS:
+            raise ValueError(
+                "UI bridge MCP timeout must not exceed "
+                f"{MAX_MCP_UI_BRIDGE_TIMEOUT_MS}ms."
+            )
+        return requested_timeout_ms
 
 
 class UiObjectStateScopeVisibilityToolArgs:

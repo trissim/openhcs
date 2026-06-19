@@ -53,15 +53,19 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
+    DEFAULT_UI_BRIDGE_TIMEOUT_MS,
     UI_BRIDGE_PROTOCOL_VERSION,
     UiBridgeGatewayABC,
     UiBridgeGatewayResponseError,
+    UiBridgeGatewayTimeoutError,
     UiBridgeGatewayUnavailableError,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 DtoT = TypeVar("DtoT")
+UI_BRIDGE_CONTROL_TIMEOUT_MAX_MS = DEFAULT_UI_BRIDGE_TIMEOUT_MS
+UI_BRIDGE_CONTROL_TIMEOUT_MIN_MS = 1
 
 
 class UiBridgeOperationName(str, Enum):
@@ -240,18 +244,41 @@ class UiBridgeControlClient:
 
         context = zmq.Context.instance()
         socket = context.socket(zmq.REQ)
+        timeout_ms = self._socket_timeout_ms(connection)
+        request_operation = self._request_operation(request_payload)
         socket.setsockopt(zmq.LINGER, 0)
-        socket.setsockopt(zmq.RCVTIMEO, connection.timeout_ms)
-        socket.setsockopt(zmq.SNDTIMEO, connection.timeout_ms)
+        socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
+        socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
         try:
             socket.connect(self._endpoint_url(connection))
             socket.send_json(request_payload)
             response = socket.recv_json()
+        except zmq.Again as exc:
+            raise UiBridgeGatewayTimeoutError(
+                operation=request_operation,
+                timeout_ms=timeout_ms,
+            ) from exc
         finally:
             socket.close(linger=0)
         if not isinstance(response, Mapping):
             raise TypeError(f"UI bridge response must be a JSON object, got {type(response).__name__}")
         return dict(response)
+
+    @staticmethod
+    def _socket_timeout_ms(connection: UiBridgeConnectionSpec) -> int:
+        return min(
+            max(connection.timeout_ms, UI_BRIDGE_CONTROL_TIMEOUT_MIN_MS),
+            UI_BRIDGE_CONTROL_TIMEOUT_MAX_MS,
+        )
+
+    @staticmethod
+    def _request_operation(request_payload: JsonObject) -> str:
+        if "operation" not in request_payload:
+            raise ValueError("UI bridge request payload missing required field 'operation'.")
+        operation = request_payload["operation"]
+        if not isinstance(operation, str):
+            raise TypeError("UI bridge request payload field 'operation' must be a string.")
+        return operation
 
     @staticmethod
     def _endpoint_url(connection: UiBridgeConnectionSpec) -> str:

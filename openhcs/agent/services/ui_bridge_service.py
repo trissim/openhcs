@@ -83,15 +83,25 @@ UNAVAILABLE_UI_STATE_SURFACE_TITLE = "Unavailable UI state surface"
 class UiBridgeDescriptorDirectoryAuthority:
     """Filesystem location policy for live UI bridge descriptors."""
 
+    UI_BRIDGE_DESCRIPTOR_SUBDIR = Path("openhcs") / "ui-bridge"
+
     @staticmethod
     def default_descriptor_dir() -> Path:
+        return UiBridgeDescriptorDirectoryAuthority.descriptor_dirs()[0]
+
+    @classmethod
+    def descriptor_dirs(cls) -> tuple[Path, ...]:
         configured = environ.get("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR")
         if configured:
-            return Path(configured).expanduser()
+            return (Path(configured).expanduser(),)
+
+        candidates: list[Path] = []
         runtime_dir = environ.get("XDG_RUNTIME_DIR")
         if runtime_dir:
-            return Path(runtime_dir).expanduser() / "openhcs" / "ui-bridge"
-        return Path(tempfile.gettempdir()) / f"openhcs-ui-bridge-{os.getuid()}"
+            candidates.append(Path(runtime_dir).expanduser() / cls.UI_BRIDGE_DESCRIPTOR_SUBDIR)
+        candidates.append(Path(f"/run/user/{os.getuid()}") / cls.UI_BRIDGE_DESCRIPTOR_SUBDIR)
+        candidates.append(Path(tempfile.gettempdir()) / f"openhcs-ui-bridge-{os.getuid()}")
+        return tuple(dict.fromkeys(candidates))
 
 
 class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
@@ -446,6 +456,34 @@ class UiBridgeGatewayResponseError(RuntimeError, UiBridgeGatewayErrorABC):
         return self.errors
 
 
+@dataclass(frozen=True, slots=True)
+class UiBridgeGatewayTimeoutError(TimeoutError, UiBridgeGatewayErrorABC):
+    registry_key = "timeout"
+
+    operation: str
+    timeout_ms: int
+
+    def __str__(self) -> str:
+        return (
+            f"UI bridge operation {self.operation!r} timed out after "
+            f"{self.timeout_ms}ms."
+        )
+
+    def agent_errors(self, fallback_code: str) -> tuple[AgentError, ...]:
+        del fallback_code
+        return (
+            AgentError(
+                code="ui_bridge_timeout",
+                message=str(self),
+                hint=(
+                    "The running UI may be blocked or busy; retry after the UI "
+                    "event loop is responsive."
+                ),
+                exception_type=type(self).__name__,
+            ),
+        )
+
+
 @singledispatch
 def ui_bridge_gateway_errors(
     exception: Exception,
@@ -467,6 +505,14 @@ def _unavailable_gateway_errors(
 @ui_bridge_gateway_errors.register
 def _response_gateway_errors(
     exception: UiBridgeGatewayResponseError,
+    fallback_code: str,
+) -> tuple[AgentError, ...]:
+    return exception.agent_errors(fallback_code)
+
+
+@ui_bridge_gateway_errors.register
+def _timeout_gateway_errors(
+    exception: UiBridgeGatewayTimeoutError,
     fallback_code: str,
 ) -> tuple[AgentError, ...]:
     return exception.agent_errors(fallback_code)
@@ -498,20 +544,34 @@ class UiBridgeDescriptorResolution:
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeConnectionResolution:
-    connection: UiBridgeConnectionSpec
+class UiBridgeConnectionResolution(UiBridgeConnectionSpec):
     descriptor: UiBridgeDescriptorResolution = UiBridgeDescriptorResolution()
     errors: tuple[AgentError, ...] = ()
+
+    @classmethod
+    def from_connection(
+        cls,
+        connection: UiBridgeConnectionSpec,
+        *,
+        descriptor: UiBridgeDescriptorResolution = UiBridgeDescriptorResolution(),
+        errors: tuple[AgentError, ...] = (),
+    ) -> "UiBridgeConnectionResolution":
+        return cls(
+            host=connection.host,
+            port=connection.port,
+            transport_mode=connection.transport_mode,
+            persistent=connection.persistent,
+            timeout_ms=connection.timeout_ms,
+            auth_token=connection.auth_token,
+            descriptor_file_path=connection.descriptor_file_path,
+            bridge_instance_id=connection.bridge_instance_id,
+            descriptor=descriptor,
+            errors=errors,
+        )
 
     @property
     def ok(self) -> bool:
         return not self.errors
-
-    def project_status(self, status_result: UiBridgeStatus) -> UiBridgeStatus:
-        return self.descriptor.project_status(
-            status_result,
-            connection=self.connection,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,10 +579,19 @@ class UiBridgeDescriptorReadResult:
     descriptor: UiBridgeDescriptorFile | None
     path: Path
     errors: tuple[AgentError, ...] = ()
+    stale_process_descriptor: bool = False
 
     @property
     def ok(self) -> bool:
         return self.descriptor is not None and not self.errors
+
+
+@dataclass(frozen=True, slots=True)
+class UiBridgeDescriptorProcessGoneError(ValueError):
+    pid: int
+
+    def __str__(self) -> str:
+        return f"UI bridge process is not running: {self.pid}"
 
 
 class DescriptorSetCardinality(Enum):
@@ -570,24 +639,21 @@ class UiBridgeDescriptorSummaryBuilder:
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeEnvironment:
-    fields: UiBridgeConnectionFields
+class UiBridgeEnvironment(UiBridgeConnectionFields):
 
     @classmethod
     def current(cls) -> "UiBridgeEnvironment":
-        return cls(
-            fields=UiBridgeConnectionFields.from_values(
-                host=_env_text("OPENHCS_UI_BRIDGE_HOST"),
-                port=_env_int("OPENHCS_UI_BRIDGE_PORT"),
-                transport_mode=_env_text("OPENHCS_UI_BRIDGE_TRANSPORT_MODE"),
-                timeout_ms=_env_int("OPENHCS_UI_BRIDGE_TIMEOUT_MS"),
-                auth_token=_env_text("OPENHCS_UI_BRIDGE_AUTH_TOKEN"),
-            )
+        return cls.from_values(
+            host=_env_text("OPENHCS_UI_BRIDGE_HOST"),
+            port=_env_int("OPENHCS_UI_BRIDGE_PORT"),
+            transport_mode=_env_text("OPENHCS_UI_BRIDGE_TRANSPORT_MODE"),
+            timeout_ms=_env_int("OPENHCS_UI_BRIDGE_TIMEOUT_MS"),
+            auth_token=_env_text("OPENHCS_UI_BRIDGE_AUTH_TOKEN"),
         )
 
     def apply(self, connection: UiBridgeConnectionSpec) -> UiBridgeConnectionSpec:
         return UiBridgeConnectionSpec.from_fields(
-            self.fields,
+            self,
             defaults=connection,
         )
 
@@ -627,8 +693,8 @@ class NoDescriptorSetResolutionRunner(DescriptorSetResolutionRunner):
         connection: UiBridgeConnectionSpec,
     ) -> UiBridgeConnectionResolution:
         del resolver, descriptor_set
-        return UiBridgeConnectionResolution(
-            connection=UiBridgeEnvironment.current().apply(connection),
+        return UiBridgeConnectionResolution.from_connection(
+            UiBridgeEnvironment.current().apply(connection),
             descriptor=UiBridgeDescriptorResolution(),
         )
 
@@ -658,8 +724,8 @@ class AmbiguousDescriptorSetResolutionRunner(DescriptorSetResolutionRunner):
         descriptor_set: LiveUiBridgeDescriptorSet,
         connection: UiBridgeConnectionSpec,
     ) -> UiBridgeConnectionResolution:
-        return UiBridgeConnectionResolution(
-            connection=connection,
+        return UiBridgeConnectionResolution.from_connection(
+            connection,
             descriptor=UiBridgeDescriptorResolution(
                 status="ambiguous_ui_bridge",
                 summaries=tuple(
@@ -763,6 +829,10 @@ class UiBridgeDescriptorReader:
                 descriptor=None,
                 path=resolved_path,
                 errors=(AgentError.from_exception("stale_ui_bridge_descriptor", exc),),
+                stale_process_descriptor=isinstance(
+                    exc,
+                    UiBridgeDescriptorProcessGoneError,
+                ),
             )
         return UiBridgeDescriptorReadResult(descriptor=descriptor, path=resolved_path)
 
@@ -828,7 +898,7 @@ class UiBridgeDescriptorReader:
         try:
             os.kill(descriptor.pid, 0)
         except ProcessLookupError as exc:
-            raise ValueError(f"UI bridge process is not running: {descriptor.pid}") from exc
+            raise UiBridgeDescriptorProcessGoneError(descriptor.pid) from exc
         except PermissionError:
             return
 
@@ -839,11 +909,7 @@ class UiBridgeDescriptorDirectoryCatalog:
     @classmethod
     def live_descriptors(cls) -> tuple[UiBridgeDescriptorFile, ...]:
         descriptors: list[UiBridgeDescriptorFile] = []
-        directory = UiBridgeDescriptorDirectoryAuthority.default_descriptor_dir()
-        if not directory.exists():
-            return ()
-        for path in sorted(directory.glob("ui_bridge_*.json")):
-            result = UiBridgeDescriptorReader.read(path)
+        for result in cls._read_descriptor_results():
             if result.ok and result.descriptor is not None:
                 descriptors.append(result.descriptor)
         return tuple(descriptors)
@@ -852,11 +918,7 @@ class UiBridgeDescriptorDirectoryCatalog:
     def descriptor_catalog(cls) -> UiBridgeCatalog:
         descriptors: list[UiBridgeDescriptorSummary] = []
         errors: list[AgentError] = []
-        directory = UiBridgeDescriptorDirectoryAuthority.default_descriptor_dir()
-        if not directory.exists():
-            return UiBridgeCatalog(schema_version=SCHEMA_VERSION)
-        for path in sorted(directory.glob("ui_bridge_*.json")):
-            result = UiBridgeDescriptorReader.read(path)
+        for result in cls._read_descriptor_results():
             if result.descriptor is not None and not result.errors:
                 descriptors.append(
                     UiBridgeDescriptorSummaryBuilder.summary(result.descriptor, "live")
@@ -868,6 +930,27 @@ class UiBridgeDescriptorDirectoryCatalog:
             bridges=tuple(descriptors),
             errors=tuple(errors),
         )
+
+    @classmethod
+    def _read_descriptor_results(cls) -> tuple[UiBridgeDescriptorReadResult, ...]:
+        results: list[UiBridgeDescriptorReadResult] = []
+        for directory in UiBridgeDescriptorDirectoryAuthority.descriptor_dirs():
+            if not directory.exists():
+                continue
+            for path in sorted(directory.glob("ui_bridge_*.json")):
+                result = UiBridgeDescriptorReader.read(path)
+                if result.stale_process_descriptor:
+                    cls._remove_stale_process_descriptor(result.path)
+                    continue
+                results.append(result)
+        return tuple(results)
+
+    @staticmethod
+    def _remove_stale_process_descriptor(path: Path) -> None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
 
 
 class UiBridgeDescriptorResolver:
@@ -901,8 +984,8 @@ class UiBridgeDescriptorResolver:
     ) -> UiBridgeConnectionResolution:
         result = UiBridgeDescriptorReader.read(path)
         if not result.ok or result.descriptor is None:
-            return UiBridgeConnectionResolution(
-                connection=replace(connection, descriptor_file_path=str(result.path)),
+            return UiBridgeConnectionResolution.from_connection(
+                replace(connection, descriptor_file_path=str(result.path)),
                 descriptor=UiBridgeDescriptorResolution(
                     status="stale_ui_bridge_descriptor",
                 ),
@@ -921,8 +1004,8 @@ class UiBridgeDescriptorResolver:
             if descriptor.bridge_instance_id == bridge_instance_id
         )
         if not matches:
-            return UiBridgeConnectionResolution(
-                connection=connection,
+            return UiBridgeConnectionResolution.from_connection(
+                connection,
                 descriptor=UiBridgeDescriptorResolution(
                     status="ui_bridge_descriptor_not_found",
                 ),
@@ -945,8 +1028,8 @@ class UiBridgeDescriptorResolver:
             UiBridgeConnectionFields.from_descriptor(descriptor),
             defaults=connection,
         )
-        return UiBridgeConnectionResolution(
-            connection=descriptor_connection,
+        return UiBridgeConnectionResolution.from_connection(
+            descriptor_connection,
             descriptor=UiBridgeDescriptorResolution(
                 status=status,
                 summaries=(UiBridgeDescriptorSummaryBuilder.summary(descriptor, status),),
@@ -1013,30 +1096,30 @@ class UiBridgeService:
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiBridgeStatus:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._status_from_resolution(resolution)
         try:
-            status_result = self._gateway.status(resolution.connection)
+            status_result = self._gateway.status(resolution)
         except Exception as exc:
             return self._status_from_resolution(
-                UiBridgeConnectionResolution(
-                    connection=resolution.connection,
+                UiBridgeConnectionResolution.from_connection(
+                    resolution,
                     descriptor=resolution.descriptor,
                     errors=self._gateway_errors("ui_bridge_unreachable", exc),
                 )
             )
-        return resolution.project_status(status_result)
+        return resolution.descriptor.project_status(status_result, connection=resolution)
 
     def list_documents(
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiCodeDocumentCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiCodeDocumentCatalog(SCHEMA_VERSION, documents=(), errors=resolution.errors)
         try:
-            return self._gateway.list_documents(resolution.connection)
+            return self._gateway.list_documents(resolution)
         except Exception as exc:
             return UiCodeDocumentCatalog(
                 SCHEMA_VERSION,
@@ -1048,7 +1131,7 @@ class UiBridgeService:
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiStateSurfaceCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiStateSurfaceCatalog(
                 SCHEMA_VERSION,
@@ -1056,7 +1139,7 @@ class UiBridgeService:
                 errors=resolution.errors,
             )
         try:
-            return self._gateway.list_state_surfaces(resolution.connection)
+            return self._gateway.list_state_surfaces(resolution)
         except Exception as exc:
             return UiStateSurfaceCatalog(
                 SCHEMA_VERSION,
@@ -1068,7 +1151,7 @@ class UiBridgeService:
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiActionCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiActionCatalog(
                 SCHEMA_VERSION,
@@ -1076,7 +1159,7 @@ class UiBridgeService:
                 errors=resolution.errors,
             )
         try:
-            return self._gateway.list_actions(resolution.connection)
+            return self._gateway.list_actions(resolution)
         except Exception as exc:
             return UiActionCatalog(
                 SCHEMA_VERSION,
@@ -1088,7 +1171,7 @@ class UiBridgeService:
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiWindowCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiWindowCatalog(
                 schema_version=SCHEMA_VERSION,
@@ -1096,7 +1179,7 @@ class UiBridgeService:
                 errors=resolution.errors,
             )
         try:
-            return self._gateway.list_windows(resolution.connection)
+            return self._gateway.list_windows(resolution)
         except Exception as exc:
             return UiWindowCatalog(
                 schema_version=SCHEMA_VERSION,
@@ -1109,12 +1192,12 @@ class UiBridgeService:
         request: UiObjectStateScopeListRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiObjectStateScopeCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._object_state_scope_catalog_error(resolution.errors)
         try:
             return self._gateway.list_object_state_scopes(
-                resolution.connection,
+                resolution,
                 request,
             )
         except Exception as exc:
@@ -1127,11 +1210,11 @@ class UiBridgeService:
         request: UiCodeDocumentRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiCodeDocument:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._document_error(request, resolution.errors)
         try:
-            return self._gateway.get_document(resolution.connection, request)
+            return self._gateway.get_document(resolution, request)
         except Exception as exc:
             return self._document_error(
                 request,
@@ -1143,11 +1226,11 @@ class UiBridgeService:
         request: UiStateSurfaceRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiStateSurfaceDocument:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._state_surface_error(request, resolution.errors)
         try:
-            return self._gateway.get_state_surface(resolution.connection, request)
+            return self._gateway.get_state_surface(resolution, request)
         except Exception as exc:
             return self._state_surface_error(
                 request,
@@ -1159,11 +1242,11 @@ class UiBridgeService:
         request: UiActionInvokeRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiActionInvokeResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._action_error(request, resolution.errors)
         try:
-            return self._gateway.invoke_action(resolution.connection, request)
+            return self._gateway.invoke_action(resolution, request)
         except Exception as exc:
             return self._action_error(
                 request,
@@ -1175,11 +1258,11 @@ class UiBridgeService:
         request: UiWindowFocusRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiWindowFocusResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._window_focus_error(request, resolution.errors)
         try:
-            return self._gateway.focus_window(resolution.connection, request)
+            return self._gateway.focus_window(resolution, request)
         except Exception as exc:
             return self._window_focus_error(
                 request,
@@ -1191,11 +1274,11 @@ class UiBridgeService:
         request: UiWindowNavigateRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiWindowNavigateResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._window_navigate_error(request, resolution.errors)
         try:
-            return self._gateway.navigate_window(resolution.connection, request)
+            return self._gateway.navigate_window(resolution, request)
         except Exception as exc:
             return self._window_navigate_error(
                 request,
@@ -1207,11 +1290,11 @@ class UiBridgeService:
         request: UiWindowSnapshotRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiWindowSnapshotResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._window_snapshot_error(request, resolution.errors)
         try:
-            return self._gateway.snapshot_window(resolution.connection, request)
+            return self._gateway.snapshot_window(resolution, request)
         except Exception as exc:
             return self._window_snapshot_error(
                 request,
@@ -1223,7 +1306,7 @@ class UiBridgeService:
         request: UiCodeDocumentValidationRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiCodeDocumentValidationResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiCodeDocumentValidationResult(
                 schema_version=SCHEMA_VERSION,
@@ -1232,7 +1315,7 @@ class UiBridgeService:
                 errors=resolution.errors,
             )
         try:
-            return self._gateway.validate_document(resolution.connection, request)
+            return self._gateway.validate_document(resolution, request)
         except Exception as exc:
             return UiCodeDocumentValidationResult(
                 schema_version=SCHEMA_VERSION,
@@ -1246,7 +1329,7 @@ class UiBridgeService:
         request: UiCodeDocumentApplyRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiCodeDocumentApplyResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiCodeDocumentApplyResult(
                 schema_version=SCHEMA_VERSION,
@@ -1256,7 +1339,7 @@ class UiBridgeService:
                 errors=resolution.errors,
             )
         try:
-            return self._gateway.apply_document(resolution.connection, request)
+            return self._gateway.apply_document(resolution, request)
         except Exception as exc:
             return UiCodeDocumentApplyResult(
                 schema_version=SCHEMA_VERSION,
@@ -1271,11 +1354,11 @@ class UiBridgeService:
         request: UiSnapshotListRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiSnapshotCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._snapshot_catalog_error(resolution.errors)
         try:
-            return self._gateway.list_snapshots(resolution.connection, request)
+            return self._gateway.list_snapshots(resolution, request)
         except Exception as exc:
             return self._snapshot_catalog_error(
                 self._gateway_errors("ui_bridge_unavailable", exc)
@@ -1299,11 +1382,11 @@ class UiBridgeService:
                     ),
                 )
             )
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._restore_error(resolution.errors)
         try:
-            return self._gateway.restore_snapshot(resolution.connection, request)
+            return self._gateway.restore_snapshot(resolution, request)
         except Exception as exc:
             return self._restore_error(
                 self._gateway_errors("ui_bridge_unavailable", exc)
@@ -1314,11 +1397,11 @@ class UiBridgeService:
         request: UiTimeTravelHeadRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiSnapshotRestoreResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._restore_error(resolution.errors)
         try:
-            return self._gateway.time_travel_head(resolution.connection, request)
+            return self._gateway.time_travel_head(resolution, request)
         except Exception as exc:
             return self._restore_error(
                 self._gateway_errors("ui_bridge_unavailable", exc)
@@ -1328,11 +1411,11 @@ class UiBridgeService:
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiBranchCatalog:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiBranchCatalog(SCHEMA_VERSION, current_branch="", branches=(), errors=resolution.errors)
         try:
-            return self._gateway.list_branches(resolution.connection)
+            return self._gateway.list_branches(resolution)
         except Exception as exc:
             return UiBranchCatalog(
                 SCHEMA_VERSION,
@@ -1346,11 +1429,11 @@ class UiBridgeService:
         request: UiBranchSwitchRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiSnapshotRestoreResult:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return self._restore_error(resolution.errors)
         try:
-            return self._gateway.switch_branch(resolution.connection, request)
+            return self._gateway.switch_branch(resolution, request)
         except Exception as exc:
             return self._restore_error(
                 self._gateway_errors("ui_bridge_unavailable", exc)
@@ -1361,7 +1444,7 @@ class UiBridgeService:
         operation_id: str,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiBridgeOperationRef:
-        resolution = self._resolve(connection)
+        resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok:
             return UiBridgeOperationRef(
                 schema_version=SCHEMA_VERSION,
@@ -1374,7 +1457,7 @@ class UiBridgeService:
                 errors=resolution.errors,
             )
         try:
-            return self._gateway.get_operation_status(resolution.connection, operation_id)
+            return self._gateway.get_operation_status(resolution, operation_id)
         except Exception as exc:
             return UiBridgeOperationRef(
                 schema_version=SCHEMA_VERSION,
@@ -1387,12 +1470,6 @@ class UiBridgeService:
                 errors=self._gateway_errors("ui_bridge_unavailable", exc),
             )
 
-    def _resolve(
-        self,
-        connection: UiBridgeConnectionSpec,
-    ) -> UiBridgeConnectionResolution:
-        return self._descriptor_resolver.resolve(connection)
-
     @staticmethod
     def _status_from_resolution(
         resolution: UiBridgeConnectionResolution,
@@ -1400,8 +1477,8 @@ class UiBridgeService:
         return UiBridgeStatus(
             schema_version=SCHEMA_VERSION,
             reachable=False,
-            connection=_public_connection(resolution.connection),
-            descriptor_file_path=resolution.connection.descriptor_file_path,
+            connection=_public_connection(resolution),
+            descriptor_file_path=resolution.descriptor_file_path,
             descriptor_status=resolution.descriptor.status,
             descriptors=resolution.descriptor.summaries,
             errors=resolution.errors,

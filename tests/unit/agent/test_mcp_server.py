@@ -76,3 +76,15 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert "openhcs_ui_snapshot_window" in tool_names
     assert "openhcs_ui_restore_snapshot" in tool_names
     assert "openhcs_ui_get_operation_status" in tool_names
+
+
+def test_mcp_ui_bridge_timeout_policy_is_fail_fast():
+    assert server.McpUiBridgeTimeoutPolicy.resolve(None) == 750
+    assert server.McpUiBridgeTimeoutPolicy.resolve(2000) == 2000
+
+    try:
+        server.McpUiBridgeTimeoutPolicy.resolve(120_000)
+    except ValueError as exc:
+        assert "must not exceed" in str(exc)
+    else:
+        raise AssertionError("large UI bridge MCP timeout was accepted")
