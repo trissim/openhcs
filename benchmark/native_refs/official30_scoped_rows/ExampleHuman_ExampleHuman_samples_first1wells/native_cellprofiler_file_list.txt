@@ -1,0 +1,3 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleHuman/images/AS_09125_050116030001_D03f00d0.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleHuman/images/AS_09125_050116030001_D03f00d1.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleHuman/images/AS_09125_050116030001_D03f00d2.tif

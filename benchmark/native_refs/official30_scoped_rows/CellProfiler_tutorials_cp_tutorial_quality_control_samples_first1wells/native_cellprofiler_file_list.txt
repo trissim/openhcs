@@ -1,0 +1,10 @@
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s1_w22CA7BDF3-1425-4AE6-8E57-9C004D6F7FF2.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s1_w164FBEEF7-F77C-4892-86F5-72D0160D4FB2.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s1_w58DA6AF62-1799-4B85-BE17-744E12ADC245.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s1_w47457436C-5BE7-4DA2-B966-CCF64B9F0088.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s1_w3FD54227A-6BE4-460B-8E2C-54B8709F6E33.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s2_w246FFAEE1-BEB6-4C81-913B-B979EC0C4BC3.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s2_w1AA6B1894-F561-42EE-9D1D-E21E5C741B75.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s2_w50F1562CD-EBCF-408E-9D8D-F6F0FDD746C8.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s2_w46657239A-5AFE-4C29-BB9B-49978EFE4791.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE/IXMtest_A01_s2_w3A597237B-C3D7-43AE-8399-83E76DA1532D.tif

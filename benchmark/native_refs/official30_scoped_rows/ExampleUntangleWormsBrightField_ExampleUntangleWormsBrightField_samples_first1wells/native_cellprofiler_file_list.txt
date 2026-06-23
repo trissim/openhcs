@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleUntangleWormsBrightField/images/WT_orig.png
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleUntangleWormsBrightField/images/fat_orig.png

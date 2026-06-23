@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleCometAssay/images/CometTails.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleCometAssay/images/NoTails.tif

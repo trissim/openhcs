@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleTumor/images/30-2A1f.jpg
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleTumor/images/30-2A1b.jpg

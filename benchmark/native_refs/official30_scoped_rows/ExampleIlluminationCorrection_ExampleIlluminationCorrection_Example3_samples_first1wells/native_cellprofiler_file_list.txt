@@ -1,0 +1,1 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleIlluminationCorrection/images/ADSAStaphInfection2_A01_w2247376DD-6ADD-442D-AE47-F54A05F3EA94.tif

@@ -1,0 +1,71 @@
+CellProfiler Analyst workflow
+version: 1
+CP version : 4281
+
+Scatter
+	x-axis: ImageNumber
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PowerLogLogSlope_OrigER
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: ImageNumber
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PowerLogLogSlope_OrigHoechst
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: ImageNumber
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PowerLogLogSlope_OrigMito
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: ImageNumber
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PowerLogLogSlope_OrigPh_golgi
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: ImageNumber
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PowerLogLogSlope_OrigSyto
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: Image_ImageQuality_StdIntensity_OrigSyto
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PercentMaximal_OrigSyto
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: Image_ImageQuality_StdIntensity_OrigPh_golgi
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PercentMaximal_OrigPh_golgi
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: Image_ImageQuality_StdIntensity_OrigMito
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PercentMaximal_OrigMito
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: Image_ImageQuality_StdIntensity_OrigHoechst
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PercentMaximal_OrigHoechst
+	y-table: BBBC022QC_Per_Image
+
+Scatter
+	x-axis: Image_ImageQuality_StdIntensity_OrigER
+	x-table: BBBC022QC_Per_Image
+	y-axis: Image_ImageQuality_PercentMaximal_OrigER
+	y-table: BBBC022QC_Per_Image
+
+Histogram
+	x-axis: Image_ImageQuality_ThresholdOtsu_OrigHoechst_2W
+	table: BBBC022QC_Per_Image
+
+Histogram
+	x-axis: Image_ImageQuality_ThresholdOtsu_OrigPh_golgi_3FW
+	table: BBBC022QC_Per_Image

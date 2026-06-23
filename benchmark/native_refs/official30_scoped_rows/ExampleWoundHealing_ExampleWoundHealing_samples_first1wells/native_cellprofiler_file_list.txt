@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleWoundHealing/images/DMSO_B5_t0.JPG
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleWoundHealing/images/DMSO_B5_t24.JPG

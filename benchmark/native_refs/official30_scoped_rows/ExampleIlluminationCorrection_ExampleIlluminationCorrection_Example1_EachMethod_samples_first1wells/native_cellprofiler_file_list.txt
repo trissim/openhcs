@@ -1,0 +1,1 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleIlluminationCorrection/images/AS_09047_050428030001_O14f01d2.TIF
