@@ -10,10 +10,12 @@ import logging
 import os  # For a potentially more dynamic default for num_workers
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union, Any, List, Annotated
+from typing import Optional, Union, List, Annotated, ClassVar
 from enum import Enum
 from abc import ABC, abstractmethod
+from numcodecs.abc import Codec
 from openhcs.constants import (
+    AllComponents,
     Microscope,
     SequentialComponents,
     VariableComponents,
@@ -59,33 +61,96 @@ class ZarrCompressor(Enum):
     ZSTD = "zstd"
     NONE = "none"
 
-    def create_compressor(
-        self, compression_level: int, shuffle: bool = True
-    ) -> Optional[Any]:
-        """Create the actual zarr compressor instance.
 
-        Args:
-            compression_level: Compression level (1-22 for ZSTD, 1-9 for others)
-            shuffle: Enable byte shuffling for better compression (blosc only)
+class ZarrCompressorFactory(ABC, metaclass=AutoRegisterMeta):
+    """Nominal strategy family for zarr compressor construction."""
 
-        Returns:
-            Configured zarr compressor instance or None for no compression
-        """
+    __registry_key__ = "compressor"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[dict[ZarrCompressor, type["ZarrCompressorFactory"]]] = {}
+
+    compressor: ClassVar[ZarrCompressor | None] = None
+
+    @abstractmethod
+    def create(
+        self,
+        compression_level: int,
+        shuffle: bool = True,
+    ) -> Optional[Codec]:
+        """Create the concrete codec for this compressor variant."""
+
+
+class NoZarrCompressorFactory(ZarrCompressorFactory):
+    """Factory for disabling zarr compression."""
+
+    compressor = ZarrCompressor.NONE
+
+    def create(
+        self,
+        compression_level: int,
+        shuffle: bool = True,
+    ) -> None:
+        return None
+
+
+class BloscZarrCompressorFactory(ZarrCompressorFactory):
+    """Factory for Blosc-backed zarr compression."""
+
+    compressor = ZarrCompressor.BLOSC
+
+    def create(
+        self,
+        compression_level: int,
+        shuffle: bool = True,
+    ) -> Codec:
         import zarr
 
-        match self:
-            case ZarrCompressor.NONE:
-                return None
-            case ZarrCompressor.BLOSC:
-                return zarr.Blosc(
-                    cname="lz4", clevel=compression_level, shuffle=shuffle
-                )
-            case ZarrCompressor.ZLIB:
-                return zarr.Zlib(level=compression_level)
-            case ZarrCompressor.LZ4:
-                return zarr.LZ4(acceleration=compression_level)
-            case ZarrCompressor.ZSTD:
-                return zarr.Zstd(level=compression_level)
+        return zarr.Blosc(cname="lz4", clevel=compression_level, shuffle=shuffle)
+
+
+class ZlibZarrCompressorFactory(ZarrCompressorFactory):
+    """Factory for zlib-backed zarr compression."""
+
+    compressor = ZarrCompressor.ZLIB
+
+    def create(
+        self,
+        compression_level: int,
+        shuffle: bool = True,
+    ) -> Codec:
+        import zarr
+
+        return zarr.Zlib(level=compression_level)
+
+
+class Lz4ZarrCompressorFactory(ZarrCompressorFactory):
+    """Factory for LZ4-backed zarr compression."""
+
+    compressor = ZarrCompressor.LZ4
+
+    def create(
+        self,
+        compression_level: int,
+        shuffle: bool = True,
+    ) -> Codec:
+        import zarr
+
+        return zarr.LZ4(acceleration=compression_level)
+
+
+class ZstdZarrCompressorFactory(ZarrCompressorFactory):
+    """Factory for Zstd-backed zarr compression."""
+
+    compressor = ZarrCompressor.ZSTD
+
+    def create(
+        self,
+        compression_level: int,
+        shuffle: bool = True,
+    ) -> Codec:
+        import zarr
+
+        return zarr.Zstd(level=compression_level)
 
 
 class ZarrChunkStrategy(Enum):
@@ -151,7 +216,8 @@ class GlobalPipelineConfig:
     """
 
     materialization_results_path: Annotated[Path, abbreviation("results_path")] = field(
-        default=Path("results"), metadata={"ui_hidden": True}
+        default_factory=lambda: Path("results"),
+        metadata={"ui_hidden": True},
     )
     """
     Path for materialized analysis results (CSV, JSON files from artifacts).
@@ -176,7 +242,8 @@ class GlobalPipelineConfig:
     """Number of worker processes/threads for parallelizable tasks."""
 
     microscope: Annotated[Microscope, abbreviation("scope")] = field(
-        default=Microscope.AUTO, metadata={"ui_hidden": True}
+        default_factory=lambda: Microscope.AUTO,
+        metadata={"ui_hidden": True},
     )
     """Default microscope type for auto-detection."""
 
@@ -192,7 +259,7 @@ class GlobalPipelineConfig:
         MultiprocessingStartMethod,
         abbreviation("mp_start"),
     ] = field(
-        default=MultiprocessingStartMethod.SPAWN,
+        default_factory=lambda: MultiprocessingStartMethod.SPAWN,
         metadata={"ui_hidden": True},
     )
     """Process start method for multiprocessing workers. SPAWN is CUDA-safe; FORK is CPU-only."""
@@ -217,12 +284,6 @@ from openhcs.utils.enum_factory import create_colormap_enum
 from openhcs.utils.display_config_factory import (
     create_napari_display_config,
     create_fiji_display_config,
-)
-
-
-# Import component order builder from factory module
-from openhcs.core.streaming_config_factory import (
-    build_component_order as _build_component_order,
 )
 
 # Create colormap enum with minimal set to avoid importing napari (→ dask → GPU libs)
@@ -260,7 +321,7 @@ NapariDisplayConfig = create_napari_display_config(
     dimension_mode_enum=NapariDimensionMode,
     variable_size_handling_enum=NapariVariableSizeHandling,
     visualization_dtype_enum=VisualizationDtype,
-    component_order=_build_component_order(),
+    component_order=AllComponents.ordered_names(),
 )
 
 # Apply the global pipeline config decorator with ui_hidden=True
@@ -308,7 +369,7 @@ class FijiDimensionMode(Enum):
 FijiDisplayConfig = create_fiji_display_config(
     lut_enum=FijiLUT,
     dimension_mode_enum=FijiDimensionMode,
-    component_order=_build_component_order(),
+    component_order=AllComponents.ordered_names(),
 )
 
 # Apply the global pipeline config decorator with ui_hidden=True
@@ -355,6 +416,10 @@ class ZarrConfig:
         ZarrChunkStrategy.WELL
     )
     """Chunking strategy: WELL (single chunk per well) or FILE (one chunk per file)."""
+
+    @property
+    def compressor_factory(self) -> ZarrCompressorFactory:
+        return ZarrCompressorFactory.__registry__[self.compressor]()
 
 
 @abbreviation("vfs")
@@ -665,6 +730,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     """
 
     # AutoRegisterMeta configuration - subclasses auto-register by snake_case class name
+    __registry__: ClassVar[dict[str, type["StreamingConfig"]]]
     __registry_key__ = "_streaming_config_key"
     __key_extractor__ = (
         lambda class_name, cls: __import__("re")
@@ -705,44 +771,107 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
         """Key to use in step_plan for this config's output paths."""
         pass
 
+    @property
     @abstractmethod
-    def get_streaming_kwargs(self, global_config) -> dict:
-        """Return kwargs needed for this streaming backend."""
+    def viewer_title(self) -> str:
+        """Title shown by this streaming viewer."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def from_config(cls, config) -> Optional["StreamingConfig"]:
+        """Read this streaming config type from an ObjectState-backed config."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def port_from_config(cls, config) -> Optional[int]:
+        """Read this streaming config type's port from an ObjectState-backed config."""
         pass
 
     @abstractmethod
-    def create_visualizer(self, filemanager, visualizer_config):
+    def viewer_surface(self, source):
+        """Return viewer transport/display/source surface for this source identity."""
+        pass
+
+    @abstractmethod
+    def streaming_viewer_surface(self, context):
+        """Return viewer transport/display/source surface for a processing context."""
+        pass
+
+    @abstractmethod
+    def create_visualizer(self, filemanager, visualizer_config=None):
         """Create and return the appropriate visualizer for this streaming config."""
         pass
 
+    @classmethod
+    def supported_config_keys(cls) -> tuple[str, ...]:
+        """Registered ObjectState field keys for streaming configs."""
+        return tuple(sorted(cls.__registry__))
 
-# Auto-generate streaming configs using factory (reduces ~110 lines to ~20 lines)
-from openhcs.core.streaming_config_factory import create_streaming_config
+    @classmethod
+    def config_type_for_key(cls, config_key: str) -> type["StreamingConfig"]:
+        """Return the registered streaming config type for an ObjectState field key."""
+        return cls.__registry__[config_key]
 
-NapariStreamingConfig = abbreviation("nap")(
-    create_streaming_config(
+    @classmethod
+    def display_name_for_config_key(cls, config_key: str) -> str:
+        """Return viewer display text for an ObjectState streaming config field key."""
+        return cls.config_type_for_key(config_key)().display_name
+
+
+from openhcs.core.streaming_config_factory import (
+    StreamingConfigBehaviorMixin,
+    StreamingViewerPresentation,
+    StreamingViewerConfigSpec,
+)
+
+
+@abbreviation("nap")
+@global_pipeline_config(preview_label="NAP")
+@dataclass(frozen=True)
+class NapariStreamingConfig(
+    StreamingConfigBehaviorMixin,
+    StreamingConfig,
+    NapariDisplayConfig,
+):
+    """Streaming configuration for Napari."""
+
+    _streaming_config_key: ClassVar[str] = "napari_streaming_config"
+    streaming_spec: ClassVar[StreamingViewerConfigSpec] = StreamingViewerConfigSpec(
         viewer_name="napari",
-        port=5555,
+        registry_key="napari_streaming_config",
+        display_name="Napari",
+        step_plan_output_key="napari_streaming_paths",
+        presentation=StreamingViewerPresentation("OpenHCS Napari Visualization"),
         backend=Backend.NAPARI_STREAM,
-        display_config_class=NapariDisplayConfig,
         visualizer_module="openhcs.runtime.napari_stream_visualizer",
-        visualizer_class_name="NapariStreamVisualizer",
-        preview_label="NAP",
     )
-)
+    port: int = 5555
 
-FijiStreamingConfig = abbreviation("fiji")(
-    create_streaming_config(
+
+@abbreviation("fiji")
+@global_pipeline_config(preview_label="FIJI")
+@dataclass(frozen=True)
+class FijiStreamingConfig(
+    StreamingConfigBehaviorMixin,
+    StreamingConfig,
+    FijiDisplayConfig,
+):
+    """Streaming configuration for Fiji."""
+
+    _streaming_config_key: ClassVar[str] = "fiji_streaming_config"
+    streaming_spec: ClassVar[StreamingViewerConfigSpec] = StreamingViewerConfigSpec(
         viewer_name="fiji",
-        port=5565,
+        registry_key="fiji_streaming_config",
+        display_name="Fiji",
+        step_plan_output_key="fiji_streaming_paths",
+        presentation=StreamingViewerPresentation("OpenHCS Fiji Visualization"),
         backend=Backend.FIJI_STREAM,
-        display_config_class=FijiDisplayConfig,
         visualizer_module="openhcs.runtime.fiji_stream_visualizer",
-        visualizer_class_name="FijiStreamVisualizer",
-        extra_fields={"fiji_executable_path": (Optional[Path], None)},
-        preview_label="FIJI",
     )
-)
+    port: int = 5565
+    fiji_executable_path: Optional[Path] = None
 
 # Inject all accumulated fields at the end of module loading.
 # Important: use the same lazy_factory module that registered injections

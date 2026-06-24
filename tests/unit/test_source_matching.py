@@ -7,13 +7,16 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
 )
 from openhcs.core.source_matching import (
+    ORIGINAL_SOURCE_METADATA_FIELD,
     source_component_metadata_values,
     merge_source_metadata,
     source_component_metadata_value,
     source_filters_match,
     source_metadata_component,
+    source_metadata_value,
     source_metadata_values_equal,
     with_source_component_metadata,
+    with_original_source_metadata,
 )
 
 
@@ -93,9 +96,22 @@ def test_source_component_metadata_values_include_native_and_alias_fields():
     )
 
 
+def test_original_source_metadata_preserves_literal_selectors_without_axis_pollution():
+    metadata = with_original_source_metadata(
+        {"channel": "1"},
+        {"ChannelNumber": "2"},
+        path="A01_s001_w1_z001_t001.tif",
+    )
+
+    assert source_metadata_value(metadata, "ChannelNumber") == "2"
+    assert source_metadata_value(metadata, "channel") == "1"
+    assert source_component_metadata_values(metadata, AllComponents.CHANNEL) == ("1",)
+
+
 def test_with_source_component_metadata_replaces_alias_fields():
     metadata = {
         "Well": "A01",
+        ORIGINAL_SOURCE_METADATA_FIELD: {"Well": "A01"},
         "Metadata_Well": "A01",
         "ChannelNumber": "1",
     }
@@ -107,6 +123,7 @@ def test_with_source_component_metadata_replaces_alias_fields():
     )
 
     assert updated == {
+        ORIGINAL_SOURCE_METADATA_FIELD: {"Well": "A01"},
         "ChannelNumber": "1",
         "well": "W001",
     }

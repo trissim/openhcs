@@ -59,6 +59,7 @@ class FunctionStepExecutionPlan:
     input_conversion: InputConversionPlan | None
     materialized_output: MaterializedOutputPlan | None
     streaming_configs: tuple[StreamingConfig, ...]
+    source_identity_stack_axes: frozenset[str]
     compiled_function_pattern: CompiledFunctionPattern
     artifact_inputs_by_group: Mapping[Any, ArtifactInputPlans]
     artifact_outputs_by_group: Mapping[Any, ArtifactOutputPlans]
@@ -140,6 +141,7 @@ class FunctionStepExecutionPlan:
             input_conversion=compiled_plan.input_conversion,
             materialized_output=compiled_plan.materialized_output,
             streaming_configs=tuple(compiled_plan.streaming_configs.values()),
+            source_identity_stack_axes=compiled_plan.source_identity_stack_axes,
             compiled_function_pattern=_require_value(
                 compiled_plan.compiled_function_pattern,
                 "compiled_function_pattern",
@@ -164,6 +166,14 @@ class FunctionStepExecutionPlan:
     @property
     def group_by_name(self) -> str | None:
         return self.group_by.name if self.group_by else None
+
+    @property
+    def group_projects_runtime_plane(self) -> bool:
+        """Return whether the current group axis is a runtime-slice stack axis."""
+        group_by_value = self.group_by_value
+        if group_by_value is None:
+            return False
+        return group_by_value in self.source_identity_stack_axes
 
     @property
     def input_conversion_dir(self) -> Path:

@@ -7,25 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openhcs.core.artifacts import ArtifactKey, ArtifactKind
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKey, ArtifactKind
 from openhcs.core.runtime_values import RuntimeValue
-
-
-def require_runtime_value_store(
-    owner: object,
-    *,
-    owner_name: str,
-) -> "RuntimeValueStore":
-    """Return the runtime value store attached to an execution owner."""
-    store = getattr(owner, "runtime_value_store", None)
-    if store is None:
-        raise RuntimeError(f"{owner_name}.runtime_value_store is required.")
-    if not isinstance(store, RuntimeValueStore):
-        raise TypeError(
-            f"{owner_name}.runtime_value_store must be RuntimeValueStore, "
-            f"got {type(store).__name__}."
-        )
-    return store
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +89,37 @@ class RuntimeArtifactQuery:
     axis_id: str
     target: RuntimeArtifactQueryTarget
 
+    @classmethod
+    def from_input_plan(
+        cls,
+        input_plan: ArtifactInputPlan,
+        *,
+        axis_id: str,
+        backend: str,
+        group_key: str | None = None,
+    ) -> "RuntimeArtifactQuery":
+        """Build the runtime-store query for one compiled artifact input."""
+        if input_plan.path == "self":
+            return cls(
+                name=input_plan.name,
+                kind=input_plan.kind,
+                axis_id=axis_id,
+                target=RuntimeArtifactGroupTarget(
+                    input_plan.require_single_group_key()
+                ),
+            )
+        return cls(
+            name=input_plan.name,
+            kind=input_plan.kind,
+            axis_id=axis_id,
+            target=RuntimeArtifactLocationTarget(
+                RuntimeArtifactLocation(
+                    path=input_plan.path_for_runtime_query(group_key),
+                    backend=backend,
+                )
+            ),
+        )
+
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("RuntimeArtifactQuery.name cannot be empty.")
@@ -170,6 +184,10 @@ class RuntimeValueStore:
                 str | None,
                 bool,
             ],
+            tuple[StoredRuntimeValue, ...],
+        ] = {}
+        self._find_matching_cache: dict[
+            tuple[int, RuntimeArtifactQuery],
             tuple[StoredRuntimeValue, ...],
         ] = {}
 
@@ -248,11 +266,17 @@ class RuntimeValueStore:
         query: RuntimeArtifactQuery,
     ) -> tuple[StoredRuntimeValue, ...]:
         """Return stored records matched by a typed runtime artifact query."""
-        return tuple(
+        cache_key = (self._revision, query)
+        cached = self._find_matching_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = tuple(
             record
             for record in self._records_by_location.values()
             if query.matches(record)
         )
+        self._find_matching_cache[cache_key] = result
+        return result
 
     def get(self, key: ArtifactKey) -> StoredRuntimeValue:
         """Return one stored value by exact typed artifact key."""
@@ -372,6 +396,7 @@ class RuntimeValueStore:
     def _mark_mutated(self) -> None:
         self._revision += 1
         self._find_cache.clear()
+        self._find_matching_cache.clear()
 
 
 def _validate_overwrite(

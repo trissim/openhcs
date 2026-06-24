@@ -217,6 +217,22 @@ def is_image_stack(value: Any) -> bool:
     )
 
 
+def image_spatial_shape_yx(value: Any) -> tuple[int, int] | None:
+    """Return the XY frame for an image payload shape, if it is image-like."""
+    array_shape = ArrayShape.from_value(value)
+    if array_shape is None or array_shape.ndim < 2:
+        return None
+    if ColorImageShapeRole.matches_slice_shape(array_shape):
+        return tuple(int(axis) for axis in array_shape.shape[:2])
+    if ColorImageShapeRole.matches_stack_shape(array_shape):
+        return tuple(int(axis) for axis in array_shape.shape[1:3])
+    if ColorVolumeShapeRole.matches_slice_shape(array_shape):
+        return tuple(int(axis) for axis in array_shape.shape[-3:-1])
+    if ColorVolumeShapeRole.matches_stack_shape(array_shape):
+        return tuple(int(axis) for axis in array_shape.shape[-3:-1])
+    return tuple(int(axis) for axis in array_shape.shape[-2:])
+
+
 def trailing_spatial_target_shape(
     shape: tuple[int, ...],
     spatial_shape: tuple[int, ...],

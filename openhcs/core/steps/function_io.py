@@ -4,22 +4,84 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence, TypeAlias
 
 from openhcs.constants.constants import Backend, LOADABLE_IMAGE_EXTENSIONS
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.runtime_values import (
-    image_payload_metadata_from_source,
-    image_payload_with_context,
+    ImagePayloadMetadataInput,
+    ImagePayloadSourceMetadataContext,
+    RuntimeImagePayloadContext,
 )
+from openhcs.core.source_image_provenance import SourceImageIdentity
 
 if TYPE_CHECKING:
+    from openhcs.core.config import ZarrConfig
     from openhcs.core.context.processing_context import ProcessingContext
-
+    from openhcs.microscopes.microscope_base import MicroscopeHandler
+    from polystore.filemanager import FileManager
 
 logger = logging.getLogger(__name__)
 
+BackendOptionValue: TypeAlias = "str | int | float | bool | ZarrConfig | None"
+ZarrBackendConfig: TypeAlias = "Mapping[str, BackendOptionValue]"
+
+
+@dataclass(frozen=True, slots=True)
+class StepPreloadFileSet:
+    """Execution-scoped source files that must be available in memory backend."""
+
+    paths: tuple[str, ...]
+
+    @classmethod
+    def from_paths(cls, paths: Sequence[str | Path]) -> "StepPreloadFileSet":
+        """Return a deterministic file set while preserving first-seen order."""
+        return cls(tuple(dict.fromkeys(str(path) for path in paths)))
+
+    def missing_memory_paths(
+        self,
+        filemanager: FileManager,
+    ) -> tuple[str, ...]:
+        """Return source paths not already copied into the execution memory backend."""
+        return tuple(
+            path
+            for path in self.paths
+            if not filemanager.exists(path, Backend.MEMORY.value)
+        )
+
+    def load_missing_payloads(
+        self,
+        *,
+        filemanager: FileManager,
+        read_backend: str,
+        zarr_config: ZarrBackendConfig | None,
+    ) -> tuple[tuple[str, ...], list[ImagePayloadMetadataInput]]:
+        """Load missing source payloads and wrap them with source metadata."""
+        missing_paths = self.missing_memory_paths(filemanager)
+        if not missing_paths:
+            return (), []
+        if read_backend == Backend.ZARR.value:
+            raw_images = filemanager.load_batch(
+                list(missing_paths),
+                read_backend,
+                zarr_config=zarr_config,
+            )
+        else:
+            raw_images = filemanager.load_batch(list(missing_paths), read_backend)
+        return missing_paths, [
+            RuntimeImagePayloadContext(
+                image,
+                mask=None,
+                metadata=ImagePayloadSourceMetadataContext(
+                    SourceImageIdentity(file_path),
+                    read_backend=read_backend,
+                    filemanager=filemanager,
+                ).metadata_request(image).metadata(),
+            ).payload()
+            for image, file_path in zip(raw_images, missing_paths, strict=True)
+        ]
 
 def generate_materialized_paths(
     memory_paths: Sequence[str],
@@ -32,10 +94,9 @@ def generate_materialized_paths(
         for memory_path in memory_paths
     ]
 
-
 def calculate_zarr_dimensions(
     file_paths: Sequence[str | Path],
-    microscope_handler: Any,
+    microscope_handler: MicroscopeHandler,
 ) -> tuple[int, int, int]:
     """Calculate Zarr channel/z/site dimensions from parsed filenames."""
     parsed_files = [
@@ -67,18 +128,17 @@ def calculate_zarr_dimensions(
 
     return max(1, n_channels), max(1, n_z), max(1, n_fields)
 
-
 def save_materialized_data(
-    filemanager: Any,
-    memory_data: Sequence[Any],
+    filemanager: FileManager,
+    memory_data: Sequence[ImagePayloadMetadataInput],
     materialized_paths: Sequence[str],
     materialized_backend: str,
-    zarr_config: Mapping[str, Any] | None,
+    zarr_config: ZarrBackendConfig | None,
     context: ProcessingContext,
     axis_id: str,
 ) -> None:
     """Save data to a materialized backend with microscope/Zarr metadata."""
-    save_kwargs: dict[str, Any] = {
+    save_kwargs: dict[str, BackendOptionValue] = {
         "parser_name": context.microscope_handler.parser.__class__.__name__,
         "microscope_type": context.microscope_handler.microscope_type,
     }
@@ -111,13 +171,12 @@ def save_materialized_data(
         payloads, list(materialized_paths), materialized_backend, **save_kwargs
     )
 
-
 def get_all_image_paths(
     input_dir: str | Path,
     backend: str,
     axis_id: str,
-    filemanager: Any,
-    microscope_handler: Any,
+    filemanager: FileManager,
+    microscope_handler: MicroscopeHandler,
 ) -> list[str]:
     """Get all image file paths for one multiprocessing axis value."""
     from openhcs.constants import MULTIPROCESSING_AXIS
@@ -151,11 +210,10 @@ def get_all_image_paths(
     )
     return full_file_paths
 
-
 def create_image_path_getter(
     axis_id: str,
-    filemanager: Any,
-    microscope_handler: Any,
+    filemanager: FileManager,
+    microscope_handler: MicroscopeHandler,
 ) -> Callable[[str | Path, str], list[str]]:
     """Create a path getter bound to one multiprocessing axis value."""
 
@@ -170,20 +228,19 @@ def create_image_path_getter(
 
     return get_paths_for_axis
 
-
 def bulk_preload_step_images(
     step_input_dir: Path,
     axis_id: str,
     read_backend: str,
-    filemanager: Any,
-    microscope_handler: Any,
-    zarr_config: Mapping[str, Any] | None = None,
+    filemanager: FileManager,
+    microscope_handler: MicroscopeHandler,
+    zarr_config: ZarrBackendConfig | None = None,
     patterns_to_preload: Sequence[str] | None = None,
     variable_components: Sequence[str] | None = None,
 ) -> None:
     """Preload this step's images from the source backend into the memory backend."""
     if patterns_to_preload is not None:
-        all_files = [
+        all_files = (
             file_path
             for pattern in patterns_to_preload
             for file_path in microscope_handler.path_list_from_pattern(
@@ -193,51 +250,47 @@ def bulk_preload_step_images(
                 read_backend,
                 variable_components,
             )
-        ]
-        full_file_paths = [
+        )
+        full_file_paths = (
             str(step_input_dir / file_path)
             if not Path(file_path).is_absolute()
             else str(file_path)
-            for file_path in set(all_files)
-        ]
+            for file_path in all_files
+        )
     else:
         get_paths_for_axis = create_image_path_getter(
             axis_id, filemanager, microscope_handler
         )
         full_file_paths = get_paths_for_axis(step_input_dir, read_backend)
 
-    if not full_file_paths:
+    preload_file_set = StepPreloadFileSet.from_paths(full_file_paths)
+
+    if not preload_file_set.paths:
         raise RuntimeError(
             f"Bulk preload found no files for axis {axis_id} in {step_input_dir} "
             f"with backend {read_backend}."
         )
 
-    if read_backend == Backend.ZARR.value:
-        raw_images = filemanager.load_batch(
-            full_file_paths, read_backend, zarr_config=zarr_config
-        )
-    else:
-        raw_images = filemanager.load_batch(full_file_paths, read_backend)
-    raw_images = [
-        image_payload_with_context(
-            image,
-            metadata=image_payload_metadata_from_source(
-                image,
-                source_path=file_path,
-                read_backend=read_backend,
-                filemanager=filemanager,
-            ),
-        )
-        for image, file_path in zip(raw_images, full_file_paths)
-    ]
-
     filemanager.ensure_directory(str(step_input_dir), Backend.MEMORY.value)
-    for file_path in full_file_paths:
-        if filemanager.exists(file_path, Backend.MEMORY.value):
-            filemanager.delete(file_path, Backend.MEMORY.value)
-
-    filemanager.save_batch(raw_images, full_file_paths, Backend.MEMORY.value)
-
+    missing_paths, raw_images = preload_file_set.load_missing_payloads(
+        filemanager=filemanager,
+        read_backend=read_backend,
+        zarr_config=zarr_config,
+    )
+    if not missing_paths:
+        logger.debug(
+            "Bulk preload reused %s memory-backed files for axis %s",
+            len(preload_file_set.paths),
+            axis_id,
+        )
+        return
+    logger.debug(
+        "Bulk preload loading %s/%s files for axis %s",
+        len(missing_paths),
+        len(preload_file_set.paths),
+        axis_id,
+    )
+    filemanager.save_batch(list(raw_images), list(missing_paths), Backend.MEMORY.value)
 
 def update_metadata_for_zarr_conversion(
     plate_root: Path,

@@ -91,8 +91,7 @@ class SourceSliceUnstackRequest(ImageStackUnstackRequest):
     source_slice_shapes: Sequence[tuple[int, ...]]
 
     def slices(self) -> list[ImageStackSliceData]:
-        output_shape = tuple(np.shape(self.array))
-        if output_shape and output_shape in set(self.source_slice_shapes):
+        if self.output_is_source_slice():
             return [
                 MemoryConversionSource.DETECTED.conversion(
                     self.array,
@@ -101,6 +100,17 @@ class SourceSliceUnstackRequest(ImageStackUnstackRequest):
                 ).materialize()
             ]
         return list(self.layout_slices())
+
+    def output_is_source_slice(self) -> bool:
+        output_shape = tuple(np.shape(self.array))
+        if not output_shape:
+            return False
+        if output_shape in set(self.source_slice_shapes):
+            return True
+        return (
+            len(self.source_slice_shapes) == 1
+            and ImageStackLayout.is_unambiguous_slice(self.array)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,20 +174,13 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     layout_key: ClassVar[str | None] = None
     shape_role: ClassVar[type[ImageShapeRole]]
     stable_slice_shape_error: ClassVar[str | None] = None
-
-    @classmethod
-    def slice_predicate(cls, value: ImageStackData) -> bool:
-        return cls.shape_role.matches_slice(value)
-
-    @classmethod
-    def stack_predicate(cls, value: ImageStackData) -> bool:
-        return cls.shape_role.matches_stack(value)
+    disambiguate_single_candidate_stack_from_slices: ClassVar[bool] = True
 
     @classmethod
     def for_slices(cls, slices: Sequence[ImageStackSliceData]) -> "ImageStackLayout":
         return ImageStackLayoutSelection(
             matches=lambda layout_type: all(
-                layout_type.slice_predicate(slice_data)
+                layout_type.shape_role.matches_slice(slice_data)
                 for slice_data in slices
             ),
             failure_message=(
@@ -193,7 +196,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     def for_stack(cls, array: ImageStackData) -> "ImageStackLayout":
         array_shape = tuple(np.shape(array))
         return ImageStackLayoutSelection(
-            matches=lambda layout_type: layout_type.stack_predicate(array),
+            matches=lambda layout_type: layout_type.shape_role.matches_stack(array),
             failure_message=(
                 "OpenHCS image stack must be shaped (N, H, W), (N, Z, H, W), "
                 "(N, H, W, C), (N, Z, H, W, C), or (N, C, Z, H, W), "
@@ -212,7 +215,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         """Stack slices, or pass through one payload already shaped as a stack."""
         if len(slices) == 1:
             candidate = slices[0]
-            if cls._is_unambiguous_single_stack(candidate):
+            if cls.is_unambiguous_stack(candidate):
                 return MemoryConversionSource.DETECTED.conversion(
                     candidate,
                     target_type=memory_type,
@@ -256,9 +259,13 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         if (
             result_shape
             and input_shape
-            and result_shape[0] == input_shape[0]
+            and (
+                result_shape[0] == input_shape[0]
+                or result_shape[0] == 1
+                or cls.is_unambiguous_stack(result)
+            )
             and any(
-                layout_type.stack_predicate(result)
+                layout_type.shape_role.matches_stack(result)
                 for layout_type in cls.__registry__.values()
             )
         ):
@@ -274,8 +281,21 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         )
 
     @classmethod
-    def _is_unambiguous_single_stack(cls, candidate: ImageStackData) -> bool:
-        """Return True when one candidate is a stack and not also a valid slice."""
+    def is_slice(cls, candidate: ImageStackData) -> bool:
+        """Return whether a value is one file-level image payload."""
+        return any(
+            layout_type.shape_role.matches_slice(candidate)
+            for layout_type in cls.__registry__.values()
+        )
+
+    @classmethod
+    def is_unambiguous_slice(cls, candidate: ImageStackData) -> bool:
+        """Return whether a value is a slice without an explicit stack axis."""
+        return cls.is_slice(candidate) and not cls.is_unambiguous_stack(candidate)
+
+    @classmethod
+    def is_unambiguous_stack(cls, candidate: ImageStackData) -> bool:
+        """Return whether a value carries an explicit OpenHCS outer stack axis."""
         return any(
             layout_type.accepts_single_candidate_stack(candidate)
             for layout_type in cls.__registry__.values()
@@ -284,18 +304,11 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def accepts_single_candidate_stack(cls, candidate: ImageStackData) -> bool:
         """Return True when this layout can own a lone candidate as a stack."""
-        return cls.stack_predicate(candidate) and not any(
-            layout_type.slice_predicate(candidate)
-            for layout_type in ImageStackLayout.__registry__.values()
-        )
-
-    @classmethod
-    def is_unambiguous_stack(cls, candidate: ImageStackData) -> bool:
-        """Return whether a value carries an explicit OpenHCS outer stack axis."""
-        return any(
-            layout_type.accepts_single_candidate_stack(candidate)
-            for layout_type in ImageStackLayout.__registry__.values()
-        )
+        if not cls.shape_role.matches_stack(candidate):
+            return False
+        if not cls.disambiguate_single_candidate_stack_from_slices:
+            return True
+        return not ImageStackLayout.is_slice(candidate)
 
     def stack(
         self,
@@ -409,10 +422,7 @@ class GrayscaleVolumeStackLayout(ImageStackLayout):
     layout_key = "grayscale_volume"
     shape_role = GrayscaleVolumeShapeRole
     stable_slice_shape_error = "OpenHCS grayscale volume stacks require stable ZYX shape"
-
-    @classmethod
-    def accepts_single_candidate_stack(cls, candidate: ImageStackData) -> bool:
-        return cls.stack_predicate(candidate)
+    disambiguate_single_candidate_stack_from_slices = False
 
 
 class ColorVolumeStackLayout(ImageStackLayout):

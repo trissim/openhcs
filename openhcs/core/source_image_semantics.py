@@ -20,28 +20,25 @@ from openhcs.core.pipeline_image_schema import (
 )
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_values import (
-    ImagePayloadMetadata,
     ImageMetadataPayload,
+    ImagePayloadMetadata,
+    ImagePayloadSourceMetadataContext,
     MaskedImagePayload,
     RuntimeArrayData,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    image_payload_metadata_from_source,
 )
+from openhcs.core.source_image_provenance import SourceImageIdentity
 from openhcs.core.source_matching import source_metadata_value
 from openhcs.core.vfs_protocol import FileManagerLike
-
 
 @dataclass(frozen=True, slots=True)
 class SourceImagePayloadSemantics:
     """Typed source-image role behavior applied to one loaded payload."""
 
     role: ImageTypeSourceRole | None
-    source_path: str | None
-    source_component_metadata: Mapping[str, str] | None = None
-    read_backend: str | None = None
-    filemanager: FileManagerLike | None = None
+    source_context: ImagePayloadSourceMetadataContext | None = None
 
     @classmethod
     def from_source_metadata(
@@ -60,13 +57,14 @@ class SourceImagePayloadSemantics:
         role: ImageTypeSourceRole | None = None
         if image_type is not None:
             role = ImageTypeSourceRole.for_image_type(image_type)
-        return cls(
-            role=role,
-            source_path=source_path,
-            source_component_metadata=source_metadata,
-            read_backend=read_backend,
-            filemanager=filemanager,
-        )
+        source_context = None
+        if source_path is not None:
+            source_context = ImagePayloadSourceMetadataContext(
+                SourceImageIdentity(source_path, source_metadata),
+                read_backend,
+                filemanager,
+            )
+        return cls(role=role, source_context=source_context)
 
     def apply(self, payload: RuntimeArrayData) -> RuntimeArrayData:
         strategy = SourceImagePayloadRoleStrategy.for_role(self.role)
@@ -92,20 +90,13 @@ class SourceImagePayloadSemantics:
     ) -> ImagePayloadMetadata:
         """Return source-file image metadata for transformed payload data."""
         existing_metadata = image_payload_metadata(payload)
-        if self.source_path is None:
+        if self.source_context is None:
             if existing_metadata.has_values:
                 return existing_metadata
             if self.role is None:
                 return ImagePayloadMetadata()
             return ImagePayloadMetadata.for_array_payload(data)
-        return image_payload_metadata_from_source(
-            data,
-            self.source_path,
-            self.source_component_metadata,
-            self.read_backend,
-            self.filemanager,
-        )
-
+        return self.source_context.metadata_request(data).metadata()
 
 class SourceImagePayloadRoleStrategy(
     NominalTypeKeyedStrategyMixin,
@@ -144,7 +135,6 @@ class SourceImagePayloadRoleStrategy(
     ) -> RuntimeArrayData | None:
         return image_payload_mask(payload)
 
-
 @dataclass(frozen=True, slots=True)
 class UndeclaredSourceImagePayloadRoleStrategy(SourceImagePayloadRoleStrategy):
     """Payload behavior for sources without a pipeline image-type declaration."""
@@ -152,14 +142,12 @@ class UndeclaredSourceImagePayloadRoleStrategy(SourceImagePayloadRoleStrategy):
     value_type = None
     role: None = None
 
-
 @dataclass(frozen=True, slots=True)
 class DeclaredSourceImagePayloadRoleStrategy(SourceImagePayloadRoleStrategy):
     """Base payload behavior for declared pipeline image roles."""
 
     value_type = ImageTypeSourceRole
     role: ImageTypeSourceRole | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class ImageStackSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrategy):
@@ -185,7 +173,6 @@ class ImageStackSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrategy
         if is_color_image_stack(array):
             return tuple(int(value) for value in array.shape[:-1])
         return tuple(int(value) for value in array.shape)
-
 
 @dataclass(frozen=True, slots=True)
 class MonochromeImageStackSourcePayloadRoleStrategy(
@@ -214,7 +201,6 @@ class MonochromeImageStackSourcePayloadRoleStrategy(
         from skimage.color import rgb2gray
 
         return rgb2gray(rgb_data)
-
 
 @dataclass(frozen=True, slots=True)
 class ObjectLabelsSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrategy):

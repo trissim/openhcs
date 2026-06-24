@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 import math
 from typing import Any
 
@@ -11,7 +11,10 @@ import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.runtime_stores import StoredRuntimeValue
-from openhcs.core.runtime_values import ColumnarRows, MeasurementTable
+from openhcs.core.runtime_values import (
+    ColumnarRows,
+    MeasurementTable,
+)
 
 
 LIVE_MEASUREMENTS_CONTEXT_KEY = "live_measurements"
@@ -281,7 +284,7 @@ def _row_mapping(row: Any) -> Mapping[str, Any]:
     if isinstance(row, Mapping):
         return dict(row)
     if is_dataclass(row) and not isinstance(row, type):
-        return {field.name: getattr(row, field.name) for field in fields(row)}
+        return asdict(row)
     return {"value": row}
 
 
@@ -308,11 +311,8 @@ def _json_safe_cell(value: Any) -> Any:
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
-    if hasattr(value, "item"):
-        try:
-            return _json_safe_cell(value.item())
-        except (TypeError, ValueError):
-            pass
+    if isinstance(value, np.generic):
+        return _json_safe_cell(value.item())
     if isinstance(value, Mapping):
         return {str(key): _json_safe_cell(item) for key, item in value.items()}
     if _is_row_sequence(value):

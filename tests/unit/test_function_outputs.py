@@ -2,8 +2,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
-from polystore.streaming.viewer_transport import ViewerStreamKwarg
+from polystore.streaming.viewer_transport import (
+    ViewerStreamBackendKwargs,
+    ViewerStreamKwarg,
+    ViewerStreamRequest,
+    ViewerStreamSource,
+)
 from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
@@ -58,6 +64,20 @@ class StreamingViewerSurfaceStub:
         self.source = ViewerStreamSourceIdentity(
             microscope_handler=context.microscope_handler,
             plate_path=context.plate_path,
+        )
+
+    def viewer_backend_kwargs(self, *, producer, source_metadata, message_context):
+        return ViewerStreamBackendKwargs(
+            ViewerStreamRequest.from_message_context(
+                message_context=message_context,
+                viewer_transport=self.runtime_config.transport_endpoint,
+                display_config=self.display_config,
+                source=ViewerStreamSource(
+                    identity=self.source,
+                    metadata=source_metadata,
+                ),
+                producer=producer,
+            )
         )
 
 
@@ -138,19 +158,37 @@ def record_output_path(context, plan, path):
                 plan,
                 path,
                 identity,
-                ImagePayloadMetadata().source_provenance,
             )
         ],
     )
 
 
+def image_payload_with_source_metadata(pixels, metadata, mask=None):
+    return RuntimeImagePayloadContext(
+        pixels,
+        mask=mask,
+        metadata=ImagePayloadMetadata(
+            source_component_metadata=metadata,
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                component_metadata=(metadata,)
+            ),
+        ),
+    ).payload()
+
+
 def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
     path = "/tmp/output/A01_s1_w1.tif"
     pixels = np.ones((2, 3), dtype=np.uint16)
-    payload = RuntimeImagePayloadContext(
+    payload = image_payload_with_source_metadata(
         pixels,
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "extension": ".tif",
+        },
         mask=np.ones_like(pixels, dtype=bool),
-    metadata = ImagePayloadMetadata()).payload()
+    )
     filemanager = FileManagerStub({path: payload})
     context = context_stub(filemanager)
     plan = function_step_plan(path, "IdentifyPrimaryObjects")
@@ -163,7 +201,7 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
     assert backend == "napari_stream"
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.port == 5555
-    assert stream_request.source.metadata.component_metadata_by_path == (
+    assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
             "site": "1",
@@ -183,7 +221,7 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
             "site": {"1": None},
         }
     }
-    assert stream_request.producer_identity.to_payload() == {
+    assert stream_request.producer.identity.to_payload() == {
         "origin": "pipeline",
         "output_kind": "main",
         "output_key": "main",
@@ -196,7 +234,7 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
     assert streamed_data == [pixels]
 
 
-def test_stream_outputs_uses_path_metadata_when_payload_has_none():
+def test_stream_outputs_rejects_unaddressed_payload_metadata():
     class ParserStub:
         def parse_filename(self, name):
             assert name == "A01_s1_w3.tif"
@@ -209,23 +247,8 @@ def test_stream_outputs_uses_path_metadata_when_payload_has_none():
     plan = function_step_plan(path, "EnhanceOrSuppressFeatures")
     record_output_path(context, plan, path)
 
-    StreamOutputsAuthority.stream_outputs(context, plan)
-
-    [(_streamed_data, _streamed_paths, _backend, kwargs)] = filemanager.saved_batches
-    stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
-    assert stream_request.source.metadata.component_metadata_by_path == (
-        {"well": "A01", "site": "1", "channel": "3"},
-    )
-    assert stream_request.message_extra["component_names_metadata"] == {
-        "channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"},
-        "well": {"A01": None},
-        "site": {"1": None},
-    }
-    assert stream_request.message_extra["component_value_domain"] == {
-        "well": ["A01"],
-        "site": [1],
-        "channel": [1, 2, 3],
-    }
+    with pytest.raises(ValueError, match="source component metadata"):
+        StreamOutputsAuthority.stream_outputs(context, plan)
 
 
 def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
@@ -250,7 +273,7 @@ def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
     assert backend == "napari_stream"
     assert [item.shape for item in streamed_data] == [(3, 4, 3), (3, 4, 3)]
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
-    assert stream_request.source.metadata.component_metadata_by_path == (
+    assert stream_request.source.metadata.metadata_by_index == (
         first_metadata,
         second_metadata,
     )
@@ -264,7 +287,7 @@ def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
         "site": [1],
         "channel": [1, 2, 3],
     }
-    assert stream_request.producer_identity.output_key == "main"
+    assert stream_request.producer.identity.output_key == "main"
 
 
 def test_stream_outputs_skips_unidentified_stack_without_per_slice_metadata():
@@ -288,7 +311,19 @@ def test_stream_outputs_skips_unidentified_stack_without_per_slice_metadata():
 def test_stream_outputs_keeps_main_stream_with_adapter_managed_artifact_outputs():
     path = "/tmp/output/A01_s1_w1.tif"
     pixels = np.ones((2, 3), dtype=np.uint16)
-    filemanager = FileManagerStub({path: pixels})
+    filemanager = FileManagerStub(
+        {
+            path: image_payload_with_source_metadata(
+                pixels,
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "1",
+                    "extension": ".tif",
+                },
+            )
+        }
+    )
     context = context_stub(filemanager)
     invocation = SimpleNamespace(
         artifact_output_keys=("SemanticImage",),
@@ -320,4 +355,4 @@ def test_stream_outputs_keeps_main_stream_with_adapter_managed_artifact_outputs(
     assert streamed_paths == [path]
     assert backend == "napari_stream"
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
-    assert stream_request.producer_identity.output_kind == "main"
+    assert stream_request.producer.identity.output_kind == "main"

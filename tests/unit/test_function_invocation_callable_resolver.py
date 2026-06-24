@@ -1,8 +1,8 @@
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.function_patterns import CompiledFunctionInvocation, FunctionInvocationKey
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.pipeline.compiler import FunctionReference
+from openhcs.core.function_reference import FunctionReference
 from openhcs.core.steps.function_runtime import FunctionInvocationCallableResolver
 
 
@@ -14,9 +14,11 @@ def _callable_contract_for_reference(
         func=reference,
         function_name=reference.function_name,
         module_name=reference.original_module,
-        input_memory_type="python",
-        output_memory_type="python",
-        module_artifact_contract=module_contract,
+        metadata=CallableMetadata(
+            input_memory_type="python",
+            output_memory_type="python",
+            module_artifact_contract=module_contract,
+        ),
     )
 
 
@@ -27,7 +29,6 @@ def test_function_reference_cache_key_includes_module_artifact_contract():
         memory_type="python",
         composite_key="cellprofiler:image_math",
         original_module="openhcs.processing.backends.cellprofiler",
-        preserved_attrs={},
     )
     first_contract = _callable_contract_for_reference(
         reference,

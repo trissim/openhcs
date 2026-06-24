@@ -10,7 +10,7 @@ from pycodify import Assignment, generate_python_source
 
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.artifact_materialization_policy import (
     NO_ARTIFACT_MATERIALIZATION,
 )
@@ -25,8 +25,8 @@ from openhcs.core.function_patterns import (
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.pipeline.compiler import FunctionReference
-from openhcs.core.pipeline.compiler import FunctionReferenceTransportAuthority
+from openhcs.core.function_reference import FunctionReference
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.source_bindings import (
     GroupedSourceBindings,
     NamedSourceBinding,
@@ -43,8 +43,13 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
 )
 from openhcs.processing.materialization.core import MaterializationSpec
 from openhcs.processing.materialization.options import TiffStackOptions
+from openhcs.runtime.zmq_execution_client import (
+    OpenHCSExecutionSubmission,
+    PycodifiedPipelineCode,
+)
 from openhcs.runtime.zmq_pipeline_transport import (
     PipelineStepsBoundary,
+    PipelineStepsNamespaceProjection,
     ZMQPipelineCodeTransport,
     ZMQPipelineSourcePayload,
 )
@@ -105,7 +110,7 @@ def test_zmq_pipeline_transport_source_rebinds_cellprofiler_contracts():
     namespace: dict[str, object] = {}
     exec(source, namespace)
 
-    restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
     rebound = CellProfilerPipelineRuntimeRebinder(
         generated_module_name="generated_test_pipeline",
         contracts_by_module_num={1: contract},
@@ -120,6 +125,47 @@ def test_zmq_pipeline_transport_source_rebinds_cellprofiler_contracts():
     assert "cellprofiler_runtime" in inspect.signature(restored_func).parameters
     assert restored_contract.module_artifact_contract == contract
     pickle.dumps(rebound)
+
+
+def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callables():
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.interop.cellprofiler.runtime.module_execution import (
+        CellProfilerRuntimeCallable,
+    )
+
+    contract = ModuleArtifactContract(
+        module_name="IdentifySecondaryObjects",
+        inputs=(ArtifactSpec("Primary", ArtifactKind.OBJECT_LABELS),),
+        outputs=(ArtifactSpec("Secondary", ArtifactKind.OBJECT_LABELS),),
+    )
+    runtime_callable = cellprofiler_module_callable(
+        cellprofiler_backend.identify_secondary_objects,
+        contract,
+        declared_processing_contract="PURE_2D",
+    )
+    submission = OpenHCSExecutionSubmission(
+        plate_id="/tmp/plate",
+        pipeline_steps=[
+            FunctionStep(
+                func=runtime_callable,
+                name="IdentifySecondaryObjects",
+            )
+        ],
+        global_config=GlobalPipelineConfig(),
+    )
+
+    source = PycodifiedPipelineCode.from_task(submission).source
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
+    restored_func = restored[0].func
+    restored_contract = CallableContract.from_callable(restored_func)
+
+    assert "cellprofiler_module_callable" in source
+    assert "ModuleArtifactContract(" in source
+    assert isinstance(restored_func, CellProfilerRuntimeCallable)
+    assert restored_contract.module_artifact_contract == contract
+    pickle.dumps(restored.steps)
 
 
 def test_function_step_source_emits_source_bindings_once():
@@ -177,7 +223,7 @@ def test_zmq_pipeline_transport_preserves_explicit_lazy_processing_defaults():
     ).source
     namespace: dict[str, object] = {}
     exec(source, namespace)
-    restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
     restored_processing_config = vars(restored[0])["processing_config"]
 
     assert "group_by=GroupBy.NONE" in source
@@ -251,7 +297,7 @@ def test_cellprofiler_runtime_callable_source_derives_materialization_contract()
     namespace: dict[str, object] = {}
     exec(pipeline_source, namespace)
 
-    restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
     rebound = CellProfilerPipelineRuntimeRebinder(
         generated_module_name="generated_test_pipeline",
         contracts_by_module_num={1: contract},
@@ -287,7 +333,7 @@ def test_zmq_pipeline_transport_uses_source_only_cellprofiler_catalog_identity_a
     namespace: dict[str, object] = {}
     exec(source, namespace)
 
-    restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
     restored_func = restored[0].func
 
     assert "__openhcs_zmq_pipeline_payload__" not in source
@@ -393,7 +439,10 @@ def test_transport_authority_normalizes_cellprofiler_submodule_raw_contract():
     from openhcs.processing.backends.cellprofiler.crop import crop as raw_crop
 
     contract = CallableContract.from_callable(cellprofiler_backend.crop)
-    contract = replace(contract, raw_processing_function=raw_crop)
+    contract = replace(
+        contract,
+        metadata=contract.metadata.with_raw_processing_function(raw_crop),
+    )
     step_plan = CompiledStepPlan(
         step_index=0,
         step_name="Crop",
@@ -437,10 +486,6 @@ def test_transport_authority_normalizes_cellprofiler_submodule_raw_contract():
 
 
 def test_transport_authority_normalizes_function_reference_preserved_callables():
-    from openhcs.core.callable_contract import (
-        PROCESSING_PREPARE_ATTR,
-        RAW_PROCESSING_FUNCTION_ATTR,
-    )
     from openhcs.processing.backends.cellprofiler.crop import crop as raw_crop
 
     def local_prepare():
@@ -452,19 +497,16 @@ def test_transport_authority_normalizes_function_reference_preserved_callables()
         memory_type="numpy",
         composite_key="openhcs:openhcs.processing.backends.cellprofiler:crop",
         original_module="openhcs.processing.backends.cellprofiler",
-        preserved_attrs={
-            RAW_PROCESSING_FUNCTION_ATTR: raw_crop,
-            PROCESSING_PREPARE_ATTR: local_prepare,
-        },
+        metadata=CallableMetadata(
+            raw_processing_function=raw_crop,
+            prepare=local_prepare,
+        ),
     )
 
     normalized = FunctionStepTransportAuthority.normalize_function_spec(reference)
 
-    assert PROCESSING_PREPARE_ATTR not in normalized.preserved_attrs
-    assert (
-        normalized.preserved_attrs[RAW_PROCESSING_FUNCTION_ATTR]
-        is cellprofiler_backend.crop
-    )
+    assert normalized.metadata.prepare is None
+    assert normalized.metadata.raw_processing_function is cellprofiler_backend.crop
     pickle.dumps(normalized)
 
 
@@ -494,7 +536,6 @@ def test_function_reference_resolver_preserves_cellprofiler_module_contracts(
         memory_type="numpy",
         composite_key="openhcs:openhcs.processing.backends.cellprofiler:crop",
         original_module="openhcs.processing.backends.cellprofiler",
-        preserved_attrs={},
     )
     green_reference = FunctionReference(
         function_name="crop",
@@ -502,7 +543,6 @@ def test_function_reference_resolver_preserves_cellprofiler_module_contracts(
         memory_type="numpy",
         composite_key="openhcs:openhcs.processing.backends.cellprofiler:crop",
         original_module="openhcs.processing.backends.cellprofiler",
-        preserved_attrs={},
     )
     blue_contract = replace(blue_contract, func=blue_reference)
     green_contract = replace(green_contract, func=green_reference)

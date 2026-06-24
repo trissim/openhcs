@@ -4,47 +4,59 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, TYPE_CHECKING
 
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.identity import StreamProducerIdentity
-from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
+from polystore.streaming.viewer_transport import ViewerStreamProducer
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.artifact_materialization_policy import (
     resolve_artifact_materialization_spec,
 )
 from openhcs.core.runtime_stores import (
+    RuntimeValueStore,
     StoredRuntimeValue,
-    require_runtime_value_store,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
-    SourceComponentMetadata,
     image_payload_metadata,
 )
-from openhcs.core.source_matching import source_component_metadata_value
-from openhcs.core.steps.function_output_identity import FunctionOutputParserContext
-from openhcs.core.steps.function_output_manifest import step_output_manifest
+from openhcs.core.source_image_provenance import (
+    SourceImageIdentity,
+)
+from openhcs.core.source_matching import with_source_component_metadata
+from openhcs.core.steps.function_output_identity import (
+    FunctionOutputIdentity,
+    FunctionOutputIdentityAuthority,
+    FunctionOutputParserContext,
+    FunctionOutputPathAuthority,
+)
+from openhcs.core.steps.function_output_manifest import (
+    FunctionStepOutputProducerIdentityAuthority,
+    FunctionStepOutputProducerIdentityRequest,
+    step_output_manifest,
+)
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.core.steps.stream_component_semantics import (
-    OpenHCSViewerStreamRequestAuthority,
-    OpenHCSViewerStreamSourceScope,
+    StreamComponentMessageExtraAuthority,
     StreamSourceComponentMetadataItems,
 )
 from openhcs.core.streaming_config_factory import StreamingViewerSurface
-from openhcs.processing.materialization.core import BackendKwargs
+from openhcs.processing.materialization.core import (
+    BackendKwargs,
+    RawBackendKwargs,
+    ViewerStreamBackendCallKwargs,
+)
 
 if TYPE_CHECKING:
     from polystore.filemanager import FileManager
     from openhcs.core.context.processing_context import ProcessingContext
 
-
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True, slots=True)
 class ArtifactMaterializationBackendPlan:
@@ -60,6 +72,46 @@ class ArtifactMaterializationBackendPlan:
             *self.streaming_viewer_surfaces,
         ]
 
+    def backend_kwargs(
+        self,
+        *,
+        artifact_source_identity: SourceImageIdentity | None,
+        producer_identity: StreamProducerIdentity,
+        context: "ProcessingContext",
+        images_dir: str,
+    ) -> BackendKwargs:
+        result: BackendKwargs = {}
+        for backend, kwargs in self.persistent_backend_kwargs.items():
+            values = dict(kwargs)
+            if "images_dir" in values and values["images_dir"] != images_dir:
+                raise ValueError(
+                    "Persistent artifact backend kwargs already define a different "
+                    f"'images_dir': {values['images_dir']!r} != {images_dir!r}."
+                )
+            values["images_dir"] = images_dir
+            result[backend] = RawBackendKwargs(values)
+        artifact_component_metadata = (
+            artifact_source_identity.component_metadata
+            if artifact_source_identity is not None
+            else None
+        )
+        source_metadata_items = StreamSourceComponentMetadataItems.from_values(
+            (artifact_component_metadata,)
+        )
+        producer = ViewerStreamProducer.from_identity(producer_identity)
+        for backend, viewer_surface in self.streaming_viewer_surfaces.items():
+            stream_backend_kwargs = StreamComponentMessageExtraAuthority.from_context(
+                viewer_surface,
+                context=context,
+                source_metadata_items=source_metadata_items,
+            ).viewer_backend_kwargs(
+                producer=producer,
+                images_dir=images_dir,
+            )
+            result[backend] = ViewerStreamBackendCallKwargs(
+                stream_backend_kwargs,
+            )
+        return result
 
 class ArtifactMaterializationTargetPlan(ABC, metaclass=AutoRegisterMeta):
     """Nominal target policy for artifact materialization destinations."""
@@ -85,7 +137,6 @@ class ArtifactMaterializationTargetPlan(ABC, metaclass=AutoRegisterMeta):
     def persistent_backend_kwargs(self) -> BackendKwargs:
         """Return persistent materialization backends owned by this policy."""
 
-
 @dataclass(frozen=True, slots=True)
 class PersistentArtifactMaterializationTargetPlan(ArtifactMaterializationTargetPlan):
     """Target policy for persistent files plus any enabled viewer streams."""
@@ -94,8 +145,7 @@ class PersistentArtifactMaterializationTargetPlan(ArtifactMaterializationTargetP
     backend: str
 
     def persistent_backend_kwargs(self) -> BackendKwargs:
-        return {self.backend: {}}
-
+        return {self.backend: RawBackendKwargs()}
 
 class StreamingOnlyArtifactMaterializationTargetPlan(ArtifactMaterializationTargetPlan):
     """Target policy for viewer streams with no persistent artifact files."""
@@ -105,74 +155,19 @@ class StreamingOnlyArtifactMaterializationTargetPlan(ArtifactMaterializationTarg
     def persistent_backend_kwargs(self) -> BackendKwargs:
         return {}
 
-
 @dataclass(frozen=True, slots=True)
 class ArtifactAnalysisOutputDescriptor:
-    """Filename plus source component metadata for an artifact materialization."""
+    """Filename plus source identity for an artifact materialization."""
 
     filename: str
-    artifact_source_component_metadata: SourceComponentMetadata | None
-
+    source_identity: SourceImageIdentity | None
 
 @dataclass(frozen=True, slots=True)
 class ArtifactRecordSourceDescriptor:
-    """Scalar source identity for an artifact record, only when the record has one."""
+    """Resolved source stem and stream identity for one artifact record."""
 
-    record: StoredRuntimeValue | None
-
-    @property
-    def payload_metadata(self) -> ImagePayloadMetadata | None:
-        if self.record is None:
-            return None
-        return image_payload_metadata(self.record.value.data)
-
-    @property
-    def has_multiplane_provenance(self) -> bool:
-        metadata = self.payload_metadata
-        if metadata is None:
-            return False
-        return metadata.source_image_provenance_planes.count > 1
-
-    def source_path(self) -> str | None:
-        """Return a scalar source path without collapsing multi-plane provenance."""
-        metadata = self.payload_metadata
-        if metadata is None:
-            return None
-        if metadata.source_path:
-            return str(metadata.source_path)
-        if self.has_multiplane_provenance:
-            return None
-        for source_path in metadata.source_image_provenance_planes.paths:
-            if source_path:
-                return str(source_path)
-        return None
-
-    def source_component_metadata(
-        self,
-        *,
-        fallback: SourceComponentMetadata | None = None,
-    ) -> SourceComponentMetadata | None:
-        """Return scalar source metadata without borrowing from the first plane."""
-        metadata = self.payload_metadata
-        if metadata is None:
-            return fallback
-        if metadata.source_component_metadata is not None:
-            return AnalysisOutputDescriptorAuthority.merge_source_component_metadata(
-                metadata.source_component_metadata,
-                fallback,
-            )
-        if self.has_multiplane_provenance:
-            return fallback
-        candidate = None
-        for component_metadata in metadata.source_image_provenance_planes.component_metadata:
-            if component_metadata is not None:
-                candidate = component_metadata
-                break
-        return AnalysisOutputDescriptorAuthority.merge_source_component_metadata(
-            candidate,
-            fallback,
-        )
-
+    filename_stem: str
+    source_identity: SourceImageIdentity | None
 
 class AnalysisOutputDescriptorAuthority:
     """Own analysis artifact filenames and their source component metadata."""
@@ -182,31 +177,31 @@ class AnalysisOutputDescriptorAuthority:
         cls,
         output_key: str,
         plan: FunctionStepExecutionPlan,
+        context: "ProcessingContext",
         dict_key: str | None = None,
-        context: "ProcessingContext | None" = None,
         artifact_path: str | None = None,
         record: StoredRuntimeValue | None = None,
     ) -> ArtifactAnalysisOutputDescriptor:
         """Build analysis output identity from the artifact's source metadata."""
-        record_source = ArtifactRecordSourceDescriptor(record)
-        source_path = record_source.source_path()
-        if source_path is not None:
+        record_source = cls.record_source_descriptor(context, plan, record)
+        if record_source is not None:
             return ArtifactAnalysisOutputDescriptor(
-                filename=f"{Path(source_path).stem}_{output_key}_step{plan.pipeline_position}.roi.zip",
-                artifact_source_component_metadata=record_source.source_component_metadata(
-                    fallback=cls.source_component_metadata_for_path(context, source_path),
+                filename=(
+                    f"{record_source.filename_stem}_{output_key}"
+                    f"_step{plan.pipeline_position}.roi.zip"
                 ),
+                source_identity=record_source.source_identity,
             )
 
         if artifact_path is not None:
-            source_component_metadata = cls.source_component_metadata_for_path(
+            source_identity = cls.source_identity_for_path(
                 context,
                 artifact_path,
             )
-            if source_component_metadata is not None:
+            if source_identity is not None:
                 return ArtifactAnalysisOutputDescriptor(
                     filename=f"{Path(artifact_path).stem}.roi.zip",
-                    artifact_source_component_metadata=source_component_metadata,
+                    source_identity=source_identity,
                 )
 
         memory_paths = cls.produced_memory_paths(context, plan)
@@ -215,21 +210,25 @@ class AnalysisOutputDescriptorAuthority:
             if dict_key is not None and artifact_path is not None:
                 return ArtifactAnalysisOutputDescriptor(
                     filename=f"{Path(artifact_path).stem}.roi.zip",
-                    artifact_source_component_metadata=None,
+                    source_identity=None,
                 )
             return ArtifactAnalysisOutputDescriptor(
                 filename=f"{plan.axis_id}_{output_key}_step{plan.pipeline_position}.roi.zip",
-                artifact_source_component_metadata=None,
+                source_identity=None,
             )
 
-        if dict_key and context:
+        if dict_key:
             parser_context = FunctionOutputParserContext.from_processing_context(
                 context
             )
             filtered_paths = []
             for path in memory_paths:
                 metadata = parser_context.parse_path_metadata(path)
-                if metadata and str(metadata.get("channel")) == str(dict_key):
+                if (
+                    metadata
+                    and "channel" in metadata
+                    and str(metadata["channel"]) == str(dict_key)
+                ):
                     filtered_paths.append(path)
 
             if filtered_paths:
@@ -238,20 +237,108 @@ class AnalysisOutputDescriptorAuthority:
         base_filename = Path(memory_paths[0]).stem
         return ArtifactAnalysisOutputDescriptor(
             filename=f"{base_filename}_{output_key}_step{plan.pipeline_position}.roi.zip",
-            artifact_source_component_metadata=cls.source_component_metadata_for_path(
+            source_identity=cls.source_identity_for_path(
                 context,
                 memory_paths[0],
             ),
         )
 
     @staticmethod
+    def record_payload_metadata(
+        record: StoredRuntimeValue | None,
+    ) -> ImagePayloadMetadata | None:
+        if record is None:
+            return None
+        payload_metadata = image_payload_metadata(record.value.data)
+        schema_provenance = record.value.schema.source_provenance
+        if not schema_provenance.has_values:
+            return payload_metadata
+        return replace(
+            payload_metadata,
+            source_provenance=schema_provenance.with_missing_from(
+                payload_metadata.source_provenance,
+            ),
+        )
+
+    @classmethod
+    def record_source_descriptor(
+        cls,
+        context: "ProcessingContext",
+        plan: FunctionStepExecutionPlan,
+        record: StoredRuntimeValue | None,
+    ) -> ArtifactRecordSourceDescriptor | None:
+        """Return source filename stem and identity for one artifact record."""
+        metadata = cls.record_payload_metadata(record)
+        if metadata is None:
+            return None
+        parser_context = FunctionOutputParserContext.from_processing_context(context)
+        identity = FunctionOutputIdentityAuthority.identity_from_metadata(
+            parser_context.parser,
+            metadata,
+            source_identity_stack_axes=plan.source_identity_stack_axes,
+        )
+        if identity is not None:
+            filename_stem = Path(
+                FunctionOutputPathAuthority.filename_for_identity(
+                    parser_context.parser,
+                    identity,
+                )
+            ).stem
+            return ArtifactRecordSourceDescriptor(
+                filename_stem=filename_stem,
+                source_identity=cls.record_source_identity_from_metadata(
+                    metadata,
+                    identity,
+                ),
+            )
+        source_path = metadata.source_provenance.scalar_source_identity.path
+        if source_path is None:
+            return None
+        return ArtifactRecordSourceDescriptor(
+            filename_stem=Path(source_path).stem,
+            source_identity=cls.record_source_identity_from_metadata(
+                metadata,
+                identity,
+            ),
+        )
+
+    @classmethod
+    def record_source_identity_from_metadata(
+        cls,
+        metadata: ImagePayloadMetadata,
+        identity: FunctionOutputIdentity | None,
+    ) -> SourceImageIdentity | None:
+        """Return scalar source identity with parser-resolved component metadata."""
+        source_identity = metadata.source_provenance.scalar_source_identity
+        if identity is not None:
+            if metadata.source_component_metadata is None:
+                component_metadata = {}
+            else:
+                component_metadata = dict(metadata.source_component_metadata)
+            for key, value in identity.component_metadata().items():
+                component = AllComponents.from_value(str(key))
+                if component is None:
+                    component_metadata[str(key)] = value
+                    continue
+                component_metadata = with_source_component_metadata(
+                    component_metadata,
+                    component,
+                    value,
+                )
+            source_identity = SourceImageIdentity(
+                path=source_identity.path,
+                component_metadata=component_metadata,
+            )
+        if source_identity.addressable:
+            return source_identity
+        return None
+
+    @staticmethod
     def produced_memory_paths(
-        context: "ProcessingContext | None",
+        context: "ProcessingContext",
         plan: FunctionStepExecutionPlan,
     ) -> list[str]:
         """Return current-step output paths without scanning a shared directory."""
-        if context is None:
-            return []
         return [
             str(path if path.is_absolute() else plan.output_dir / path)
             for path in (
@@ -261,179 +348,73 @@ class AnalysisOutputDescriptorAuthority:
         ]
 
     @staticmethod
-    def merge_source_component_metadata(
-        primary: SourceComponentMetadata | None,
-        fallback: SourceComponentMetadata | None,
-    ) -> SourceComponentMetadata | None:
-        """Merge payload metadata with parser-derived axis metadata."""
-        if primary is None:
-            return fallback
-        if fallback is None:
-            return primary
-
-        merged = dict(primary)
-        for component in AllComponents:
-            if source_component_metadata_value(merged, component) is not None:
-                continue
-            fallback_value = source_component_metadata_value(fallback, component)
-            if fallback_value is not None:
-                merged[component.value] = fallback_value
-        return merged
-
-    @staticmethod
-    def source_component_metadata_for_path(
-        context: "ProcessingContext | None",
-        path: str | Path | None,
-    ) -> SourceComponentMetadata | None:
-        """Return microscope component metadata for a source path when available."""
-        if context is None or path is None:
-            return None
-        return FunctionOutputParserContext.from_processing_context(
+    def source_identity_for_path(
+        context: "ProcessingContext",
+        path: str | Path,
+    ) -> SourceImageIdentity | None:
+        """Return microscope source identity for a source path when available."""
+        component_metadata = FunctionOutputParserContext.from_processing_context(
             context
         ).parse_path_metadata(path)
+        if component_metadata is None:
+            return None
+        return SourceImageIdentity(component_metadata=component_metadata)
 
-
-STREAMING_BACKENDS = frozenset(
-    (
-        Backend.NAPARI_STREAM.value,
-        Backend.FIJI_STREAM.value,
-    )
-)
-
-
-class BackendKwargsWithStreamIdentityAuthority:
-    """Attach stream identity and source-plane metadata to streaming backends."""
-
-    @staticmethod
-    def build(
-        backend_plan: ArtifactMaterializationBackendPlan,
-        artifact_source_component_metadata: SourceComponentMetadata | None,
-        producer_identity: StreamProducerIdentity,
-        context: "ProcessingContext",
-        images_dir: str,
-    ) -> BackendKwargs:
-        result: BackendKwargs = {
-            backend: dict(kwargs)
-            for backend, kwargs in backend_plan.persistent_backend_kwargs.items()
-        }
-        source_metadata_items = StreamSourceComponentMetadataItems.from_values(
-            (artifact_source_component_metadata,)
-        )
-        for backend, viewer_surface in backend_plan.streaming_viewer_surfaces.items():
-            if backend not in STREAMING_BACKENDS:
-                raise ValueError(
-                    f"Unsupported streaming backend in artifact plan: {backend}"
-                )
-            viewer_request = OpenHCSViewerStreamRequestAuthority.from_source_scope(
-                OpenHCSViewerStreamSourceScope.from_viewer_surface(
-                    viewer_surface,
-                    context=context,
-                    producer_identity=producer_identity,
-                    source_metadata_items=source_metadata_items,
-                ),
-                images_dir=images_dir,
-            )
-            result[backend] = ViewerStreamBackendKwargs(viewer_request).to_kwargs()
-        return result
-
-
-class ArtifactStreamIdentityAuthority:
-    """Build stable stream producer identities for artifact outputs."""
-
-    @staticmethod
-    def build(
-        plan: FunctionStepExecutionPlan,
-        output_key: str,
-        output_plan: ArtifactOutputPlan,
-    ) -> StreamProducerIdentity:
-        return StreamProducerIdentity.pipeline_output(
-            output_kind="artifact",
-            output_key=output_key,
-            step_name=plan.step_name,
-            pipeline_position=plan.pipeline_position,
-            step_scope_id=plan.step_scope_id,
-            artifact_kind=output_plan.kind.value,
+def actual_materialization_records(
+    *,
+    store: RuntimeValueStore,
+    plan: FunctionStepExecutionPlan,
+    output_plan: ArtifactOutputPlan,
+) -> tuple[StoredRuntimeValue, ...]:
+    """Return actually produced memory records for one planned artifact output."""
+    if not output_plan.group_keys:
+        raise RuntimeError(
+            f"Artifact output plan '{output_plan.name}' has no group keys."
         )
 
+    planned_path_by_group = {
+        group_key: output_plan.for_group(group_key).path
+        for group_key in output_plan.group_keys
+    }
+    planned_paths = frozenset(planned_path_by_group.values())
+    group_order = {
+        group_key: index
+        for index, group_key in enumerate(output_plan.group_keys)
+    }
+    record_sort_items = []
+    for record in store.find(
+        name=output_plan.name,
+        kind=output_plan.kind,
+        axis_id=plan.axis_id,
+    ):
+        if record.backend != Backend.MEMORY.value or record.path not in planned_paths:
+            continue
 
-class PlannedArtifactPathsAuthority:
-    """Return every compiler-planned memory path for one artifact output."""
-
-    @staticmethod
-    def paths(output_plan: ArtifactOutputPlan) -> frozenset[str]:
-        paths = {output_plan.path}
-        if output_plan.paths_by_group:
-            paths.update(output_plan.paths_by_group.values())
-        return frozenset(paths)
-
-
-class MaterializationRecordSortKeyAuthority:
-    """Sort runtime artifact records by compiler group order."""
-
-    @staticmethod
-    def key(
-        record: StoredRuntimeValue,
-        output_plan: ArtifactOutputPlan,
-    ) -> tuple[int, str]:
-        group_keys = output_plan.group_keys
-        if group_keys is None:
-            group_keys = (None,)
-        group_order = {
-            group_key: index
-            for index, group_key in enumerate(group_keys)
-        }
         group_key = record.key.scope.group_key
-        if group_key in group_order:
-            group_index = group_order[group_key]
-        else:
-            group_index = len(group_order)
-        if group_key is None:
-            group_name = ""
-        else:
-            group_name = str(group_key)
-        return group_index, group_name
-
-
-class ActualMaterializationRecordsAuthority:
-    """Resolve records actually produced for one planned output."""
-
-    @staticmethod
-    def records(
-        *,
-        context: "ProcessingContext",
-        plan: FunctionStepExecutionPlan,
-        output_plan: ArtifactOutputPlan,
-    ) -> tuple[StoredRuntimeValue, ...]:
-        store = require_runtime_value_store(context, owner_name="context")
-        planned_paths = PlannedArtifactPathsAuthority.paths(output_plan)
-        records = tuple(
-            record
-            for record in store.find(
-                name=output_plan.name,
-                kind=output_plan.kind,
-                axis_id=plan.axis_id,
-            )
-            if (
-                record.backend == Backend.MEMORY.value
-                and record.path in planned_paths
-            )
-        )
-        if not records:
+        if group_key not in planned_path_by_group:
             raise RuntimeError(
-                f"Missing RuntimeValueStore record for planned artifact materialization "
-                f"'{output_plan.name}' ({output_plan.kind.value}) on axis "
-                f"'{plan.axis_id}'."
+                f"Runtime artifact record for planned output '{output_plan.name}' "
+                f"has unplanned group key {group_key!r}."
             )
-        return tuple(
-            sorted(
-                records,
-                key=lambda record: MaterializationRecordSortKeyAuthority.key(
-                    record,
-                    output_plan,
-                ),
+        expected_path = planned_path_by_group[group_key]
+        if record.path != expected_path:
+            raise RuntimeError(
+                f"Runtime artifact record for planned output '{output_plan.name}' "
+                f"uses path {record.path!r}; expected {expected_path!r} for "
+                f"group key {group_key!r}."
             )
-        )
+        record_sort_items.append((group_order[group_key], record))
 
+    if not record_sort_items:
+        raise RuntimeError(
+            f"Missing RuntimeValueStore record for planned artifact materialization "
+            f"'{output_plan.name}' ({output_plan.kind.value}) on axis "
+            f"'{plan.axis_id}'."
+        )
+    return tuple(
+        record
+        for _, record in sorted(record_sort_items, key=lambda item: item[0])
+    )
 
 def materialize_artifact_outputs(
     filemanager: "FileManager",
@@ -452,18 +433,18 @@ def materialize_artifact_outputs(
 
     analysis_output_dir = plan.artifact_analysis_output_dir
     images_dir = plan.artifact_images_dir
-
-    filemanager._materialization_context = {"images_dir": images_dir}
+    store = context.runtime_value_store
 
     for output_key, output_plan in plan.artifact_outputs.items():
         if output_plan.materialization is None and output_plan.kind is ArtifactKind.SPECIAL:
             continue
 
-        records = ActualMaterializationRecordsAuthority.records(
-            context=context,
+        records = actual_materialization_records(
+            store=store,
             plan=plan,
             output_plan=output_plan,
         )
+
         for record in records:
             dict_key = record.key.scope.group_key
 
@@ -481,8 +462,8 @@ def materialize_artifact_outputs(
             output_descriptor = AnalysisOutputDescriptorAuthority.build(
                 output_key,
                 plan,
-                dict_key,
                 context,
+                dict_key,
                 artifact_path=record.path,
                 record=record,
             )
@@ -493,16 +474,21 @@ def materialize_artifact_outputs(
                 str(analysis_path),
                 filemanager,
                 backends,
-                BackendKwargsWithStreamIdentityAuthority.build(
-                    backend_plan,
-                    output_descriptor.artifact_source_component_metadata,
-                    ArtifactStreamIdentityAuthority.build(
-                        plan,
-                        output_key,
-                        output_plan,
+                backend_plan.backend_kwargs(
+                    artifact_source_identity=output_descriptor.source_identity,
+                    producer_identity=(
+                        FunctionStepOutputProducerIdentityAuthority.build(
+                            FunctionStepOutputProducerIdentityRequest(
+                                plan=plan,
+                                output_kind="artifact",
+                                output_key=output_key,
+                                artifact_kind=output_plan.kind.value,
+                            )
+                        )
                     ),
-                    context,
-                    images_dir,
+                    context=context,
+                    images_dir=images_dir,
                 ),
                 context=context,
+                artifact_source_identity=output_descriptor.source_identity,
             )

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, ClassVar, Mapping
+from typing import Any, ClassVar, Mapping, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -16,12 +16,22 @@ from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.components.validation import convert_enum_by_value
 from openhcs.core.runtime_semantics import coerce_enum
+from openhcs.core.source_metadata import (
+    SourceMetadataIdentityItems,
+    SourceMetadataIdentityProjection,
+    SourceMetadataMapping,
+    SourceMetadataScalar,
+    SourceMetadataValue,
+    source_metadata_scalar,
+)
+from openhcs.core.source_path_identity import source_path_identity_key
 
 
 SourceBindingGroupMap = Mapping[str | None, tuple["NamedSourceBinding", ...]]
 SourceBindingGroupDict = dict[str | None, tuple["NamedSourceBinding", ...]]
-SourceMetadataIdentity = tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
+SourceMetadataIdentity = tuple[tuple[str, SourceMetadataIdentityItems], ...]
 SOURCE_ALIAS_PART_SEPARATOR = "__"
+SourceBindingValue = TypeVar("SourceBindingValue")
 
 
 class SourceBindingOrigin(Enum):
@@ -104,48 +114,21 @@ class SourceFilterClause:
         object.__setattr__(self, "value", normalized_value)
 
 
-@dataclass(frozen=True, slots=True)
-class SourceBindingTypedValues:
-    """Validated tuple of values for a typed source-binding field."""
+def normalize_source_binding_values(
+    field_name: str,
+    values: tuple[SourceBindingValue, ...],
+    value_type: type[SourceBindingValue],
+) -> tuple[SourceBindingValue, ...]:
+    """Return a typed tuple for one source-binding field."""
 
-    field_name: str
-    values: tuple[object, ...]
-    value_type: type[object]
-
-    def normalized(self) -> tuple[object, ...]:
-        normalized_values = tuple(self.values)
-        for value in normalized_values:
-            if not isinstance(value, self.value_type):
-                raise TypeError(
-                    f"{self.field_name} must contain {self.value_type.__name__} "
-                    f"values, got {type(value).__name__}."
-                )
-        return normalized_values
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingUniqueValues:
-    """Validated source-binding values with unique semantic identities."""
-
-    field_name: str
-    values: tuple[object, ...]
-    value_type: type[object]
-    identity: Callable[[Any], object]
-    duplicate_message: Callable[[object], str]
-
-    def normalized(self) -> tuple[object, ...]:
-        normalized_values = SourceBindingTypedValues(
-            self.field_name,
-            self.values,
-            self.value_type,
-        ).normalized()
-        seen: set[object] = set()
-        for value in normalized_values:
-            identity = self.identity(value)
-            if identity in seen:
-                raise ValueError(self.duplicate_message(identity))
-            seen.add(identity)
-        return normalized_values
+    normalized_values = tuple(values)
+    for value in normalized_values:
+        if not isinstance(value, value_type):
+            raise TypeError(
+                f"{field_name} must contain {value_type.__name__} "
+                f"values, got {type(value).__name__}."
+            )
+    return normalized_values
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,11 +161,11 @@ class MetadataExtractionRule:
         object.__setattr__(
             self,
             "filters",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "MetadataExtractionRule.filters",
                 self.filters,
                 SourceFilterClause,
-            ).normalized(),
+            ),
         )
 
 
@@ -217,16 +200,20 @@ class SourceBindingMatchFields:
     fields: tuple[SourceBindingMatchField, ...]
 
     def normalized(self) -> tuple[SourceBindingMatchField, ...]:
-        return SourceBindingUniqueValues(
+        fields = normalize_source_binding_values(
             "SourceBindingMatchDimension.fields",
             self.fields,
             SourceBindingMatchField,
-            lambda field: field.alias,
-            lambda alias: (
-                "SourceBindingMatchDimension contains duplicate alias "
-                f"{alias!r}."
-            ),
-        ).normalized()
+        )
+        seen_aliases: set[str] = set()
+        for field in fields:
+            if field.alias in seen_aliases:
+                raise ValueError(
+                    "SourceBindingMatchDimension contains duplicate alias "
+                    f"{field.alias!r}."
+                )
+            seen_aliases.add(field.alias)
+        return fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,11 +256,11 @@ class SourceBindingMatchPlan:
         object.__setattr__(
             self,
             "dimensions",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "SourceBindingMatchPlan.dimensions",
                 self.dimensions,
                 SourceBindingMatchDimension,
-            ).normalized(),
+            ),
         )
 
 
@@ -323,29 +310,29 @@ class SourceSelector:
         object.__setattr__(
             self,
             "components",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "SourceSelector.components",
                 self.components,
                 ComponentSelector,
-            ).normalized(),
+            ),
         )
         object.__setattr__(
             self,
             "metadata",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "SourceSelector.metadata",
                 self.metadata,
                 MetadataSelector,
-            ).normalized(),
+            ),
         )
         object.__setattr__(
             self,
             "filters",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "SourceSelector.filters",
                 self.filters,
                 SourceFilterClause,
-            ).normalized(),
+            ),
         )
 
 
@@ -408,6 +395,11 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
             return ()
         return source_alias_measurement_names(self.alias)
 
+    @property
+    def participates_in_image_stack(self) -> bool:
+        """Whether this source assignment contributes to the main image stack."""
+        return self.artifact_kind is ArtifactKind.IMAGE
+
     def to_binding(self) -> "NamedSourceBinding":
         """Project this source assignment into a step-local source binding."""
         return NamedSourceBinding(
@@ -415,6 +407,7 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
             artifact_kind=self.artifact_kind,
             selector=self.selector,
             origin=self.origin,
+            participates_in_image_stack=self.participates_in_image_stack,
         )
 
 
@@ -425,6 +418,7 @@ class NamedSourceBinding(SourceAssignmentBase):
     assignment_kind = "named_source_binding"
     artifact_kind: ArtifactKind = ArtifactKind.IMAGE
     required: bool = True
+    participates_in_image_stack: bool = True
 
     def __post_init__(self) -> None:
         SourceAssignmentBase.__post_init__(self)
@@ -436,6 +430,11 @@ class NamedSourceBinding(SourceAssignmentBase):
                 self.artifact_kind,
                 "NamedSourceBinding.artifact_kind",
             ),
+        )
+        object.__setattr__(
+            self,
+            "participates_in_image_stack",
+            bool(self.participates_in_image_stack),
         )
 
     @property
@@ -449,26 +448,32 @@ class NamedSourceBinding(SourceAssignmentBase):
             or not self.selector.inherit_current_scope
         )
 
+    def requires_step_input_component_stack(
+        self,
+        components: tuple[AllComponents, ...],
+    ) -> bool:
+        """Whether resolving this binding needs component-varying step input."""
+        if self.origin is not SourceBindingOrigin.STEP_INPUT:
+            return False
+        if not components:
+            return False
+        if self.selector.filters or self.selector.metadata:
+            return True
+        return any(selector.component in components for selector in self.selector.components)
+
     @property
     def requires_step_input_channel_stack(self) -> bool:
         """Whether resolving this binding needs channel-varying step input."""
-
-        if self.origin is not SourceBindingOrigin.STEP_INPUT:
-            return False
-        return bool(
-            self.selector.filters
-            or self.selector.metadata
-            or any(
-                selector.component is AllComponents.CHANNEL
-                for selector in self.selector.components
-            )
-        )
+        return self.requires_step_input_component_stack((AllComponents.CHANNEL,))
 
     @property
     def participates_in_execution_anchoring(self) -> bool:
         """Whether this binding contributes source-file execution anchors."""
 
-        return self.artifact_kind is ArtifactKind.IMAGE
+        return (
+            self.artifact_kind is ArtifactKind.IMAGE
+            and self.participates_in_image_stack
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,16 +509,20 @@ class SourceBindingGroups:
     groups: tuple[GroupedSourceBindings, ...]
 
     def normalized(self) -> tuple[GroupedSourceBindings, ...]:
-        return SourceBindingUniqueValues(
+        groups = normalize_source_binding_values(
             "StepSourceBindingsConfig.groups",
             self.groups,
             GroupedSourceBindings,
-            lambda group: group.group_key,
-            lambda group_key: (
-                "StepSourceBindingsConfig contains duplicate group key "
-                f"{group_key!r}."
-            ),
-        ).normalized()
+        )
+        seen_group_keys: set[str | None] = set()
+        for group in groups:
+            if group.group_key in seen_group_keys:
+                raise ValueError(
+                    "StepSourceBindingsConfig contains duplicate group key "
+                    f"{group.group_key!r}."
+                )
+            seen_group_keys.add(group.group_key)
+        return groups
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -584,15 +593,21 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
     def has_primary_content(self) -> bool:
         return bool(self.groups)
 
-    @property
-    def requires_step_input_channel_stack(self) -> bool:
-        """Whether any binding needs channel-resolved stack input."""
-
+    def requires_step_input_component_stack(
+        self,
+        components: tuple[AllComponents, ...],
+    ) -> bool:
+        """Whether any binding needs component-resolved stack input."""
         return any(
-            binding.requires_step_input_channel_stack
+            binding.requires_step_input_component_stack(components)
             for group in self.groups
             for binding in group.bindings
         )
+
+    @property
+    def requires_step_input_channel_stack(self) -> bool:
+        """Whether any binding needs channel-resolved step input."""
+        return self.requires_step_input_component_stack((AllComponents.CHANNEL,))
 
     @property
     def requires_pipeline_start_resolution(self) -> bool:
@@ -706,7 +721,9 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
         normalized_group_key = None if group_key is None else str(group_key)
         if normalized_group_key in self.bindings_by_group:
             return self.bindings_by_group[normalized_group_key]
-        return self.bindings_by_group.get(None, ())
+        if None in self.bindings_by_group:
+            return self.bindings_by_group[None]
+        return ()
 
     def binding_for_alias(
         self,
@@ -778,22 +795,66 @@ class SourceRuntimePathLookup:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceBindingRuntimeMetadataNormalizer:
+    """Normalize source metadata carried by a runtime source-binding context."""
+
+    source_metadata_by_path: Mapping[str, SourceMetadataMapping]
+
+    def normalized(self) -> Mapping[str, SourceMetadataMapping]:
+        return MappingProxyType(
+            {
+                str(path): MappingProxyType(
+                    {
+                        str(key): self.normalized_value(value)
+                        for key, value in metadata.items()
+                    }
+                )
+                for path, metadata in self.source_metadata_by_path.items()
+            }
+        )
+
+    @classmethod
+    def normalized_value(cls, value: SourceMetadataValue) -> SourceMetadataValue:
+        if isinstance(value, Mapping):
+            return MappingProxyType(
+                {
+                    str(key): cls.normalized_scalar(nested_value)
+                    for key, nested_value in value.items()
+                }
+            )
+        return cls.normalized_scalar(value)
+
+    @staticmethod
+    def normalized_scalar(value: SourceMetadataScalar) -> SourceMetadataScalar:
+        return source_metadata_scalar(value)
+
+
+@dataclass(frozen=True)
 class SourceBindingRuntimeContext:
     """Execution-local file universe for selector-bearing source bindings."""
 
     step_input_files: tuple[str, ...] = ()
     current_step_input_files: tuple[str, ...] = ()
+    current_image_files: tuple[str, ...] = ()
     step_input_dir: str | None = None
-    step_input_backend: str | None = None
+    step_input_source_backend: str | None = None
+    step_input_storage_backend: str | None = None
     step_input_source_paths: Mapping[str, str] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    source_metadata_by_path: Mapping[str, Mapping[str, str]] = field(
+    source_metadata_by_path: Mapping[str, SourceMetadataMapping] = field(
         default_factory=lambda: MappingProxyType({})
     )
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
+    source_binding_context: InitVar["SourceBindingRuntimeContext | None"] = None
     _source_metadata_identity: SourceMetadataIdentity | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _virtual_source_paths_by_identity: Mapping[str, tuple[str, ...]] | None = field(
         default=None,
         init=False,
         repr=False,
@@ -804,20 +865,85 @@ class SourceBindingRuntimeContext:
     def empty(cls) -> "SourceBindingRuntimeContext":
         return cls()
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        source_binding_context: "SourceBindingRuntimeContext | None",
+    ) -> None:
+        if source_binding_context is not None:
+            object.__setattr__(
+                self,
+                "step_input_files",
+                source_binding_context.step_input_files,
+            )
+            object.__setattr__(
+                self,
+                "current_step_input_files",
+                source_binding_context.current_step_input_files,
+            )
+            object.__setattr__(
+                self,
+                "current_image_files",
+                source_binding_context.current_image_files,
+            )
+            object.__setattr__(
+                self,
+                "step_input_dir",
+                source_binding_context.step_input_dir,
+            )
+            object.__setattr__(
+                self,
+                "step_input_source_backend",
+                source_binding_context.step_input_source_backend,
+            )
+            object.__setattr__(
+                self,
+                "step_input_storage_backend",
+                source_binding_context.step_input_storage_backend,
+            )
+            object.__setattr__(
+                self,
+                "step_input_source_paths",
+                source_binding_context.step_input_source_paths,
+            )
+            object.__setattr__(
+                self,
+                "source_metadata_by_path",
+                source_binding_context.source_metadata_by_path,
+            )
+            object.__setattr__(
+                self,
+                "pipeline_input_files",
+                source_binding_context.pipeline_input_files,
+            )
+            object.__setattr__(
+                self,
+                "pipeline_input_backend",
+                source_binding_context.pipeline_input_backend,
+            )
         object.__setattr__(self, "step_input_files", tuple(self.step_input_files))
         object.__setattr__(
             self,
             "current_step_input_files",
             tuple(self.current_step_input_files or self.step_input_files),
         )
+        object.__setattr__(
+            self,
+            "current_image_files",
+            tuple(self.current_image_files or self.current_step_input_files),
+        )
         if self.step_input_dir is not None:
             object.__setattr__(self, "step_input_dir", str(self.step_input_dir))
-        if self.step_input_backend is not None:
+        if self.step_input_source_backend is not None:
             object.__setattr__(
                 self,
-                "step_input_backend",
-                str(self.step_input_backend),
+                "step_input_source_backend",
+                str(self.step_input_source_backend),
+            )
+        if self.step_input_storage_backend is not None:
+            object.__setattr__(
+                self,
+                "step_input_storage_backend",
+                str(self.step_input_storage_backend),
             )
         step_input_source_paths = self.step_input_source_paths
         if not isinstance(step_input_source_paths, MappingProxyType):
@@ -826,17 +952,13 @@ class SourceBindingRuntimeContext:
             )
         object.__setattr__(self, "step_input_source_paths", step_input_source_paths)
 
-        source_metadata_by_path = self.source_metadata_by_path
-        if not isinstance(source_metadata_by_path, MappingProxyType):
-            source_metadata_by_path = MappingProxyType(
-                {
-                    str(path): MappingProxyType(
-                        {str(key): str(value) for key, value in metadata.items()}
-                    )
-                    for path, metadata in source_metadata_by_path.items()
-                }
-            )
-        object.__setattr__(self, "source_metadata_by_path", source_metadata_by_path)
+        object.__setattr__(
+            self,
+            "source_metadata_by_path",
+            SourceBindingRuntimeMetadataNormalizer(
+                self.source_metadata_by_path
+            ).normalized(),
+        )
         object.__setattr__(
             self,
             "pipeline_input_files",
@@ -858,11 +980,47 @@ class SourceBindingRuntimeContext:
         cached = self._source_metadata_identity
         if cached is None:
             cached = tuple(
-                (path, tuple(sorted(metadata.items())))
+                (path, SourceMetadataIdentityProjection(metadata).items())
                 for path, metadata in sorted(self.source_metadata_by_path.items())
             )
             object.__setattr__(self, "_source_metadata_identity", cached)
         return cached
+
+    @property
+    def virtual_source_paths_by_identity(self) -> Mapping[str, tuple[str, ...]]:
+        """Return virtual source paths grouped by normalized physical identity."""
+
+        cached = self._virtual_source_paths_by_identity
+        if cached is None:
+            grouped: dict[str, list[str]] = {}
+            for virtual_path, source_path in self.step_input_source_paths.items():
+                for identity in self.source_path_identities(source_path):
+                    paths = grouped.get(identity)
+                    if paths is None:
+                        grouped[identity] = [virtual_path]
+                        continue
+                    paths.append(virtual_path)
+            cached = MappingProxyType(
+                {
+                    identity: tuple(dict.fromkeys(paths))
+                    for identity, paths in grouped.items()
+                }
+            )
+            object.__setattr__(self, "_virtual_source_paths_by_identity", cached)
+        return cached
+
+    @staticmethod
+    def source_path_identities(source_path: str) -> tuple[str, ...]:
+        """Return path identities for stored and resolved source-path spellings."""
+        path = Path(source_path)
+        return tuple(
+            dict.fromkeys(
+                (
+                    source_path_identity_key(source_path),
+                    source_path_identity_key(str(path.resolve(strict=False))),
+                )
+            )
+        )
 
     def metadata_identity_for_paths(
         self,
@@ -870,9 +1028,36 @@ class SourceBindingRuntimeContext:
     ) -> SourceMetadataIdentity:
         """Return the stable metadata identity for a selected source subset."""
 
+        identity: list[tuple[str, SourceMetadataIdentityItems]] = []
+        for path in paths:
+            if path in self.source_metadata_by_path:
+                metadata = SourceMetadataIdentityProjection(
+                    self.source_metadata_by_path[path]
+                ).items()
+            else:
+                metadata = ()
+            identity.append((path, metadata))
+        return tuple(identity)
+
+    @property
+    def pipeline_source_candidate_files(self) -> tuple[str, ...]:
+        """Return the source universe used for pipeline-origin source matching."""
+        if self.pipeline_input_files:
+            return self.pipeline_input_files
+        return self.step_input_files
+
+    def source_candidate_file_universes(self) -> tuple[tuple[str, ...], ...]:
+        """Return distinct non-empty file universes that may be source-parsed."""
         return tuple(
-            (path, tuple(sorted(self.source_metadata_by_path.get(path, {}).items())))
-            for path in paths
+            dict.fromkeys(
+                files
+                for files in (
+                    self.step_input_files,
+                    self.current_step_input_files,
+                    self.pipeline_source_candidate_files,
+                )
+                if files
+            )
         )
 
     def __reduce__(
@@ -882,6 +1067,8 @@ class SourceBindingRuntimeContext:
         tuple[
             tuple[str, ...],
             tuple[str, ...],
+            tuple[str, ...],
+            str | None,
             str | None,
             str | None,
             dict[str, str],
@@ -896,8 +1083,10 @@ class SourceBindingRuntimeContext:
             (
                 self.step_input_files,
                 self.current_step_input_files,
+                self.current_image_files,
                 self.step_input_dir,
-                self.step_input_backend,
+                self.step_input_source_backend,
+                self.step_input_storage_backend,
                 dict(self.step_input_source_paths),
                 {
                     path: dict(metadata)

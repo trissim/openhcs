@@ -5,48 +5,37 @@ import pytest
 import numpy as np
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
-from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.runtime_semantics import ObjectLabelDomain
+from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImageMetadataPayload,
+    MeasurementTable,
     ObjectLabelPayload,
     RuntimeArrayPayload,
+    SourceImageProvenancePlanes,
     image_payload_metadata,
     RuntimeImagePayloadContext,
     normalize_artifact_value,
-SourceImageProvenancePlanes)
+)
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
 )
-from openhcs.core.steps.function_runtime import (
-    FunctionOutputContextRequest,
-    FunctionOutputContextStrategy,
+from openhcs.core.steps.function_runtime import FunctionOutputContextStrategy
+from openhcs.core.streaming_config_factory import (
+    StreamingViewerPresentation,
+    StreamingViewerRuntimeConfig,
+    StreamingViewerSurface,
 )
 from openhcs.processing.materialization import CsvOptions, JsonOptions, ROIOptions, csv_only
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
-
-
-class StreamingViewerSurfaceStub:
-    def __init__(self, display_config, context):
-        self.display_config = display_config
-        self.runtime_config = SimpleNamespace(
-            transport_endpoint=ViewerTransportEndpoint(
-                host=display_config.host,
-                port=display_config.port,
-                transport_mode=display_config.transport_mode,
-            )
-        )
-        self.source = ViewerStreamSourceIdentity(
-            microscope_handler=context.microscope_handler,
-            plate_path=context.plate_path,
-        )
 
 
 class StreamingConfigStub(ViewerDisplayConfigObject):
@@ -62,11 +51,38 @@ class StreamingConfigStub(ViewerDisplayConfigObject):
         return {component: "stack" for component in self.COMPONENT_ORDER}
 
     def streaming_viewer_surface(self, _context):
-        return StreamingViewerSurfaceStub(self, _context)
+        return StreamingViewerSurface(
+            runtime_config=StreamingViewerRuntimeConfig(
+                transport_endpoint=ViewerTransportEndpoint(
+                    host=self.host,
+                    port=self.port,
+                    transport_mode=self.transport_mode,
+                ),
+                persistent=False,
+                presentation=StreamingViewerPresentation(title="Napari"),
+            ),
+            display_config=self,
+            source=self.viewer_source(_context),
+        )
+
+    @staticmethod
+    def viewer_source(_context):
+        from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
+
+        return ViewerStreamSourceIdentity(
+            microscope_handler=_context.microscope_handler,
+            plate_path=_context.plate_path,
+        )
 
 
 def streaming_config_stub(port=5555):
     return StreamingConfigStub(port)
+
+
+def stream_request_from_backend_kwargs(backend_kwargs):
+    return backend_kwargs["napari_stream"].values.to_kwargs()[
+        ViewerStreamKwarg.STREAM_REQUEST.value
+    ]
 
 
 class MetadataHandlerStub:
@@ -78,6 +94,53 @@ class MetadataHandlerStub:
 
     def get_component_values(self, _root, component):
         return self.values.get(component, {})
+
+
+class FilenameParserStub:
+    def parse_filename(self, filename):
+        import re
+
+        positional_match = re.match(
+            r"(?P<well>\d+)_(?P<site>POS\d+)_(?P<channel>[A-Za-z])"
+            r"(?P<extension>\.[^.]+)?$",
+            Path(filename).name,
+        )
+        if positional_match is not None:
+            return positional_match.groupdict()
+
+        match = re.match(
+            r"(?P<well>[A-Z]\d{2})_s(?P<site>\d+)_w(?P<channel>\d+)"
+            r"(?:_z(?P<z_index>\d+))?(?:_t(?P<timepoint>\d+))?"
+            r"(?P<extension>\.[^.]+)?$",
+            Path(filename).name,
+        )
+        if match is None:
+            return None
+        parsed = {
+            key: value
+            for key, value in match.groupdict().items()
+            if value is not None
+        }
+        parsed.setdefault("z_index", "1")
+        parsed.setdefault("timepoint", "1")
+        return parsed
+
+    def construct_filename(
+        self,
+        *,
+        well,
+        site,
+        channel,
+        z_index=1,
+        timepoint=1,
+        extension=".tif",
+    ):
+        if str(site).startswith("POS"):
+            return f"{well}_{site}_{channel}{extension}"
+        return (
+            f"{well}_s{int(site):03d}_w{int(channel)}"
+            f"_z{int(z_index):03d}_t{int(timepoint):03d}{extension}"
+        )
 
 
 class MicroscopeHandlerStub(ViewerMicroscopeHandlerABC):
@@ -112,7 +175,13 @@ class ArrayLike(RuntimeArrayPayload):
         return data
 
 
-def _plan(output_plan, *, streaming_configs=(), memory_paths=()):
+def _plan(
+    output_plan,
+    *,
+    streaming_configs=(),
+    memory_paths=(),
+    source_identity_stack_axes=frozenset(),
+):
     return SimpleNamespace(
         artifact_outputs={output_plan.name: output_plan},
         streaming_configs=streaming_configs,
@@ -127,6 +196,7 @@ def _plan(output_plan, *, streaming_configs=(), memory_paths=()):
         input_dir=Path("/tmp/input"),
         read_backend="memory",
         group_by_value=None,
+        source_identity_stack_axes=source_identity_stack_axes,
     )
 
 
@@ -139,7 +209,7 @@ def _context(filemanager):
     context.filemanager = filemanager
     context.runtime_value_store = RuntimeValueStore()
     context.microscope_handler = MicroscopeHandlerStub(
-        parser=SimpleNamespace(parse_filename=lambda _filename: None),
+        parser=FilenameParserStub(),
         metadata_handler=MetadataHandlerStub(
             {"channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"}}
         ),
@@ -174,13 +244,12 @@ def test_slice_aligned_object_label_arrays_preserve_source_slice_metadata():
         )
     )
 
-    request = FunctionOutputContextRequest(
-        source_payload=source,
-        output_value=label_slices,
-        output_plan=output_plan,
-    )
-    contextualized = FunctionOutputContextStrategy.for_output(request).contextualize(
-        request
+    contextualized = FunctionOutputContextStrategy.for_output_plan(
+        output_plan
+    ).contextualize(
+        source,
+        label_slices,
+        output_plan,
     )
     runtime_value = normalize_artifact_value(
         output_plan,
@@ -223,13 +292,12 @@ def test_image_outputs_merge_source_provenance_when_output_already_has_metadata(
         metadata=ImagePayloadMetadata(source_dtype="float32"),
     )
 
-    request = FunctionOutputContextRequest(
-        source_payload=source,
-        output_value=output,
-        output_plan=output_plan,
-    )
-    contextualized = FunctionOutputContextStrategy.for_output(request).contextualize(
-        request
+    contextualized = FunctionOutputContextStrategy.for_output_plan(
+        output_plan
+    ).contextualize(
+        source,
+        output,
+        output_plan,
     )
 
     metadata = image_payload_metadata(contextualized)
@@ -268,16 +336,15 @@ def test_object_label_payload_stack_preserves_source_slice_metadata():
                 np.array([[0, 2], [0, 0]], dtype=np.int32),
             )
         ),
-        declared_object_count=2,
-    )
+        domain=ObjectLabelDomain(declared_object_count=2,
+    ))
 
-    request = FunctionOutputContextRequest(
-        source_payload=source,
-        output_value=labels,
-        output_plan=output_plan,
-    )
-    contextualized = FunctionOutputContextStrategy.for_output(request).contextualize(
-        request
+    contextualized = FunctionOutputContextStrategy.for_output_plan(
+        output_plan
+    ).contextualize(
+        source,
+        labels,
+        output_plan,
     )
     runtime_value = normalize_artifact_value(
         output_plan,
@@ -286,7 +353,7 @@ def test_object_label_payload_stack_preserves_source_slice_metadata():
     )
 
     assert isinstance(runtime_value.data, ObjectLabelPayload)
-    assert runtime_value.data.declared_object_count == 2
+    assert runtime_value.data.domain.declared_object_count == 2
     assert runtime_value.data.source_image_provenance_planes.paths == (
         "/input/A02_s001_w1_z001_t001.tif",
         "/input/A02_s002_w1_z001_t001.tif",
@@ -489,6 +556,87 @@ def test_materialize_artifact_outputs_uses_actual_group_records(monkeypatch):
     assert path == "/analysis/A01_w1_measurements_step7.roi.zip"
 
 
+def test_materialize_artifact_outputs_uses_group_measurement_source_identity(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/A01_measurements_step7.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+        group_keys=("1", "2"),
+        paths_by_group={
+            "1": "/memory/A01_s001_measurements_step7.pkl",
+            "2": "/memory/A01_s002_measurements_step7.pkl",
+        },
+    )
+    group_one = output_plan.for_group("1")
+    group_two = output_plan.for_group("2")
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            group_one,
+            MeasurementTable(
+                name="measurements",
+                rows=[{"site": "1", "object_id": 1, "area": 42}],
+                source_path="/input/A01_s001_w5_z001_t001.TIF",
+                source_component_metadata={
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "5",
+                },
+            ),
+            axis_id="A01",
+        ),
+        path=group_one.path,
+        backend="memory",
+    )
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            group_two,
+            MeasurementTable(
+                name="measurements",
+                rows=[{"site": "2", "object_id": 2, "area": 84}],
+                source_path="/input/A01_s002_w5_z001_t001.TIF",
+                source_component_metadata={
+                    "well": "A01",
+                    "site": "2",
+                    "channel": "5",
+                },
+            ),
+            axis_id="A01",
+        ),
+        path=group_two.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(spec, data, path, *_args, **_kwargs):
+        materialized.append((spec, data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert [path for _spec, _data, path in materialized] == [
+        "/analysis/A01_s001_w5_z001_t001_measurements_step7.roi.zip",
+        "/analysis/A01_s002_w5_z001_t001_measurements_step7.roi.zip",
+    ]
+    assert [data for _spec, data, _path in materialized] == [
+        [{"site": "1", "object_id": 1, "area": 42}],
+        [{"site": "2", "object_id": 2, "area": 84}],
+    ]
+
+
 def test_materialize_artifact_outputs_defaults_metadata_to_existing_json_spec(
     monkeypatch,
 ):
@@ -611,7 +759,7 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
         labels=np.zeros((2, 2), dtype=np.int32),
         source_path="/input/A01_s001_w1.TIF",
         source_component_metadata={"well": "A01", "channel": 1},
-        source_spatial_shape_yx=(100, 200),
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
     )
     filemanager = FileManagerStub()
     context = _context(filemanager)
@@ -649,19 +797,29 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
     spec, data, path, backends, backend_kwargs = materialized[0]
     assert isinstance(spec.outputs[0], ROIOptions)
     assert data is labels
-    assert path == "/analysis/A01_s001_w1_labels_step7.roi.zip"
+    assert path == "/analysis/A01_s001_w1_z001_t001_labels_step7.roi.zip"
     assert backends == ["napari_stream"]
-    stream_request = backend_kwargs["napari_stream"][ViewerStreamKwarg.STREAM_REQUEST.value]
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.port == 5555
     assert stream_request.display_config is streaming_config
-    assert stream_request.source.metadata.component_metadata_by_path == (
-        {"well": "A01", "channel": 1},
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".TIF",
+        },
     )
     assert stream_request.message_extra["component_value_domain"] == {
         "well": ["A01"],
+        "site": [1],
         "channel": [1, 2, 3],
+        "z_index": [1],
+        "timepoint": [1],
     }
-    assert stream_request.producer_identity.to_payload() == {
+    assert stream_request.producer.identity.to_payload() == {
         "origin": "pipeline",
         "output_kind": "artifact",
         "output_key": "labels",
@@ -685,18 +843,13 @@ def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streamin
     labels = ObjectLabelPayload(
         labels=np.zeros((2, 2), dtype=np.int32),
         source_path="/input/A01_s002_w3_z001_t001.TIF",
-        source_spatial_shape_yx=(100, 200),
+        source_component_metadata={"channel": 3},
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
     )
     filemanager = FileManagerStub()
     context = _context(filemanager)
     context.microscope_handler = MicroscopeHandlerStub(
-        parser=SimpleNamespace(
-            parse_filename=lambda filename: (
-                {"well": "A01", "site": 2, "channel": 3}
-                if filename == "A01_s002_w3_z001_t001.TIF"
-                else None
-            )
-        ),
+        parser=FilenameParserStub(),
         metadata_handler=MetadataHandlerStub(
             {"channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"}}
         ),
@@ -738,20 +891,31 @@ def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streamin
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
     assert path == "/analysis/A01_s002_w3_z001_t001_labels_step7.roi.zip"
-    stream_request = backend_kwargs["napari_stream"][ViewerStreamKwarg.STREAM_REQUEST.value]
-    assert stream_request.source.metadata.component_metadata_by_path == (
-        {"well": "A01", "site": 2, "channel": 3},
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": "2",
+            "channel": "3",
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".TIF",
+        },
     )
     assert stream_request.message_extra == {
         "component_value_domain": {
             "well": ["A01"],
             "site": [2],
             "channel": [1, 2, 3],
+            "z_index": [1],
+            "timepoint": [1],
         },
         "component_names_metadata": {
             "channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"},
             "well": {"A01": None},
             "site": {"2": None},
+            "z_index": {"1": None},
+            "timepoint": {"1": None},
         },
     }
 
@@ -769,7 +933,7 @@ def test_materialize_artifact_outputs_streams_payload_component_metadata(
         labels=np.zeros((2, 2), dtype=np.int32),
         source_path="/input/01_POS002_D.TIF",
         source_component_metadata={"well": "01", "site": "POS002", "channel": "D"},
-        source_spatial_shape_yx=(100, 200),
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
     )
     filemanager = FileManagerStub()
     context = _context(filemanager)
@@ -806,9 +970,9 @@ def test_materialize_artifact_outputs_streams_payload_component_metadata(
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
     assert path == "/analysis/01_POS002_D_Nuclei_step7.roi.zip"
-    stream_request = backend_kwargs["napari_stream"][ViewerStreamKwarg.STREAM_REQUEST.value]
-    assert stream_request.source.metadata.component_metadata_by_path == (
-        {"well": "01", "site": "POS002", "channel": "D"},
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {"well": "01", "site": "POS002", "channel": "D", "extension": ".TIF"},
     )
 
 
@@ -825,18 +989,12 @@ def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
         labels=np.zeros((2, 2), dtype=np.int32),
         source_path="/input/A01_s002_w3_z001_t001.TIF",
         source_component_metadata={"OpenHCSImageType": "Grayscale image"},
-        source_spatial_shape_yx=(100, 200),
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
     )
     filemanager = FileManagerStub()
     context = _context(filemanager)
     context.microscope_handler = MicroscopeHandlerStub(
-        parser=SimpleNamespace(
-            parse_filename=lambda filename: (
-                {"well": "A01", "site": 2, "channel": 3}
-                if filename == "A01_s002_w3_z001_t001.TIF"
-                else None
-            )
-        ),
+        parser=FilenameParserStub(),
         metadata_handler=MetadataHandlerStub(
             {"channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"}}
         ),
@@ -874,12 +1032,101 @@ def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
     assert path == "/analysis/A01_s002_w3_z001_t001_Nuclei_step7.roi.zip"
-    stream_request = backend_kwargs["napari_stream"][ViewerStreamKwarg.STREAM_REQUEST.value]
-    assert stream_request.source.metadata.component_metadata_by_path == (
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
         {
             "OpenHCSImageType": "Grayscale image",
             "well": "A01",
             "site": "2",
             "channel": "3",
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".TIF",
+        },
+    )
+
+
+def test_materialize_artifact_outputs_uses_source_stack_identity_for_streaming(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    streaming_config = streaming_config_stub()
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2, 2), dtype=np.int32),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s001_w1_z002_t001.TIF",
+            ),
+            component_metadata=(
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "1",
+                    "z_index": "1",
+                    "timepoint": "1",
+                },
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "1",
+                    "z_index": "2",
+                    "timepoint": "1",
+                },
+            ),
+        ),
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, labels, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(
+            output_plan,
+            streaming_configs=(streaming_config,),
+            source_identity_stack_axes=frozenset({"z_index"}),
+        ),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s001_w1_z001_t001_Nuclei_step7.roi.zip"
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "timepoint": "1",
+            "extension": ".TIF",
         },
     )

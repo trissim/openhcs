@@ -98,6 +98,7 @@ class CompiledStepPlan:
     gpu_id: int | None = None
     zarr_config: Mapping[str, Any] | None = None
     streaming_configs: dict[str, StreamingConfig] = field(default_factory=dict)
+    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
     visualize: bool = False
     create_openhcs_metadata: bool = False
     chainbreaker: bool = False

@@ -8,7 +8,7 @@ import numpy as np
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.constants.constants import MEMORY_TYPE_NUMPY
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugArtifactExportControlPayload,
@@ -22,6 +22,8 @@ from openhcs.core.debug import (
     DebugEvent,
     DebugEventType,
     DebugExecutionConfig,
+    DebugEventSink,
+    DebugExecutionContext,
     DebugExecutionPolicy,
     DebugInvocationParameter,
     DebugProgressContext,
@@ -31,7 +33,6 @@ from openhcs.core.debug import (
     DebugSnapshotReadControlPayload,
     DebugSnapshotReadResponse,
     DebugSnapshot,
-    DebugSnapshotFileManagerContext,
     DebugReplayMode,
     DebugSinkInstallRequest,
     DebugSession,
@@ -49,9 +50,15 @@ from openhcs.core.debug import (
     DebugWarmReplayArtifactReusePlan,
     debug_event_sink_from_context,
 )
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.function_patterns import (
+    CompiledFunctionGroup,
     CompiledFunctionInvocation,
     FunctionInvocationKey,
 )
@@ -60,8 +67,8 @@ from openhcs.core.source_bindings import (
     SourceBindingRuntimeContext,
 )
 from openhcs.core.steps.function_runtime import (
-    FunctionChainExecutor,
-    FunctionChainExecutionRequest,
+    ComponentArtifactPlans,
+    FunctionRuntimeScope,
 )
 
 
@@ -110,8 +117,10 @@ class DebugRuntimeFixture:
                 func=func,
                 function_name=func.__name__,
                 module_name=func.__module__,
-                input_memory_type=MEMORY_TYPE_NUMPY,
-                output_memory_type=MEMORY_TYPE_NUMPY,
+                metadata=CallableMetadata(
+                    input_memory_type=MEMORY_TYPE_NUMPY,
+                    output_memory_type=MEMORY_TYPE_NUMPY,
+                ),
             ),
             artifact_input_keys=artifact_input_keys,
             artifact_output_keys=artifact_output_keys,
@@ -127,9 +136,43 @@ class DebugRuntimeFixture:
             input_memory_type=MEMORY_TYPE_NUMPY,
             device_id=0,
             source_binding_plan=CompiledSourceBindingPlan.empty(),
+            source_identity_stack_axes=frozenset(),
             compiled_function_pattern=SimpleNamespace(is_grouped=False),
             group_by_value=None,
         )
+
+    @classmethod
+    def execute_function_chain(
+        cls,
+        *,
+        initial_data_stack,
+        invocations: tuple[CompiledFunctionInvocation, ...],
+        context,
+        artifact_inputs=None,
+        artifact_outputs=None,
+        runtime_plane_index: int = 0,
+        source_binding_context: SourceBindingRuntimeContext | None = None,
+    ):
+        runtime_scope = FunctionRuntimeScope(
+            context=context,
+            execution_plan=cls.execution_plan(),
+            compiled_group=CompiledFunctionGroup(
+                group_key=cls.GROUP_KEY,
+                invocations=invocations,
+            ),
+            artifacts=ComponentArtifactPlans(
+                inputs={} if artifact_inputs is None else artifact_inputs,
+                outputs={} if artifact_outputs is None else artifact_outputs,
+            ),
+            source_binding_context=(
+                SourceBindingRuntimeContext.empty()
+                if source_binding_context is None
+                else source_binding_context
+            ),
+            runtime_plane_index=runtime_plane_index,
+            runtime_plane_count=1,
+        )
+        return runtime_scope.execute_chain(initial_data_stack)
 
     @classmethod
     def cursor(cls) -> DebugCursor:
@@ -151,7 +194,11 @@ class DebugRuntimeFixture:
         )
 
     @classmethod
-    def sink_install_request(cls, *, context: object) -> DebugSinkInstallRequest:
+    def sink_install_request(
+        cls,
+        *,
+        context: DebugExecutionContext,
+    ) -> DebugSinkInstallRequest:
         return DebugSinkInstallRequest(
             context=context,
             execution_id=cls.EXECUTION_ID,
@@ -207,13 +254,31 @@ class DebugSnapshotFileManagerStub:
         return path_text in self.directories
 
 
-class DebugSnapshotContextStub(DebugSnapshotFileManagerContext):
-    """Nominal debug snapshot context used by policy tests."""
+class DebugExecutionContextStub(DebugExecutionContext):
+    """Nominal debug execution context used by debug-runtime tests."""
 
     filemanager = AliasProperty[DebugSnapshotFileManagerStub]("_filemanager")
 
-    def __init__(self, filemanager: DebugSnapshotFileManagerStub) -> None:
-        self._filemanager = filemanager
+    def __init__(
+        self,
+        filemanager: DebugSnapshotFileManagerStub | None = None,
+        debug_event_sink: DebugEventSink | None = None,
+    ) -> None:
+        if filemanager is None:
+            self._filemanager = DebugSnapshotFileManagerStub()
+        else:
+            self._filemanager = filemanager
+        if debug_event_sink is None:
+            self._debug_event_sink = NoOpDebugEventSink()
+        else:
+            self._debug_event_sink = debug_event_sink
+
+    @property
+    def debug_event_sink(self) -> DebugEventSink:
+        return self._debug_event_sink
+
+    def install_debug_event_sink(self, debug_event_sink: DebugEventSink) -> None:
+        self._debug_event_sink = debug_event_sink
 
 
 def _free_tcp_port() -> int:
@@ -284,21 +349,14 @@ def test_debug_execution_config_normalizes_compile_cache_payload():
 
 def test_execute_chain_emits_debug_invocation_events():
     sink = RecordingDebugEventSink()
-    context = SimpleNamespace(debug_event_sink=sink)
-    request = FunctionChainExecutionRequest(
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    result = DebugRuntimeFixture.execute_function_chain(
         initial_data_stack=np.array([1, 2, 3]),
         invocations=(
             DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.double),
         ),
         context=context,
-        execution_plan=DebugRuntimeFixture.execution_plan(),
-        artifact_inputs={},
-        artifact_outputs={},
-        runtime_plane_index=0,
-        source_binding_context=SourceBindingRuntimeContext.empty(),
     )
-
-    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 4, 6]))
     assert [event.event_type for event in sink.events] == [
@@ -313,8 +371,8 @@ def test_execute_chain_emits_debug_invocation_events():
 
 def test_execute_chain_debug_events_include_planned_artifact_refs():
     sink = RecordingDebugEventSink()
-    context = SimpleNamespace(debug_event_sink=sink)
-    request = FunctionChainExecutionRequest(
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    result = DebugRuntimeFixture.execute_function_chain(
         initial_data_stack=np.array([1, 2, 3]),
         invocations=(
             DebugRuntimeFixture.compiled_invocation(
@@ -323,8 +381,6 @@ def test_execute_chain_debug_events_include_planned_artifact_refs():
             ),
         ),
         context=context,
-        execution_plan=DebugRuntimeFixture.execution_plan(),
-        artifact_inputs={},
         artifact_outputs={
             "measurements": ArtifactOutputPlan(
                 name="measurements",
@@ -337,11 +393,7 @@ def test_execute_chain_debug_events_include_planned_artifact_refs():
                 kind=ArtifactKind.RELATIONSHIPS,
             ),
         },
-        runtime_plane_index=0,
-        source_binding_context=SourceBindingRuntimeContext.empty(),
     )
-
-    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 4, 6]))
     after_event = sink.events[-1]
@@ -361,26 +413,19 @@ def test_debug_step_executes_one_function_pattern_invocation():
         debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
         command_type=DebugCommandType.STEP,
     )
-    context = SimpleNamespace()
+    context = DebugExecutionContextStub()
     ProgressDebugExecutionPolicy(config).install_context_sink(
         DebugRuntimeFixture.sink_install_request(context=context)
     )
     context.debug_event_sink.emit_progress = emitted.append
-    request = FunctionChainExecutionRequest(
+    result = DebugRuntimeFixture.execute_function_chain(
         initial_data_stack=np.array([1, 2, 3]),
         invocations=(
             DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.double, position=0),
             DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.plus_one, position=1),
         ),
         context=context,
-        execution_plan=DebugRuntimeFixture.execution_plan(),
-        artifact_inputs={},
-        artifact_outputs={},
-        runtime_plane_index=0,
-        source_binding_context=SourceBindingRuntimeContext.empty(),
     )
-
-    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 4, 6]))
     assert [
@@ -400,12 +445,12 @@ def test_debug_step_can_advance_past_current_function_pattern_invocation():
         command_type=DebugCommandType.STEP,
         start_after_invocation_key=DebugCursor.invocation_key_text(first_invocation),
     )
-    context = SimpleNamespace()
+    context = DebugExecutionContextStub()
     ProgressDebugExecutionPolicy(config).install_context_sink(
         DebugRuntimeFixture.sink_install_request(context=context)
     )
     context.debug_event_sink.emit_progress = emitted.append
-    request = FunctionChainExecutionRequest(
+    result = DebugRuntimeFixture.execute_function_chain(
         initial_data_stack=np.array([1, 2, 3]),
         invocations=(
             first_invocation,
@@ -413,14 +458,7 @@ def test_debug_step_can_advance_past_current_function_pattern_invocation():
             DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.double, position=2),
         ),
         context=context,
-        execution_plan=DebugRuntimeFixture.execution_plan(),
-        artifact_inputs={},
-        artifact_outputs={},
-        runtime_plane_index=0,
-        source_binding_context=SourceBindingRuntimeContext.empty(),
     )
-
-    result = FunctionChainExecutor(request).execute()
 
     np.testing.assert_array_equal(result, np.array([2, 3, 4]))
     assert len(emitted) == 2
@@ -433,22 +471,15 @@ def test_debug_step_can_advance_past_current_function_pattern_invocation():
 
 def test_execute_chain_emits_debug_exception_event():
     sink = RecordingDebugEventSink()
-    context = SimpleNamespace(debug_event_sink=sink)
-    request = FunctionChainExecutionRequest(
-        initial_data_stack=np.array([1]),
-        invocations=(
-            DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.raising),
-        ),
-        context=context,
-        execution_plan=DebugRuntimeFixture.execution_plan(),
-        artifact_inputs={},
-        artifact_outputs={},
-        runtime_plane_index=0,
-        source_binding_context=SourceBindingRuntimeContext.empty(),
-    )
-
+    context = DebugExecutionContextStub(debug_event_sink=sink)
     try:
-        FunctionChainExecutor(request).execute()
+        DebugRuntimeFixture.execute_function_chain(
+            initial_data_stack=np.array([1]),
+            invocations=(
+                DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.raising),
+            ),
+            context=context,
+        )
     except RuntimeError:
         pass
 
@@ -461,7 +492,7 @@ def test_execute_chain_emits_debug_exception_event():
 
 
 def test_debug_sink_from_context_defaults_to_noop():
-    sink = debug_event_sink_from_context(SimpleNamespace())
+    sink = debug_event_sink_from_context(DebugExecutionContextStub())
 
     assert isinstance(sink, NoOpDebugEventSink)
 
@@ -550,10 +581,12 @@ def test_debug_progress_context_round_trips_through_progress_event():
         snapshot_store_backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
     )
     progress = ProgressEvent(
-        execution_id="exec",
-        plate_id=DebugRuntimeFixture.PLATE_ID,
-        axis_id=DebugRuntimeFixture.AXIS_ID,
-        step_name=DebugRuntimeFixture.SEGMENT_NAME,
+        identity=ProgressIdentity(
+            execution_id="exec",
+            plate_id=DebugRuntimeFixture.PLATE_ID,
+            axis_id=DebugRuntimeFixture.AXIS_ID,
+            step_name=DebugRuntimeFixture.SEGMENT_NAME,
+        ),
         phase=ProgressPhase.PATTERN_GROUP,
         status=ProgressStatus.RUNNING,
         percent=50,
@@ -708,7 +741,7 @@ def test_debug_execution_config_round_trips_through_config_params():
 
 def test_progress_debug_execution_policy_uses_filemanager_snapshot_store():
     filemanager = DebugSnapshotFileManagerStub()
-    context = DebugSnapshotContextStub(filemanager=filemanager)
+    context = DebugExecutionContextStub(filemanager=filemanager)
     config = DebugExecutionConfig(
         debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
         snapshot_store_ref="/debug",
@@ -899,7 +932,7 @@ def test_warm_replay_rejects_missing_artifact_outputs():
     )
 
     try:
-        plan.require_available(DebugSnapshotContextStub(DebugSnapshotFileManagerStub()))
+        plan.require_available(DebugExecutionContextStub(DebugSnapshotFileManagerStub()))
     except RuntimeError as error:
         assert "expected artifact outputs are unavailable" in str(error)
     else:
@@ -940,7 +973,7 @@ def test_warm_replay_hydrates_local_artifact_from_snapshot_identity(tmp_path):
         artifact_plans={"measurements": destination_plan},
         cursor=cursor,
         snapshot_store=store,
-    ).require_available(DebugSnapshotContextStub(DebugSnapshotFileManagerStub()))
+    ).require_available(DebugExecutionContextStub(DebugSnapshotFileManagerStub()))
 
     assert destination_path.read_text(encoding="utf-8") == "x,y\n1,2\n"
 
@@ -980,7 +1013,7 @@ def test_warm_replay_hydrates_vfs_artifact_from_snapshot_identity():
         artifact_plans={"measurements": destination_plan},
         cursor=cursor,
         snapshot_store=store,
-    ).require_available(DebugSnapshotContextStub(filemanager))
+    ).require_available(DebugExecutionContextStub(filemanager))
 
     assert filemanager.load("/debug/replay/measurements.json", "memory") == {"value": 1}
 
@@ -1022,7 +1055,7 @@ def test_warm_replay_rejects_snapshot_artifact_with_stale_vfs_content():
             artifact_plans={"measurements": destination_plan},
             cursor=cursor,
             snapshot_store=store,
-        ).require_available(DebugSnapshotContextStub(filemanager))
+        ).require_available(DebugExecutionContextStub(filemanager))
     except RuntimeError as error:
         assert "expected artifact outputs are unavailable" in str(error)
     else:
@@ -1067,7 +1100,7 @@ def test_warm_replay_rejects_snapshot_artifact_with_mismatched_settings_identity
             artifact_plans={"measurements": destination_plan},
             cursor=cursor,
             snapshot_store=store,
-        ).require_available(DebugSnapshotContextStub(filemanager))
+        ).require_available(DebugExecutionContextStub(filemanager))
     except RuntimeError as error:
         assert "expected artifact outputs are unavailable" in str(error)
     else:

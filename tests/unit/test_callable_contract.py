@@ -1,12 +1,16 @@
 import pickle
-from types import MappingProxyType
+import sys
+from types import MappingProxyType, ModuleType
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
 from openhcs.core.callable_contract import (
     CallableContract,
+    CallableMetadata,
     CompilerPreparedAutoRegisterFamily,
     PROCESSING_CONTRACT_ATTR,
-    RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
     PROCESSING_PREPARE_ATTR,
     _PREPARED_CALLABLE_KEYS,
     _prepare_module_autoregister_families,
@@ -14,22 +18,34 @@ from openhcs.core.callable_contract import (
     prepare_processing_callable,
     runtime_image_execution_mode,
 )
-from openhcs.core.pipeline.compiler import FunctionReference
+from openhcs.core.function_reference import FunctionReference
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchExecutionDomain,
+    RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
-_PREPARED_TEST_FAMILY_CALLS = 0
+_AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
 
 
-class _TestCompilerPreparedFamily(CompilerPreparedAutoRegisterFamily):
+class _PreparedAutoRegisterFamily(
+    CompilerPreparedAutoRegisterFamily,
+    metaclass=AutoRegisterMeta,
+):
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key = None
+
     @classmethod
     def prepare_registered_family(cls) -> None:
-        global _PREPARED_TEST_FAMILY_CALLS
-        _PREPARED_TEST_FAMILY_CALLS += 1
+        global _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS
+        _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS += 1
+
+
+class _PreparedAutoRegisterImplementation(_PreparedAutoRegisterFamily):
+    registry_key = "prepared"
 
 
 def _function_with_imported_prepared_family(image):
@@ -62,9 +78,9 @@ def test_callable_contract_reads_runtime_image_execution_mode_from_function_refe
         memory_type="numpy",
         composite_key="numpy:process",
         original_module=__name__,
-        preserved_attrs={
-            RUNTIME_IMAGE_EXECUTION_MODE_ATTR: ImagePayloadExecutionMode.FULL_STACK,
-        },
+        metadata=CallableMetadata(
+            runtime_image_execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        ),
     )
 
     contract = CallableContract.from_callable(reference)
@@ -90,9 +106,71 @@ def test_callable_contract_metadata_preserves_explicit_nominal_processing_contra
 
 
 def test_prepare_processing_callable_warms_imported_registered_families() -> None:
+    global _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS
+    _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
+    _prepare_module_autoregister_families.cache_clear()
+    AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+
     prepare_processing_callable(_function_with_imported_prepared_family)
 
-    assert _PREPARED_TEST_FAMILY_CALLS == 1
+    assert _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS == 1
+
+
+def test_prepare_processing_callable_does_not_warm_unrelated_loaded_families() -> None:
+    calls = {"related": 0, "unrelated": 0}
+
+    class RelatedFamily(CompilerPreparedAutoRegisterFamily, metaclass=AutoRegisterMeta):
+        __registry_key__ = "registry_key"
+        __skip_if_no_key__ = True
+        registry_key = None
+
+        @classmethod
+        def prepare_registered_family(cls) -> None:
+            calls["related"] += 1
+
+    class RelatedImplementation(RelatedFamily):
+        registry_key = "related"
+
+    class UnrelatedFamily(
+        CompilerPreparedAutoRegisterFamily,
+        metaclass=AutoRegisterMeta,
+    ):
+        __registry_key__ = "registry_key"
+        __skip_if_no_key__ = True
+        registry_key = None
+
+        @classmethod
+        def prepare_registered_family(cls) -> None:
+            calls["unrelated"] += 1
+
+    class UnrelatedImplementation(UnrelatedFamily):
+        registry_key = "unrelated"
+
+    def process(image):
+        return image
+
+    related_module = ModuleType("tests.unit._warmup_related_module")
+    unrelated_module = ModuleType("tests.unit._warmup_unrelated_module")
+    related_module.RelatedFamily = RelatedFamily
+    related_module.RelatedImplementation = RelatedImplementation
+    related_module.process = process
+    unrelated_module.UnrelatedFamily = UnrelatedFamily
+    unrelated_module.UnrelatedImplementation = UnrelatedImplementation
+    process.__module__ = related_module.__name__
+
+    _prepare_module_autoregister_families.cache_clear()
+    AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+    sys.modules[related_module.__name__] = related_module
+    sys.modules[unrelated_module.__name__] = unrelated_module
+    try:
+        prepare_processing_callable(process)
+    finally:
+        sys.modules.pop(related_module.__name__, None)
+        sys.modules.pop(unrelated_module.__name__, None)
+        _prepare_module_autoregister_families.cache_clear()
+        AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+
+    assert calls == {"related": 1, "unrelated": 0}
 
 
 def test_prepare_processing_callable_caches_equivalent_bound_method_hooks() -> None:
@@ -129,6 +207,22 @@ def test_prepare_module_autoregister_families_skips_cellprofiler_backend_mixin_r
     )
 
 
+def test_module_registered_family_preparation_runs_compiler_prepared_family_hook() -> None:
+    global _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS
+    _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
+    AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+
+    report = AutoRegisterRegistryPreparation.prepare_module_registered_families(
+        (sys.modules[__name__],)
+    )
+
+    assert _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS == 1
+    assert report.prepared_family_count == 1
+    assert _PreparedAutoRegisterImplementation in (
+        _PreparedAutoRegisterFamily.__registry__.values()
+    )
+
+
 def test_callable_contract_preserves_immutable_runtime_batch_executors() -> None:
     contract = CallableContract.from_callable(_function_with_runtime_batch_executor)
 
@@ -151,3 +245,23 @@ def test_callable_contract_pickles_runtime_batch_executors() -> None:
         restored.runtime_batch_executor(RuntimeBatchExecutionDomain.PURE_2D_SLICES)
         is _batch_executor
     )
+
+
+def test_runtime_slice_batch_request_exposes_callable_defaults() -> None:
+    def process(image, *, method="otsu", threshold=0.5):
+        return image, method, threshold
+
+    def execute_slice(func, image, kwargs, slice_index, slice_count):
+        del slice_index, slice_count
+        return func(image, **kwargs)
+
+    request = RuntimePure2DSliceBatchRequest(
+        func=process,
+        slices_2d=("image",),
+        kwargs={"threshold": 0.75},
+        execute_slice=execute_slice,
+    )
+
+    assert request.kwargs["method"] == "otsu"
+    assert request.kwargs["threshold"] == 0.75
+    assert request.execute_one(0) == ("image", "otsu", 0.75)

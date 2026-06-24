@@ -12,6 +12,7 @@ from openhcs.core.artifacts import (
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_patterns import (
     FunctionInvocationKey,
+    RuntimeInvocationDomain,
     compile_function_pattern,
     inject_artifact_input_values,
     inject_kwargs_into_pattern,
@@ -33,6 +34,7 @@ from openhcs.core.pipeline.artifact_planning import (
     normalize_pattern,
 )
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.processing.materialization import csv_only
 
 
@@ -243,7 +245,15 @@ def test_compile_function_pattern_builds_invocation_source_of_truth():
     compiled = compile_function_pattern(
         {
             "DAPI": [
-                (first, {"sigma": 1, "__pyqt_reactive_scope_token__": "ui"}),
+                (
+                    first,
+                    {
+                        "sigma": 1,
+                        "enabled": True,
+                        "dtype_config": "inherited",
+                        "__pyqt_reactive_scope_token__": "ui",
+                    },
+                ),
                 second,
             ]
         },
@@ -337,6 +347,55 @@ def test_module_artifact_contract_drives_default_artifact_declarations():
     assert list(graph.outputs) == ["Nuclei"]
     assert invocation.artifact_input_keys == ("DNA",)
     assert invocation.artifact_output_keys == ("Nuclei",)
+
+
+def test_compiled_group_declares_managed_artifact_input_domain():
+    @artifact_inputs(ArtifactSpec("illum", ArtifactKind.IMAGE))
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_inputs=True,
+    )
+    def apply_illumination(image, *, runtime):
+        return image
+
+    compiled = compile_function_pattern(
+        apply_illumination,
+        {
+            "illum": ArtifactInputPlan(
+                name="illum",
+                path="/memory/illum.pkl",
+                kind=ArtifactKind.IMAGE,
+            ),
+        },
+        {},
+    )
+
+    group = compiled.default_group
+    assert group.invocations[0].runtime_domain is RuntimeInvocationDomain.ARTIFACT_MANAGED
+    assert group.runtime_domain is RuntimeInvocationDomain.ARTIFACT_MANAGED
+
+
+def test_compiled_group_does_not_treat_plain_artifact_inputs_as_managed_domain():
+    @artifact_inputs(ArtifactSpec("illum", ArtifactKind.IMAGE))
+    def apply_illumination(image, illum):
+        return image
+
+    compiled = compile_function_pattern(
+        apply_illumination,
+        {
+            "illum": ArtifactInputPlan(
+                name="illum",
+                path="/memory/illum.pkl",
+                kind=ArtifactKind.IMAGE,
+            ),
+        },
+        {},
+    )
+
+    group = compiled.default_group
+    assert group.invocations[0].runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
+    assert group.runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
 
 
 def test_compile_function_pattern_preserves_typed_invocation_options():

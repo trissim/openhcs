@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import InitVar, dataclass, field, replace
 from enum import Enum
+from functools import lru_cache
 import logging
-from operator import attrgetter
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar, Generic, Self, TypeVar
+from typing import Any, ClassVar, Generic, Self, TypeVar, cast
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
@@ -28,7 +28,23 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactPayloadShape,
 )
+from openhcs.core.source_image_provenance import (
+    SourceComponentMetadata,
+    SourceImageIdentity,
+    SourceImageProvenance,
+    SourceImageProvenanceAddressRequirement,
+    SourceImageProvenanceFields,
+    SourceImageProvenancePlaneCountRequirement,
+    SourceImageProvenancePlaneMetadataValues,
+    SourceImageProvenancePlanes,
+    SourceProvenanceInitValues,
+)
+from openhcs.core.source_spatial_domain import (
+    SourceSpatialDomain,
+    SourceSpatialDomainFields,
+)
 from openhcs.core.image_shapes import (
+    image_spatial_shape_yx,
     is_color_image_slice,
     is_color_image_stack,
 )
@@ -50,6 +66,9 @@ from openhcs.core.runtime_semantics import (
     RelationshipSemantics,
     MeasurementObjectRowIdentity,
     RuntimePlaneAxis,
+    RuntimePlaneAxisSliceProjectionPolicy,
+    RuntimeSliceIdentityProjectableValue,
+    RuntimeSliceProjectableValue,
     SpatialGridOrigin,
     SpatialGridOrdering,
     DenseObjectLabelPairAligner,
@@ -63,36 +82,55 @@ from openhcs.core.runtime_semantics import (
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     NominalTypeKeyedStrategyMixin,
+    StrategyLabelRegistryMixin,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
+from openhcs.core.vfs_protocol import FileManagerLike
 
 
 PhysicalBorderEdgesYX = tuple[bool, bool, bool, bool] | None
-SourceComponentMetadata = Mapping[str, Any]
-ChannelSourceComponentMetadata = tuple[SourceComponentMetadata | None, ...]
+OBJECT_LABEL_VALUE_TYPE_LABEL = "object_label_value"
+OBJECT_LABEL_SOURCE_SPATIAL_VALUE_NAME = "Object-label"
+EMPTY_RUNTIME_FIELD_NAME = ""
+ARTIFACT_KIND_ENUM_MEMBER_ATTR = "kind"
+SINGLETON_AXIS_LENGTH = 1
+SPATIAL_GRID_DEFAULT_SLICE_INDEX = 0
+DENSE_LABEL_PLANE_STACK_RANK = 3
+SQUARE_LABEL_PLANE_STACK_RANK = 4
 MetadataValueT = TypeVar("MetadataValueT")
+MappingFieldDefaultT = TypeVar("MappingFieldDefaultT")
 SliceAlignedValueT = TypeVar("SliceAlignedValueT")
 SliceAlignedPayloadT = TypeVar("SliceAlignedPayloadT")
-SourceProvenanceIdentity = tuple[str | None, tuple[tuple[str, str], ...] | None]
-SourceProvenanceInitValues = tuple[
-    str | None,
-    SourceComponentMetadata | None,
-    tuple[str | None, ...],
-    ChannelSourceComponentMetadata,
-    tuple[str, ...],
-]
+ObjectLabelVariantAliasValueT = TypeVar("ObjectLabelVariantAliasValueT")
+
 
 _TPayload = TypeVar("_TPayload", bound=type[Any])
 _ARRAY_PAYLOAD_PREDICATES: list[Callable[[Any], bool]] = []
 logger = logging.getLogger(__name__)
 
 
-def _normalize_component_metadata(
-    metadata: SourceComponentMetadata | None,
-) -> SourceComponentMetadata | None:
-    if metadata is None:
-        return None
-    return MappingProxyType(dict(metadata))
+def runtime_array_ufunc_result(
+    ufunc: Any,
+    method: str,
+    inputs: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+) -> Any:
+    """Invoke a NumPy ``__array_ufunc__`` protocol method without dynamic lookup."""
+    match method:
+        case "__call__":
+            return ufunc(*inputs, **kwargs)
+        case "reduce":
+            return ufunc.reduce(*inputs, **kwargs)
+        case "accumulate":
+            return ufunc.accumulate(*inputs, **kwargs)
+        case "reduceat":
+            return ufunc.reduceat(*inputs, **kwargs)
+        case "outer":
+            return ufunc.outer(*inputs, **kwargs)
+        case "at":
+            return ufunc.at(*inputs, **kwargs)
+        case _:
+            return NotImplemented
 
 
 class RuntimeArrayPayload(ABC, metaclass=AutoRegisterMeta):
@@ -155,434 +193,66 @@ class RuntimeArrayPayload(ABC, metaclass=AutoRegisterMeta):
                 **kwargs,
                 "out": tuple(runtime_array_operand(value) for value in kwargs["out"]),
             }
-        result = getattr(ufunc, method)(*converted_inputs, **kwargs)
+        result = runtime_array_ufunc_result(ufunc, method, converted_inputs, kwargs)
+        if result is NotImplemented:
+            return NotImplemented
         return self.array_ufunc_result(result)
 
+
+class DataBackedRuntimeArrayPayload(RuntimeArrayPayload):
+    """Runtime array payload whose concrete array is stored in ``data``."""
+
+    data: Any
+
+    @property
+    def shape(self) -> Any:
+        return self.data.shape
+
+    @property
+    def ndim(self) -> int:
+        return self.data.ndim
+
+    @property
+    def dtype(self) -> Any:
+        return self.data.dtype
+
+    def __array__(self, dtype: Any | None = None) -> Any:
+        import numpy as np
+
+        return np.asarray(self.data, dtype=dtype)
+
+    def array_payload_data(self) -> Any:
+        return self.data
+
+    def __getitem__(self, key: Any) -> Any:
+        return self.data[key]
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def astype(self, *args: Any, **kwargs: Any) -> Any:
+        return self.data.astype(*args, **kwargs)
+
+    def flatten(self, *args: Any, **kwargs: Any) -> Any:
+        return self.data.flatten(*args, **kwargs)
+
+    def copy(self, *args: Any, **kwargs: Any) -> Any:
+        return self.data.copy(*args, **kwargs)
 
 RuntimeArrayData = RuntimeArrayPayload | np.ndarray
 ImagePayloadMetadataInput = RuntimeArrayData
 
 
-class SourceImageProvenance:
-    """Source-image identity carried by image and object-label payloads."""
-
-    __slots__ = (
-        "source_path",
-        "source_component_metadata",
-        "channel_source_paths",
-        "channel_source_component_metadata",
-        "source_image_names",
-    )
-
-    def __init__(
-        self,
-        source_path: str | None = None,
-        source_component_metadata: SourceComponentMetadata | None = None,
-        channel_source_paths: tuple[str | None, ...] = (),
-        channel_source_component_metadata: ChannelSourceComponentMetadata = (),
-        source_image_names: tuple[str, ...] = (),
-    ) -> None:
-        self.source_path = self.normalized_source_path(source_path)
-        self.source_component_metadata = _normalize_component_metadata(
-            source_component_metadata
-        )
-        self.channel_source_paths = tuple(
-            self.normalized_source_path(path) for path in channel_source_paths
-        )
-        self.channel_source_component_metadata = tuple(
-            _normalize_component_metadata(metadata)
-            for metadata in channel_source_component_metadata
-        )
-        self.source_image_names = tuple(str(name) for name in source_image_names)
-
-    @classmethod
-    def from_init_values(
-        cls,
-        values: SourceProvenanceInitValues,
-    ) -> "SourceImageProvenance":
-        return cls(*values)
-
-    @staticmethod
-    def normalized_source_path(source_path: str | None) -> str | None:
-        if source_path is None:
-            return None
-        return str(source_path)
-
-    @property
-    def has_values(self) -> bool:
-        return any(
-            (
-                self.source_path is not None,
-                self.source_component_metadata is not None,
-                bool(self.channel_source_paths),
-                bool(self.channel_source_component_metadata),
-                bool(self.source_image_names),
-            )
-        )
-
-    @property
-    def plane_count_sources(self) -> tuple[int, ...]:
-        return tuple(
-            count
-            for count in (
-                len(self.channel_source_paths),
-                len(self.channel_source_component_metadata),
-            )
-            if count > 0
-        )
-
-    @property
-    def channel_plane_count(self) -> int:
-        return max(self.plane_count_sources, default=0)
-
-    @property
-    def addressable(self) -> bool:
-        return self.source_path is not None or self.source_component_metadata is not None
-
-    def for_channel(self, channel_index: int) -> "SourceImageProvenance":
-        source_path = _tuple_value(self.channel_source_paths, channel_index)
-        source_component_metadata = _tuple_value(
-            self.channel_source_component_metadata,
-            channel_index,
-        )
-        return type(self)(
-            source_path=source_path if source_path is not None else self.source_path,
-            source_component_metadata=(
-                source_component_metadata
-                if source_component_metadata is not None
-                else self.source_component_metadata
-            ),
-            source_image_names=self.source_image_names_for_channel(channel_index),
-        )
-
-    def source_image_names_for_channel(self, channel_index: int) -> tuple[str, ...]:
-        """Return source-image aliases represented by a selected provenance plane."""
-        if len(self.source_image_names) <= channel_index:
-            return self.source_image_names
-        return (self.source_image_names[channel_index],)
-
-    def identity(self) -> SourceProvenanceIdentity:
-        return (
-            self.source_path,
-            self.source_component_identity,
-        )
-
-    def with_missing_from(self, fallback: "SourceImageProvenance") -> Self:
-        return type(self)(
-            source_path=(
-                self.source_path
-                if self.source_path is not None
-                else fallback.source_path
-            ),
-            source_component_metadata=(
-                self.source_component_metadata
-                if self.source_component_metadata is not None
-                else fallback.source_component_metadata
-            ),
-            channel_source_paths=self.merged_channel_values(
-                self.channel_source_paths,
-                fallback.channel_source_paths,
-            ),
-            channel_source_component_metadata=self.merged_channel_values(
-                self.channel_source_component_metadata,
-                fallback.channel_source_component_metadata,
-            ),
-            source_image_names=(
-                self.source_image_names
-                if self.source_image_names
-                else fallback.source_image_names
-            ),
-        )
-
-    @staticmethod
-    def merged_channel_values(
-        values: tuple[MetadataValueT | None, ...],
-        fallback: tuple[MetadataValueT | None, ...],
-    ) -> tuple[MetadataValueT | None, ...]:
-        """Fill missing per-channel identities without changing cardinality."""
-        if not values:
-            return fallback
-        if not fallback or len(values) != len(fallback):
-            return values
-        return tuple(
-            value if value is not None else fallback_value
-            for value, fallback_value in zip(values, fallback)
-        )
-
-    @property
-    def source_component_identity(self) -> tuple[tuple[str, str], ...] | None:
-        if self.source_component_metadata is None:
-            return None
-        return tuple(
-            sorted(
-                (str(key), repr(value))
-                for key, value in self.source_component_metadata.items()
-            )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceImageProvenanceRequirement(ABC, metaclass=AutoRegisterMeta):
-    """Nominal source-provenance invariant with policy-selected failure behavior."""
-
-    __registry_key__ = "requirement_name"
-    __skip_if_no_key__ = True
-    requirement_name: ClassVar[str | None] = None
-
-    provenance: SourceImageProvenance
-    label_name: str
-
-    @property
-    @abstractmethod
-    def satisfied(self) -> bool:
-        """Return whether this source-provenance invariant is satisfied."""
-
-    @abstractmethod
-    def error(self) -> ValueError:
-        """Return the fail-loud error for an unsatisfied invariant."""
-
-    def validate(self) -> None:
-        SourceImageProvenanceRequirementPolicy.for_requirement(self).validate(self)
-
-
-class SourceImageProvenanceRequirementPolicy(ABC, metaclass=AutoRegisterMeta):
-    """Registered satisfied/unsatisfied handling for provenance requirements."""
-
-    __registry_key__ = "satisfied"
-    __skip_if_no_key__ = True
-    satisfied: ClassVar[bool | None] = None
-
-    @classmethod
-    def for_requirement(
-        cls,
-        requirement: SourceImageProvenanceRequirement,
-    ) -> "SourceImageProvenanceRequirementPolicy":
-        return cls.__registry__[requirement.satisfied]()
-
-    def validate(self, requirement: SourceImageProvenanceRequirement) -> None:
-        """Validate one source-provenance requirement."""
-        return None
-
-
-class SatisfiedSourceImageProvenanceRequirementPolicy(
-    SourceImageProvenanceRequirementPolicy
-):
-    """Accept source-provenance requirements that are already satisfied."""
-
-    satisfied = True
-
-
-class UnsatisfiedSourceImageProvenanceRequirementPolicy(
-    SourceImageProvenanceRequirementPolicy
-):
-    """Raise the requirement-specific error for failed provenance invariants."""
-
-    satisfied = False
-
-    def validate(self, requirement: SourceImageProvenanceRequirement) -> None:
-        raise requirement.error()
-
-
-@dataclass(frozen=True, slots=True)
-class SourceImageProvenancePlaneCountRequirement(SourceImageProvenanceRequirement):
-    """Require per-plane source identities to match source-aligned label planes."""
-
-    requirement_name = "plane_count"
-    expected_count: int
-
-    @property
-    def satisfied(self) -> bool:
-        return self.provenance.channel_plane_count == self.expected_count
-
-    def error(self) -> ValueError:
-        return ValueError(
-            f"Object-label artifact {self.label_name!r} has {self.expected_count} "
-            "source-aligned label planes but "
-            f"{self.provenance.channel_plane_count} per-plane source identities "
-            "after source-image contextualization."
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceImageProvenanceAddressRequirement(SourceImageProvenanceRequirement):
-    """Require one plane source identity to be addressable."""
-
-    requirement_name = "address"
-    plane_index: int
-
-    @property
-    def satisfied(self) -> bool:
-        return self.provenance.addressable
-
-    def error(self) -> ValueError:
-        return ValueError(
-            f"Object-label artifact {self.label_name!r} plane {self.plane_index} "
-            "has neither source_path nor source_component_metadata after "
-            "source-image contextualization."
-        )
-
-
-@dataclass(kw_only=True)
-class SourceImageProvenanceFields:
-    """Source-image provenance fields shared by image and object-label carriers."""
-
-    source_provenance: SourceImageProvenance = field(
-        default_factory=SourceImageProvenance
-    )
-    source_path: InitVar[str | None] = None
-    source_component_metadata: InitVar[SourceComponentMetadata | None] = None
-    channel_source_paths: InitVar[tuple[str | None, ...]] = ()
-    channel_source_component_metadata: InitVar[ChannelSourceComponentMetadata] = ()
-    source_image_names: InitVar[tuple[str, ...]] = ()
-
-    def absorb_explicit_source_provenance(
-        self,
-        explicit: SourceImageProvenance,
-    ) -> None:
-        self.source_provenance = explicit.with_missing_from(self.source_provenance)
-
-    def normalize_source_provenance_fields(self) -> None:
-        self.source_provenance = SourceImageProvenance(
-            self.source_provenance.source_path,
-            self.source_provenance.source_component_metadata,
-            self.source_provenance.channel_source_paths,
-            self.source_provenance.channel_source_component_metadata,
-            self.source_provenance.source_image_names,
-        )
-
-def _source_path_getter(self: SourceImageProvenanceFields) -> str | None:
-    return self.source_provenance.source_path
-
-
-def _source_path_setter(
-    self: SourceImageProvenanceFields,
-    value: str | None,
-) -> None:
-    self.source_provenance = SourceImageProvenance(
-        source_path=value,
-        source_component_metadata=self.source_provenance.source_component_metadata,
-        channel_source_paths=self.source_provenance.channel_source_paths,
-        channel_source_component_metadata=(
-            self.source_provenance.channel_source_component_metadata
-        ),
-        source_image_names=self.source_provenance.source_image_names,
-    )
-
-
-def _source_component_metadata_getter(
-    self: SourceImageProvenanceFields,
-) -> SourceComponentMetadata | None:
-    return self.source_provenance.source_component_metadata
-
-
-def _source_component_metadata_setter(
-    self: SourceImageProvenanceFields,
-    value: SourceComponentMetadata | None,
-) -> None:
-    self.source_provenance = SourceImageProvenance(
-        source_path=self.source_provenance.source_path,
-        source_component_metadata=value,
-        channel_source_paths=self.source_provenance.channel_source_paths,
-        channel_source_component_metadata=(
-            self.source_provenance.channel_source_component_metadata
-        ),
-        source_image_names=self.source_provenance.source_image_names,
-    )
-
-
-def _channel_source_paths_getter(
-    self: SourceImageProvenanceFields,
-) -> tuple[str | None, ...]:
-    return self.source_provenance.channel_source_paths
-
-
-def _channel_source_paths_setter(
-    self: SourceImageProvenanceFields,
-    value: tuple[str | None, ...],
-) -> None:
-    self.source_provenance = SourceImageProvenance(
-        source_path=self.source_provenance.source_path,
-        source_component_metadata=self.source_provenance.source_component_metadata,
-        channel_source_paths=value,
-        channel_source_component_metadata=(
-            self.source_provenance.channel_source_component_metadata
-        ),
-        source_image_names=self.source_provenance.source_image_names,
-    )
-
-
-def _channel_source_component_metadata_getter(
-    self: SourceImageProvenanceFields,
-) -> ChannelSourceComponentMetadata:
-    return self.source_provenance.channel_source_component_metadata
-
-
-def _channel_source_component_metadata_setter(
-    self: SourceImageProvenanceFields,
-    value: ChannelSourceComponentMetadata,
-) -> None:
-    self.source_provenance = SourceImageProvenance(
-        source_path=self.source_provenance.source_path,
-        source_component_metadata=self.source_provenance.source_component_metadata,
-        channel_source_paths=self.source_provenance.channel_source_paths,
-        channel_source_component_metadata=value,
-        source_image_names=self.source_provenance.source_image_names,
-    )
-
-
-def _source_image_names_getter(self: SourceImageProvenanceFields) -> tuple[str, ...]:
-    return self.source_provenance.source_image_names
-
-
-def _source_image_names_setter(
-    self: SourceImageProvenanceFields,
-    value: tuple[str, ...],
-) -> None:
-    self.source_provenance = SourceImageProvenance(
-        source_path=self.source_provenance.source_path,
-        source_component_metadata=self.source_provenance.source_component_metadata,
-        channel_source_paths=self.source_provenance.channel_source_paths,
-        channel_source_component_metadata=(
-            self.source_provenance.channel_source_component_metadata
-        ),
-        source_image_names=value,
-    )
-
-
-SourceImageProvenanceFields.source_path = property(
-    _source_path_getter,
-    _source_path_setter,
-)
-SourceImageProvenanceFields.source_component_metadata = property(
-    _source_component_metadata_getter,
-    _source_component_metadata_setter,
-)
-SourceImageProvenanceFields.channel_source_paths = property(
-    _channel_source_paths_getter,
-    _channel_source_paths_setter,
-)
-SourceImageProvenanceFields.channel_source_component_metadata = property(
-    _channel_source_component_metadata_getter,
-    _channel_source_component_metadata_setter,
-)
-SourceImageProvenanceFields.source_image_names = property(
-    _source_image_names_getter,
-    _source_image_names_setter,
-)
-
-
 @dataclass(slots=True)
-class ImagePayloadMetadata(SourceImageProvenanceFields):
+class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainFields):
     """Generic source-image metadata that should travel with runtime pixels."""
 
     intensity_scale: float | None = None
     source_dtype: str | None = None
     unit_interval_intensity_scale: int | None = None
-    channel_intensity_scales: tuple[float | None, ...] = ()
-    channel_source_dtypes: tuple[str | None, ...] = ()
-    channel_unit_interval_intensity_scales: tuple[int | None, ...] = ()
-    spatial_origin_yx: tuple[int, int] | None = None
-    source_spatial_shape_yx: tuple[int, int] | None = None
+    source_plane_intensity_scales: tuple[float | None, ...] = ()
+    source_plane_dtypes: tuple[str | None, ...] = ()
+    source_plane_unit_interval_intensity_scales: tuple[int | None, ...] = ()
     physical_border_edges_yx: PhysicalBorderEdgesYX = None
     mask_defines_border: bool | None = None
 
@@ -614,18 +284,13 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
         from openhcs.core.memory import MEMORY_TYPE_NUMPY, detect_memory_type
 
         memory_type = detect_memory_type(array)
-        dtype = getattr(array, "dtype", None)
-        if dtype is None:
-            raise TypeError(
-                "ImagePayloadMetadata.for_array_payload requires an array payload "
-                f"with dtype; got {type(array).__name__}."
-            )
+        dtype = array.dtype
+        if memory_type == MEMORY_TYPE_NUMPY:
+            intensity_scale = image_intensity_scale_for_dtype(dtype)
+        else:
+            intensity_scale = None
         return cls(
-            intensity_scale=(
-                image_intensity_scale_for_dtype(dtype)
-                if memory_type == MEMORY_TYPE_NUMPY
-                else None
-            ),
+            intensity_scale=intensity_scale,
             source_dtype=str(dtype),
             source_path=source_path,
         )
@@ -635,6 +300,7 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
             SourceImageProvenance.from_init_values(source_provenance_values)
         )
         self.normalize_source_provenance_fields()
+        self.normalize_source_spatial_domain_fields()
 
     @property
     def has_values(self) -> bool:
@@ -646,56 +312,87 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
                 self.source_path is not None,
                 self.source_component_metadata is not None,
                 self.unit_interval_intensity_scale is not None,
-                bool(self.channel_intensity_scales),
-                bool(self.channel_source_dtypes),
-                bool(self.channel_source_paths),
-                bool(self.channel_source_component_metadata),
-                bool(self.channel_unit_interval_intensity_scales),
-                self.spatial_origin_yx is not None,
-                self.source_spatial_shape_yx is not None,
+                bool(self.source_plane_intensity_scales),
+                bool(self.source_plane_dtypes),
+                self.source_image_provenance_planes.has_values,
+                bool(self.source_plane_unit_interval_intensity_scales),
+                self.source_spatial_domain.has_values,
                 self.physical_border_edges_yx is not None,
                 self.mask_defines_border is not None,
                 bool(self.source_image_names),
             )
         )
 
-    def intensity_scale_for_channel(self, channel_index: int) -> float | None:
-        """Return the best available intensity scale for one channel/plane."""
-        if 0 <= channel_index < len(self.channel_intensity_scales):
-            channel_scale = self.channel_intensity_scales[channel_index]
-            if channel_scale is not None:
-                return channel_scale
+    @property
+    def source_image_paths(self) -> tuple[str, ...]:
+        """Return provenance image paths, falling back to the scalar source path."""
+        paths = self.source_image_provenance_paths
+        if paths:
+            return paths
+        if self.source_path is not None and str(self.source_path):
+            return (str(self.source_path),)
+        return ()
+
+    @property
+    def source_image_path_tokens(self) -> tuple[str, ...]:
+        """Return all image path values carried by this metadata for matching."""
+        return self._nonempty_source_path_values(
+            (*self.source_image_provenance_planes.paths, self.source_path)
+        )
+
+    @property
+    def source_image_provenance_paths(self) -> tuple[str, ...]:
+        """Return non-empty per-plane provenance paths."""
+        return self._nonempty_source_path_values(
+            self.source_image_provenance_planes.paths
+        )
+
+    @staticmethod
+    def _nonempty_source_path_values(paths: Sequence[str | None]) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(str(path) for path in paths if path is not None and str(path))
+        )
+
+    def intensity_scale_for_source_plane(self, plane_index: int) -> float | None:
+        """Return the best available intensity scale for one source plane."""
+        if 0 <= plane_index < len(self.source_plane_intensity_scales):
+            plane_scale = self.source_plane_intensity_scales[plane_index]
+            if plane_scale is not None:
+                return plane_scale
         return self.intensity_scale
 
-    def unit_interval_intensity_scale_for_channel(
+    def unit_interval_intensity_scale_for_source_plane(
         self,
-        channel_index: int,
+        plane_index: int,
     ) -> int | None:
         """Return the scale proving current pixels are exact integer/scale values."""
-        if 0 <= channel_index < len(self.channel_unit_interval_intensity_scales):
-            channel_scale = self.channel_unit_interval_intensity_scales[channel_index]
-            if channel_scale is not None:
-                return int(channel_scale)
+        if 0 <= plane_index < len(self.source_plane_unit_interval_intensity_scales):
+            plane_scale = self.source_plane_unit_interval_intensity_scales[plane_index]
+            if plane_scale is not None:
+                return int(plane_scale)
         return self.unit_interval_intensity_scale
 
     def payload_with(self, data: Any, mask: Any | None = None) -> Any:
         """Return image payload data carrying this metadata."""
-        return image_payload_with_context(data=data, mask=mask, metadata=self)
+        if mask is None and self.has_values:
+            return ImageMetadataPayload(data=data, metadata=self)
+        if mask is None:
+            return data
+        return MaskedImagePayload(data=data, mask=mask, metadata=self)
 
-    def for_channel(self, channel_index: int) -> "ImagePayloadMetadata":
-        """Return single-channel metadata sliced from a stacked payload."""
-        source_provenance = self.source_provenance.for_channel(channel_index)
+    def for_source_plane(self, plane_index: int) -> "ImagePayloadMetadata":
+        """Return metadata for one source plane sliced from a stacked payload."""
+        source_provenance = self.source_provenance.for_source_plane(plane_index)
         return ImagePayloadMetadata(
-            intensity_scale=self.intensity_scale_for_channel(channel_index),
-            source_dtype=_tuple_value(self.channel_source_dtypes, channel_index)
+            intensity_scale=self.intensity_scale_for_source_plane(plane_index),
+            source_dtype=_tuple_value(self.source_plane_dtypes, plane_index)
             or self.source_dtype,
             source_path=source_provenance.source_path,
             source_component_metadata=source_provenance.source_component_metadata,
             unit_interval_intensity_scale=(
-                self.unit_interval_intensity_scale_for_channel(channel_index)
+                self.unit_interval_intensity_scale_for_source_plane(plane_index)
             ),
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
+            source_spatial_domain=self.source_spatial_domain,
             physical_border_edges_yx=self.physical_border_edges_yx,
             mask_defines_border=self.mask_defines_border,
             source_image_names=source_provenance.source_image_names,
@@ -713,17 +410,49 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
         return replace(
             self,
             unit_interval_intensity_scale=None,
-            channel_unit_interval_intensity_scales=(),
+            source_plane_unit_interval_intensity_scales=(),
         )
 
     def without_spatial_domain(self) -> "ImagePayloadMetadata":
         """Return metadata with invalidated source-spatial placement removed."""
         return replace(
             self,
-            spatial_origin_yx=None,
-            source_spatial_shape_yx=None,
+            source_spatial_domain=SourceSpatialDomain(),
             physical_border_edges_yx=None,
             mask_defines_border=None,
+        )
+
+    def source_spatial_wire_mapping(self) -> dict[str, Any]:
+        """Return viewer-wire source-spatial metadata carried by this payload."""
+        return self.source_spatial_domain.to_viewer_wire_mapping()
+
+    def object_label_source_spatial_domain(self) -> SourceSpatialDomain:
+        """Return this metadata's object-label source-image coordinate domain."""
+        return self.source_spatial_domain.with_value_name(
+            OBJECT_LABEL_SOURCE_SPATIAL_VALUE_NAME,
+        )
+
+    def with_source_spatial_context_from(
+        self,
+        source: "ImagePayloadMetadata",
+    ) -> "ImagePayloadMetadata":
+        """Fill missing source-image geometry without changing provenance."""
+        spatial_domain = self.source_spatial_domain.with_missing_from(
+            source.source_spatial_domain
+        )
+        return replace(
+            self,
+            source_spatial_domain=spatial_domain,
+            physical_border_edges_yx=(
+                self.physical_border_edges_yx
+                if self.physical_border_edges_yx is not None
+                else source.physical_border_edges_yx
+            ),
+            mask_defines_border=(
+                self.mask_defines_border
+                if self.mask_defines_border is not None
+                else source.mask_defines_border
+            ),
         )
 
     def with_source_context_from(
@@ -735,28 +464,24 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
             source.source_provenance
         )
         return replace(
-            self,
+            self.with_source_spatial_context_from(source),
             source_provenance=source_provenance,
-            spatial_origin_yx=(
-                self.spatial_origin_yx
-                if self.spatial_origin_yx is not None
-                else source.spatial_origin_yx
+        )
+
+    def with_source_provenance(
+        self,
+        source_provenance: SourceImageProvenance,
+    ) -> "ImagePayloadMetadata":
+        """Return metadata with source-image provenance replaced atomically."""
+        return replace(
+            self,
+            source_provenance=SourceImageProvenance(),
+            source_path=source_provenance.source_path,
+            source_component_metadata=source_provenance.source_component_metadata,
+            source_image_provenance_planes=(
+                source_provenance.source_image_provenance_planes
             ),
-            source_spatial_shape_yx=(
-                self.source_spatial_shape_yx
-                if self.source_spatial_shape_yx is not None
-                else source.source_spatial_shape_yx
-            ),
-            physical_border_edges_yx=(
-                self.physical_border_edges_yx
-                if self.physical_border_edges_yx is not None
-                else source.physical_border_edges_yx
-            ),
-            mask_defines_border=(
-                self.mask_defines_border
-                if self.mask_defines_border is not None
-                else source.mask_defines_border
-            ),
+            source_image_names=source_provenance.source_image_names,
         )
 
     def physical_border_edges_for_shape(
@@ -771,17 +496,8 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
         """
         if self.physical_border_edges_yx is not None:
             return tuple(bool(edge) for edge in self.physical_border_edges_yx)
-        if self.spatial_origin_yx is None or self.source_spatial_shape_yx is None:
-            return True, True, True, True
-
-        height, width = _spatial_shape_pair(image_shape_yx, "image_shape_yx")
-        origin_y, origin_x = self.spatial_origin_yx
-        source_height, source_width = self.source_spatial_shape_yx
-        return (
-            origin_y <= 0,
-            origin_y + height >= source_height,
-            origin_x <= 0,
-            origin_x + width >= source_width,
+        return self.source_spatial_domain.physical_border_edges_for_shape(
+            image_shape_yx
         )
 
     def with_spatial_crop(
@@ -793,33 +509,52 @@ class ImagePayloadMetadata(SourceImageProvenanceFields):
         physical_border_edges_yx: PhysicalBorderEdgesYX = None,
     ) -> "ImagePayloadMetadata":
         """Return metadata for a crop of this image payload."""
-        input_shape = _spatial_shape_pair(input_shape_yx, "input_shape_yx")
         output_shape = _spatial_shape_pair(output_shape_yx, "output_shape_yx")
-        parent_origin = self.spatial_origin_yx or (0, 0)
-        source_shape = self.source_spatial_shape_yx or input_shape
-        origin = (
-            int(parent_origin[0]) + int(offset_yx[0]),
-            int(parent_origin[1]) + int(offset_yx[1]),
+        spatial_domain = self.source_spatial_domain.with_spatial_crop(
+            input_shape_yx=input_shape_yx,
+            output_shape_yx=output_shape_yx,
+            offset_yx=offset_yx,
         )
         if physical_border_edges_yx is None:
             physical_border_edges_yx = (
-                origin[0] <= 0,
-                origin[0] + output_shape[0] >= source_shape[0],
-                origin[1] <= 0,
-                origin[1] + output_shape[1] >= source_shape[1],
+                spatial_domain.physical_border_edges_for_shape(output_shape)
             )
         return replace(
             self,
-            spatial_origin_yx=origin,
-            source_spatial_shape_yx=source_shape,
+            source_spatial_domain=spatial_domain,
             physical_border_edges_yx=tuple(
                 bool(edge) for edge in physical_border_edges_yx
             ),
         )
 
+    def with_materialized_source_domain(
+        self,
+        target_domain: SourceSpatialDomain,
+    ) -> "ImagePayloadMetadata":
+        """Return metadata after pixels are expanded to source-image XY."""
+        return replace(
+            self,
+            source_spatial_domain=(
+                self.source_spatial_domain.as_materialized_source_domain(
+                    target_domain
+                )
+            ),
+            physical_border_edges_yx=(True, True, True, True),
+        )
+
 
 @dataclass(frozen=True, slots=True)
-class ImageMetadataPayload(RuntimeArrayPayload):
+class ImagePayloadMetadataCarrier(ABC):
+    """Nominal contract for image payloads that carry runtime metadata."""
+
+    @property
+    @abstractmethod
+    def metadata(self) -> ImagePayloadMetadata:
+        """Return the image metadata attached to this payload."""
+
+
+@dataclass(frozen=True, slots=True)
+class ImageMetadataPayload(DataBackedRuntimeArrayPayload, ImagePayloadMetadataCarrier):
     """Image data plus metadata, without requiring a validity mask."""
 
     data: Any
@@ -833,37 +568,6 @@ class ImageMetadataPayload(RuntimeArrayPayload):
             )
         if not self.metadata.has_values:
             raise ValueError("ImageMetadataPayload.metadata cannot be empty.")
-
-    @property
-    def shape(self) -> Any:
-        return self.data.shape
-
-    @property
-    def ndim(self) -> int:
-        return self.data.ndim
-
-    @property
-    def dtype(self) -> Any:
-        return self.data.dtype
-
-    def __array__(self, dtype: Any | None = None) -> Any:
-        import numpy as np
-
-        return np.asarray(self.data, dtype=dtype)
-
-    def array_payload_data(self) -> Any:
-        return self.data
-
-    def __getitem__(self, key: Any) -> Any:
-        return self.data[key]
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("__"):
-            raise AttributeError(name)
-        return getattr(self.data, name)
 
     def with_data(
         self,
@@ -879,7 +583,7 @@ class ImageMetadataPayload(RuntimeArrayPayload):
 
 
 @dataclass(frozen=True, slots=True)
-class MaskedImagePayload(RuntimeArrayPayload):
+class MaskedImagePayload(DataBackedRuntimeArrayPayload, ImagePayloadMetadataCarrier):
     """Image data plus an authoritative per-pixel validity mask."""
 
     data: Any
@@ -904,37 +608,6 @@ class MaskedImagePayload(RuntimeArrayPayload):
                 "MaskedImagePayload.mask shape must match the image spatial "
                 f"domain; got mask {mask_shape!r} for image {data_shape!r}."
             )
-
-    @property
-    def shape(self) -> Any:
-        return self.data.shape
-
-    @property
-    def ndim(self) -> int:
-        return self.data.ndim
-
-    @property
-    def dtype(self) -> Any:
-        return self.data.dtype
-
-    def __array__(self, dtype: Any | None = None) -> Any:
-        import numpy as np
-
-        return np.asarray(self.data, dtype=dtype)
-
-    def array_payload_data(self) -> Any:
-        return self.data
-
-    def __getitem__(self, key: Any) -> Any:
-        return self.data[key]
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("__"):
-            raise AttributeError(name)
-        return getattr(self.data, name)
 
     def with_data(self, data: Any, mask: Any | None = None) -> "MaskedImagePayload":
         """Return the same semantic image mask attached to replacement data."""
@@ -968,29 +641,7 @@ def image_payload_mask(payload: Any) -> Any | None:
 
 def image_payload_metadata(payload: Any) -> ImagePayloadMetadata:
     """Return runtime image metadata when present."""
-    if isinstance(payload, (MaskedImagePayload, ImageMetadataPayload)):
-        return payload.metadata
-    if isinstance(payload, ObjectLabelPayload):
-        return ImagePayloadMetadata(
-            source_path=payload.source_path,
-            source_component_metadata=payload.source_component_metadata,
-            channel_source_paths=payload.channel_source_paths,
-            channel_source_component_metadata=payload.channel_source_component_metadata,
-            spatial_origin_yx=payload.spatial_origin_yx,
-            source_spatial_shape_yx=payload.source_spatial_shape_yx,
-            source_image_names=payload.source_image_names,
-        )
-    if isinstance(payload, ObjectLabelSet):
-        return ImagePayloadMetadata(
-            source_path=payload.source_path,
-            source_component_metadata=payload.source_component_metadata,
-            channel_source_paths=payload.channel_source_paths,
-            channel_source_component_metadata=payload.channel_source_component_metadata,
-            spatial_origin_yx=payload.spatial_origin_yx,
-            source_spatial_shape_yx=payload.source_spatial_shape_yx,
-            source_image_names=payload.source_image_names,
-        )
-    return ImagePayloadMetadata()
+    return ImagePayloadMetadataStrategy.metadata_for_payload(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1007,20 +658,6 @@ class RuntimeImagePayloadContext:
         if self.metadata.has_values:
             return ImageMetadataPayload(data=self.data, metadata=self.metadata)
         return self.data
-
-
-def image_payload_with_context(
-    data: RuntimeArrayData,
-    *,
-    mask: RuntimeArrayData | None = None,
-    metadata: ImagePayloadMetadata | None = None,
-) -> RuntimeArrayData:
-    """Attach generic image context to pixels only when context is present."""
-    return RuntimeImagePayloadContext(
-        data,
-        mask,
-        ImagePayloadMetadata() if metadata is None else metadata,
-    ).payload()
 
 
 def project_image_mask_to_data_domain(mask: Any, data: Any) -> Any | None:
@@ -1045,8 +682,8 @@ def project_image_mask_to_data_domain(mask: Any, data: Any) -> Any | None:
         return np.all(mask_array, axis=-1)
     if (
         len(mask_shape) == len(data_shape)
-        and mask_shape[0] == 1
-        and data_shape[0] != 1
+        and mask_shape[0] == SINGLETON_AXIS_LENGTH
+        and data_shape[0] != SINGLETON_AXIS_LENGTH
         and mask_shape[1:] == data_shape[1:]
     ):
         return np.broadcast_to(mask_array, data_shape)
@@ -1130,26 +767,48 @@ class DerivedImagePayloadSourceMetadata:
     def metadata(self) -> ImagePayloadMetadata:
         output_metadata = image_payload_metadata(self.data)
         source_metadata = image_payload_metadata(self.source_payload)
-        if not self.source_planes_should_replace_output(output_metadata, source_metadata):
-            return output_metadata.with_source_context_from(source_metadata)
-        return DerivedImagePayloadPlaneSourceReplacement(
-            output_metadata=output_metadata,
-            source_metadata=source_metadata,
-        ).metadata()
+        if self.source_planes_should_replace_output(source_metadata):
+            return DerivedImagePayloadPlaneSourceReplacement(
+                output_metadata=output_metadata,
+                source_metadata=source_metadata,
+            ).metadata()
+        if self.scalar_source_should_replace_output(source_metadata):
+            return DerivedImagePayloadScalarSourceReplacement(
+                output_metadata=output_metadata,
+                source_metadata=source_metadata,
+            ).metadata()
+        if self.output_scalar_source_owns_provenance(output_metadata):
+            return output_metadata.with_source_spatial_context_from(source_metadata)
+        return output_metadata.with_source_context_from(source_metadata)
 
     def source_planes_should_replace_output(
         self,
-        output_metadata: ImagePayloadMetadata,
         source_metadata: ImagePayloadMetadata,
     ) -> bool:
         plane_count = self.output_plane_count()
         if plane_count is None:
             return False
-        source_plane_count = source_metadata.source_provenance.channel_plane_count
-        if source_plane_count != plane_count:
+        source_plane_count = source_metadata.source_provenance.source_plane_count
+        return source_plane_count == plane_count
+
+    def scalar_source_should_replace_output(
+        self,
+        source_metadata: ImagePayloadMetadata,
+    ) -> bool:
+        if self.output_plane_count() is not None:
             return False
-        output_plane_count = output_metadata.source_provenance.channel_plane_count
-        return output_plane_count != plane_count
+        source_provenance = source_metadata.source_provenance
+        if source_provenance.source_plane_count > 1:
+            return False
+        return source_provenance.scalar_source_identity.addressable
+
+    def output_scalar_source_owns_provenance(
+        self,
+        output_metadata: ImagePayloadMetadata,
+    ) -> bool:
+        if self.output_plane_count() is not None:
+            return False
+        return output_metadata.source_provenance.scalar_source_identity.addressable
 
     def output_plane_count(self) -> int | None:
         data = np.asarray(image_payload_data(self.data))
@@ -1166,38 +825,44 @@ class DerivedImagePayloadPlaneSourceReplacement:
     source_metadata: ImagePayloadMetadata
 
     def metadata(self) -> ImagePayloadMetadata:
-        metadata = replace(self.output_metadata)
-        metadata.source_path = self.source_metadata.source_path
-        metadata.source_component_metadata = self.source_metadata.source_component_metadata
-        metadata.channel_source_paths = self.source_metadata.channel_source_paths
-        metadata.channel_source_component_metadata = (
-            self.source_metadata.channel_source_component_metadata
+        metadata = self.output_metadata.with_source_provenance(
+            SourceImageProvenance(
+                source_path=self.source_metadata.source_path,
+                source_component_metadata=(
+                    self.source_metadata.source_component_metadata
+                ),
+                source_image_provenance_planes=(
+                    self.source_metadata.source_image_provenance_planes
+                ),
+                source_image_names=(
+                    self.source_metadata.source_image_names
+                    or self.output_metadata.source_image_names
+                ),
+            )
         )
-        metadata.source_image_names = (
-            self.source_metadata.source_image_names
-            or self.output_metadata.source_image_names
+        return metadata.with_source_spatial_context_from(self.source_metadata)
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedImagePayloadScalarSourceReplacement:
+    """Copy scalar source identity onto derived image payload metadata."""
+
+    output_metadata: ImagePayloadMetadata
+    source_metadata: ImagePayloadMetadata
+
+    def metadata(self) -> ImagePayloadMetadata:
+        source_identity = self.source_metadata.source_provenance.scalar_source_identity
+        metadata = self.output_metadata.with_source_provenance(
+            SourceImageProvenance(
+                source_path=source_identity.path,
+                source_component_metadata=source_identity.component_metadata,
+                source_image_names=(
+                    self.source_metadata.source_image_names
+                    or self.output_metadata.source_image_names
+                ),
+            )
         )
-        metadata.spatial_origin_yx = (
-            self.output_metadata.spatial_origin_yx
-            if self.output_metadata.spatial_origin_yx is not None
-            else self.source_metadata.spatial_origin_yx
-        )
-        metadata.source_spatial_shape_yx = (
-            self.output_metadata.source_spatial_shape_yx
-            if self.output_metadata.source_spatial_shape_yx is not None
-            else self.source_metadata.source_spatial_shape_yx
-        )
-        metadata.physical_border_edges_yx = (
-            self.output_metadata.physical_border_edges_yx
-            if self.output_metadata.physical_border_edges_yx is not None
-            else self.source_metadata.physical_border_edges_yx
-        )
-        metadata.mask_defines_border = (
-            self.output_metadata.mask_defines_border
-            if self.output_metadata.mask_defines_border is not None
-            else self.source_metadata.mask_defines_border
-        )
-        return metadata
+        return metadata.with_source_spatial_context_from(self.source_metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1235,32 +900,32 @@ def with_image_payload_data(
     resolved_metadata = (
         image_payload_metadata(payload) if metadata is None else metadata
     )
-    return image_payload_with_context(
-        data,
+    return RuntimeImagePayloadContext(
+        data=data,
         mask=resolved_mask,
         metadata=resolved_metadata,
-    )
+    ).payload()
 
 
 def image_payload_slice_context(
     payload: Any,
     data: Any,
-    channel_index: int,
+    plane_index: int,
 ) -> Any:
-    """Attach one channel/slice of a payload's image context to slice data."""
+    """Attach one source plane of a payload's image context to slice data."""
     mask = image_payload_mask(payload)
-    return image_payload_with_context(
-        data,
-        mask=None if mask is None else image_payload_mask_slice(mask, channel_index),
-        metadata=image_payload_metadata(payload).for_channel(channel_index),
-    )
+    return RuntimeImagePayloadContext(
+        data=data,
+        mask=None if mask is None else image_payload_mask_slice(mask, plane_index),
+        metadata=image_payload_metadata(payload).for_source_plane(plane_index),
+    ).payload()
 
 
-def image_payload_mask_slice(mask: Any, channel_index: int) -> Any:
-    """Return the mask plane matching one image channel/slice."""
+def image_payload_mask_slice(mask: Any, plane_index: int) -> Any:
+    """Return the mask plane matching one source plane."""
     mask_array = np.asarray(mask)
     if mask_array.ndim >= 3:
-        return mask_array[channel_index]
+        return mask_array[plane_index]
     return mask
 
 
@@ -1288,13 +953,13 @@ class ImagePayloadChannelProjection:
         )
 
     def payload(self) -> Any:
-        return image_payload_with_context(
-            self.channel_data,
+        return RuntimeImagePayloadContext(
+            data=self.channel_data,
             mask=self.projected_mask(),
-            metadata=image_payload_metadata(self.source_payload).for_channel(
+            metadata=image_payload_metadata(self.source_payload).for_source_plane(
                 self.channel_index,
             ),
-        )
+        ).payload()
 
     def projected_mask(self) -> Any | None:
         mask = image_payload_mask(self.source_payload)
@@ -1318,19 +983,48 @@ def image_payload_spatial_shape_yx(payload: Any) -> tuple[int, int] | None:
     return tuple(int(value) for value in array.shape[-2:])
 
 
-@dataclass(frozen=True, slots=True)
-class ImagePayloadMetadataCompositionRequest:
-    """Compose source-image metadata for a stack assembled from payload slices."""
+@dataclass(slots=True)
+class ImagePayloadSequence:
+    """Nominal sequence of image payloads with shared projections."""
 
-    image_payloads: Sequence[ImagePayloadMetadataInput]
+    payloads: Sequence[ImagePayloadMetadataInput]
+
+    def __post_init__(self) -> None:
+        self.payloads = tuple(self.payloads)
+        if not self.payloads:
+            raise ValueError(f"{type(self).__name__}.payloads cannot be empty.")
 
     @property
     def source_metadata(self) -> tuple[ImagePayloadMetadata, ...]:
-        return tuple(image_payload_metadata(payload) for payload in self.image_payloads)
+        return tuple(image_payload_metadata(payload) for payload in self.payloads)
 
     @property
     def source_plane_metadata(self) -> tuple[ImagePayloadMetadata, ...]:
-        return tuple(metadata.for_channel(0) for metadata in self.source_metadata)
+        return tuple(metadata.for_source_plane(0) for metadata in self.source_metadata)
+
+    @property
+    def data_payloads(self) -> tuple[RuntimeArrayData, ...]:
+        return tuple(image_payload_data(payload) for payload in self.payloads)
+
+    @property
+    def masks(self) -> tuple[RuntimeArrayData | None, ...]:
+        return tuple(image_payload_mask(payload) for payload in self.payloads)
+
+    @property
+    def present_masks(self) -> tuple[RuntimeArrayData, ...]:
+        return tuple(mask for mask in self.masks if mask is not None)
+
+    @property
+    def complete_masks(self) -> tuple[RuntimeArrayData, ...] | None:
+        masks = self.masks
+        if any(mask is None for mask in masks):
+            return None
+        return tuple(np.asarray(mask, dtype=bool) for mask in masks)
+
+
+@dataclass(slots=True)
+class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
+    """Compose source-image metadata for a stack assembled from payload slices."""
 
     def metadata(self) -> ImagePayloadMetadata:
         metadata_by_payload = self.source_metadata
@@ -1338,31 +1032,42 @@ class ImagePayloadMetadataCompositionRequest:
             return ImagePayloadMetadata()
         source_metadata_by_payload = self.source_plane_metadata
         return ImagePayloadMetadata(
-            channel_intensity_scales=tuple(
+            source_path=self.common_metadata_value(
+                metadata.source_path for metadata in source_metadata_by_payload
+            ),
+            source_component_metadata=self.common_source_component_metadata(
+                source_metadata_by_payload
+            ),
+            source_plane_intensity_scales=tuple(
                 metadata.intensity_scale
                 for metadata in source_metadata_by_payload
             ),
-            channel_source_dtypes=tuple(
+            source_plane_dtypes=tuple(
                 metadata.source_dtype
                 for metadata in source_metadata_by_payload
             ),
-            channel_source_paths=tuple(
-                metadata.source_path
-                for metadata in source_metadata_by_payload
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=tuple(
+                    metadata.source_path
+                    for metadata in source_metadata_by_payload
+                ),
+                component_metadata=tuple(
+                    metadata.source_component_metadata
+                    for metadata in source_metadata_by_payload
+                ),
             ),
-            channel_source_component_metadata=tuple(
-                metadata.source_component_metadata
-                for metadata in source_metadata_by_payload
-            ),
-            channel_unit_interval_intensity_scales=tuple(
+            source_plane_unit_interval_intensity_scales=tuple(
                 metadata.unit_interval_intensity_scale
                 for metadata in source_metadata_by_payload
             ),
-            spatial_origin_yx=self.common_metadata_value(
-                metadata.spatial_origin_yx for metadata in metadata_by_payload
-            ),
-            source_spatial_shape_yx=self.common_metadata_value(
-                metadata.source_spatial_shape_yx for metadata in metadata_by_payload
+            source_spatial_domain=SourceSpatialDomain(
+                origin_yx=self.common_metadata_value(
+                    metadata.spatial_origin_yx for metadata in metadata_by_payload
+                ),
+                source_shape_yx=self.common_metadata_value(
+                    metadata.source_spatial_shape_yx
+                    for metadata in metadata_by_payload
+                ),
             ),
             physical_border_edges_yx=self.common_metadata_value(
                 metadata.physical_border_edges_yx for metadata in metadata_by_payload
@@ -1376,6 +1081,44 @@ class ImagePayloadMetadataCompositionRequest:
                 for source_image_name in metadata.source_image_names
             ),
         )
+
+    @classmethod
+    def common_source_component_metadata(
+        cls,
+        values: Iterable[ImagePayloadMetadata],
+    ) -> SourceComponentMetadata | None:
+        """Return source metadata shared by every source plane in a composed stack."""
+        metadata_values = tuple(values)
+        metadata_by_plane = tuple(
+            dict(metadata.source_component_metadata)
+            for metadata in metadata_values
+            if metadata.source_component_metadata is not None
+        )
+        common_metadata: dict[str, Any] = {}
+        if metadata_by_plane:
+            common_keys = set(metadata_by_plane[0])
+            for metadata in metadata_by_plane[1:]:
+                common_keys.intersection_update(metadata)
+            common_metadata.update(
+                {
+                    key: metadata_by_plane[0][key]
+                    for key in common_keys
+                    if all(
+                        metadata[key] == metadata_by_plane[0][key]
+                        for metadata in metadata_by_plane
+                    )
+                }
+            )
+        extension = cls.common_metadata_value(
+            "".join(Path(metadata.source_path).suffixes)
+            for metadata in metadata_values
+            if metadata.source_path is not None
+        )
+        if extension:
+            common_metadata.setdefault("extension", extension)
+        if not common_metadata:
+            return None
+        return MappingProxyType(common_metadata)
 
     @staticmethod
     def common_metadata_value(
@@ -1411,7 +1154,7 @@ def image_payload_intensity_scale(
     """Return the best semantic intensity scale for an image payload."""
     import numpy as np
 
-    metadata_scale = image_payload_metadata(payload).intensity_scale_for_channel(
+    metadata_scale = image_payload_metadata(payload).intensity_scale_for_source_plane(
         channel_index
     )
     if metadata_scale is not None and metadata_scale > 0:
@@ -1452,76 +1195,119 @@ def normalize_image_payload_intensity(
     return with_image_payload_data(payload, normalized)
 
 
-def image_payload_metadata_from_source(
-    image: Any,
-    source_path: str,
-    source_component_metadata: SourceComponentMetadata | None = None,
-    read_backend: str | None = None,
-    filemanager: Any | None = None,
-) -> ImagePayloadMetadata:
-    """Return generic source metadata for an image loaded through OpenHCS I/O."""
-    resolved_source_path = ImagePayloadSourcePathResolver(
-        source_path=source_path,
-        read_backend=read_backend,
-        filemanager=filemanager,
-    ).resolve()
-    source_metadata = image_file_source_metadata(resolved_source_path)
-    source_dtype = source_metadata.source_dtype
-    resolved_path_text = (
-        str(resolved_source_path) if resolved_source_path is not None else source_path
-    )
-    if source_dtype is None:
-        array_metadata = ImagePayloadMetadata.for_array(
-            image_payload_data(image),
+@dataclass(frozen=True, slots=True)
+class ImagePayloadSourceMetadataContext:
+    """Source-file identity and I/O context for loaded image metadata."""
+
+    source_identity: SourceImageIdentity
+    read_backend: str | None = None
+    filemanager: FileManagerLike | None = None
+
+    @property
+    def source_path(self) -> str:
+        if self.source_identity.path is None:
+            raise ValueError("ImagePayloadSourceMetadataContext requires source path.")
+        return self.source_identity.path
+
+    def metadata_request(self, image: Any) -> "ImagePayloadSourceMetadataRequest":
+        return ImagePayloadSourceMetadataRequest(image, self)
+
+
+@dataclass(frozen=True, slots=True)
+class ImagePayloadSourceMetadataRequest:
+    """Source-file metadata request for an image loaded through OpenHCS I/O."""
+
+    image: Any
+    source_context: ImagePayloadSourceMetadataContext
+
+    def metadata(self) -> ImagePayloadMetadata:
+        resolved_source_path = ImagePayloadSourcePathResolver(
+            self.source_context
+        ).resolve()
+        source_metadata = image_file_source_metadata(resolved_source_path)
+        source_dtype = source_metadata.source_dtype
+        source_spatial_shape_yx = image_spatial_shape_yx(
+            image_payload_data(self.image)
+        )
+        spatial_origin_yx = (
+            (0, 0)
+            if source_spatial_shape_yx is not None
+            else None
+        )
+        resolved_path_text = (
+            str(resolved_source_path)
+            if resolved_source_path is not None
+            else self.source_context.source_path
+        )
+        if source_dtype is None:
+            array_metadata = ImagePayloadMetadata.for_array(
+                image_payload_data(self.image),
+                source_path=resolved_path_text,
+            )
+            return replace(
+                array_metadata,
+                source_component_metadata=(
+                    self.source_context.source_identity.component_metadata
+                ),
+                source_spatial_domain=SourceSpatialDomain(
+                    origin_yx=spatial_origin_yx,
+                    source_shape_yx=source_spatial_shape_yx,
+                ),
+            )
+        return ImagePayloadMetadata(
+            intensity_scale=source_metadata.intensity_scale,
+            source_dtype=str(source_dtype),
             source_path=resolved_path_text,
+            source_component_metadata=(
+                self.source_context.source_identity.component_metadata
+            ),
+            source_spatial_domain=SourceSpatialDomain(
+                origin_yx=spatial_origin_yx,
+                source_shape_yx=source_spatial_shape_yx,
+            ),
         )
-        return replace(
-            array_metadata,
-            source_component_metadata=source_component_metadata,
-        )
-    return ImagePayloadMetadata(
-        intensity_scale=source_metadata.intensity_scale,
-        source_dtype=str(source_dtype),
-        source_path=resolved_path_text,
-        source_component_metadata=source_component_metadata,
-    )
 
 
 @dataclass(frozen=True, slots=True)
 class ImagePayloadSourcePathResolver:
     """Resolve physical image paths from optional backend-specific I/O context."""
 
-    source_path: str
-    read_backend: str | None = None
-    filemanager: Any | None = None
+    source_context: ImagePayloadSourceMetadataContext
 
     def resolve(self) -> Path | None:
-        if self.read_backend is not None and self.filemanager is not None:
+        if (
+            self.source_context.read_backend is not None
+            and self.source_context.filemanager is not None
+        ):
             resolved_backend_path = self.resolve_backend_path()
             if resolved_backend_path is not None:
                 return resolved_backend_path
-        path = Path(self.source_path)
-        return path if path.exists() else None
+        path = Path(self.source_context.source_path)
+        if not path.exists():
+            return None
+        return path
 
     def resolve_backend_path(self) -> Path | None:
-        try:
-            registry = self.filemanager.registry
-        except AttributeError:
+        filemanager = self.source_context.filemanager
+        if filemanager is None:
             return None
+        registry = filemanager.registry
         if not isinstance(registry, Mapping):
-            return None
-        backend = registry.get(self.read_backend)
+            raise TypeError(
+                "ImagePayloadSourcePathResolver.filemanager.registry must be a mapping."
+            )
+        backend = registry.get(self.source_context.read_backend)
         if VirtualWorkspaceBackend is not None and isinstance(
             backend,
             VirtualWorkspaceBackend,
         ):
             try:
-                return Path(backend._resolve_path(self.source_path))
+                return Path(backend._resolve_path(self.source_context.source_path))
             except Exception:
                 logger.debug(
                     "Could not resolve image source path %s via backend %s.",
-                    self.source_path,
-                    self.read_backend,
+                    self.source_context.source_path,
+                    self.source_context.read_backend,
                     exc_info=True,
                 )
         return None
@@ -1540,6 +1326,7 @@ class ImageFileSourceMetadata:
     intensity_scale: float | None = None
 
 
+@lru_cache(maxsize=8192)
 def image_file_source_metadata(path: Path | None) -> ImageFileSourceMetadata:
     """Return image file metadata without loading pixel data when possible."""
     if path is None or not path.exists():
@@ -1554,29 +1341,36 @@ def image_file_source_metadata(path: Path | None) -> ImageFileSourceMetadata:
     return ImageFileSourceMetadata(
         source_dtype=dtype,
         intensity_scale=(
-            _image_file_declared_intensity_scale(path)
+            ImageFileDeclaredIntensityScale(path).value()
             or image_intensity_scale_for_dtype(dtype)
         ),
     )
 
 
-def _image_file_declared_intensity_scale(path: Path) -> float | None:
-    """Return declared source-file max intensity when the format exposes one."""
-    if path.suffix.lower() not in {".tif", ".tiff"}:
-        return None
-    import tifffile
+@dataclass(frozen=True, slots=True)
+class ImageFileDeclaredIntensityScale:
+    """Declared source-file max intensity exposed by image container metadata."""
 
-    with tifffile.TiffFile(path) as tif:
-        page = tif.pages[0]
-        tag = page.tags.get("SMaxSampleValue") or page.tags.get("MaxSampleValue")
-        if tag is None:
+    path: Path
+
+    def value(self) -> float | None:
+        if self.path.suffix.lower() not in {".tif", ".tiff"}:
             return None
-        value = tag.value
-    scale_value = value[0] if isinstance(value, (tuple, list)) else value
-    if not isinstance(scale_value, (int, float, np.integer, np.floating)):
-        return None
-    scale = float(scale_value)
-    return scale if scale > 0 else None
+        import tifffile
+
+        with tifffile.TiffFile(self.path) as tif:
+            page = tif.pages[0]
+            tag = page.tags.get("SMaxSampleValue") or page.tags.get("MaxSampleValue")
+            if tag is None:
+                return None
+            value = tag.value
+        scale_value = value[0] if isinstance(value, (tuple, list)) else value
+        if not isinstance(scale_value, (int, float, np.integer, np.floating)):
+            return None
+        scale = float(scale_value)
+        if scale <= 0:
+            return None
+        return scale
 
 
 def _spatial_shape_pair(value: Sequence[int], name: str) -> tuple[int, int]:
@@ -1660,47 +1454,331 @@ class ImageMaskDomain:
 
 
 class ObjectLabelDomainMetadataFields(ObjectLabelDomainMetadata):
-    """Object-label domain metadata carried as normalized runtime-value fields."""
+    """Object-label domain metadata carried by one normalized domain value."""
 
-    declared_object_count: int | None
-    declared_object_ids: tuple[int, ...]
-    declared_object_id_domains: tuple[tuple[int, ...], ...]
-    domain_scope: ObjectLabelDomainScope
+    domain: ObjectLabelDomain
 
     def object_label_domain(self) -> ObjectLabelDomain:
-        return ObjectLabelDomain.declared(
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            scope=self.domain_scope,
+        return self.domain
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelVariantData:
+    """Final and optional CellProfiler object-label variant arrays."""
+
+    labels: ObjectLabelData
+    unedited_labels: ObjectLabelData | None = None
+    small_removed_labels: ObjectLabelData | None = None
+
+    @classmethod
+    def from_value(cls, value: "ObjectLabelValue") -> "ObjectLabelVariantData":
+        """Return the variant set carried by one object-label value."""
+        return value.variant_data
+
+    @classmethod
+    def compatible_replacement(
+        cls,
+        source: "ObjectLabelValue",
+        labels: ObjectLabelData,
+    ) -> "ObjectLabelVariantData":
+        """Return replacement labels with source variants that still match."""
+        source_variants = source.variant_data
+        return cls(
+            labels=labels,
+            unedited_labels=object_label_variant_matching_labels(
+                source_variants.unedited_labels,
+                labels,
+            ),
+            small_removed_labels=object_label_variant_matching_labels(
+                source_variants.small_removed_labels,
+                labels,
+            ),
         )
+
+    @property
+    def present_variants(self) -> tuple[ObjectLabelVariant, ...]:
+        variants = [ObjectLabelVariant.FINAL]
+        if self.unedited_labels is not None:
+            variants.append(ObjectLabelVariant.UNEDITED)
+        if self.small_removed_labels is not None:
+            variants.append(ObjectLabelVariant.SMALL_REMOVED)
+        return tuple(variants)
+
+    def labels_for_variant(
+        self,
+        variant: ObjectLabelVariant | str,
+    ) -> ObjectLabelData:
+        normalized = coerce_enum(
+            ObjectLabelVariant,
+            variant,
+            "ObjectLabelVariantData.variant",
+        )
+        return ObjectLabelVariantDataStrategy.for_enum_member(normalized).labels(self)
+
+    def with_labels(self, labels: ObjectLabelData) -> "ObjectLabelVariantData":
+        """Return these variants with replacement final labels."""
+        return type(self)(
+            labels=labels,
+            unedited_labels=self.unedited_labels,
+            small_removed_labels=self.small_removed_labels,
+        )
+
+    def with_unedited_labels(
+        self,
+        unedited_labels: ObjectLabelData | None,
+    ) -> "ObjectLabelVariantData":
+        """Return these variants with replacement unedited labels."""
+        return type(self)(
+            labels=self.labels,
+            unedited_labels=unedited_labels,
+            small_removed_labels=self.small_removed_labels,
+        )
+
+    def with_small_removed_labels(
+        self,
+        small_removed_labels: ObjectLabelData | None,
+    ) -> "ObjectLabelVariantData":
+        """Return these variants with replacement small-removed labels."""
+        return type(self)(
+            labels=self.labels,
+            unedited_labels=self.unedited_labels,
+            small_removed_labels=small_removed_labels,
+        )
+
+    def project(
+        self,
+        projector: Callable[[ObjectLabelData], ObjectLabelData],
+    ) -> "ObjectLabelVariantData":
+        """Project every present variant through the same label operation."""
+        return ObjectLabelVariantData(
+            labels=projector(self.labels),
+            unedited_labels=(
+                None if self.unedited_labels is None else projector(self.unedited_labels)
+            ),
+            small_removed_labels=(
+                None
+                if self.small_removed_labels is None
+                else projector(self.small_removed_labels)
+            ),
+        )
+
+    def project_runtime_slice(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> "ObjectLabelVariantData":
+        """Project every present variant onto one runtime slice."""
+        return self.project(
+            lambda labels: DenseObjectLabelSliceStackRequest(
+                labels,
+                slice_count=slice_count,
+            ).slice_or_original(slice_index)
+        )
+
+    def first_plane(self) -> "ObjectLabelVariantData":
+        """Collapse a singleton leading label plane for every present variant."""
+        return self.project(lambda labels: labels[0])
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelVariantAlias(Generic[ObjectLabelVariantAliasValueT]):
+    """Descriptor for object-label variant aliases backed by one carrier."""
+
+    getter: Callable[[ObjectLabelVariantData], ObjectLabelVariantAliasValueT]
+    setter: Callable[
+        [ObjectLabelVariantData, ObjectLabelVariantAliasValueT],
+        ObjectLabelVariantData,
+    ]
+
+    def __get__(
+        self,
+        instance: "ObjectLabelVariantFields | None",
+        _owner: type["ObjectLabelVariantFields"],
+    ) -> ObjectLabelVariantAliasValueT | Self:
+        if instance is None:
+            return self
+        if instance.variant_data is None:
+            raise AttributeError("Object-label variants have not been initialized.")
+        return self.getter(instance.variant_data)
+
+    def __set__(
+        self,
+        instance: "ObjectLabelVariantFields",
+        value: ObjectLabelVariantAliasValueT,
+    ) -> None:
+        if instance.variant_data is None:
+            raise AttributeError("Object-label variants have not been initialized.")
+        instance.variant_data = self.setter(instance.variant_data, value)
+
+
+ObjectLabelVariantInitValues = tuple[
+    "ObjectLabelData | None",
+    "ObjectLabelData | None",
+    "ObjectLabelData | None",
+]
+
+
+@dataclass(kw_only=True)
+class ObjectLabelVariantFields:
+    """Object-label variant carrier shared by payload and native values."""
+
+    variant_data: ObjectLabelVariantData | None = None
+    labels: InitVar[ObjectLabelData | None] = None
+    unedited_labels: InitVar[ObjectLabelData | None] = None
+    small_removed_labels: InitVar[ObjectLabelData | None] = None
+
+    def absorb_explicit_object_label_variants(
+        self,
+        values: ObjectLabelVariantInitValues,
+    ) -> None:
+        labels, unedited_labels, small_removed_labels = values
+        if self.variant_data is None:
+            if labels is None:
+                raise ValueError(f"{type(self).__name__}.labels is required.")
+            self.variant_data = ObjectLabelVariantData(
+                labels=labels,
+                unedited_labels=unedited_labels,
+                small_removed_labels=small_removed_labels,
+            )
+            return
+        if not isinstance(self.variant_data, ObjectLabelVariantData):
+            raise TypeError(
+                f"{type(self).__name__}.variant_data requires "
+                "ObjectLabelVariantData."
+            )
+        if any(value is not None for value in values):
+            raise ValueError(
+                f"{type(self).__name__} accepts either variant_data or label "
+                "variant fields, not both."
+            )
+
+
+ObjectLabelVariantFields.labels = ObjectLabelVariantAlias(
+    lambda variants: variants.labels,
+    ObjectLabelVariantData.with_labels,
+)
+ObjectLabelVariantFields.unedited_labels = ObjectLabelVariantAlias(
+    lambda variants: variants.unedited_labels,
+    ObjectLabelVariantData.with_unedited_labels,
+)
+ObjectLabelVariantFields.small_removed_labels = ObjectLabelVariantAlias(
+    lambda variants: variants.small_removed_labels,
+    ObjectLabelVariantData.with_small_removed_labels,
+)
+
+
+def object_label_init_values(
+    values: tuple[object, ...],
+) -> tuple[SourceProvenanceInitValues, ObjectLabelVariantInitValues]:
+    """Split inherited source-provenance and object-label variant init values."""
+    if len(values) != 7:
+        raise ValueError(
+            "Object-label value initialization expects four source-provenance "
+            f"and three variant values, got {len(values)}."
+        )
+    return (
+        cast(SourceProvenanceInitValues, values[:4]),
+        cast(ObjectLabelVariantInitValues, values[4:]),
+    )
 
 
 class ObjectLabelValue(
+    ObjectLabelVariantFields,
     SourceImageProvenanceFields,
+    SourceSpatialDomainFields,
     ObjectLabelDomainMetadataFields,
+    RuntimeSliceIdentityProjectableValue,
     ABC,
 ):
     """Nominal object-label carrier with dense labels and domain metadata."""
 
-    labels: ObjectLabelData
-    unedited_labels: ObjectLabelData | None
-    small_removed_labels: ObjectLabelData | None
     representation: ObjectLabelRepresentation
     plane_axis: RuntimePlaneAxis
-    spatial_origin_yx: tuple[int, int] | None
-    source_spatial_shape_yx: tuple[int, int] | None
 
     @property
     def source_image_name(self) -> str | None:
         """Return the semantic source image name when this carrier has one."""
         return None
 
-    @abstractmethod
-    def labels_for_variant(self, variant: ObjectLabelVariant | str) -> ObjectLabelData:
-        """Return the dense labels for one semantic label variant."""
+    @property
+    def source_image_name_axis(self) -> tuple[str, ...]:
+        """Return composed source-image names encoded in the scalar source name."""
+        source_image_name = self.source_image_name
+        if source_image_name is None:
+            return ()
+        return tuple(alias for alias in source_image_name.split("__") if alias)
+
+    @property
+    def source_aliases(self) -> tuple[str, ...]:
+        """Return source-binding aliases carried by this object-label value."""
+        aliases = tuple(
+            dict.fromkeys(alias for alias in self.source_image_names if alias)
+        )
+        if aliases:
+            return aliases
+        source_image_name = self.source_image_name
+        if source_image_name is not None:
+            return (source_image_name,)
+        return ()
+
+    @property
+    def source_alias_group(self) -> tuple[str, ...]:
+        """Return source aliases, or the composed scalar source-name axis."""
+        aliases = self.source_aliases
+        if aliases:
+            return aliases
+        return self.source_image_name_axis
+
+    @property
+    def composed_source_axis(self) -> tuple[str, ...]:
+        """Return the multi-source axis encoded in this value's source name."""
+        axis = self.source_image_name_axis
+        if len(axis) <= 1:
+            return ()
+        return axis
+
+    @property
+    def is_composed_source_axis_component(self) -> bool:
+        """Return whether the label aliases refer to one composed source axis."""
+        axis = self.composed_source_axis
+        if not axis:
+            return False
+        aliases = self.source_aliases
+        if not aliases:
+            return False
+        return set(aliases).issubset(axis)
+
+    def source_aliases_with_context(
+        self,
+        source_aliases: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Return label aliases using declared context when labels lack provenance."""
+        aliases = tuple(
+            dict.fromkeys(alias for alias in self.source_image_names if alias)
+        )
+        if aliases:
+            return aliases
+        if source_aliases:
+            return source_aliases
+        source_image_name = self.source_image_name
+        if source_image_name is not None:
+            return (source_image_name,)
+        return ()
+
+    @property
+    def dimensions(self) -> tuple[str, ...]:
+        """Return schema dimensions carried by native object-label values."""
+        return ()
 
     @abstractmethod
+    def with_variants(
+        self,
+        context: "ObjectLabelValueConstructionContext",
+        variants: "ObjectLabelVariantData",
+    ) -> "ObjectLabelValue":
+        """Build this carrier's native value form from context and variants."""
+
     def with_labels(
         self,
         labels: ObjectLabelData,
@@ -1709,8 +1787,11 @@ class ObjectLabelValue(
         small_removed_labels: ObjectLabelData | None = None,
     ) -> "ObjectLabelValue":
         """Return this carrier's metadata with replacement labels."""
+        return self.with_variants(
+            ObjectLabelValueConstructionContext.from_value(self),
+            ObjectLabelVariantData(labels, unedited_labels, small_removed_labels),
+        )
 
-    @abstractmethod
     def with_projected_plane(
         self,
         labels: ObjectLabelData,
@@ -1720,138 +1801,434 @@ class ObjectLabelValue(
         small_removed_labels: ObjectLabelData | None = None,
     ) -> "ObjectLabelValue":
         """Return one selected label plane with projected domain metadata."""
+        return self.with_variants(
+            object_label_projected_plane_context(
+                self,
+                plane_index,
+                object_label_domain_for_projected_label_plane(self, plane_index),
+            ),
+            ObjectLabelVariantData(labels, unedited_labels, small_removed_labels),
+        )
+
+    def with_runtime_slice_projection(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+        plane_indices: tuple[int, ...] | None = None,
+    ) -> "ObjectLabelValue":
+        """Return this carrier projected onto one runtime slice."""
+        if not RuntimePlaneAxisSliceProjectionPolicy.for_enum_member(
+            self.plane_axis
+        ).supports_slice_projection():
+            return self
+        variants = ObjectLabelVariantData.from_value(self).project_runtime_slice(
+            slice_index=slice_index,
+            slice_count=slice_count,
+        )
+        return self.with_variants(
+            self.runtime_slice_construction_context(
+                slice_index=slice_index,
+                slice_count=slice_count,
+                plane_indices=plane_indices,
+            ),
+            variants,
+        )
+
+    def with_runtime_slice_identity(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> Self:
+        """Return this object-label carrier stamped with execution-slice identity."""
+        del slice_count
+        return object_label_value_with_execution_slice(
+            self,
+            self.labels,
+            slice_index,
+        )
+
+    def normalize_object_label_metadata(
+        self,
+        value_label: str,
+    ) -> ObjectLabelRepresentation:
+        """Normalize shared object-label domain and provenance fields."""
+        if not isinstance(self.domain, ObjectLabelDomain):
+            raise TypeError(
+                f"{value_label}.domain requires ObjectLabelDomain, "
+                f"got {type(self.domain).__name__}."
+            )
+        self.representation = coerce_enum(
+            ObjectLabelRepresentation,
+            self.representation,
+            f"{value_label}.representation",
+        )
+        self.plane_axis = coerce_enum(
+            RuntimePlaneAxis,
+            self.plane_axis,
+            f"{value_label}.plane_axis",
+        )
+        self.normalize_source_spatial_domain_fields()
+        self.normalize_source_provenance_fields()
+        return self.representation
+
+    def validate_object_label_payload(
+        self,
+        *,
+        value_label: str,
+        representation: ObjectLabelRepresentation,
+    ) -> None:
+        """Validate label variants against the declared representation."""
+        validator = _PAYLOAD_VALIDATORS[representation.payload_shape]
+        if validator is not None and not validator(self.labels):
+            raise TypeError(
+                f"{value_label} requires {representation.value} payload, got "
+                f"{type(self.labels).__name__}."
+            )
+        _validate_object_label_variant(
+            value_label,
+            "unedited_labels",
+            self.labels,
+            self.unedited_labels,
+            validator,
+        )
+        _validate_object_label_variant(
+            value_label,
+            "small_removed_labels",
+            self.labels,
+            self.small_removed_labels,
+            validator,
+        )
+
+    def runtime_slice_domain(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+        plane_indices: tuple[int, ...] | None = None,
+    ) -> ObjectLabelDomain:
+        """Return the object-id domain represented by one runtime slice."""
+        domain = self.object_label_domain()
+        if plane_indices is not None:
+            return domain.project_planes(plane_indices)
+        return domain.project_slice(slice_index, slice_count)
+
+    def runtime_slice_construction_context(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+        plane_indices: tuple[int, ...] | None = None,
+    ) -> "ObjectLabelValueConstructionContext":
+        """Return metadata/domain context for one runtime-slice projection."""
+        slice_metadata = image_payload_metadata(self).for_source_plane(slice_index)
+        return ObjectLabelValueConstructionContext.from_value(
+            self,
+            domain=self.runtime_slice_domain(
+                slice_index=slice_index,
+                slice_count=slice_count,
+                plane_indices=plane_indices,
+            ),
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            source_provenance=slice_metadata.source_provenance,
+            source_spatial_domain=slice_metadata.object_label_source_spatial_domain(),
+        )
+
+    def object_label_source_spatial_domain(self) -> SourceSpatialDomain:
+        """Return this value's source-image coordinate domain."""
+        return self.source_spatial_domain.with_value_name(
+            OBJECT_LABEL_SOURCE_SPATIAL_VALUE_NAME,
+        )
+
+    def object_label_semantic_identity(self) -> tuple[tuple[str, Hashable], ...]:
+        """Return the declared semantic identity for label-domain batching."""
+        source_spatial_domain = self.object_label_source_spatial_domain()
+        return (
+            ("carrier", (type(self).__module__, type(self).__qualname__)),
+            ("representation", self.representation),
+            ("domain", self.object_label_domain()),
+            ("plane_axis", self.plane_axis),
+            ("source_provenance", self.source_provenance.equality_identity),
+            (
+                "source_spatial_domain",
+                (
+                    source_spatial_domain.origin_yx,
+                    source_spatial_domain.source_shape_yx,
+                    repr(source_spatial_domain.fill_value),
+                    source_spatial_domain.value_name,
+                ),
+            ),
+        )
+
+    def runtime_slice_stack_view_sources(self) -> tuple[ObjectLabelData, ...]:
+        """Return payloads that declare this value's runtime-slice stack axis."""
+        return tuple(
+            item
+            for item in (
+                self.labels,
+                self.unedited_labels,
+                self.small_removed_labels,
+            )
+            if item is not None
+        )
 
     @abstractmethod
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelValue":
         """Return this object-label value with missing provenance filled from image."""
 
 
-@dataclass(frozen=True, slots=True)
-class ObjectLabelSourceContextProvenanceMerge:
-    """Merge image provenance into object labels without reviving stale stack axes."""
+class ImagePayloadMetadataStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered metadata extraction for runtime image-like payloads."""
 
-    label_provenance: SourceImageProvenance
-    image_provenance: SourceImageProvenance
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
-    def for_label_and_image(
-        cls,
-        label: ObjectLabelValue,
-        image: RuntimeArrayData,
-    ) -> "ObjectLabelSourceContextProvenanceMerge":
-        return cls(
-            label_provenance=label.source_provenance,
-            image_provenance=image_payload_metadata(image).source_provenance,
+    def metadata_for_payload(cls, payload: Any) -> ImagePayloadMetadata:
+        strategy = cls.for_nominal_value(payload)
+        if strategy is None:
+            return ImagePayloadMetadata()
+        return strategy.metadata(payload)
+
+    @abstractmethod
+    def metadata(self, payload: Any) -> ImagePayloadMetadata:
+        """Return runtime image metadata for one payload."""
+
+
+class ImageMetadataCarrierPayloadStrategy(ImagePayloadMetadataStrategy):
+    """Metadata-bearing image payloads expose metadata directly."""
+
+    value_type = ImagePayloadMetadataCarrier
+
+    def metadata(self, payload: Any) -> ImagePayloadMetadata:
+        return payload.metadata
+
+
+class ObjectLabelValueImagePayloadMetadataStrategy(ImagePayloadMetadataStrategy):
+    """Object labels expose image-like provenance through object-label metadata."""
+
+    value_type = ObjectLabelValue
+
+    def metadata(self, payload: Any) -> ImagePayloadMetadata:
+        return ImagePayloadMetadata(
+            source_path=payload.source_path,
+            source_component_metadata=payload.source_component_metadata,
+            source_image_provenance_planes=payload.source_image_provenance_planes,
+            source_spatial_domain=payload.source_spatial_domain,
+            source_image_names=payload.source_image_names,
         )
 
-    def provenance(self) -> SourceImageProvenance:
-        merged = self.label_provenance.with_missing_from(self.image_provenance)
-        if not self.label_has_scalar_source_identity:
-            return merged
-        return SourceImageProvenance(
-            source_path=merged.source_path,
-            source_component_metadata=merged.source_component_metadata,
-            source_image_names=self.scalar_source_image_names(
-                merged.source_image_names,
+
+def object_label_source_context_provenance(
+    label: ObjectLabelValue,
+    image: RuntimeArrayData,
+) -> SourceImageProvenance:
+    """Merge image provenance into labels without reviving stale stack axes."""
+    label_provenance = label.source_provenance
+    merged = label_provenance.with_missing_from(
+        image_payload_metadata(image).source_provenance
+    )
+    if not (
+        label_provenance.addressable
+        and label_provenance.source_plane_count == 0
+    ):
+        return merged
+    names = merged.source_image_names
+    if len(names) > 1:
+        unique_names = tuple(dict.fromkeys(names))
+        names = unique_names if len(unique_names) == 1 else ()
+    return SourceImageProvenance(
+        source_path=merged.source_path,
+        source_component_metadata=merged.source_component_metadata,
+        source_image_names=names,
+    )
+
+
+ObjectLabelVariantSource = ObjectLabelVariantData | ObjectLabelValue
+ObjectLabelVariantSources = Sequence[ObjectLabelVariantSource]
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelValueConstructionContext:
+    """Shared construction context for object-label payload and native values."""
+
+    domain: ObjectLabelDomain
+    source_provenance: SourceImageProvenance = field(
+        default_factory=SourceImageProvenance
+    )
+    source_spatial_domain: SourceSpatialDomain = field(
+        default_factory=SourceSpatialDomain
+    )
+    plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
+
+    @classmethod
+    def from_value(
+        cls,
+        value: ObjectLabelValue,
+        *,
+        domain: ObjectLabelDomain | None = None,
+        plane_axis: RuntimePlaneAxis | None = None,
+        source_provenance: SourceImageProvenance | None = None,
+        source_spatial_domain: SourceSpatialDomain | None = None,
+    ) -> "ObjectLabelValueConstructionContext":
+        return cls(
+            domain=value.object_label_domain() if domain is None else domain,
+            source_provenance=(
+                value.source_provenance
+                if source_provenance is None
+                else source_provenance
             ),
+            source_spatial_domain=(
+                value.object_label_source_spatial_domain()
+                if source_spatial_domain is None
+                else source_spatial_domain
+            ),
+            plane_axis=value.plane_axis if plane_axis is None else plane_axis,
         )
 
     @property
-    def label_has_scalar_source_identity(self) -> bool:
-        return (
-            self.label_provenance.addressable
-            and self.label_provenance.channel_plane_count == 0
+    def spatial_origin_yx(self) -> tuple[int, int] | None:
+        return self.source_spatial_domain.origin_yx
+
+    @property
+    def source_spatial_shape_yx(self) -> tuple[int, int] | None:
+        return self.source_spatial_domain.source_shape_yx
+
+    def payload(
+        self,
+        labels: ObjectLabelData,
+        *,
+        unedited_labels: ObjectLabelData | None = None,
+        small_removed_labels: ObjectLabelData | None = None,
+        representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS,
+    ) -> "ObjectLabelPayload":
+        return self.payload_from_variants(
+            ObjectLabelVariantData(
+                labels,
+                unedited_labels,
+                small_removed_labels,
+            ),
+            representation=representation,
         )
 
-    @staticmethod
-    def scalar_source_image_names(names: tuple[str, ...]) -> tuple[str, ...]:
-        if len(names) <= 1:
-            return names
-        unique_names = tuple(dict.fromkeys(names))
-        if len(unique_names) == 1:
-            return unique_names
-        return ()
+    def payload_from_variants(
+        self,
+        variants: ObjectLabelVariantData,
+        *,
+        representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS,
+    ) -> "ObjectLabelPayload":
+        return ObjectLabelPayload(
+            labels=variants.labels,
+            unedited_labels=variants.unedited_labels,
+            small_removed_labels=variants.small_removed_labels,
+            representation=representation,
+            domain=self.domain,
+            plane_axis=self.plane_axis,
+            source_spatial_domain=self.source_spatial_domain,
+            source_provenance=self.source_provenance,
+        )
+
+    def payload_from_value(self, value: ObjectLabelValue) -> "ObjectLabelPayload":
+        return self.payload_from_variants(ObjectLabelVariantData.from_value(value))
+
+    def label_set(
+        self,
+        *,
+        name: str,
+        labels: ObjectLabelData,
+        unedited_labels: ObjectLabelData | None = None,
+        small_removed_labels: ObjectLabelData | None = None,
+        representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS,
+        dimensions: tuple[str, ...] = (),
+        source_image_name: str | None = None,
+    ) -> "ObjectLabelSet":
+        return self.label_set_from_variants(
+            name=name,
+            variants=ObjectLabelVariantData(
+                labels,
+                unedited_labels,
+                small_removed_labels,
+            ),
+            representation=representation,
+            dimensions=dimensions,
+            source_image_name=source_image_name,
+        )
+
+    def label_set_from_variants(
+        self,
+        *,
+        name: str,
+        variants: ObjectLabelVariantData,
+        representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS,
+        dimensions: tuple[str, ...] = (),
+        source_image_name: str | None = None,
+    ) -> "ObjectLabelSet":
+        return ObjectLabelSet(
+            name=name,
+            labels=variants.labels,
+            unedited_labels=variants.unedited_labels,
+            small_removed_labels=variants.small_removed_labels,
+            representation=representation,
+            domain=self.domain,
+            plane_axis=self.plane_axis,
+            source_spatial_domain=self.source_spatial_domain,
+            source_provenance=self.source_provenance,
+            dimensions=dimensions,
+            source_image_name=source_image_name,
+        )
+
+    def value_from_variants(
+        self,
+        source: "ObjectLabelValueBuildSource",
+        variants: ObjectLabelVariantData,
+        *,
+        representation: ObjectLabelRepresentation | None = None,
+    ) -> "ObjectLabelValue":
+        """Return variants rebuilt in the source value category."""
+        return ObjectLabelValueBuilderStrategy.for_source(source).build_variants(
+            source,
+            self,
+            variants,
+            representation=representation,
+        )
+
+def object_label_projected_plane_context(
+    source: ObjectLabelValue,
+    plane_index: int,
+    domain: ObjectLabelDomain,
+) -> ObjectLabelValueConstructionContext:
+    """Return construction context for one projected source plane."""
+    return ObjectLabelValueConstructionContext.from_value(
+        source,
+        domain=domain,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_provenance=source.source_provenance.for_source_plane(plane_index),
+    )
 
 
 @dataclass(slots=True)
 class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelValue):
     """Dense object labels plus optional semantic label variants."""
 
-    labels: ObjectLabelData
-    unedited_labels: ObjectLabelData | None = None
-    small_removed_labels: ObjectLabelData | None = None
-    declared_object_count: int | None = None
-    declared_object_ids: tuple[int, ...] = ()
-    declared_object_id_domains: tuple[tuple[int, ...], ...] = ()
-    domain_scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
+    representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
+    domain: ObjectLabelDomain = field(default_factory=ObjectLabelDomain)
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
-    spatial_origin_yx: tuple[int, int] | None = None
-    source_spatial_shape_yx: tuple[int, int] | None = None
 
-    @classmethod
-    def from_domain_metadata(
-        cls,
-        metadata: Any,
-        *,
-        labels: ObjectLabelData,
-        unedited_labels: ObjectLabelData | None = None,
-        small_removed_labels: ObjectLabelData | None = None,
-        plane_axis: RuntimePlaneAxis | None = None,
-    ) -> "ObjectLabelPayload":
-        """Build a payload preserving object-label domain metadata from a carrier."""
-        return cls(
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-            declared_object_count=metadata.declared_object_count,
-            declared_object_ids=metadata.declared_object_ids,
-            declared_object_id_domains=metadata.declared_object_id_domains,
-            domain_scope=metadata.domain_scope,
-            plane_axis=metadata.plane_axis if plane_axis is None else plane_axis,
-            spatial_origin_yx=metadata.spatial_origin_yx,
-            source_spatial_shape_yx=metadata.source_spatial_shape_yx,
-            source_path=metadata.source_path,
-            source_component_metadata=metadata.source_component_metadata,
-            channel_source_paths=metadata.channel_source_paths,
-            channel_source_component_metadata=metadata.channel_source_component_metadata,
-            source_image_names=metadata.source_image_names,
+    def __post_init__(self, *init_values: object) -> None:
+        source_provenance_values, variant_values = object_label_init_values(
+            init_values
         )
-
-    def __post_init__(self, *source_provenance_values: object) -> None:
+        self.absorb_explicit_object_label_variants(variant_values)
         self.absorb_explicit_source_provenance(
             SourceImageProvenance.from_init_values(source_provenance_values)
         )
-        if self.declared_object_count is not None:
-            count = int(self.declared_object_count)
-            if count < 0:
-                raise ValueError("ObjectLabelPayload.declared_object_count cannot be negative.")
-            self.declared_object_count = count
-        ids = tuple(int(object_id) for object_id in self.declared_object_ids)
-        if any(object_id <= 0 for object_id in ids):
-            raise ValueError("ObjectLabelPayload.declared_object_ids must be positive.")
-        self.declared_object_ids = tuple(sorted(dict.fromkeys(ids)))
-        self.declared_object_id_domains = tuple(
-                ObjectLabelDomain._normalize_ids(domain, "declared_object_id_domains")
-                for domain in self.declared_object_id_domains
-            )
-        self.domain_scope = coerce_enum(
-                ObjectLabelDomainScope,
-                self.domain_scope,
-                "ObjectLabelPayload.domain_scope",
-            )
-        self.plane_axis = coerce_enum(
-                RuntimePlaneAxis,
-                self.plane_axis,
-                "ObjectLabelPayload.plane_axis",
-            )
-        if self.spatial_origin_yx is not None:
-            self.spatial_origin_yx = _spatial_shape_pair(self.spatial_origin_yx, "spatial_origin_yx")
-        if self.source_spatial_shape_yx is not None:
-            self.source_spatial_shape_yx = _spatial_shape_pair(
-                    self.source_spatial_shape_yx,
-                    "source_spatial_shape_yx",
-                )
-        self.normalize_source_provenance_fields()
+        self.normalize_object_label_metadata("ObjectLabelPayload")
 
     @property
     def shape(self) -> Any:
@@ -1865,11 +2242,11 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelValue):
     def dtype(self) -> Any:
         return self.labels.dtype
 
-    def max(self) -> np.generic:
+    def max(self, *args: Any, **kwargs: Any) -> np.generic:
         labels = np.asarray(self.labels)
         if labels.size == 0:
             raise ValueError("ObjectLabelPayload.max requires non-empty labels.")
-        return labels.max()
+        return labels.max(*args, **kwargs)
 
     def __array__(self, dtype: Any | None = None) -> Any:
         import numpy as np
@@ -1882,124 +2259,61 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelValue):
     def __getitem__(self, key: Any) -> Any:
         return self.labels[key]
 
-    def labels_for_variant(
-        self,
-        variant: ObjectLabelVariant | str,
-    ) -> ObjectLabelData:
-        normalized = coerce_enum(
-            ObjectLabelVariant,
-            variant,
-            "ObjectLabelPayload.variant",
-        )
-        return ObjectLabelVariantDataStrategy.for_enum_member(normalized).labels(self)
-
     @property
     def variants(self) -> tuple[ObjectLabelVariant, ...]:
-        variants = [ObjectLabelVariant.FINAL]
-        if self.unedited_labels is not None:
-            variants.append(ObjectLabelVariant.UNEDITED)
-        if self.small_removed_labels is not None:
-            variants.append(ObjectLabelVariant.SMALL_REMOVED)
-        return tuple(variants)
+        return ObjectLabelVariantData.from_value(self).present_variants
 
-    def with_labels(
+    def with_variants(
         self,
-        labels: ObjectLabelData,
-        *,
-        unedited_labels: ObjectLabelData | None = None,
-        small_removed_labels: ObjectLabelData | None = None,
+        context: ObjectLabelValueConstructionContext,
+        variants: ObjectLabelVariantData,
     ) -> "ObjectLabelPayload":
-        """Return this payload's domain metadata with replacement labels."""
-        return ObjectLabelPayload.from_domain_metadata(
-            self,
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-        )
+        return context.payload_from_variants(variants)
 
     def with_data(self, data: Any) -> "ObjectLabelPayload":
         return self.with_labels(data)
 
-    def with_projected_plane(
-        self,
-        labels: ObjectLabelData,
-        plane_index: int,
-        *,
-        unedited_labels: ObjectLabelData | None = None,
-        small_removed_labels: ObjectLabelData | None = None,
-    ) -> "ObjectLabelPayload":
-        """Return one selected payload plane with projected domain metadata."""
-        return object_label_payload_with_projected_plane(
-            self,
-            labels,
-            plane_index,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-        )
-
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelPayload":
         """Attach image provenance without changing this payload's label domain."""
         metadata = image_payload_metadata(image)
-        source_provenance = ObjectLabelSourceContextProvenanceMerge.for_label_and_image(
+        source_provenance = object_label_source_context_provenance(
             self,
             image,
-        ).provenance()
-        return ObjectLabelPayload(
-            labels=self.labels,
-            unedited_labels=self.unedited_labels,
-            small_removed_labels=self.small_removed_labels,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=self.plane_axis,
-            spatial_origin_yx=(
-                self.spatial_origin_yx
-                if self.spatial_origin_yx is not None
-                else metadata.spatial_origin_yx
-            ),
-            source_spatial_shape_yx=(
-                self.source_spatial_shape_yx
-                if self.source_spatial_shape_yx is not None
-                else metadata.source_spatial_shape_yx
-            ),
-            source_path=source_provenance.source_path,
-            source_component_metadata=source_provenance.source_component_metadata,
-            channel_source_paths=source_provenance.channel_source_paths,
-            channel_source_component_metadata=(
-                source_provenance.channel_source_component_metadata
-            ),
-            source_image_names=source_provenance.source_image_names,
         )
-
-
-class SharedStrategyLabelBase(ABC):
-    """Shared registry-label declaration surface for strategy families."""
-
-    __registry_key__ = RegistryKeyAttribute.STRATEGY_LABEL.value
-    __skip_if_no_key__ = True
-
-    strategy_label: ClassVar[str | None] = None
+        source_spatial_domain = (
+            self.object_label_source_spatial_domain().with_missing_from(
+                metadata.object_label_source_spatial_domain()
+            )
+        )
+        return ObjectLabelValueConstructionContext.from_value(
+            self,
+            source_provenance=source_provenance,
+            source_spatial_domain=source_spatial_domain,
+        ).payload_from_value(self)
 
 
 class ObjectLabelVariantDataStrategy(
-    SharedStrategyLabelBase,
+    StrategyLabelRegistryMixin,
     EnumKeyedStrategyMixin[ObjectLabelVariant],
     ABC,
     metaclass=AutoRegisterMeta,
 ):
     """Registered semantics for object-label variant payload selection."""
 
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+    __registry_key__ = "variant"
     __enum_member_attr__ = "variant"
+    stable_key_axis: ClassVar[str] = __registry_key__
     variant: ClassVar[ObjectLabelVariant]
 
     @abstractmethod
-    def labels(self, payload: ObjectLabelPayload) -> ObjectLabelData:
+    def labels(self, payload: ObjectLabelVariantSource) -> ObjectLabelData:
         """Return labels for this variant from one payload."""
 
     @abstractmethod
-    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+    def present(
+        self,
+        payloads: ObjectLabelVariantSources,
+    ) -> bool:
         """Return whether this variant has material data across payloads."""
 
 
@@ -2008,10 +2322,10 @@ class FinalObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy):
 
     variant = ObjectLabelVariant.FINAL
 
-    def labels(self, payload: ObjectLabelPayload) -> ObjectLabelData:
+    def labels(self, payload: ObjectLabelVariantData) -> ObjectLabelData:
         return payload.labels
 
-    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+    def present(self, payloads: ObjectLabelVariantSources) -> bool:
         del payloads
         return True
 
@@ -2021,10 +2335,10 @@ class UneditedObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy):
 
     variant = ObjectLabelVariant.UNEDITED
 
-    def labels(self, payload: ObjectLabelPayload) -> ObjectLabelData:
+    def labels(self, payload: ObjectLabelVariantSource) -> ObjectLabelData:
         return payload.unedited_labels if payload.unedited_labels is not None else payload.labels
 
-    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+    def present(self, payloads: ObjectLabelVariantSources) -> bool:
         return any(payload.unedited_labels is not None for payload in payloads)
 
 
@@ -2033,14 +2347,14 @@ class SmallRemovedObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy)
 
     variant = ObjectLabelVariant.SMALL_REMOVED
 
-    def labels(self, payload: ObjectLabelPayload) -> ObjectLabelData:
+    def labels(self, payload: ObjectLabelVariantSource) -> ObjectLabelData:
         return (
             payload.small_removed_labels
             if payload.small_removed_labels is not None
             else payload.labels
         )
 
-    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+    def present(self, payloads: ObjectLabelVariantSources) -> bool:
         return any(payload.small_removed_labels is not None for payload in payloads)
 
 
@@ -2094,6 +2408,10 @@ class SparseIJVLabelRows(ColumnarRows):
 
     data: Any
 
+    @property
+    def column_layout(self) -> "SparseIJVColumnLayout":
+        return SparseIJVColumnLayout(has_slice_index=self.has_slice_index)
+
     def __post_init__(self) -> None:
         array = self.as_array()
         if array.ndim != 2 or array.shape[1] not in (3, 4):
@@ -2126,15 +2444,15 @@ class SparseIJVLabelRows(ColumnarRows):
 
     @property
     def y_column(self) -> int:
-        return 1 if self.has_slice_index else 0
+        return self.column_layout.y_column
 
     @property
     def x_column(self) -> int:
-        return 2 if self.has_slice_index else 1
+        return self.column_layout.x_column
 
     @property
     def label_column(self) -> int:
-        return 3 if self.has_slice_index else 2
+        return self.column_layout.label_column
 
     @classmethod
     def from_yx_label(cls, data: Any) -> "SparseIJVLabelRows":
@@ -2254,9 +2572,11 @@ class SparseIJVLabelRows(ColumnarRows):
     def label_data_runtime_slice_count(self) -> int:
         """Return the encoded runtime-slice count, including empty stacks."""
         if not self.has_slice_index:
-            return 1
+            return SINGLETON_AXIS_LENGTH
         slice_indices = self.slice_indices()
-        return max(slice_indices) + 1 if slice_indices else 0
+        if not slice_indices:
+            return 0
+        return max(slice_indices) + SINGLETON_AXIS_LENGTH
 
     def _dense_spatial_shape(
         self,
@@ -2279,6 +2599,31 @@ class SparseIJVLabelRows(ColumnarRows):
         except Exception as exc:  # pragma: no cover - numpy is a core runtime dep.
             raise TypeError("SparseIJVLabelRows requires an array-like payload.") from exc
         return _np.asarray(self.data)
+
+
+@dataclass(frozen=True, slots=True)
+class SparseIJVColumnLayout:
+    """Column indexes for sparse IJV rows with optional runtime slice index."""
+
+    has_slice_index: bool
+
+    @property
+    def y_column(self) -> int:
+        if self.has_slice_index:
+            return 1
+        return 0
+
+    @property
+    def x_column(self) -> int:
+        if self.has_slice_index:
+            return 2
+        return 1
+
+    @property
+    def label_column(self) -> int:
+        if self.has_slice_index:
+            return 3
+        return 2
 
 
 class SparseIJVLabelRowsIdDomainStrategy(ObjectLabelIdDomainStrategy):
@@ -2340,12 +2685,26 @@ class SourceImageContext(metaclass=AutoRegisterMeta):
     source_image_name: str | None = None
 
     def _validate_source_image_context(self, owner_name: str) -> None:
-        if self.source_image_name == "":
+        if self.source_image_name == EMPTY_RUNTIME_FIELD_NAME:
             raise ValueError(f"{owner_name}.source_image_name cannot be empty.")
+
+    def source_image_context_plane_index(
+        self,
+        source_aliases: tuple[str, ...],
+        axis_size: int,
+    ) -> int | None:
+        """Return this context's plane index in a composed source-alias axis."""
+        source_aliases = tuple(dict.fromkeys(source_aliases))
+        if self.source_image_name not in source_aliases:
+            return None
+        plane_index = source_aliases.index(self.source_image_name)
+        if plane_index < axis_size:
+            return plane_index
+        return None
 
 
 @dataclass(slots=True, kw_only=True)
-class RuntimeValueSchema(SourceImageContext):
+class RuntimeValueSchema(SourceImageContext, SourceImageProvenanceFields):
     """Semantic schema attached to a runtime artifact value."""
 
     kind: ArtifactKind
@@ -2360,7 +2719,11 @@ class RuntimeValueSchema(SourceImageContext):
     measurement_schema_loss_reasons: frozenset[str] = frozenset()
     label_variants: tuple[ObjectLabelVariant, ...] = ()
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, *source_provenance_values: object) -> None:
+        self.absorb_explicit_source_provenance(
+            SourceImageProvenance.from_init_values(source_provenance_values)
+        )
+        self.normalize_source_provenance_fields()
         self._validate_source_image_context("RuntimeValueSchema")
         self.kind = coerce_enum(ArtifactKind, self.kind, "RuntimeValueSchema.kind")
         if self.label_representation is not None:
@@ -2369,9 +2732,9 @@ class RuntimeValueSchema(SourceImageContext):
                     self.label_representation,
                     "RuntimeValueSchema.label_representation",
                 )
-        if self.object_name == "":
+        if self.object_name == EMPTY_RUNTIME_FIELD_NAME:
             raise ValueError("RuntimeValueSchema.object_name cannot be empty.")
-        if self.object_id_field == "":
+        if self.object_id_field == EMPTY_RUNTIME_FIELD_NAME:
             raise ValueError("RuntimeValueSchema.object_id_field cannot be empty.")
         self.measurement_schema_loss_reasons = frozenset(str(reason) for reason in self.measurement_schema_loss_reasons)
         if self.measurement_schema_validated and self.measurement_schema_loss_reasons:
@@ -2469,12 +2832,18 @@ class RuntimeMeasurementSubjectIdentity:
 
     @property
     def token(self) -> str:
+        subject_name = self.name
+        if subject_name is None:
+            subject_name = EMPTY_RUNTIME_FIELD_NAME
+        subject_id_field = self.id_field
+        if subject_id_field is None:
+            subject_id_field = EMPTY_RUNTIME_FIELD_NAME
         return ":".join(
             (
                 "measurement_subject",
                 self.scope.value,
-                self.name or "",
-                self.id_field or "",
+                subject_name,
+                subject_id_field,
             )
         )
 
@@ -2637,17 +3006,9 @@ class ObjectLabelSet(
 ):
     """Native OpenHCS object-label value."""
 
-    labels: ObjectLabelData
-    unedited_labels: ObjectLabelData | None = None
-    small_removed_labels: ObjectLabelData | None = None
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
-    declared_object_count: int | None = None
-    declared_object_ids: tuple[int, ...] = ()
-    declared_object_id_domains: tuple[tuple[int, ...], ...] = ()
-    domain_scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
+    domain: ObjectLabelDomain = field(default_factory=ObjectLabelDomain)
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
-    spatial_origin_yx: tuple[int, int] | None = None
-    source_spatial_shape_yx: tuple[int, int] | None = None
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -2660,23 +3021,15 @@ class ObjectLabelSet(
         payload = value.data
         schema = value.schema
         if isinstance(payload, ObjectLabelPayload):
-            return cls(
+            context = ObjectLabelValueConstructionContext.from_value(
+                payload,
+                source_provenance=schema.source_provenance.with_missing_from(
+                    payload.source_provenance
+                ),
+            )
+            return context.label_set_from_variants(
                 name=value.name,
-                labels=payload.labels,
-                unedited_labels=payload.unedited_labels,
-                small_removed_labels=payload.small_removed_labels,
-                declared_object_count=payload.declared_object_count,
-                declared_object_ids=payload.declared_object_ids,
-                declared_object_id_domains=payload.declared_object_id_domains,
-                domain_scope=payload.domain_scope,
-                plane_axis=payload.plane_axis,
-                spatial_origin_yx=payload.spatial_origin_yx,
-                source_spatial_shape_yx=payload.source_spatial_shape_yx,
-                source_path=payload.source_path,
-                source_component_metadata=payload.source_component_metadata,
-                channel_source_paths=payload.channel_source_paths,
-                channel_source_component_metadata=payload.channel_source_component_metadata,
-                source_image_names=payload.source_image_names,
+                variants=ObjectLabelVariantData.from_value(payload),
                 dimensions=schema.dimensions,
                 source_image_name=schema.source_image_name,
                 representation=(
@@ -2689,42 +3042,85 @@ class ObjectLabelSet(
             labels=payload,
             dimensions=schema.dimensions,
             source_image_name=schema.source_image_name,
+            source_provenance=schema.source_provenance,
             representation=(
                 schema.label_representation
                 or ObjectLabelRepresentation.DENSE_LABELS
             ),
         )
 
-    def __post_init__(self, *source_provenance_values: object) -> None:
+    def __post_init__(self, *init_values: object) -> None:
+        source_provenance_values, variant_values = object_label_init_values(
+            init_values
+        )
+        self.absorb_explicit_object_label_variants(variant_values)
         self.absorb_explicit_source_provenance(
             SourceImageProvenance.from_init_values(source_provenance_values)
         )
-        ObjectLabelSetInitialization(self).apply()
+        NativeRuntimeValue.__post_init__(self)
+        self._validate_source_image_context(type(self).__name__)
+        if isinstance(self.labels, ObjectLabelPayload):
+            payload = self.labels
+            payload_context = ObjectLabelValueConstructionContext.from_value(
+                payload,
+                domain=self.domain.with_missing_declarations_from(
+                    payload.object_label_domain()
+                ),
+                source_provenance=self.source_provenance.with_missing_from(
+                    payload.source_provenance
+                ),
+                source_spatial_domain=(
+                    self.object_label_source_spatial_domain().with_missing_from(
+                        payload.object_label_source_spatial_domain()
+                    )
+                ),
+            )
+            variants = ObjectLabelVariantData.from_value(payload)
+            self.labels = variants.labels
+            self.unedited_labels = variants.unedited_labels
+            self.small_removed_labels = variants.small_removed_labels
+            self.domain = payload_context.domain
+            self.plane_axis = payload_context.plane_axis
+            self.source_spatial_domain = payload_context.source_spatial_domain
+            self.source_provenance = payload_context.source_provenance
+        representation = self.normalize_object_label_metadata("ObjectLabelSet")
+        self.validate_object_label_payload(
+            value_label=f"ObjectLabelSet '{self.name}'",
+            representation=representation,
+        )
 
     def runtime_payload(self) -> Any:
         if (
             self.unedited_labels is not None
             or self.small_removed_labels is not None
-            or self.declared_object_count is not None
-            or self.declared_object_ids
-            or self.declared_object_id_domains
-            or self.domain_scope is not ObjectLabelDomainScope.PAYLOAD
+            or self.domain != ObjectLabelDomain()
             or self.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE
-            or self.spatial_origin_yx is not None
-            or self.source_spatial_shape_yx is not None
+            or self.source_spatial_domain.has_values
             or self.source_path is not None
             or self.source_component_metadata is not None
-            or self.channel_source_paths
-            or self.channel_source_component_metadata
+            or self.source_image_provenance_planes.has_values
             or self.source_image_names
         ):
-            return ObjectLabelPayload.from_domain_metadata(
-                self,
-                labels=self.labels,
-                unedited_labels=self.unedited_labels,
-                small_removed_labels=self.small_removed_labels,
+            return ObjectLabelValueConstructionContext.from_value(self).payload_from_value(
+                self
             )
         return self.labels
+
+    def runtime_slice_stack_view_sources(self) -> tuple[ObjectLabelData, ...]:
+        """Project runtime-slice stack discovery through the stored payload form."""
+        runtime_payload = self.runtime_payload()
+        if isinstance(runtime_payload, ObjectLabelValue):
+            return runtime_payload.runtime_slice_stack_view_sources()
+        return (runtime_payload,)
+
+    def object_label_semantic_identity(self) -> tuple[tuple[str, Hashable], ...]:
+        """Return native object-label identity fields in addition to payload metadata."""
+        return (
+            *ObjectLabelValue.object_label_semantic_identity(self),
+            ("object_name", self.name),
+            ("dimensions", self.dimensions),
+            ("source_image_name", self.source_image_name),
+        )
 
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         label_variants = (
@@ -2739,6 +3135,7 @@ class ObjectLabelSet(
             label_variants=label_variants,
             object_name=self.name,
             source_image_name=self.source_image_name,
+            source_provenance=self.source_provenance,
         )
 
     @property
@@ -2758,253 +3155,136 @@ class ObjectLabelSet(
 
         return np.asarray(self.labels, dtype=dtype)
 
-    def labels_for_variant(
+    def with_variants(
         self,
-        variant: ObjectLabelVariant | str,
-    ) -> ObjectLabelData:
-        payload = ObjectLabelPayload(
-            labels=self.labels,
-            unedited_labels=self.unedited_labels,
-            small_removed_labels=self.small_removed_labels,
-        )
-        return payload.labels_for_variant(variant)
-
-    def with_labels(
-        self,
-        labels: ObjectLabelData,
-        *,
-        unedited_labels: ObjectLabelData | None = None,
-        small_removed_labels: ObjectLabelData | None = None,
+        context: ObjectLabelValueConstructionContext,
+        variants: ObjectLabelVariantData,
     ) -> "ObjectLabelSet":
-        """Return this runtime value's metadata with replacement labels."""
-        return ObjectLabelSet(
+        return context.label_set_from_variants(
             name=self.name,
-            labels=ObjectLabelSetReplacementStrategy.for_source(self).replacement_labels(
-                labels
+            variants=ObjectLabelVariantData(
+                ObjectLabelSetReplacementStrategy.for_source(
+                    self
+                ).replacement_labels(variants.labels),
+                variants.unedited_labels,
+                variants.small_removed_labels,
             ),
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
             representation=self.representation,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=self.plane_axis,
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
-            source_path=self.source_path,
-            source_component_metadata=self.source_component_metadata,
-            channel_source_paths=self.channel_source_paths,
-            channel_source_component_metadata=self.channel_source_component_metadata,
-            source_image_names=self.source_image_names,
             dimensions=self.dimensions,
             source_image_name=self.source_image_name,
-        )
-
-    def with_projected_plane(
-        self,
-        labels: ObjectLabelData,
-        plane_index: int,
-        *,
-        unedited_labels: ObjectLabelData | None = None,
-        small_removed_labels: ObjectLabelData | None = None,
-    ) -> "ObjectLabelSet":
-        """Return one selected label-set plane with projected domain metadata."""
-        return object_label_set_with_projected_plane(
-            self,
-            labels,
-            plane_index,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
         )
 
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelSet":
         """Attach image provenance without changing this label set's domain."""
         metadata = image_payload_metadata(image)
-        source_provenance = ObjectLabelSourceContextProvenanceMerge.for_label_and_image(
+        source_provenance = object_label_source_context_provenance(
             self,
             image,
-        ).provenance()
-        return ObjectLabelSet(
+        )
+        source_spatial_domain = (
+            self.object_label_source_spatial_domain().with_missing_from(
+                metadata.object_label_source_spatial_domain()
+            )
+        )
+        return ObjectLabelValueConstructionContext.from_value(
+            self,
+            source_provenance=source_provenance,
+            source_spatial_domain=source_spatial_domain,
+        ).label_set_from_variants(
             name=self.name,
-            labels=self.labels,
-            unedited_labels=self.unedited_labels,
-            small_removed_labels=self.small_removed_labels,
+            variants=ObjectLabelVariantData.from_value(self),
             representation=self.representation,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=self.plane_axis,
-            spatial_origin_yx=(
-                self.spatial_origin_yx
-                if self.spatial_origin_yx is not None
-                else metadata.spatial_origin_yx
-            ),
-            source_spatial_shape_yx=(
-                self.source_spatial_shape_yx
-                if self.source_spatial_shape_yx is not None
-                else metadata.source_spatial_shape_yx
-            ),
-            source_path=source_provenance.source_path,
-            source_component_metadata=source_provenance.source_component_metadata,
-            channel_source_paths=source_provenance.channel_source_paths,
-            channel_source_component_metadata=(
-                source_provenance.channel_source_component_metadata
-            ),
-            source_image_names=source_provenance.source_image_names,
             dimensions=self.dimensions,
             source_image_name=self.source_image_name,
         )
 
-@dataclass(frozen=True, slots=True)
-class ObjectLabelSetInitialization:
-    """Initialization authority for native object-label values."""
 
-    target: ObjectLabelSet
-
-    def apply(self) -> None:
-        NativeRuntimeValue.__post_init__(self.target)
-        self.target._validate_source_image_context(type(self.target).__name__)
-        representation = self.normalize_representation()
-        self.absorb_payload_metadata()
-        self.normalize_domain_metadata()
-        self.normalize_provenance_metadata()
-        self.validate_payload(representation)
-
-    def normalize_representation(self) -> ObjectLabelRepresentation:
-        representation = coerce_enum(
-            ObjectLabelRepresentation,
-            self.target.representation,
-            "ObjectLabelSet.representation",
-        )
-        self.target.representation = representation
-        return representation
-
-    def absorb_payload_metadata(self) -> None:
-        if not isinstance(self.target.labels, ObjectLabelPayload):
-            return
-        payload = self.target.labels
-        self.target.labels = payload.labels
-        self.target.unedited_labels = payload.unedited_labels
-        self.target.small_removed_labels = payload.small_removed_labels
-        ObjectLabelPayloadMetadataAbsorption(self.target, payload).apply()
-
-    def normalize_domain_metadata(self) -> None:
-        if self.target.declared_object_count is not None:
-            count = int(self.target.declared_object_count)
-            if count < 0:
-                raise ValueError("ObjectLabelSet.declared_object_count cannot be negative.")
-            self.target.declared_object_count = count
-
-        ids = tuple(int(object_id) for object_id in self.target.declared_object_ids)
-        if any(object_id <= 0 for object_id in ids):
-            raise ValueError("ObjectLabelSet.declared_object_ids must be positive.")
-        self.target.declared_object_ids = tuple(sorted(dict.fromkeys(ids)))
-        self.target.declared_object_id_domains = tuple(
-                ObjectLabelDomain._normalize_ids(domain, "declared_object_id_domains")
-                for domain in self.target.declared_object_id_domains
-            )
-        self.target.domain_scope = coerce_enum(
-                ObjectLabelDomainScope,
-                self.target.domain_scope,
-                "ObjectLabelSet.domain_scope",
-            )
-        self.target.plane_axis = coerce_enum(
-                RuntimePlaneAxis,
-                self.target.plane_axis,
-                "ObjectLabelSet.plane_axis",
-            )
-        if self.target.spatial_origin_yx is not None:
-            self.target.spatial_origin_yx = _spatial_shape_pair(self.target.spatial_origin_yx, "spatial_origin_yx")
-        if self.target.source_spatial_shape_yx is not None:
-            self.target.source_spatial_shape_yx = _spatial_shape_pair(
-                    self.target.source_spatial_shape_yx,
-                    "source_spatial_shape_yx",
-                )
-
-    def normalize_provenance_metadata(self) -> None:
-        self.target.normalize_source_provenance_fields()
-
-    def validate_payload(self, representation: ObjectLabelRepresentation) -> None:
-        validator = _PAYLOAD_VALIDATORS[representation.payload_shape]
-        if validator is not None and not validator(self.target.labels):
-            raise TypeError(
-                f"ObjectLabelSet '{self.target.name}' requires "
-                f"{representation.value} payload, got "
-                f"{type(self.target.labels).__name__}."
-            )
-        _validate_object_label_variant(
-            self.target.name,
-            "unedited_labels",
-            self.target.labels,
-            self.target.unedited_labels,
-            validator,
-        )
-        _validate_object_label_variant(
-            self.target.name,
-            "small_removed_labels",
-            self.target.labels,
-            self.target.small_removed_labels,
-            validator,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelPayloadMetadataAbsorption:
-    """Copies payload-owned metadata into an ObjectLabelSet when not overridden."""
-
-    target: ObjectLabelSet
-    payload: ObjectLabelPayload
-
-    def apply(self) -> None:
-        self.absorb_declared_domains()
-        self.absorb_label_domain_axes()
-        self.absorb_spatial_domains()
-        self.absorb_source_provenance()
-
-    def absorb_declared_domains(self) -> None:
-        if self.target.declared_object_count is None:
-            self.target.declared_object_count = self.payload.declared_object_count
-        if not self.target.declared_object_ids:
-            self.target.declared_object_ids = self.payload.declared_object_ids
-        if not self.target.declared_object_id_domains:
-            self.target.declared_object_id_domains = self.payload.declared_object_id_domains
-
-    def absorb_label_domain_axes(self) -> None:
-        self.target.domain_scope = self.payload.domain_scope
-        self.target.plane_axis = self.payload.plane_axis
-
-    def absorb_spatial_domains(self) -> None:
-        if self.target.spatial_origin_yx is None:
-            self.target.spatial_origin_yx = self.payload.spatial_origin_yx
-        if self.target.source_spatial_shape_yx is None:
-            self.target.source_spatial_shape_yx = self.payload.source_spatial_shape_yx
-
-    def absorb_source_provenance(self) -> None:
-        provenance = self.target.source_provenance.with_missing_from(
-            self.payload.source_provenance
-        )
-        self.target.source_path = provenance.source_path
-        self.target.source_component_metadata = provenance.source_component_metadata
-        self.target.channel_source_paths = provenance.channel_source_paths
-        self.target.channel_source_component_metadata = provenance.channel_source_component_metadata
-        self.target.source_image_names = provenance.source_image_names
-
-
-class RuntimePayloadDataStrategy(ABC):
-    """Base contract for nominal payload-to-data extraction strategies."""
+class SourceImageContextPlaneIndexStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal source-alias plane selection for source-image contexts."""
 
     value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+
+    @classmethod
+    def plane_index_for_value(
+        cls,
+        value: SourceImageContext,
+        source_aliases: tuple[str, ...],
+        axis_size: int,
+    ) -> int | None:
+        strategy = cls.for_nominal_value(value)
+        if strategy is None:
+            return None
+        return strategy.plane_index(value, source_aliases, axis_size)
 
     @abstractmethod
-    def data(self, payload: object) -> object:
-        """Return the concrete data represented by payload."""
+    def plane_index(
+        self,
+        value: SourceImageContext,
+        source_aliases: tuple[str, ...],
+        axis_size: int,
+    ) -> int | None:
+        """Return the source-alias plane index represented by this value."""
+
+
+class DefaultSourceImageContextPlaneIndexStrategy(SourceImageContextPlaneIndexStrategy):
+    """Scalar source-image contexts select their position in a composed axis."""
+
+    value_type = SourceImageContext
+
+    def plane_index(
+        self,
+        value: SourceImageContext,
+        source_aliases: tuple[str, ...],
+        axis_size: int,
+    ) -> int | None:
+        return value.source_image_context_plane_index(source_aliases, axis_size)
+
+
+class ObjectLabelSetSourceImageContextPlaneIndexStrategy(
+    SourceImageContextPlaneIndexStrategy
+):
+    """Resolve source-binding object labels through their declared source image."""
+
+    value_type = ObjectLabelSet
+
+    def plane_index(
+        self,
+        value: SourceImageContext,
+        source_aliases: tuple[str, ...],
+        axis_size: int,
+    ) -> int | None:
+        if not isinstance(value, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetSourceImageContextPlaneIndexStrategy requires "
+                f"ObjectLabelSet, got {type(value).__name__}."
+            )
+        if value.plane_axis is not RuntimePlaneAxis.SOURCE_BINDING:
+            return None
+        return value.source_image_context_plane_index(source_aliases, axis_size)
+
+
+def source_image_context_plane_index(
+    value: SourceImageContext,
+    source_aliases: tuple[str, ...],
+    axis_size: int,
+) -> int | None:
+    """Return source-alias plane selection through nominal value ownership."""
+    return SourceImageContextPlaneIndexStrategy.plane_index_for_value(
+        value,
+        source_aliases,
+        axis_size,
+    )
 
 
 class ObjectLabelDenseDataStrategy(
     NominalTypeKeyedStrategyMixin,
-    RuntimePayloadDataStrategy,
+    ABC,
     metaclass=AutoRegisterMeta,
 ):
     """Registered dense-label extractor for one nominal object-label runtime type."""
@@ -3048,7 +3328,9 @@ class ObjectLabelContainerDenseDataStrategy(ObjectLabelDenseDataStrategy):
             )
         if isinstance(payload.labels, SparseIJVLabelRows):
             return payload.labels.to_dense(
-                source_spatial_shape_yx=payload.source_spatial_shape_yx,
+                source_spatial_shape_yx=(
+                    payload.source_spatial_domain.source_shape_yx
+                ),
             )
         return payload.labels
 
@@ -3072,29 +3354,16 @@ class RawObjectLabelDenseDataStrategy(ObjectLabelDenseDataStrategy):
         return payload
 
 
-class ObjectLabelPayloadIdDomainStrategy(ObjectLabelIdDomainStrategy):
-    """Extract present object IDs from serialized object-label payloads."""
+class ObjectLabelValueIdDomainStrategy(ObjectLabelIdDomainStrategy):
+    """Extract present object IDs from nominal object-label values."""
 
-    value_type = ObjectLabelPayload
-
-    def present_ids(self, labels: Any) -> tuple[int, ...]:
-        if not isinstance(labels, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadIdDomainStrategy requires ObjectLabelPayload, "
-                f"got {type(labels).__name__}."
-            )
-        return ObjectLabelIdDomainStrategy.for_value(labels.labels).present_ids(labels.labels)
-
-
-class ObjectLabelSetIdDomainStrategy(ObjectLabelIdDomainStrategy):
-    """Extract present object IDs from native object-label runtime values."""
-
-    value_type = ObjectLabelSet
+    value_type = ObjectLabelValue
+    value_type_label = OBJECT_LABEL_VALUE_TYPE_LABEL
 
     def present_ids(self, labels: Any) -> tuple[int, ...]:
-        if not isinstance(labels, ObjectLabelSet):
+        if not isinstance(labels, ObjectLabelValue):
             raise TypeError(
-                "ObjectLabelSetIdDomainStrategy requires ObjectLabelSet, "
+                "ObjectLabelValueIdDomainStrategy requires an object-label value, "
                 f"got {type(labels).__name__}."
             )
         return ObjectLabelIdDomainStrategy.for_value(labels.labels).present_ids(labels.labels)
@@ -3129,9 +3398,13 @@ class DenseObjectLabelAggregation:
     ) -> "DenseObjectLabelAggregation":
         """Build reductions from any nominal object-label payload."""
         labels = object_label_dense_array(payload, dtype=dtype)
+        if labels.size:
+            object_count = int(np.max(labels))
+        else:
+            object_count = 0
         return cls(
             labels=labels,
-            object_count=int(np.max(labels)) if labels.size else 0,
+            object_count=object_count,
         )
 
     def counts(self) -> np.ndarray:
@@ -3396,16 +3669,15 @@ class ObjectLabelContainerPlaneStackContract(
     def value_plane_count(self, value: object) -> int | None:
         payload = self.typed_value(value)
         data_count = ObjectLabelDataPlaneStackContract.plane_count(payload.labels)
-        if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+        if payload.domain.scope is not ObjectLabelDomainScope.PLANE:
             return ObjectLabelSourceBackedPlaneCountResolution(
                 payload,
                 data_count,
             ).result.count
-        declared_count = (
-            len(payload.declared_object_id_domains)
-            if payload.declared_object_id_domains
-            else None
-        )
+        if payload.domain.declared_object_id_domains:
+            declared_count = len(payload.domain.declared_object_id_domains)
+        else:
+            declared_count = None
         if declared_count is not None and data_count is not None:
             ObjectLabelPlaneDomainCardinalityResolution(
                 payload_type=type(payload).__name__,
@@ -3514,13 +3786,11 @@ class ObjectLabelRuntimeSliceStackContract(
         slice_count: int,
     ) -> bool:
         strategy = cls.for_nominal_value(value)
-        return (
-            False
-            if strategy is None
-            else strategy.value_preserves_runtime_slice_stack(
-                value,
-                slice_count=slice_count,
-            )
+        if strategy is None:
+            return False
+        return strategy.value_preserves_runtime_slice_stack(
+            value,
+            slice_count=slice_count,
         )
 
     @classmethod
@@ -3558,7 +3828,7 @@ class ObjectLabelContainerRuntimeSliceStackContract(
         slice_count: int,
     ) -> bool:
         payload = self.typed_value(value)
-        if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+        if payload.domain.scope is not ObjectLabelDomainScope.PLANE:
             return False
         return ObjectLabelDataRuntimeSliceStackContract.preserves_runtime_slice_stack(
             payload.labels,
@@ -3568,7 +3838,7 @@ class ObjectLabelContainerRuntimeSliceStackContract(
 
     def value_runtime_slice_count(self, value: object) -> int | None:
         payload = self.typed_value(value)
-        if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+        if payload.domain.scope is not ObjectLabelDomainScope.PLANE:
             return None
         return ObjectLabelDataRuntimeSliceStackContract.runtime_slice_count(
             payload.labels,
@@ -3645,12 +3915,14 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
 
     @property
     def declared_object_count(self) -> int | None:
-        return self.common_value(value.declared_object_count for value in self.values)
+        return self.common_value(
+            value.domain.declared_object_count for value in self.values
+        )
 
     @property
     def declared_object_ids(self) -> tuple[int, ...]:
         common_ids = self.common_value(
-            value.declared_object_ids for value in self.values
+            value.domain.declared_object_ids for value in self.values
         )
         if common_ids is None:
             return ()
@@ -3658,10 +3930,6 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
 
     @property
     def declared_object_id_domains(self) -> tuple[tuple[int, ...], ...]:
-        if len(self.values) == 1:
-            return ObjectLabelDomain.explicit_plane_id_domains(
-                value.object_label_domain() for value in self.values
-            )
         return tuple(
             plane_domain
             for value in self.values
@@ -3673,20 +3941,32 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         value: ObjectLabelValue,
     ) -> tuple[tuple[int, ...], ...]:
         """Return the object-id domain represented by one PURE_2D output slice."""
+        domain = value.object_label_domain()
         return ObjectLabelPlaneDomainStrategy.for_enum_member(
-            value.domain_scope
+            domain.scope
         ).identity_domains(
-            value.labels_for_variant(ObjectLabelVariant.FINAL),
-            declared_object_count=value.declared_object_count,
-            declared_object_ids=value.declared_object_ids,
-            declared_object_id_domains=value.declared_object_id_domains,
+            ObjectLabelVariantData.from_value(value).labels_for_variant(
+                ObjectLabelVariant.FINAL
+            ),
+            declared_object_count=domain.declared_object_count,
+            declared_object_ids=domain.declared_object_ids,
+            declared_object_id_domains=domain.declared_object_id_domains,
         )
 
     @property
     def domain_scope(self) -> ObjectLabelDomainScope:
         if len(self.values) > 1:
             return ObjectLabelDomainScope.PLANE
-        return ObjectLabelDomainScope.common(value.domain_scope for value in self.values)
+        return ObjectLabelDomainScope.common(value.domain.scope for value in self.values)
+
+    @property
+    def domain(self) -> ObjectLabelDomain:
+        return ObjectLabelDomain(
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
+            scope=self.domain_scope,
+        )
 
     @property
     def plane_axis(self) -> RuntimePlaneAxis:
@@ -3728,10 +4008,6 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         )
 
     @property
-    def source_spatial_shape_yx(self) -> tuple[int, int] | None:
-        return self.common_value(value.source_spatial_shape_yx for value in self.values)
-
-    @property
     def source_path(self) -> str | None:
         return self.common_value(
             self.value_source_provenance(slice_index, value).source_path
@@ -3756,54 +4032,45 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         return None
 
     @property
-    def channel_source_paths(self) -> tuple[str | None, ...]:
+    def source_image_provenance_planes(self) -> SourceImageProvenancePlanes:
         paths = tuple(
             self.value_source_provenance(slice_index, value).source_path
             for slice_index, value in enumerate(self.values)
         )
-        if any(path is not None for path in paths):
-            return paths
-        common_paths = self.common_value(
-            value.channel_source_paths for value in self.values
-        )
-        if common_paths is None:
-            return ()
-        return common_paths
-
-    @property
-    def channel_source_component_metadata(self) -> ChannelSourceComponentMetadata:
-        metadata = tuple(
+        component_metadata = tuple(
             self.value_source_provenance(
                 slice_index,
                 value,
             ).source_component_metadata
             for slice_index, value in enumerate(self.values)
         )
-        if any(item is not None for item in metadata):
-            return metadata
-        channel_metadata = tuple(
-            value.channel_source_component_metadata for value in self.values
-        )
-        present = tuple(value for value in channel_metadata if value)
-        if not present:
-            return ()
-        first = self.channel_source_component_identity(present[0])
-        if all(
-            self.channel_source_component_identity(value) == first
-            for value in present
+        if any(path is not None for path in paths) or any(
+            metadata is not None for metadata in component_metadata
         ):
-            return present[0]
-        return ()
+            return SourceImageProvenancePlanes.from_components(
+                paths=paths,
+                component_metadata=component_metadata,
+            )
 
-    @staticmethod
-    def channel_source_component_identity(
-        metadata: ChannelSourceComponentMetadata,
-    ) -> tuple[SourceProvenanceIdentity, ...]:
-        return tuple(
-            SourceImageProvenance(
-                source_component_metadata=component_metadata,
-            ).identity()
-            for component_metadata in metadata
+        present = tuple(
+            value.source_image_provenance_planes
+            for value in self.values
+            if value.source_image_provenance_planes.has_values
+        )
+        if not present:
+            return SourceImageProvenancePlanes()
+        first = present[0].identity
+        if all(value.identity == first for value in present):
+            return present[0]
+        return SourceImageProvenancePlanes()
+
+    @property
+    def source_provenance(self) -> SourceImageProvenance:
+        return SourceImageProvenance(
+            source_path=self.source_path,
+            source_component_metadata=self.source_component_metadata,
+            source_image_provenance_planes=self.source_image_provenance_planes,
+            source_image_names=self.source_image_names,
         )
 
     @staticmethod
@@ -3812,25 +4079,36 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         value: ObjectLabelValue,
     ) -> SourceImageProvenance:
         """Return the source provenance represented by one aggregate slice."""
-        return value.source_provenance.for_channel(slice_index)
+        return value.source_provenance.for_source_plane(slice_index)
 
     @property
-    def spatial_origin_yx(self) -> tuple[int, int] | None:
-        if self.expands_to_source_domain:
-            return None
-        return self.common_value(value.spatial_origin_yx for value in self.values)
+    def source_spatial_domains(self) -> tuple[SourceSpatialDomain, ...]:
+        return tuple(
+            value.object_label_source_spatial_domain()
+            for value in self.values
+        )
+
+    @property
+    def source_spatial_domain(self) -> SourceSpatialDomain:
+        return SourceSpatialDomain.common_from_domains(
+            self.source_spatial_domains,
+            expand_varying_domains=True,
+            value_name=OBJECT_LABEL_SOURCE_SPATIAL_VALUE_NAME,
+        )
 
     @property
     def expands_to_source_domain(self) -> bool:
-        if len(self.values) <= 1:
-            return False
-        domains = tuple(
-            (value.spatial_origin_yx, value.source_spatial_shape_yx)
-            for value in self.values
+        return SourceSpatialDomain.domains_have_varying_complete_placement(
+            self.source_spatial_domains
         )
-        if any(origin is None or source_shape is None for origin, source_shape in domains):
-            return False
-        return len(set(domains)) > 1
+
+    def construction_context(self) -> ObjectLabelValueConstructionContext:
+        return ObjectLabelValueConstructionContext(
+            domain=self.domain,
+            source_provenance=self.source_provenance,
+            source_spatial_domain=self.source_spatial_domain,
+            plane_axis=self.plane_axis,
+        )
 
     @staticmethod
     def common_value(
@@ -3846,13 +4124,15 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
 
     def aggregate_values(self) -> ObjectLabelValue:
         return self.output_value(
-            labels=self.aggregate_variant(ObjectLabelVariant.FINAL),
-            unedited_labels=self.aggregate_optional_variant(
-                ObjectLabelVariant.UNEDITED
-            ),
-            small_removed_labels=self.aggregate_optional_variant(
-                ObjectLabelVariant.SMALL_REMOVED
-            ),
+            ObjectLabelVariantData(
+                labels=self.aggregate_variant(ObjectLabelVariant.FINAL),
+                unedited_labels=self.aggregate_optional_variant(
+                    ObjectLabelVariant.UNEDITED
+                ),
+                small_removed_labels=self.aggregate_optional_variant(
+                    ObjectLabelVariant.SMALL_REMOVED
+                ),
+            )
         )
 
     def aggregate_optional_variant(
@@ -3875,7 +4155,7 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         variant: ObjectLabelVariant,
     ) -> ObjectLabelData:
         if not self.expands_to_source_domain:
-            return value.labels_for_variant(variant)
+            return ObjectLabelVariantData.from_value(value).labels_for_variant(variant)
         domain_value = self.domain_value_for_variant(value, variant)
         aligned, _ = DenseObjectLabelPairAligner(domain_value, domain_value).aligned()
         return aligned
@@ -3891,10 +4171,7 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def output_value(
         self,
-        *,
-        labels: ObjectLabelData,
-        unedited_labels: ObjectLabelData | None,
-        small_removed_labels: ObjectLabelData | None,
+        variants: ObjectLabelVariantData,
     ) -> ObjectLabelValue:
         """Build the aggregated object-label value."""
 
@@ -3909,25 +4186,15 @@ class ObjectLabelPayloadPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
         value: ObjectLabelPayload,
         variant: ObjectLabelVariant,
     ) -> ObjectLabelPayload:
-        return ObjectLabelPayload.from_domain_metadata(
-            value,
-            labels=value.labels_for_variant(variant),
+        return ObjectLabelValueConstructionContext.from_value(value).payload(
+            ObjectLabelVariantData.from_value(value).labels_for_variant(variant)
         )
 
     def output_value(
         self,
-        *,
-        labels: ObjectLabelData,
-        unedited_labels: ObjectLabelData | None,
-        small_removed_labels: ObjectLabelData | None,
+        variants: ObjectLabelVariantData,
     ) -> ObjectLabelPayload:
-        return ObjectLabelPayload.from_domain_metadata(
-            self,
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-            plane_axis=self.plane_axis,
-        )
+        return self.construction_context().payload_from_variants(variants)
 
 
 class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
@@ -3961,7 +4228,7 @@ class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
         return super().aggregate_values()
 
     def aggregate_sparse_ijv(self) -> ObjectLabelSet:
-        return ObjectLabelSet(
+        return self.construction_context().label_set(
             name=self.first.name,
             labels=SparseIJVLabelRows.from_slices(
                 tuple(
@@ -3973,16 +4240,6 @@ class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
             ),
             representation=self.representation,
             dimensions=self.first.dimensions,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=self.plane_axis,
-            source_path=self.source_path,
-            source_component_metadata=self.source_component_metadata,
-            channel_source_paths=self.channel_source_paths,
-            channel_source_component_metadata=self.channel_source_component_metadata,
-            source_image_names=self.source_image_names,
             source_image_name=self.first.source_image_name,
         )
 
@@ -3991,60 +4248,35 @@ class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
         value: ObjectLabelSet,
         variant: ObjectLabelVariant,
     ) -> ObjectLabelSet:
-        return ObjectLabelSet(
+        return ObjectLabelValueConstructionContext.from_value(value).label_set(
             name=value.name,
-            labels=value.labels_for_variant(variant),
+            labels=ObjectLabelVariantData.from_value(value).labels_for_variant(variant),
             representation=value.representation,
-            declared_object_count=value.declared_object_count,
-            declared_object_ids=value.declared_object_ids,
-            declared_object_id_domains=value.declared_object_id_domains,
-            domain_scope=value.domain_scope,
-            plane_axis=value.plane_axis,
-            spatial_origin_yx=value.spatial_origin_yx,
-            source_spatial_shape_yx=value.source_spatial_shape_yx,
-            source_path=value.source_path,
-            source_component_metadata=value.source_component_metadata,
-            channel_source_paths=value.channel_source_paths,
-            channel_source_component_metadata=value.channel_source_component_metadata,
-            source_image_names=value.source_image_names,
             dimensions=value.dimensions,
             source_image_name=value.source_image_name,
         )
 
     def output_value(
         self,
-        *,
-        labels: ObjectLabelData,
-        unedited_labels: ObjectLabelData | None,
-        small_removed_labels: ObjectLabelData | None,
+        variants: ObjectLabelVariantData,
     ) -> ObjectLabelSet:
-        return ObjectLabelSet(
+        return self.construction_context().label_set_from_variants(
             name=self.first.name,
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=self.plane_axis,
+            variants=variants,
             representation=self.representation,
             dimensions=self.first.dimensions,
             source_image_name=self.first.source_image_name,
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
-            source_path=self.source_path,
-            source_component_metadata=self.source_component_metadata,
-            channel_source_paths=self.channel_source_paths,
-            channel_source_component_metadata=self.channel_source_component_metadata,
-            source_image_names=self.source_image_names,
         )
 
 
-class RuntimeObjectLabelSliceStackStrategy(ABC, metaclass=AutoRegisterMeta):
+class RuntimeObjectLabelSliceStackStrategy(
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal stack strategy for dense runtime object-label slice values."""
 
     __registry_key__ = "strategy_name"
+    stable_key_axis: ClassVar[str] = "strategy_name"
     strategy_name: ClassVar[str | None] = None
 
     @classmethod
@@ -4066,7 +4298,7 @@ class RuntimeObjectLabelSliceStackStrategy(ABC, metaclass=AutoRegisterMeta):
                 return strategy_type()
         raise ValueError(
             "No object-label runtime slice stack strategy accepts shapes "
-            f"{[getattr(value, 'shape', None) for value in values]!r}."
+            f"{[tuple(np.shape(value)) for value in values]!r}."
         )
 
 
@@ -4078,7 +4310,7 @@ class ImageLayoutObjectLabelSliceStackStrategy(RuntimeObjectLabelSliceStackStrat
     @classmethod
     def supports(cls, values: tuple[Any, ...]) -> bool:
         return any(
-            all(layout_type.slice_predicate(value) for value in values)
+            all(layout_type.shape_role.matches_slice(value) for value in values)
             for layout_type in ImageStackLayout.__registry__.values()
         )
 
@@ -4134,156 +4366,8 @@ class RuntimeSliceStackRequest:
         )
 
 
-class NominalSourceStrategyLookup(NominalTypeKeyedStrategyMixin, ABC):
-    """Shared lookup authority for strategies keyed by a source value."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
-    fallback_strategy_type: ClassVar[type["NominalSourceStrategyLookup"] | None] = None
-
-    @classmethod
-    def for_source(cls, source: object) -> Self:
-        strategy = cls.for_nominal_value(source)
-        if strategy is not None:
-            return strategy
-        fallback_type = cls.fallback_strategy_type
-        if fallback_type is None:
-            raise TypeError(f"{cls.__name__} must declare fallback_strategy_type.")
-        return fallback_type()
-
-
-class ObjectLabelPayloadBuilderStrategy(
-    NominalSourceStrategyLookup,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Registered constructor for preserving object-label metadata across transforms."""
-
-    value_type: ClassVar[type[object] | None] = None
-    value_type_label: ClassVar[str | None] = None
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
-
-    @abstractmethod
-    def build(
-        self,
-        source: object,
-        labels: object,
-        *,
-        declared_domain: ObjectLabelDomain,
-    ) -> ObjectLabelPayload:
-        """Return transformed labels wrapped in the source object's semantic domain."""
-
-
-class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
-    """Preserve metadata from serialized object-label payloads."""
-
-    value_type = ObjectLabelPayload
-
-    def build(
-        self,
-        source: object,
-        labels: object,
-        *,
-        declared_domain: ObjectLabelDomain,
-    ) -> ObjectLabelPayload:
-        if not isinstance(source, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadBuilder requires ObjectLabelPayload, "
-                f"got {type(source).__name__}."
-            )
-        return ObjectLabelPayload(
-            labels=labels,
-            declared_object_count=declared_domain.declared_object_count,
-            declared_object_ids=declared_domain.declared_object_ids,
-            declared_object_id_domains=declared_domain.declared_object_id_domains,
-            domain_scope=declared_domain.scope,
-            plane_axis=source.plane_axis,
-            spatial_origin_yx=source.spatial_origin_yx,
-            source_spatial_shape_yx=source.source_spatial_shape_yx,
-            source_path=source.source_path,
-            source_component_metadata=source.source_component_metadata,
-            channel_source_paths=source.channel_source_paths,
-            channel_source_component_metadata=source.channel_source_component_metadata,
-            source_image_names=source.source_image_names,
-        )
-
-
-class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
-    """Preserve metadata from native object-label runtime values."""
-
-    value_type = ObjectLabelSet
-
-    def build(
-        self,
-        source: object,
-        labels: object,
-        *,
-        declared_domain: ObjectLabelDomain,
-    ) -> ObjectLabelPayload:
-        if not isinstance(source, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetPayloadBuilder requires ObjectLabelSet, "
-                f"got {type(source).__name__}."
-            )
-        return ObjectLabelPayload(
-            labels=labels,
-            declared_object_count=declared_domain.declared_object_count,
-            declared_object_ids=declared_domain.declared_object_ids,
-            declared_object_id_domains=declared_domain.declared_object_id_domains,
-            domain_scope=declared_domain.scope,
-            plane_axis=source.plane_axis,
-            spatial_origin_yx=source.spatial_origin_yx,
-            source_spatial_shape_yx=source.source_spatial_shape_yx,
-            source_path=source.source_path,
-            source_component_metadata=source.source_component_metadata,
-            channel_source_paths=source.channel_source_paths,
-            channel_source_component_metadata=source.channel_source_component_metadata,
-            source_image_names=source.source_image_names,
-        )
-
-
-class RawObjectLabelPayloadBuilderStrategy(ObjectLabelPayloadBuilderStrategy):
-    """Build a semantic payload for already-dense object labels."""
-
-    def build(
-        self,
-        source: object,
-        labels: object,
-        *,
-        declared_domain: ObjectLabelDomain,
-    ) -> ObjectLabelPayload:
-        return ObjectLabelPayload(
-            labels=labels,
-            declared_object_count=declared_domain.declared_object_count,
-            declared_object_ids=declared_domain.declared_object_ids,
-            declared_object_id_domains=declared_domain.declared_object_id_domains,
-            domain_scope=declared_domain.scope,
-        )
-
-
-ObjectLabelPayloadBuilderStrategy.fallback_strategy_type = (
-    RawObjectLabelPayloadBuilderStrategy
-)
-
-
-def object_label_payload_with_dense_labels(
-    source: object,
-    labels: object,
-    *,
-    domain_declaration: ObjectLabelDomainDeclaration = (
-        PreserveSourceObjectLabelDomainDeclaration()
-    ),
-) -> ObjectLabelPayload:
-    """Build a dense-label payload while preserving nominal object-label metadata."""
-    declared_domain = domain_declaration.declared_domain(source, labels)
-    return ObjectLabelPayloadBuilderStrategy.for_source(source).build(
-        source,
-        labels,
-        declared_domain=declared_domain,
-    )
-
-
 class ObjectLabelValueBuilderStrategy(
-    NominalSourceStrategyLookup,
+    NominalTypeKeyedStrategyMixin,
     ABC,
     metaclass=AutoRegisterMeta,
 ):
@@ -4292,6 +4376,14 @@ class ObjectLabelValueBuilderStrategy(
     value_type: ClassVar[type[ObjectLabelValue] | None] = None
     value_type_label: ClassVar[str | None] = None
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+    fallback_strategy_type: ClassVar[type["ObjectLabelValueBuilderStrategy"]]
+
+    @classmethod
+    def for_source(cls, source: object) -> Self:
+        strategy = cls.for_nominal_value(source)
+        if strategy is not None:
+            return strategy
+        return cls.fallback_strategy_type()
 
     @abstractmethod
     def build(
@@ -4300,12 +4392,24 @@ class ObjectLabelValueBuilderStrategy(
         labels: ObjectLabelData,
         *,
         declared_domain: ObjectLabelDomain,
+        representation: ObjectLabelRepresentation | None = None,
     ) -> ObjectLabelValue:
         """Return transformed labels preserving the source value category."""
 
+    @abstractmethod
+    def build_variants(
+        self,
+        source: ObjectLabelValueBuildSource,
+        context: ObjectLabelValueConstructionContext,
+        variants: ObjectLabelVariantData,
+        *,
+        representation: ObjectLabelRepresentation | None = None,
+    ) -> ObjectLabelValue:
+        """Return transformed variants preserving the source value category."""
+
 
 class ObjectLabelPayloadValueBuilder(ObjectLabelValueBuilderStrategy):
-    """Payload sources stay serialized object-label payloads."""
+    """Object-label payloads preserve payload metadata and stay payload-backed."""
 
     value_type = ObjectLabelPayload
 
@@ -4315,11 +4419,47 @@ class ObjectLabelPayloadValueBuilder(ObjectLabelValueBuilderStrategy):
         labels: ObjectLabelData,
         *,
         declared_domain: ObjectLabelDomain,
+        representation: ObjectLabelRepresentation | None = None,
     ) -> ObjectLabelPayload:
-        return object_label_payload_with_dense_labels(
+        if not isinstance(source, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadValueBuilder requires ObjectLabelPayload, "
+                f"got {type(source).__name__}."
+            )
+        target_representation = (
+            ObjectLabelRepresentation.DENSE_LABELS
+            if representation is None
+            else representation
+        )
+        return ObjectLabelValueConstructionContext.from_value(
             source,
-            labels,
-            domain_declaration=ExplicitObjectLabelDomainDeclaration(declared_domain),
+            domain=declared_domain,
+        ).payload(
+            labels=labels,
+            representation=target_representation,
+        )
+
+    def build_variants(
+        self,
+        source: ObjectLabelValueBuildSource,
+        context: ObjectLabelValueConstructionContext,
+        variants: ObjectLabelVariantData,
+        *,
+        representation: ObjectLabelRepresentation | None = None,
+    ) -> ObjectLabelPayload:
+        if not isinstance(source, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadValueBuilder requires ObjectLabelPayload, "
+                f"got {type(source).__name__}."
+            )
+        target_representation = (
+            ObjectLabelRepresentation.DENSE_LABELS
+            if representation is None
+            else representation
+        )
+        return context.payload_from_variants(
+            variants,
+            representation=target_representation,
         )
 
 
@@ -4334,16 +4474,21 @@ class ObjectLabelSetValueBuilder(ObjectLabelValueBuilderStrategy):
         labels: ObjectLabelData,
         *,
         declared_domain: ObjectLabelDomain,
+        representation: ObjectLabelRepresentation | None = None,
     ) -> ObjectLabelSet:
         if not isinstance(source, ObjectLabelSet):
             raise TypeError(
                 "ObjectLabelSetValueBuilder requires ObjectLabelSet, "
                 f"got {type(source).__name__}."
             )
-        return ObjectLabelSet(
+        target_representation = source.representation if representation is None else representation
+        return ObjectLabelValueConstructionContext.from_value(
+            source,
+            domain=declared_domain,
+        ).label_set(
             name=source.name,
-            labels=ObjectLabelSetReplacementStrategy.for_source(
-                source
+            labels=ObjectLabelSetReplacementStrategy.for_enum_member(
+                target_representation
             ).replacement_labels(labels),
             unedited_labels=object_label_variant_matching_labels(
                 source.unedited_labels,
@@ -4353,19 +4498,35 @@ class ObjectLabelSetValueBuilder(ObjectLabelValueBuilderStrategy):
                 source.small_removed_labels,
                 labels,
             ),
-            representation=source.representation,
-            declared_object_count=declared_domain.declared_object_count,
-            declared_object_ids=declared_domain.declared_object_ids,
-            declared_object_id_domains=declared_domain.declared_object_id_domains,
-            domain_scope=declared_domain.scope,
-            plane_axis=source.plane_axis,
-            spatial_origin_yx=source.spatial_origin_yx,
-            source_spatial_shape_yx=source.source_spatial_shape_yx,
-            source_path=source.source_path,
-            source_component_metadata=source.source_component_metadata,
-            channel_source_paths=source.channel_source_paths,
-            channel_source_component_metadata=source.channel_source_component_metadata,
-            source_image_names=source.source_image_names,
+            representation=target_representation,
+            dimensions=source.dimensions,
+            source_image_name=source.source_image_name,
+        )
+
+    def build_variants(
+        self,
+        source: ObjectLabelValueBuildSource,
+        context: ObjectLabelValueConstructionContext,
+        variants: ObjectLabelVariantData,
+        *,
+        representation: ObjectLabelRepresentation | None = None,
+    ) -> ObjectLabelSet:
+        if not isinstance(source, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetValueBuilder requires ObjectLabelSet, "
+                f"got {type(source).__name__}."
+            )
+        target_representation = source.representation if representation is None else representation
+        return context.label_set_from_variants(
+            name=source.name,
+            variants=ObjectLabelVariantData(
+                ObjectLabelSetReplacementStrategy.for_enum_member(
+                    target_representation
+                ).replacement_labels(variants.labels),
+                variants.unedited_labels,
+                variants.small_removed_labels,
+            ),
+            representation=target_representation,
             dimensions=source.dimensions,
             source_image_name=source.source_image_name,
         )
@@ -4380,11 +4541,38 @@ class RawObjectLabelValueBuilderStrategy(ObjectLabelValueBuilderStrategy):
         labels: ObjectLabelData,
         *,
         declared_domain: ObjectLabelDomain,
+        representation: ObjectLabelRepresentation | None = None,
     ) -> ObjectLabelPayload:
-        return object_label_payload_with_dense_labels(
-            source,
-            labels,
-            domain_declaration=ExplicitObjectLabelDomainDeclaration(declared_domain),
+        del source
+        target_representation = (
+            ObjectLabelRepresentation.DENSE_LABELS
+            if representation is None
+            else representation
+        )
+        return ObjectLabelValueConstructionContext(
+            domain=declared_domain,
+        ).payload(
+            labels=labels,
+            representation=target_representation,
+        )
+
+    def build_variants(
+        self,
+        source: ObjectLabelValueBuildSource,
+        context: ObjectLabelValueConstructionContext,
+        variants: ObjectLabelVariantData,
+        *,
+        representation: ObjectLabelRepresentation | None = None,
+    ) -> ObjectLabelPayload:
+        del source
+        target_representation = (
+            ObjectLabelRepresentation.DENSE_LABELS
+            if representation is None
+            else representation
+        )
+        return context.payload_from_variants(
+            variants,
+            representation=target_representation,
         )
 
 
@@ -4398,6 +4586,7 @@ def object_label_value_with_dense_labels(
     domain_declaration: ObjectLabelDomainDeclaration = (
         PreserveSourceObjectLabelDomainDeclaration()
     ),
+    representation: ObjectLabelRepresentation | None = None,
 ) -> ObjectLabelValue:
     """Build transformed object labels preserving the source value category."""
     declared_domain = domain_declaration.declared_domain(source, labels)
@@ -4405,6 +4594,7 @@ def object_label_value_with_dense_labels(
         source,
         labels,
         declared_domain=declared_domain,
+        representation=representation,
     )
 
 
@@ -4414,25 +4604,39 @@ class SourceImageObjectLabelBuildRequest:
 
     image: object
     labels: object
+    domain_scope: ObjectLabelDomainScope | None = None
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
     unedited_labels: object | None = None
     small_removed_labels: object | None = None
 
     @property
+    def variants(self) -> ObjectLabelVariantData:
+        return ObjectLabelVariantData(
+            labels=self.labels,
+            unedited_labels=self.unedited_labels,
+            small_removed_labels=self.small_removed_labels,
+        )
+
+    @property
     def metadata(self) -> ImagePayloadMetadata:
         return image_payload_metadata(self.image)
 
-    @property
-    def domain(self) -> ObjectLabelDomain:
-        if (
-            SourceImageObjectLabelDomainRequest(
-                image=self.image,
-                labels=self.labels,
-            ).plane_semantics()
-            is not None
-        ):
-            return ObjectLabelDomain(
+    def construction_context(self) -> ObjectLabelValueConstructionContext:
+        metadata = self.metadata
+        semantics = SourceImageObjectLabelDomainRequest(
+            image=self.image,
+            labels=self.labels,
+            domain_scope=self.domain_scope,
+        ).plane_semantics()
+        if semantics is None:
+            label_domain=ObjectLabelDomain(
+                declared_object_count=self.declared_object_count,
+                declared_object_ids=self.declared_object_ids,
+            )
+            plane_axis = RuntimePlaneAxis.RUNTIME_SLICE
+        else:
+            label_domain=ObjectLabelDomain(
                 declared_object_id_domains=dense_object_label_plane_id_domains(
                     self.labels,
                     declared_object_count=self.declared_object_count,
@@ -4441,43 +4645,16 @@ class SourceImageObjectLabelBuildRequest:
                 ),
                 scope=ObjectLabelDomainScope.PLANE,
             )
-        return ObjectLabelDomain(
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-        )
-
-    @property
-    def plane_axis(self) -> RuntimePlaneAxis:
-        semantics = SourceImageObjectLabelDomainRequest(
-            image=self.image,
-            labels=self.labels,
-        ).plane_semantics()
-        return (
-            RuntimePlaneAxis.RUNTIME_SLICE
-            if semantics is None
-            else semantics.plane_axis
+            plane_axis = semantics.plane_axis
+        return ObjectLabelValueConstructionContext(
+            domain=label_domain,
+            source_provenance=metadata.source_provenance,
+            source_spatial_domain=metadata.object_label_source_spatial_domain(),
+            plane_axis=plane_axis,
         )
 
     def payload(self) -> ObjectLabelPayload:
-        metadata = self.metadata
-        label_domain = self.domain
-        return ObjectLabelPayload(
-            labels=self.labels,
-            unedited_labels=self.unedited_labels,
-            small_removed_labels=self.small_removed_labels,
-            declared_object_count=label_domain.declared_object_count,
-            declared_object_ids=label_domain.declared_object_ids,
-            declared_object_id_domains=label_domain.declared_object_id_domains,
-            domain_scope=label_domain.scope,
-            plane_axis=self.plane_axis,
-            spatial_origin_yx=metadata.spatial_origin_yx,
-            source_spatial_shape_yx=metadata.source_spatial_shape_yx,
-            source_path=metadata.source_path,
-            source_component_metadata=metadata.source_component_metadata,
-            channel_source_paths=metadata.channel_source_paths,
-            channel_source_component_metadata=metadata.channel_source_component_metadata,
-            source_image_names=metadata.source_image_names,
-        )
+        return self.construction_context().payload_from_variants(self.variants)
 
     def label_set(
         self,
@@ -4486,26 +4663,10 @@ class SourceImageObjectLabelBuildRequest:
         source_image_name: str | None = None,
         representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS,
     ) -> ObjectLabelSet:
-        metadata = self.metadata
-        label_domain = self.domain
-        return ObjectLabelSet(
+        return self.construction_context().label_set_from_variants(
             name=name,
-            labels=self.labels,
-            unedited_labels=self.unedited_labels,
-            small_removed_labels=self.small_removed_labels,
+            variants=self.variants,
             representation=representation,
-            declared_object_count=label_domain.declared_object_count,
-            declared_object_ids=label_domain.declared_object_ids,
-            declared_object_id_domains=label_domain.declared_object_id_domains,
-            domain_scope=label_domain.scope,
-            plane_axis=self.plane_axis,
-            spatial_origin_yx=metadata.spatial_origin_yx,
-            source_spatial_shape_yx=metadata.source_spatial_shape_yx,
-            source_path=metadata.source_path,
-            source_component_metadata=metadata.source_component_metadata,
-            channel_source_paths=metadata.channel_source_paths,
-            channel_source_component_metadata=metadata.channel_source_component_metadata,
-            source_image_names=metadata.source_image_names,
             source_image_name=source_image_name,
         )
 
@@ -4539,7 +4700,7 @@ class SourceAlignedObjectLabelProvenanceRequest:
     @property
     def plane_provenance(self) -> tuple[SourceImageProvenance, ...]:
         return tuple(
-            self.labels.source_provenance.for_channel(plane_index)
+            self.labels.source_provenance.for_source_plane(plane_index)
             for plane_index in range(self.plane_count)
         )
 
@@ -4611,9 +4772,9 @@ class SourceImagePlaneAxisRequest:
         return self.metadata.source_provenance
 
     @property
-    def channel_plane_count(self) -> int:
+    def source_plane_count(self) -> int:
         """Return the number of source-provenance planes declared by metadata."""
-        return self.source_provenance.channel_plane_count
+        return self.source_provenance.source_plane_count
 
 class SourceImagePlaneAxisPolicy(ABC, metaclass=AutoRegisterMeta):
     """Registered source-image plane-axis classifier."""
@@ -4621,14 +4782,13 @@ class SourceImagePlaneAxisPolicy(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "plane_axis_policy_name"
     __skip_if_no_key__ = True
     plane_axis_policy_name: ClassVar[str | None] = None
-    priority: ClassVar[int]
 
     @classmethod
     def for_request(
         cls,
         request: SourceImagePlaneAxisRequest,
     ) -> "SourceImagePlaneAxisPolicy":
-        for policy_type in sorted(cls.__registry__.values(), key=attrgetter("priority")):
+        for policy_type in cls.__registry__.values():
             policy = policy_type()
             if policy.matches(request):
                 return policy
@@ -4661,42 +4821,29 @@ class RepeatedSourceNamePlaneAxisPolicy(RuntimeSliceSourceImagePlaneAxisPolicy):
     """Repeated semantic source names identify runtime-slice planes, not bindings."""
 
     plane_axis_policy_name = "repeated_source_image_name"
-    priority = 0
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         names = request.source_provenance.source_image_names
         return (
-            request.channel_plane_count > 1
-            and len(names) == request.channel_plane_count
+            request.source_plane_count > 1
+            and len(names) == request.source_plane_count
             and len(set(names)) == 1
         )
 
 
-class ChannelSourcePathPlaneAxisPolicy(SourceBindingPlaneAxisPolicy):
-    """Channel source paths declare a source-binding stack axis."""
+class SourceImageProvenancePlanesAxisPolicy(SourceBindingPlaneAxisPolicy):
+    """Source-image provenance planes declare a source-binding stack axis."""
 
-    plane_axis_policy_name = "channel_source_paths"
-    priority = 1
-
-    def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
-        return len(request.metadata.channel_source_paths) > 1
-
-
-class ChannelSourceComponentPlaneAxisPolicy(SourceBindingPlaneAxisPolicy):
-    """Channel source component metadata declares a source-binding stack axis."""
-
-    plane_axis_policy_name = "channel_source_component_metadata"
-    priority = 2
+    plane_axis_policy_name = "source_image_provenance_planes"
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
-        return len(request.metadata.channel_source_component_metadata) > 1
+        return request.metadata.source_image_provenance_planes.count > 1
 
 
 class ColorStackPlaneAxisPolicy(SourceBindingPlaneAxisPolicy):
     """Color stacks use their leading axis as source-binding planes."""
 
     plane_axis_policy_name = "color_stack"
-    priority = 3
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         return is_color_image_stack(request.image_array)
@@ -4706,7 +4853,6 @@ class VolumetricSourceImagePlaneAxisPolicy(SourceImagePlaneAxisPolicy):
     """Plain 3D grayscale image stacks do not imply source-bound label planes."""
 
     plane_axis_policy_name = "volumetric"
-    priority = 4
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         return request.image_array.ndim == 3
@@ -4719,7 +4865,6 @@ class RuntimeSlicePlaneAxisPolicy(RuntimeSliceSourceImagePlaneAxisPolicy):
     """Non-stack source images align object labels to the runtime slice axis."""
 
     plane_axis_policy_name = "runtime_slice"
-    priority = 5
 
     def matches(self, request: SourceImagePlaneAxisRequest) -> bool:
         del request
@@ -4743,15 +4888,37 @@ class SourceImageObjectLabelDomainRequest:
 
     image: object
     labels: object
+    domain_scope: ObjectLabelDomainScope | None = None
 
     def plane_semantics(self) -> SourceImageObjectLabelPlaneSemantics | None:
         """Return the semantic plane axis carried by source-aligned labels."""
+        if self.domain_scope is ObjectLabelDomainScope.PAYLOAD:
+            return None
+        if (
+            self.domain_scope is not None
+            and self.domain_scope is not ObjectLabelDomainScope.PLANE
+        ):
+            raise TypeError(
+                "Source-image object-label domain_scope must be "
+                "ObjectLabelDomainScope.PAYLOAD, ObjectLabelDomainScope.PLANE, "
+                f"or None; got {self.domain_scope!r}."
+            )
         image_array = np.asarray(image_payload_data(self.image))
         label_array = np.asarray(self.labels)
         if not self.labels_share_source_image_planes(image_array, label_array):
+            if self.domain_scope is ObjectLabelDomainScope.PLANE:
+                raise ValueError(
+                    "Plane-scoped object-label output does not share source-image "
+                    "planes."
+                )
             return None
         plane_axis = self.source_image_plane_axis(image_array)
         if plane_axis is None:
+            if self.domain_scope is ObjectLabelDomainScope.PLANE:
+                raise ValueError(
+                    "Plane-scoped object-label output has no source-image plane "
+                    "axis."
+                )
             return None
         return SourceImageObjectLabelPlaneSemantics(plane_axis)
 
@@ -4817,13 +4984,86 @@ class ObjectLabelSetReplacementStrategy(
         """Return labels compatible with this representation."""
 
 
-class DenseObjectLabelSetReplacementStrategy(ObjectLabelSetReplacementStrategy):
+class IdentityObjectLabelReplacementMixin:
+    """Replacement labels are already in the target representation."""
+
+    def replacement_labels(self, labels: object) -> object:
+        return labels
+
+
+class DenseObjectLabelSetReplacementStrategy(
+    IdentityObjectLabelReplacementMixin,
+    ObjectLabelSetReplacementStrategy,
+):
     """Dense labels are already the concrete replacement payload."""
 
     representation = ObjectLabelRepresentation.DENSE_LABELS
 
-    def replacement_labels(self, labels: object) -> object:
-        return labels
+
+class SparseIJVReplacementLabelsStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered conversion into sparse-IJV replacement label storage."""
+
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+
+    @classmethod
+    def replacement_for(cls, labels: object) -> SparseIJVLabelRows:
+        strategy = cls.for_nominal_value(labels)
+        if strategy is None:
+            return SparseIJVLabelRows.from_dense_stack(labels)
+        return strategy.replacement_labels(labels)
+
+    @classmethod
+    def source_is_sparse_ijv(cls, labels: object) -> bool:
+        strategy = cls.for_nominal_value(labels)
+        return strategy is not None and strategy.presents_sparse_ijv_rows(labels)
+
+    def presents_sparse_ijv_rows(self, labels: object) -> bool:
+        """Return whether the source already owns sparse-IJV row semantics."""
+        del labels
+        return False
+
+    @abstractmethod
+    def replacement_labels(self, labels: object) -> SparseIJVLabelRows:
+        """Return sparse-IJV-compatible replacement labels."""
+
+
+class SparseIJVRowsReplacementLabelsStrategy(
+    IdentityObjectLabelReplacementMixin,
+    SparseIJVReplacementLabelsStrategy,
+):
+    """Sparse-IJV rows are already in sparse replacement form."""
+
+    value_type = SparseIJVLabelRows
+
+    def presents_sparse_ijv_rows(self, labels: object) -> bool:
+        del labels
+        return True
+
+
+class ObjectLabelValueSparseIJVReplacementLabelsStrategy(
+    SparseIJVReplacementLabelsStrategy
+):
+    """Object-label values convert through their declared representation."""
+
+    value_type = ObjectLabelValue
+
+    def presents_sparse_ijv_rows(self, labels: object) -> bool:
+        label_value = cast(ObjectLabelValue, labels)
+        return label_value.representation is ObjectLabelRepresentation.SPARSE_IJV
+
+    def replacement_labels(self, labels: object) -> SparseIJVLabelRows:
+        label_value = cast(ObjectLabelValue, labels)
+        if label_value.representation is ObjectLabelRepresentation.SPARSE_IJV:
+            return label_value.labels
+        return SparseIJVLabelRows.from_dense_stack(
+            ObjectLabelDenseDataStrategy.for_payload(label_value).data(label_value)
+        )
 
 
 class SparseIJVObjectLabelSetReplacementStrategy(ObjectLabelSetReplacementStrategy):
@@ -4832,139 +5072,7 @@ class SparseIJVObjectLabelSetReplacementStrategy(ObjectLabelSetReplacementStrate
     representation = ObjectLabelRepresentation.SPARSE_IJV
 
     def replacement_labels(self, labels: object) -> object:
-        if isinstance(labels, SparseIJVLabelRows):
-            return labels
-        if isinstance(labels, ObjectLabelSet):
-            if labels.representation is not ObjectLabelRepresentation.SPARSE_IJV:
-                return SparseIJVLabelRows.from_dense_stack(
-                    ObjectLabelDenseDataStrategy.for_payload(labels).data(labels)
-                )
-            return labels.labels
-        if isinstance(labels, ObjectLabelPayload):
-            if isinstance(labels.labels, SparseIJVLabelRows):
-                return labels.labels
-            return SparseIJVLabelRows.from_dense_stack(
-                ObjectLabelDenseDataStrategy.for_payload(labels).data(labels)
-            )
-        return SparseIJVLabelRows.from_dense_stack(labels)
-
-
-def object_label_set_with_replacement_labels(
-    source: ObjectLabelSet,
-    labels: object,
-    *,
-    unedited_labels: object | None = None,
-    small_removed_labels: object | None = None,
-) -> ObjectLabelSet:
-    """Return an ObjectLabelSet with representation-compatible replacement labels."""
-    projected_plane_index = object_label_projected_plane_index(source, labels)
-    if projected_plane_index is not None:
-        return object_label_set_with_projected_plane(
-            source,
-            labels,
-            projected_plane_index,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-        )
-    return source.with_labels(
-        labels,
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-    )
-
-
-def object_label_payload_with_replacement_labels(
-    source: ObjectLabelPayload,
-    labels: object,
-    *,
-    unedited_labels: object | None = None,
-    small_removed_labels: object | None = None,
-) -> ObjectLabelPayload:
-    """Return an object-label payload with replacement labels and preserved domain."""
-    projected_plane_index = object_label_projected_plane_index(source, labels)
-    if projected_plane_index is not None:
-        return object_label_payload_with_projected_plane(
-            source,
-            labels,
-            projected_plane_index,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-        )
-    return source.with_labels(
-        labels,
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-    )
-
-
-def object_label_payload_with_projected_plane(
-    source: ObjectLabelPayload,
-    labels: object,
-    plane_index: int,
-    *,
-    unedited_labels: object | None = None,
-    small_removed_labels: object | None = None,
-) -> ObjectLabelPayload:
-    """Return one selected object-label plane with matching domain metadata."""
-    domain = object_label_domain_for_projected_label_plane(source, plane_index)
-    source_provenance = source.source_provenance.for_channel(plane_index)
-    return ObjectLabelPayload(
-        labels=labels,
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-        declared_object_count=domain.declared_object_count,
-        declared_object_ids=domain.declared_object_ids,
-        declared_object_id_domains=domain.declared_object_id_domains,
-        domain_scope=domain.scope,
-        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        spatial_origin_yx=source.spatial_origin_yx,
-        source_spatial_shape_yx=source.source_spatial_shape_yx,
-        source_path=source_provenance.source_path,
-        source_component_metadata=source_provenance.source_component_metadata,
-        source_image_names=source_provenance.source_image_names,
-    )
-
-
-def object_label_set_with_projected_plane(
-    source: ObjectLabelSet,
-    labels: object,
-    plane_index: int,
-    *,
-    unedited_labels: object | None = None,
-    small_removed_labels: object | None = None,
-) -> ObjectLabelSet:
-    """Return one selected object-label-set plane with matching domain metadata."""
-    domain = object_label_domain_for_projected_label_plane(source, plane_index)
-    source_provenance = source.source_provenance.for_channel(plane_index)
-    return ObjectLabelSet(
-        name=source.name,
-        labels=ObjectLabelSetReplacementStrategy.for_source(source).replacement_labels(
-            labels
-        ),
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-        representation=source.representation,
-        declared_object_count=domain.declared_object_count,
-        declared_object_ids=domain.declared_object_ids,
-        declared_object_id_domains=domain.declared_object_id_domains,
-        domain_scope=domain.scope,
-        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        spatial_origin_yx=source.spatial_origin_yx,
-        source_spatial_shape_yx=source.source_spatial_shape_yx,
-        source_path=source_provenance.source_path,
-        source_component_metadata=source_provenance.source_component_metadata,
-        source_image_names=source_provenance.source_image_names,
-        dimensions=source.dimensions,
-        source_image_name=source.source_image_name,
-    )
-
-
-def source_image_names_for_projected_label_plane(
-    source: ObjectLabelValue,
-    plane_index: int,
-) -> tuple[str, ...]:
-    """Return provenance aliases carried by a selected object-label plane."""
-    return source.source_provenance.source_image_names_for_channel(plane_index)
+        return SparseIJVReplacementLabelsStrategy.replacement_for(labels)
 
 
 def object_label_projected_plane_index(
@@ -5007,41 +5115,13 @@ def object_label_domain_for_derived_label_plane(labels: object) -> ObjectLabelDo
         labels,
         domain_scope=ObjectLabelDomainScope.PAYLOAD,
     )
+    if identity_domains:
+        declared_object_ids = identity_domains[0]
+    else:
+        declared_object_ids = ()
     return ObjectLabelDomain.declared(
         scope=ObjectLabelDomainScope.PAYLOAD,
-        declared_object_ids=identity_domains[0] if identity_domains else (),
-    )
-
-
-def object_label_payload_with_derived_projected_plane(
-    source: ObjectLabelPayload,
-    labels: object,
-    plane_index: int,
-    *,
-    unedited_labels: object | None = None,
-    small_removed_labels: object | None = None,
-) -> ObjectLabelPayload:
-    """Return a derived payload plane with source-plane provenance."""
-    domain = object_label_domain_for_derived_label_plane(labels)
-    return ObjectLabelPayload(
-        labels=labels,
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-        declared_object_count=domain.declared_object_count,
-        declared_object_ids=domain.declared_object_ids,
-        declared_object_id_domains=domain.declared_object_id_domains,
-        domain_scope=domain.scope,
-        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        spatial_origin_yx=source.spatial_origin_yx,
-        source_spatial_shape_yx=source.source_spatial_shape_yx,
-        source_path=source.source_path,
-        source_component_metadata=source.source_component_metadata,
-        channel_source_paths=source.channel_source_paths,
-        channel_source_component_metadata=source.channel_source_component_metadata,
-        source_image_names=source_image_names_for_projected_label_plane(
-            source,
-            plane_index,
-        ),
+        declared_object_ids=declared_object_ids,
     )
 
 
@@ -5053,57 +5133,14 @@ def object_label_value_with_execution_slice(
     """Project PURE_2D execution-slice identity without discarding explicit domains."""
     domain = source.object_label_domain()
     if domain.explicit_id_domain() is not None or domain.declared_object_id_domains:
-        return ObjectLabelMeasurementPayloadStrategy.for_source(
-            source
-        ).with_projected_plane(
-            source,
-            labels,
-            plane_index,
+        request: ObjectLabelMeasurementPayloadRequest = (
+            ObjectLabelSourcePlaneProjectionRequest(labels, plane_index)
         )
-    return ObjectLabelMeasurementPayloadStrategy.for_source(
-        source
-    ).with_derived_projected_plane(
+    else:
+        request = ObjectLabelDerivedPlaneProjectionRequest(labels, plane_index)
+    return ObjectLabelMeasurementPayloadStrategy.for_source(source).materialize(
         source,
-        labels,
-        plane_index,
-    )
-
-
-def object_label_set_with_derived_projected_plane(
-    source: ObjectLabelSet,
-    labels: object,
-    plane_index: int,
-    *,
-    unedited_labels: object | None = None,
-    small_removed_labels: object | None = None,
-) -> ObjectLabelSet:
-    """Return a derived label-set plane with source-plane provenance."""
-    domain = object_label_domain_for_derived_label_plane(labels)
-    return ObjectLabelSet(
-        name=source.name,
-        labels=ObjectLabelSetReplacementStrategy.for_source(source).replacement_labels(
-            labels
-        ),
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-        representation=source.representation,
-        declared_object_count=domain.declared_object_count,
-        declared_object_ids=domain.declared_object_ids,
-        declared_object_id_domains=domain.declared_object_id_domains,
-        domain_scope=domain.scope,
-        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        spatial_origin_yx=source.spatial_origin_yx,
-        source_spatial_shape_yx=source.source_spatial_shape_yx,
-        source_path=source.source_path,
-        source_component_metadata=source.source_component_metadata,
-        channel_source_paths=source.channel_source_paths,
-        channel_source_component_metadata=source.channel_source_component_metadata,
-        source_image_names=source_image_names_for_projected_label_plane(
-            source,
-            plane_index,
-        ),
-        dimensions=source.dimensions,
-        source_image_name=source.source_image_name,
+        request,
     )
 
 
@@ -5192,8 +5229,21 @@ def object_label_variant_matching_labels(
     ).matching_labels(variant, labels)
 
 
+def object_label_variant_data_is_source(
+    source: "ObjectLabelValue",
+    variants: ObjectLabelVariantData,
+) -> bool:
+    """Return whether variants reuse the exact arrays carried by ``source``."""
+    source_variants = source.variant_data
+    return (
+        variants.labels is source_variants.labels
+        and variants.unedited_labels is source_variants.unedited_labels
+        and variants.small_removed_labels is source_variants.small_removed_labels
+    )
+
+
 class ObjectLabelMeasurementPayloadStrategy(
-    NominalSourceStrategyLookup,
+    NominalTypeKeyedStrategyMixin,
     ABC,
     metaclass=AutoRegisterMeta,
 ):
@@ -5202,205 +5252,143 @@ class ObjectLabelMeasurementPayloadStrategy(
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+    fallback_strategy_type: ClassVar[type["ObjectLabelMeasurementPayloadStrategy"]]
+
+    @classmethod
+    def for_source(cls, source: object) -> Self:
+        strategy = cls.for_nominal_value(source)
+        if strategy is not None:
+            return strategy
+        return cls.fallback_strategy_type()
 
     @abstractmethod
-    def with_labels(self, source: object, labels: object) -> object:
+    def materialize(
+        self,
+        source: object,
+        request: "ObjectLabelMeasurementPayloadRequest",
+    ) -> object:
         """Return source metadata over labels selected for measurement."""
 
-    @abstractmethod
-    def with_projected_plane(
-        self,
-        source: object,
-        labels: object,
-        plane_index: int,
-    ) -> object:
-        """Return one selected label plane with matching domain metadata."""
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelMeasurementPayloadRequest(ABC, metaclass=AutoRegisterMeta):
+    """Typed request for labels selected by measurement-time logic."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
+
+    labels: object
+
+    def materialize(self, source: ObjectLabelValue) -> ObjectLabelValue:
+        variants = ObjectLabelVariantData.compatible_replacement(source, self.labels)
+        context = self.context(source, variants)
+        if (
+            object_label_variant_data_is_source(source, variants)
+            and context == ObjectLabelValueConstructionContext.from_value(source)
+        ):
+            return source
+        return source.with_variants(context, variants)
 
     @abstractmethod
-    def with_derived_projected_plane(
+    def context(
+        self,
+        source: ObjectLabelValue,
+        variants: ObjectLabelVariantData,
+    ) -> ObjectLabelValueConstructionContext:
+        """Return the construction context matching this measurement request."""
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelReplacementRequest(ObjectLabelMeasurementPayloadRequest):
+    """Measurement labels replacing an existing source payload."""
+
+    def context(
+        self,
+        source: ObjectLabelValue,
+        variants: ObjectLabelVariantData,
+    ) -> ObjectLabelValueConstructionContext:
+        projected_plane_index = object_label_projected_plane_index(source, variants.labels)
+        if projected_plane_index is None:
+            return ObjectLabelValueConstructionContext.from_value(source)
+        return object_label_projected_plane_context(
+            source,
+            projected_plane_index,
+            object_label_domain_for_projected_label_plane(
+                source,
+                projected_plane_index,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelSourcePlaneProjectionRequest(ObjectLabelMeasurementPayloadRequest):
+    """Measurement labels selected from one source label-stack plane."""
+
+    plane_index: int
+
+    def context(
+        self,
+        source: ObjectLabelValue,
+        variants: ObjectLabelVariantData,
+    ) -> ObjectLabelValueConstructionContext:
+        del variants
+        return object_label_projected_plane_context(
+            source,
+            self.plane_index,
+            object_label_domain_for_projected_label_plane(source, self.plane_index),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelDerivedPlaneProjectionRequest(ObjectLabelMeasurementPayloadRequest):
+    """Measurement labels derived from one projected label-stack plane."""
+
+    plane_index: int
+
+    def context(
+        self,
+        source: ObjectLabelValue,
+        variants: ObjectLabelVariantData,
+    ) -> ObjectLabelValueConstructionContext:
+        return object_label_projected_plane_context(
+            source,
+            self.plane_index,
+            object_label_domain_for_derived_label_plane(variants.labels),
+        )
+
+
+class NominalObjectLabelMeasurementPayloadStrategy(ObjectLabelMeasurementPayloadStrategy):
+    """Replace labels for nominal object-label runtime values."""
+
+    value_type = ObjectLabelValue
+    value_type_label = OBJECT_LABEL_VALUE_TYPE_LABEL
+
+    def source_value(self, source: object) -> ObjectLabelValue:
+        if not isinstance(source, ObjectLabelValue):
+            raise TypeError(
+                "NominalObjectLabelMeasurementPayloadStrategy requires an "
+                f"object-label value, got {type(source).__name__}."
+            )
+        return source
+
+    def materialize(
         self,
         source: object,
-        labels: object,
-        plane_index: int,
+        request: ObjectLabelMeasurementPayloadRequest,
     ) -> object:
-        """Return one derived label plane with projected provenance metadata."""
-
-
-class ObjectLabelSetMeasurementPayloadStrategy(ObjectLabelMeasurementPayloadStrategy):
-    """Replace labels for native object-label runtime values."""
-
-    value_type = ObjectLabelSet
-
-    def with_labels(self, source: object, labels: object) -> object:
-        if not isinstance(source, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetMeasurementPayloadStrategy requires ObjectLabelSet, "
-                f"got {type(source).__name__}."
-            )
-        return object_label_set_with_replacement_labels(
-            source,
-            labels,
-            unedited_labels=object_label_variant_matching_labels(
-                source.unedited_labels,
-                labels,
-            ),
-            small_removed_labels=object_label_variant_matching_labels(
-                source.small_removed_labels,
-                labels,
-            ),
-        )
-
-    def with_projected_plane(
-        self,
-        source: object,
-        labels: object,
-        plane_index: int,
-    ) -> object:
-        if not isinstance(source, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetMeasurementPayloadStrategy requires ObjectLabelSet, "
-                f"got {type(source).__name__}."
-            )
-        return object_label_set_with_projected_plane(
-            source,
-            labels,
-            plane_index,
-            unedited_labels=object_label_variant_matching_labels(
-                source.unedited_labels,
-                labels,
-            ),
-            small_removed_labels=object_label_variant_matching_labels(
-                source.small_removed_labels,
-                labels,
-            ),
-        )
-
-    def with_derived_projected_plane(
-        self,
-        source: object,
-        labels: object,
-        plane_index: int,
-    ) -> object:
-        if not isinstance(source, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetMeasurementPayloadStrategy requires ObjectLabelSet, "
-                f"got {type(source).__name__}."
-            )
-        return object_label_set_with_derived_projected_plane(
-            source,
-            labels,
-            plane_index,
-            unedited_labels=object_label_variant_matching_labels(
-                source.unedited_labels,
-                labels,
-            ),
-            small_removed_labels=object_label_variant_matching_labels(
-                source.small_removed_labels,
-                labels,
-            ),
-        )
-
-
-class ObjectLabelPayloadMeasurementPayloadStrategy(
-    ObjectLabelMeasurementPayloadStrategy
-):
-    """Replace labels for serialized object-label payloads."""
-
-    value_type = ObjectLabelPayload
-
-    def with_labels(self, source: object, labels: object) -> object:
-        if not isinstance(source, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadMeasurementPayloadStrategy requires "
-                f"ObjectLabelPayload, got {type(source).__name__}."
-            )
-        return object_label_payload_with_replacement_labels(
-            source,
-            labels,
-            unedited_labels=object_label_variant_matching_labels(
-                source.unedited_labels,
-                labels,
-            ),
-            small_removed_labels=object_label_variant_matching_labels(
-                source.small_removed_labels,
-                labels,
-            ),
-        )
-
-    def with_projected_plane(
-        self,
-        source: object,
-        labels: object,
-        plane_index: int,
-    ) -> object:
-        if not isinstance(source, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadMeasurementPayloadStrategy requires "
-                f"ObjectLabelPayload, got {type(source).__name__}."
-            )
-        return object_label_payload_with_projected_plane(
-            source,
-            labels,
-            plane_index,
-            unedited_labels=object_label_variant_matching_labels(
-                source.unedited_labels,
-                labels,
-            ),
-            small_removed_labels=object_label_variant_matching_labels(
-                source.small_removed_labels,
-                labels,
-            ),
-        )
-
-    def with_derived_projected_plane(
-        self,
-        source: object,
-        labels: object,
-        plane_index: int,
-    ) -> object:
-        if not isinstance(source, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadMeasurementPayloadStrategy requires "
-                f"ObjectLabelPayload, got {type(source).__name__}."
-            )
-        return object_label_payload_with_derived_projected_plane(
-            source,
-            labels,
-            plane_index,
-            unedited_labels=object_label_variant_matching_labels(
-                source.unedited_labels,
-                labels,
-            ),
-            small_removed_labels=object_label_variant_matching_labels(
-                source.small_removed_labels,
-                labels,
-            ),
-        )
+        return request.materialize(self.source_value(source))
 
 
 class RawObjectLabelMeasurementPayloadStrategy(ObjectLabelMeasurementPayloadStrategy):
     """Dense arrays have no nominal metadata to preserve."""
 
-    def with_labels(self, source: object, labels: object) -> object:
-        return labels
-
-    def with_projected_plane(
+    def materialize(
         self,
         source: object,
-        labels: object,
-        plane_index: int,
+        request: ObjectLabelMeasurementPayloadRequest,
     ) -> object:
-        del source, plane_index
-        return labels
-
-    def with_derived_projected_plane(
-        self,
-        source: object,
-        labels: object,
-        plane_index: int,
-    ) -> object:
-        del source, plane_index
-        return labels
+        del source
+        return request.labels
 
 
 ObjectLabelMeasurementPayloadStrategy.fallback_strategy_type = (
@@ -5444,8 +5432,7 @@ class ObjectLabelPayloadStackCollapseStrategy(
             )
         if labels.ndim != 3 or labels.shape[0] != 1:
             return labels
-        return object_label_payload_with_replacement_labels(
-            labels,
+        return labels.with_labels(
             labels.labels[0],
             unedited_labels=(
                 None if labels.unedited_labels is None else labels.unedited_labels[0]
@@ -5507,40 +5494,51 @@ class DenseObjectLabelSliceStack:
     payload: object | None = None
     preserves_payload_domain: bool = False
 
-    @classmethod
-    def from_payload(
-        cls,
-        payload: object,
-        *,
-        slice_count: int,
-        dtype: object | None = None,
-    ) -> "DenseObjectLabelSliceStack | None":
-        return DenseObjectLabelSliceStackRequest(payload, slice_count, dtype).stack()
-
     def slice(self, slice_index: int) -> object:
+        if slice_index < 0 or slice_index >= self.labels.shape[0]:
+            raise IndexError(slice_index)
         labels = self.labels[slice_index]
         if self.preserves_payload_domain and self.payload is not None:
             return ObjectLabelMeasurementPayloadStrategy.for_source(
                 self.payload
-            ).with_projected_plane(
+            ).materialize(
                 self.payload,
-                labels,
-                slice_index,
+                ObjectLabelSourcePlaneProjectionRequest(labels, slice_index),
             )
         return labels
 
 
 @dataclass(frozen=True, slots=True)
-class DenseObjectLabelSliceStackRequest:
-    """Typed request for projecting dense labels onto a fixed slice axis."""
+class DenseObjectLabelStackRequest:
+    """Base request for dense object-label stack projections."""
 
     payload: object
+
+
+def dense_label_stack_supports_plane_reduction(stack: np.ndarray) -> bool:
+    """Return whether stacked label planes can be reduced into one label plane."""
+    dtype = stack.dtype
+    return np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_)
+
+
+def dense_label_stack_reduce_planes(stack: np.ndarray) -> np.ndarray:
+    """Return one label plane representing all planes in a label stack group."""
+    dtype = stack.dtype
+    if np.issubdtype(dtype, np.bool_):
+        return np.any(stack, axis=0)
+    return np.max(stack, axis=0).astype(dtype, copy=False)
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelSliceStackRequest(DenseObjectLabelStackRequest):
+    """Typed request for projecting dense labels onto a fixed slice axis."""
+
     slice_count: int
     dtype: object | None = None
 
     def stack(self) -> DenseObjectLabelSliceStack | None:
         label_array = object_label_dense_array(self.payload, dtype=self.dtype)
-        if label_array.ndim == 3 and label_array.shape[0] == self.slice_count:
+        if label_array.ndim >= 3 and label_array.shape[0] == self.slice_count:
             return DenseObjectLabelSliceStack(
                 np.ascontiguousarray(label_array),
                 payload=self.payload,
@@ -5555,7 +5553,60 @@ class DenseObjectLabelSliceStackRequest:
                     )
                 )
             )
+        if label_array.ndim < 3:
+            return None
+        stack = label_array.reshape((-1, *label_array.shape[-2:]))
+        if stack.shape[0] == self.slice_count:
+            return DenseObjectLabelSliceStack(np.ascontiguousarray(stack))
+        if stack.shape[0] == 1:
+            return DenseObjectLabelSliceStack(
+                np.ascontiguousarray(
+                    np.broadcast_to(
+                        stack[0],
+                        (self.slice_count, *stack.shape[-2:]),
+                    )
+                )
+            )
+        if (
+            stack.shape[0] > self.slice_count
+            and stack.shape[0] % self.slice_count == 0
+            and dense_label_stack_supports_plane_reduction(stack)
+        ):
+            return DenseObjectLabelSliceStack(
+                np.ascontiguousarray(
+                    np.stack(
+                        tuple(
+                            dense_label_stack_reduce_planes(
+                                stack[slice_index :: self.slice_count],
+                            )
+                            for slice_index in range(self.slice_count)
+                        )
+                    )
+                )
+            )
+        if (
+            stack.shape[0] < self.slice_count
+            and self.slice_count % stack.shape[0] == 0
+            and dense_label_stack_supports_plane_reduction(stack)
+        ):
+            return DenseObjectLabelSliceStack(
+                np.ascontiguousarray(
+                    np.stack(
+                        tuple(
+                            stack[slice_index % stack.shape[0]]
+                            for slice_index in range(self.slice_count)
+                        )
+                    )
+                )
+            )
         return None
+
+    def slice_or_original(self, slice_index: int) -> object:
+        """Return one projected slice when labels encode runtime slices."""
+        stack = self.stack()
+        if stack is None:
+            return self.payload
+        return stack.slice(slice_index)
 
 
 @dataclass(frozen=True, slots=True)
@@ -5566,22 +5617,6 @@ class DenseObjectLabelPlaneDomainStack:
     payload: object
     object_id_domains: tuple[tuple[int, ...], ...]
 
-    @classmethod
-    def from_payload(
-        cls,
-        payload: object,
-        *,
-        dtype: object | None = None,
-        allow_single_plane: bool = False,
-        collapse_repeated: bool = False,
-    ) -> "DenseObjectLabelPlaneDomainStack | None":
-        return DenseObjectLabelPlaneDomainStackRequest(
-            payload,
-            dtype,
-            allow_single_plane,
-            collapse_repeated,
-        ).stack()
-
     @staticmethod
     def _project_measurement_stack(
         payload: ObjectLabelValue,
@@ -5589,7 +5624,7 @@ class DenseObjectLabelPlaneDomainStack:
         *,
         collapse_repeated: bool,
     ) -> tuple[np.ndarray | None, tuple[tuple[int, ...], ...]]:
-        if labels.ndim == 3:
+        if labels.ndim == DENSE_LABEL_PLANE_STACK_RANK:
             domains = DenseObjectLabelPlaneDomainStack._domains_for_stack(
                 payload,
                 labels,
@@ -5604,7 +5639,10 @@ class DenseObjectLabelPlaneDomainStack:
             ):
                 return labels[:1], (domains[0],)
             return labels, domains
-        if labels.ndim != 4 or labels.shape[0] != labels.shape[1]:
+        if (
+            labels.ndim != SQUARE_LABEL_PLANE_STACK_RANK
+            or labels.shape[0] != labels.shape[1]
+        ):
             return None, ()
         diagonal = np.stack(
             tuple(labels[index, index] for index in range(labels.shape[0])),
@@ -5636,7 +5674,8 @@ class DenseObjectLabelPlaneDomainStack:
         payload: ObjectLabelValue,
         labels: np.ndarray,
     ) -> tuple[tuple[int, ...], ...]:
-        domains = payload.declared_object_id_domains
+        payload_domain = payload.object_label_domain()
+        domains = payload_domain.declared_object_id_domains
         if domains:
             if len(domains) != labels.shape[0]:
                 raise ValueError(
@@ -5646,9 +5685,9 @@ class DenseObjectLabelPlaneDomainStack:
             return domains
         return dense_object_label_plane_id_domains(
             labels,
-            declared_object_count=payload.declared_object_count,
-            declared_object_ids=payload.declared_object_ids,
-            domain_scope=payload.domain_scope,
+            declared_object_count=payload_domain.declared_object_count,
+            declared_object_ids=payload_domain.declared_object_ids,
+            domain_scope=payload_domain.scope,
         )
 
     @staticmethod
@@ -5657,7 +5696,7 @@ class DenseObjectLabelPlaneDomainStack:
         diagonal_count: int,
         diagonal_labels: np.ndarray,
     ) -> tuple[tuple[int, ...], ...]:
-        domains = payload.declared_object_id_domains
+        domains = payload.domain.declared_object_id_domains
         if not domains:
             return DenseObjectLabelPlaneDomainStack._domains_for_stack(
                 payload,
@@ -5691,10 +5730,12 @@ class DenseObjectLabelPlaneDomainStack:
             raise IndexError(plane_index)
         projected = ObjectLabelMeasurementPayloadStrategy.for_source(
             self.payload
-        ).with_projected_plane(
+        ).materialize(
             self.payload,
-            self.labels[plane_index],
-            plane_index,
+            ObjectLabelSourcePlaneProjectionRequest(
+                self.labels[plane_index],
+                plane_index,
+            ),
         )
         return ObjectLabelValueBuilderStrategy.for_source(projected).build(
             projected,
@@ -5707,10 +5748,9 @@ class DenseObjectLabelPlaneDomainStack:
 
 
 @dataclass(frozen=True, slots=True)
-class DenseObjectLabelPlaneDomainStackRequest:
+class DenseObjectLabelPlaneDomainStackRequest(DenseObjectLabelStackRequest):
     """Typed request for object-label planes with distinct measurement domains."""
 
-    payload: object
     dtype: object | None = None
     allow_single_plane: bool = False
     collapse_repeated: bool = False
@@ -5718,7 +5758,7 @@ class DenseObjectLabelPlaneDomainStackRequest:
     def stack(self) -> DenseObjectLabelPlaneDomainStack | None:
         if not isinstance(self.payload, ObjectLabelValue):
             return None
-        if self.payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+        if self.payload.domain.scope is not ObjectLabelDomainScope.PLANE:
             return None
         labels = object_label_dense_array(self.payload, dtype=self.dtype)
         if not isinstance(labels, np.ndarray):
@@ -5742,7 +5782,7 @@ class DenseObjectLabelPlaneDomainStackRequest:
 
 
 class RuntimeSliceAlignedPayloadNormalizationStrategy(
-    SharedStrategyLabelBase,
+    StrategyLabelRegistryMixin,
     Generic[SliceAlignedValueT, SliceAlignedPayloadT],
     EnumKeyedStrategyMixin[ArtifactKind],
     ABC,
@@ -5750,8 +5790,9 @@ class RuntimeSliceAlignedPayloadNormalizationStrategy(
 ):
     """Normalize nominal slice-aligned payloads before runtime storage."""
 
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    __enum_member_attr__ = "kind"
+    __registry_key__ = ARTIFACT_KIND_ENUM_MEMBER_ATTR
+    __enum_member_attr__ = ARTIFACT_KIND_ENUM_MEMBER_ATTR
+    stable_key_axis: ClassVar[str] = __registry_key__
 
     kind: ClassVar[ArtifactKind]
 
@@ -5788,26 +5829,19 @@ class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
 
         slices = tuple(value.value_for_slice(index) for index in range(value.slice_count))
         if not slices or not all(
-            isinstance(item, (ObjectLabelPayload, ObjectLabelSet))
+            isinstance(item, ObjectLabelValue)
             for item in slices
         ):
             return None
-        label_values = tuple(
-            item
-            for item in slices
-            if isinstance(item, (ObjectLabelPayload, ObjectLabelSet))
-        )
-        if len(label_values) != len(slices):
-            return None
         return ObjectLabelPure2DSliceAggregator.aggregate(
-            label_values,
-            detect_memory_type(label_values[0].labels),
+            slices,
+            detect_memory_type(slices[0].labels),
             force_plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         )
 
 
 @dataclass(slots=True, kw_only=True)
-class MeasurementTable(NativeRuntimeValue):
+class MeasurementTable(SourceImageProvenanceFields, NativeRuntimeValue):
     """Native OpenHCS measurement table value."""
 
     rows: Any
@@ -5837,15 +5871,20 @@ class MeasurementTable(NativeRuntimeValue):
             subject=value.schema.measurement_subject,
             validated_runtime_schema=value.schema.measurement_schema_validated,
             schema_loss_reasons=value.schema.measurement_schema_loss_reasons,
+            source_provenance=value.schema.source_provenance,
         )
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, *source_provenance_values: object) -> None:
+        self.absorb_explicit_source_provenance(
+            SourceImageProvenance.from_init_values(source_provenance_values)
+        )
+        self.normalize_source_provenance_fields()
         NativeRuntimeValue.__post_init__(self)
-        if self.object_name == "":
+        if self.object_name == EMPTY_RUNTIME_FIELD_NAME:
             raise ValueError("MeasurementTable.object_name cannot be empty.")
-        if self.object_id_field == "":
+        if self.object_id_field == EMPTY_RUNTIME_FIELD_NAME:
             raise ValueError("MeasurementTable.object_id_field cannot be empty.")
-        if self.source_image_name == "":
+        if self.source_image_name == EMPTY_RUNTIME_FIELD_NAME:
             raise ValueError("MeasurementTable.source_image_name cannot be empty.")
         subject = _resolve_measurement_subject(
             self.subject,
@@ -5879,6 +5918,37 @@ class MeasurementTable(NativeRuntimeValue):
         if declared_layout is None:
             measurement_table_row_layout(self.rows)
 
+    def iter_rows(self) -> Iterable[object]:
+        """Yield row payloads using this table's row representation."""
+        rows = self.rows
+        if isinstance(rows, ColumnarRows):
+            yield from rows.row_mappings()
+            return
+        if isinstance(rows, list | tuple):
+            yield from rows
+            return
+        yield rows
+
+    def row_payloads(self) -> tuple[object, ...]:
+        """Return row payloads using this table's row representation."""
+        return tuple(self.iter_rows())
+
+    def row_sequence_payloads(self) -> tuple[object, ...] | None:
+        """Return native sequence rows, excluding columnar and scalar payloads."""
+        rows = self.rows
+        if isinstance(rows, ColumnarRows):
+            return None
+        if not isinstance(rows, list | tuple) or not rows:
+            return None
+        return tuple(rows)
+
+    def column_names(self) -> tuple[str, ...] | None:
+        """Return column names when this table uses a columnar row payload."""
+        rows = self.rows
+        if not isinstance(rows, ColumnarRows):
+            return None
+        return tuple(str(column) for column in rows.columns)
+
     def runtime_payload(self) -> Any:
         return self.rows
 
@@ -5886,13 +5956,14 @@ class MeasurementTable(NativeRuntimeValue):
         subject_resolver = MeasurementTableSubjectResolver(self)
         return RuntimeValueSchema(
             kind=ArtifactKind.MEASUREMENTS,
-            fields=self.fields or RuntimePayloadFieldInference(payload).fields(),
+            fields=self.fields or runtime_payload_fields(payload),
             measurement_subject=self.subject,
             object_name=subject_resolver.object_name,
             source_image_name=subject_resolver.source_image_name,
             object_id_field=subject_resolver.object_id_field,
             measurement_schema_validated=self.validated_runtime_schema,
             measurement_schema_loss_reasons=self.schema_loss_reasons,
+            source_provenance=self.source_provenance,
         )
 
 
@@ -5931,6 +6002,42 @@ class SpatialGridDimensions:
         self.columns = int(self.columns)
         if self.rows <= 0 or self.columns <= 0:
             raise ValueError("SpatialGrid dimensions must be positive.")
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridGeometry:
+    """Scalar geometry required to construct spatial-grid axes."""
+
+    rows: int
+    columns: int
+    x_spacing: float
+    y_spacing: float
+    x_origin: float
+    y_origin: float
+
+    @property
+    def dimensions(self) -> SpatialGridDimensions:
+        return SpatialGridDimensions(self.rows, self.columns)
+
+    def column_axis(
+        self,
+        locations: tuple[float, ...] | None = None,
+    ) -> SpatialGridAxis:
+        return SpatialGridAxis(
+            spacing=self.x_spacing,
+            origin=self.x_origin,
+            locations=locations,
+        )
+
+    def row_axis(
+        self,
+        locations: tuple[float, ...] | None = None,
+    ) -> SpatialGridAxis:
+        return SpatialGridAxis(
+            spacing=self.y_spacing,
+            origin=self.y_origin,
+            locations=locations,
+        )
 
 
 @dataclass(slots=True)
@@ -6043,6 +6150,49 @@ class SpatialGridTopology:
         if self.origin.reverses_columns:
             table = table[:, ::-1]
         return tuple(tuple(int(value) for value in row) for row in table)
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridTopologyMapping:
+    """Mapping-backed parser for optional spatial-grid topology fields."""
+
+    data: Mapping[str, Any]
+
+    def origin(self) -> SpatialGridOrigin:
+        raw_origin = OptionalMappingField(self.data, "origin").value_or_none()
+        if raw_origin is None:
+            return SpatialGridOrigin.TOP_LEFT
+        return coerce_enum(SpatialGridOrigin, raw_origin, "SpatialGrid.origin")
+
+    def topology(
+        self,
+        *,
+        geometry: SpatialGridGeometry,
+    ) -> SpatialGridTopology:
+        """Return normalized topology parsed from a spatial-grid mapping."""
+        return SpatialGridTopology(
+            dimensions=geometry.dimensions,
+            coordinate_system=SpatialGridCoordinateSystem(
+                self.origin(),
+                OptionalMappingField(self.data, "ordering").grid_ordering(),
+            ),
+            column_axis=geometry.column_axis(
+                OptionalMappingField(
+                    self.data,
+                    "x_locations",
+                ).nullable_float_tuple(),
+            ),
+            row_axis=geometry.row_axis(
+                OptionalMappingField(
+                    self.data,
+                    "y_locations",
+                ).nullable_float_tuple(),
+            ),
+            spot_table=OptionalMappingField(
+                self.data,
+                "spot_table",
+            ).nullable_int_table(),
+        )
 
 
 @dataclass(slots=True, kw_only=True, init=False)
@@ -6166,45 +6316,21 @@ class SpatialGrid(NativeRuntimeValue):
             "y_origin",
             aliases=("y_location_of_lowest_y_spot",),
         )
-        origin = (
-            SpatialGridOrigin.TOP_LEFT
-            if data.get("origin") is None
-            else coerce_enum(SpatialGridOrigin, data["origin"], "SpatialGrid.origin")
+        geometry = SpatialGridGeometry(
+            rows=rows,
+            columns=columns,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
         )
-        ordering = OptionalMappingField(data, "ordering").grid_ordering()
-        x_locations_value = data.get("x_locations")
-        y_locations_value = data.get("y_locations")
-        spot_table_value = data.get("spot_table")
-        topology = SpatialGridTopology(
-            dimensions=SpatialGridDimensions(rows, columns),
-            coordinate_system=SpatialGridCoordinateSystem(origin, ordering),
-            column_axis=SpatialGridAxis(
-                spacing=x_spacing,
-                origin=x_origin,
-                locations=(
-                    None
-                    if x_locations_value is None
-                    else tuple(float(item) for item in x_locations_value)
-                ),
-            ),
-            row_axis=SpatialGridAxis(
-                spacing=y_spacing,
-                origin=y_origin,
-                locations=(
-                    None
-                    if y_locations_value is None
-                    else tuple(float(item) for item in y_locations_value)
-                ),
-            ),
-            spot_table=(
-                None
-                if spot_table_value is None
-                else tuple(
-                    tuple(int(item) for item in row)
-                    for row in spot_table_value
-                )
-            ),
+        topology = SpatialGridTopologyMapping(data).topology(
+            geometry=geometry,
         )
+        if "slice_index" in data:
+            slice_index = int(data["slice_index"])
+        else:
+            slice_index = SPATIAL_GRID_DEFAULT_SLICE_INDEX
         return cls(
             name=name,
             rows=rows,
@@ -6213,11 +6339,11 @@ class SpatialGrid(NativeRuntimeValue):
             y_spacing=y_spacing,
             x_origin=x_origin,
             y_origin=y_origin,
-            slice_index=OptionalMappingField(data, "slice_index").int_or(default=0),
+            slice_index=slice_index,
             total_width=OptionalMappingField(data, "total_width").nullable_float(),
             total_height=OptionalMappingField(data, "total_height").nullable_float(),
-            origin=origin,
-            ordering=ordering,
+            origin=topology.origin,
+            ordering=topology.ordering,
             x_locations=topology.x_locations,
             y_locations=topology.y_locations,
             spot_table=topology.spot_table,
@@ -6343,7 +6469,11 @@ class SpatialGrid(NativeRuntimeValue):
 
 
 @dataclass(slots=True, kw_only=True)
-class ObjectRelationship(NativeRuntimeValue):
+class ObjectRelationship(
+    SourceImageProvenanceFields,
+    NativeRuntimeValue,
+    RuntimeSliceProjectableValue,
+):
     """Native OpenHCS directed object relationship value."""
 
     source: RelationshipEndpoint
@@ -6353,10 +6483,6 @@ class ObjectRelationship(NativeRuntimeValue):
     relationship_type: str = "related"
     slice_indices: tuple[int, ...] = ()
     slice_count: int | None = None
-    source_path: str | None = None
-    source_component_metadata: SourceComponentMetadata | None = None
-    channel_source_paths: tuple[str | None, ...] = ()
-    channel_source_component_metadata: ChannelSourceComponentMetadata = ()
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -6395,18 +6521,18 @@ class ObjectRelationship(NativeRuntimeValue):
                 value.data,
                 "source_component_metadata",
             ).nullable_mapping(),
-            channel_source_paths=OptionalMappingField(
-                value.data,
-                "channel_source_paths",
-            ).nullable_str_tuple(),
-            channel_source_component_metadata=OptionalMappingField(
-                value.data,
-                "channel_source_component_metadata",
-            ).nullable_mapping_tuple(),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_records(
+                value.data.get("source_image_provenance_planes")
+            ),
+            source_provenance=value.schema.source_provenance,
         )
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, *source_provenance_values: object) -> None:
         NativeRuntimeValue.__post_init__(self)
+        self.absorb_explicit_source_provenance(
+            SourceImageProvenance.from_init_values(source_provenance_values)
+        )
+        self.normalize_source_provenance_fields()
         if not isinstance(self.source, RelationshipEndpoint):
             raise TypeError(
                 "ObjectRelationship.source must be RelationshipEndpoint, "
@@ -6446,11 +6572,6 @@ class ObjectRelationship(NativeRuntimeValue):
             )
         self.slice_indices = slice_indices
         self.slice_count = slice_count
-        self.source_component_metadata = _normalize_component_metadata(self.source_component_metadata)
-        self.channel_source_component_metadata = tuple(
-                _normalize_component_metadata(metadata)
-                for metadata in self.channel_source_component_metadata
-            )
 
     @property
     def semantics(self) -> RelationshipSemantics:
@@ -6458,6 +6579,46 @@ class ObjectRelationship(NativeRuntimeValue):
             source=self.source,
             target=self.target,
             relationship_type=self.relationship_type,
+        )
+
+    def project_runtime_slice(self, slice_index: int) -> "ObjectRelationship":
+        """Return only relationship rows belonging to one runtime slice."""
+        source_ids_all = tuple(int(source_id) for source_id in self.source_ids)
+        target_ids_all = tuple(int(target_id) for target_id in self.target_ids)
+        if not self.slice_indices:
+            if (
+                self.slice_count is not None
+                and self.slice_count > 1
+                and source_ids_all
+            ):
+                raise ValueError(
+                    "Cannot slice multi-plane ObjectRelationship without "
+                    "slice_indices."
+                )
+            return self
+
+        source_ids: list[int] = []
+        target_ids: list[int] = []
+        for source_id, target_id, relationship_slice_index in zip(
+            source_ids_all,
+            target_ids_all,
+            self.slice_indices,
+            strict=True,
+        ):
+            if relationship_slice_index != int(slice_index):
+                continue
+            source_ids.append(source_id)
+            target_ids.append(target_id)
+        source_provenance = self.source_provenance.for_source_plane(slice_index)
+        return ObjectRelationship(
+            name=self.name,
+            source=self.source,
+            target=self.target,
+            source_ids=tuple(source_ids),
+            target_ids=tuple(target_ids),
+            relationship_type=self.relationship_type,
+            slice_count=1,
+            source_provenance=source_provenance,
         )
 
     def as_table(self) -> dict[str, Any]:
@@ -6479,11 +6640,9 @@ class ObjectRelationship(NativeRuntimeValue):
             table["source_path"] = self.source_path
         if self.source_component_metadata is not None:
             table["source_component_metadata"] = self.source_component_metadata
-        if self.channel_source_paths:
-            table["channel_source_paths"] = self.channel_source_paths
-        if self.channel_source_component_metadata:
-            table["channel_source_component_metadata"] = (
-                self.channel_source_component_metadata
+        if self.source_image_provenance_planes.count:
+            table["source_image_provenance_planes"] = (
+                self.source_image_provenance_planes.records
             )
         return table
 
@@ -6493,8 +6652,9 @@ class ObjectRelationship(NativeRuntimeValue):
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         return RuntimeValueSchema(
             kind=ArtifactKind.RELATIONSHIPS,
-            fields=RuntimePayloadFieldInference(payload).fields(),
+            fields=runtime_payload_fields(payload),
             relationship=self.semantics,
+            source_provenance=self.source_provenance,
         )
 
 
@@ -6508,7 +6668,11 @@ def normalize_artifact_value(
     if isinstance(value, RuntimeValue):
         return validate_runtime_value(value, output_plan, axis_id=axis_id)
 
-    native_value = _normalize_native_value(output_plan, value, axis_id=axis_id)
+    native_value = NativeArtifactValueNormalization(
+        output_plan=output_plan,
+        value=value,
+        axis_id=axis_id,
+    ).runtime_value()
     if native_value is not None:
         return validate_runtime_value(native_value, output_plan, axis_id=axis_id)
 
@@ -6521,18 +6685,108 @@ def normalize_artifact_value(
     return validate_runtime_value(runtime_value, output_plan, axis_id=axis_id)
 
 
-def _normalize_native_value(
-    output_plan: ArtifactOutputPlan,
-    value: Any,
-    *,
-    axis_id: str,
-) -> RuntimeValue | None:
-    if _is_runtime_slice_aligned_values(value):
-        return _normalize_slice_aligned_value(output_plan, value, axis_id=axis_id)
-    if isinstance(value, NativeRuntimeValue):
-        _validate_native_name(output_plan, value.name)
-        return value.to_runtime_value(output_plan, axis_id=axis_id)
-    return None
+@dataclass(frozen=True, slots=True)
+class NativeArtifactValueNormalization:
+    """Normalize native artifact returns before generic RuntimeValue wrapping."""
+
+    output_plan: ArtifactOutputPlan
+    value: Any
+    axis_id: str
+
+    def runtime_value(self) -> RuntimeValue | None:
+        if _is_runtime_slice_aligned_values(self.value):
+            return _normalize_slice_aligned_value(
+                self.output_plan,
+                self.value,
+                axis_id=self.axis_id,
+            )
+        if isinstance(self.value, NativeRuntimeValue):
+            _validate_native_name(self.output_plan, self.value.name)
+            return self.value.to_runtime_value(
+                self.output_plan,
+                axis_id=self.axis_id,
+            )
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSliceAlignedNormalizedItem:
+    """One slice-aligned item after optional runtime-value normalization."""
+
+    data: Any
+    schema: RuntimeValueSchema | None = None
+
+
+class RuntimeSliceAlignedItemNormalizationStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered normalization for values carried inside slice-aligned sets."""
+
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+
+    @classmethod
+    def normalize_item(
+        cls,
+        item: Any,
+        output_plan: ArtifactOutputPlan,
+        *,
+        axis_id: str,
+    ) -> RuntimeSliceAlignedNormalizedItem:
+        strategy = cls.for_nominal_value(item)
+        if strategy is None:
+            return RuntimeSliceAlignedNormalizedItem(item)
+        return strategy.normalize(item, output_plan, axis_id=axis_id)
+
+    @abstractmethod
+    def normalize(
+        self,
+        item: Any,
+        output_plan: ArtifactOutputPlan,
+        *,
+        axis_id: str,
+    ) -> RuntimeSliceAlignedNormalizedItem:
+        """Return normalized data and an optional schema for one aligned item."""
+
+
+class NativeRuntimeSliceAlignedItemNormalizationStrategy(
+    RuntimeSliceAlignedItemNormalizationStrategy
+):
+    """Normalize native runtime values inside a slice-aligned set."""
+
+    value_type = NativeRuntimeValue
+
+    def normalize(
+        self,
+        item: Any,
+        output_plan: ArtifactOutputPlan,
+        *,
+        axis_id: str,
+    ) -> RuntimeSliceAlignedNormalizedItem:
+        _validate_native_name(output_plan, item.name)
+        runtime_item = item.to_runtime_value(output_plan, axis_id=axis_id)
+        return RuntimeSliceAlignedNormalizedItem(runtime_item.data, runtime_item.schema)
+
+
+class RuntimeValueSliceAlignedItemNormalizationStrategy(
+    RuntimeSliceAlignedItemNormalizationStrategy
+):
+    """Validate already-wrapped runtime values inside a slice-aligned set."""
+
+    value_type = RuntimeValue
+
+    def normalize(
+        self,
+        item: Any,
+        output_plan: ArtifactOutputPlan,
+        *,
+        axis_id: str,
+    ) -> RuntimeSliceAlignedNormalizedItem:
+        validated = validate_runtime_value(item, output_plan, axis_id=axis_id)
+        return RuntimeSliceAlignedNormalizedItem(validated.data, item.schema)
 
 
 def _normalize_slice_aligned_value(
@@ -6557,19 +6811,14 @@ def _normalize_slice_aligned_value(
     slice_values: list[Any] = []
     slice_schemas: list[RuntimeValueSchema] = []
     for item in value.slices:
-        if isinstance(item, NativeRuntimeValue):
-            _validate_native_name(output_plan, item.name)
-            runtime_item = item.to_runtime_value(output_plan, axis_id=axis_id)
-            slice_values.append(runtime_item.data)
-            slice_schemas.append(runtime_item.schema)
-            continue
-        if isinstance(item, RuntimeValue):
-            slice_values.append(
-                validate_runtime_value(item, output_plan, axis_id=axis_id).data
-            )
-            slice_schemas.append(item.schema)
-            continue
-        slice_values.append(item)
+        normalized_item = RuntimeSliceAlignedItemNormalizationStrategy.normalize_item(
+            item,
+            output_plan,
+            axis_id=axis_id,
+        )
+        slice_values.append(normalized_item.data)
+        if normalized_item.schema is not None:
+            slice_schemas.append(normalized_item.schema)
 
     schema = (
         _merge_slice_aligned_schemas(output_plan, slice_schemas)
@@ -6635,17 +6884,12 @@ def validate_runtime_value(
             f"'{value.key.scope.axis_id}', not '{axis_id}'."
         )
 
-    _validate_payload_kind(output_plan.name, value.kind, value.data, value.schema)
+    ArtifactPayloadValidationStrategy.for_kind(value.kind).validate(
+        output_plan.name,
+        value.data,
+        value.schema,
+    )
     return value
-
-
-def _validate_payload_kind(
-    name: str,
-    kind: ArtifactKind,
-    data: Any,
-    schema: RuntimeValueSchema,
-) -> None:
-    ArtifactPayloadValidationStrategy.for_kind(kind).validate(name, data, schema)
 
 
 class ArtifactPayloadValidationStrategy(
@@ -6657,7 +6901,7 @@ class ArtifactPayloadValidationStrategy(
 
     __registry_key__ = "kind_label"
     __skip_if_no_key__ = True
-    __enum_member_attr__ = "kind"
+    __enum_member_attr__ = ARTIFACT_KIND_ENUM_MEMBER_ATTR
     __enum_label_attr__ = "kind_label"
 
     kind: ClassVar[ArtifactKind | None] = None
@@ -6827,28 +7071,41 @@ _PAYLOAD_VALIDATORS = _payload_validators(
 
 
 @dataclass(frozen=True, slots=True)
-class RequiredMappingField:
-    """Resolve a required canonical mapping field with legacy aliases."""
+class MappingFieldLookup:
+    """Shared lookup for canonical mapping fields with legacy aliases."""
 
     data: Mapping[str, Any]
     name: str
     aliases: tuple[str, ...] = ()
 
-    def value(self) -> Any:
+    def value_or(self, default: MappingFieldDefaultT) -> Any | MappingFieldDefaultT:
         for key in (self.name, *self.aliases):
             if key in self.data:
                 return self.data[key]
+        return default
+
+
+_MISSING_MAPPING_FIELD = object()
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredMappingField(MappingFieldLookup):
+    """Resolve a required canonical mapping field with legacy aliases."""
+
+    def value(self) -> Any:
+        value = self.value_or(_MISSING_MAPPING_FIELD)
+        if value is not _MISSING_MAPPING_FIELD:
+            return value
         names = ", ".join(repr(key) for key in (self.name, *self.aliases))
         raise KeyError(f"Missing required mapping field {names}.")
 
 
 @dataclass(frozen=True, slots=True)
-class OptionalMappingField:
+class OptionalMappingField(MappingFieldLookup):
     """Optional value lookup and coercion over mapping-backed runtime values."""
 
-    data: Mapping[str, Any]
-    name: str
-    aliases: tuple[str, ...] = ()
+    def value_or_none(self) -> Any | None:
+        return self.value_or(None)
 
     def int_or(self, *, default: int) -> int:
         if self.name not in self.data:
@@ -6881,6 +7138,20 @@ class OptionalMappingField:
             return None
         return float(self.data[self.name])
 
+    def nullable_float_tuple(self) -> tuple[float, ...] | None:
+        value = self.value_or_none()
+        if value is None:
+            return None
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            return tuple(float(item) for item in value)
+        raise TypeError(
+            f"Optional float tuple field '{self.name}' must be a sequence, "
+            f"got {type(value).__name__}."
+        )
+
     def nullable_str(self) -> str | None:
         if self.name not in self.data or self.data[self.name] is None:
             return None
@@ -6911,7 +7182,7 @@ class OptionalMappingField:
             f"got {type(value).__name__}."
         )
 
-    def nullable_mapping_tuple(self) -> ChannelSourceComponentMetadata:
+    def nullable_mapping_tuple(self) -> SourceImageProvenancePlaneMetadataValues:
         if self.name not in self.data or self.data[self.name] is None:
             return ()
         value = self.data[self.name]
@@ -6925,6 +7196,20 @@ class OptionalMappingField:
             )
         raise TypeError(
             f"Optional mapping tuple field '{self.name}' must be a sequence, "
+            f"got {type(value).__name__}."
+        )
+
+    def nullable_int_table(self) -> tuple[tuple[int, ...], ...] | None:
+        value = self.value_or_none()
+        if value is None:
+            return None
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            return tuple(tuple(int(item) for item in row) for row in value)
+        raise TypeError(
+            f"Optional integer table field '{self.name}' must be a sequence, "
             f"got {type(value).__name__}."
         )
 
@@ -7049,25 +7334,16 @@ class MeasurementTableSubjectResolver:
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimePayloadFieldInference:
+def runtime_payload_fields(rows: Any) -> tuple[FieldSpec, ...]:
     """Infer tabular field declarations from runtime payload row shapes."""
-
-    rows: Any
-
-    def fields(self) -> tuple[FieldSpec, ...]:
-        _ensure_runtime_payload_integrations_registered()
-        if isinstance(self.rows, ColumnarRows):
-            return tuple(FieldSpec(str(column)) for column in self.rows.columns)
-        if isinstance(self.rows, Mapping):
-            return tuple(FieldSpec(str(column)) for column in self.rows)
-        if (
-            isinstance(self.rows, Sequence)
-            and self.rows
-            and isinstance(self.rows[0], Mapping)
-        ):
-            return tuple(FieldSpec(str(column)) for column in self.rows[0])
-        return ()
+    _ensure_runtime_payload_integrations_registered()
+    if isinstance(rows, ColumnarRows):
+        return tuple(FieldSpec(str(column)) for column in rows.columns)
+    if isinstance(rows, Mapping):
+        return tuple(FieldSpec(str(column)) for column in rows)
+    if isinstance(rows, Sequence) and rows and isinstance(rows[0], Mapping):
+        return tuple(FieldSpec(str(column)) for column in rows[0])
+    return ()
 
 
 def _ensure_runtime_payload_integrations_registered() -> None:

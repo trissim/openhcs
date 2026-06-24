@@ -4,11 +4,46 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import ClassVar, Generic, TypeVar
+from collections.abc import Sequence
+from typing import Any, ClassVar, Generic, TypeVar
+
+from metaclass_registry import AutoRegisterMeta
 
 
 CacheKey = TypeVar("CacheKey")
 CachedValue = TypeVar("CachedValue")
+
+
+def identity_owner_tuples_match(
+    left: Sequence[object],
+    right: Sequence[object],
+) -> bool:
+    """Return whether identity-keyed cache owners still reference the same objects."""
+    return (
+        len(left) == len(right)
+        and all(
+            left_owner is right_owner
+            for left_owner, right_owner in zip(left, right, strict=True)
+        )
+    )
+
+
+def named_identity_owner_tuples_match(
+    left: Sequence[tuple[str, object]],
+    right: Sequence[tuple[str, object]],
+) -> bool:
+    """Return whether named identity-keyed cache owners still match."""
+    return (
+        len(left) == len(right)
+        and all(
+            left_name == right_name and left_owner is right_owner
+            for (left_name, left_owner), (right_name, right_owner) in zip(
+                left,
+                right,
+                strict=True,
+            )
+        )
+    )
 
 
 @dataclass(slots=True)
@@ -41,3 +76,37 @@ class ProcessLocalBoundedCache(Generic[CacheKey, CachedValue]):
         return cache
 
     _process_cache: ClassVar["ProcessLocalBoundedCache[object, object] | None"] = None
+
+
+class IdentityBoundProcessCache(
+    ProcessLocalBoundedCache[int, tuple[object, Any]],
+    metaclass=AutoRegisterMeta,
+):
+    """Process-local cache whose keys are protected against id reuse."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    max_entries = 4096
+    registry_key: ClassVar[str | None] = None
+
+    def get_bound(
+        self,
+        owner: object,
+    ) -> Any | None:
+        cache_key = id(owner)
+        cached = self.cached_value(cache_key)
+        if cached is None:
+            return None
+        cached_owner, value = cached
+        if cached_owner is not owner:
+            del self.entries[cache_key]
+            return None
+        return value
+
+    def put_bound(
+        self,
+        owner: object,
+        value: Any,
+    ) -> Any:
+        return self.store_value(id(owner), (owner, value))[1]

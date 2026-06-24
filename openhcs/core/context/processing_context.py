@@ -4,12 +4,38 @@ Processing Context for OpenHCS.
 This module defines the ProcessingContext class, which maintains state during pipeline execution.
 """
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
 
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig
+from dataclasses import dataclass
+from typing import Any
+
+from polystore.filemanager import FileManager
+
+from openhcs.core.config import GlobalPipelineConfig, StreamingConfig
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.debug import DebugSnapshotFileManagerContext, NO_OP_DEBUG_EVENT_SINK
+from openhcs.core.debug import (
+    DebugEventSink,
+    DebugExecutionContext,
+    NO_OP_DEBUG_EVENT_SINK,
+)
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.axis_filter import StepAxisFilterMap
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredVisualizer:
+    """Streaming visualizer required by a compiled processing context."""
+
+    backend_name: str | None
+    config: StreamingConfig
+
+    @property
+    def key(self) -> tuple[str, int]:
+        return (self.config.viewer_type, self.config.port)
+
+    @property
+    def launch_message(self) -> str:
+        return f"Launching {self.config.viewer_type} viewer on port {self.config.port}"
 
 
 class ProcessingContext:
@@ -24,9 +50,6 @@ class ProcessingContext:
 
     Attributes:
         step_plans: Dictionary mapping step indices to compiled execution plans.
-        outputs: Dictionary for step outputs (usage may change with VFS-centric model).
-        intermediates: Dictionary for intermediate results (usage may change).
-        current_step: Current executing step ID (usage may change).
         axis_id: Identifier of the multiprocessing axis value being processed.
         filemanager: Instance of FileManager for VFS operations.
         global_config: GlobalPipelineConfig holding system-wide configurations.
@@ -36,12 +59,14 @@ class ProcessingContext:
         _is_frozen: Internal flag indicating if the context is immutable.
     """
 
+    _is_frozen: bool = False
+
     def __init__(
         self,
-        global_config: GlobalPipelineConfig, # Made a required argument
-        step_plans: Optional[Dict[int, CompiledStepPlan]] = None,
-        axis_id: Optional[str] = None,
-        **kwargs
+        global_config: GlobalPipelineConfig,
+        step_plans: dict[int, CompiledStepPlan] | None = None,
+        axis_id: str | None = None,
+        filemanager: FileManager | None = None,
     ):
         """
         Initialize the processing context.
@@ -50,49 +75,67 @@ class ProcessingContext:
             global_config: The global pipeline configuration object.
             step_plans: Dictionary mapping step indices to compiled execution plans.
             axis_id: Identifier of the multiprocessing axis value being processed.
-            **kwargs: Additional context attributes (e.g., filemanager, microscope_handler).
+            filemanager: FileManager instance for VFS operations.
         """
-        # Initialize _is_frozen first to allow other attributes to be set by __setattr__
-        # This direct assignment bypasses the custom __setattr__ during initialization.
-        object.__setattr__(self, '_is_frozen', False)
+        self._is_frozen = False
 
-        self.step_plans = step_plans or {}
-        self.outputs = {}  # Future use TBD, primary data flow via VFS
-        self.intermediates = {} # Future use TBD, primary data flow via VFS
+        if step_plans is None:
+            self.step_plans = {}
+        else:
+            self.step_plans = dict(step_plans)
         self.runtime_value_store = RuntimeValueStore()
-        self.current_step = None # Future use TBD
         self.axis_id = axis_id
-        self.global_config = global_config # Store the global config
-        self.filemanager = None # Expected to be set by Orchestrator via kwargs or direct assignment
-        self.required_visualizers: list[Any] = []
-        self.step_axis_filters: dict[int, dict[str, Any]] = {}
+        self.global_config = global_config
+        self.filemanager = filemanager
+        self.microscope_handler = None
+        self.input_dir = None
+        self.workspace_path = None
+        self.plate_path = None
+        self.required_visualizers: list[RequiredVisualizer] = []
+        self.step_axis_filters: StepAxisFilterMap = {}
+        self.metadata_cache: dict[str, dict[str, str | None]] | None = None
+        self.analysis_consolidation_config = (
+            global_config.analysis_consolidation_config
+        )
+        self.plate_metadata_config = global_config.plate_metadata_config
+        self.auto_add_output_plate_to_plate_manager = (
+            global_config.auto_add_output_plate_to_plate_manager
+        )
 
-        # Execution tracking fields (set at execution time)
-        self.execution_id = None  # Set by worker before execution
-        self.plate_id = None  # Set by worker before execution (same as plate_path)
-        self.worker_slot = None  # Logical worker slot for deterministic ownership
-        self.owned_wells = None  # Full well set owned by this worker slot
+        self.execution_id = None
+        self.plate_id = None
+        self.worker_slot = None
+        self.owned_wells = None
         self.debug_event_sink = NO_OP_DEBUG_EVENT_SINK
 
-        # Pipeline-wide sequential processing fields
         self.pipeline_sequential_mode = False
-        self.pipeline_sequential_combinations = None  # Precomputed at compile time from metadata
-        self.current_sequential_combination = None  # Set by compiler for each combination iteration
+        self.pipeline_sequential_combinations = None
+        self.current_sequential_combination = None
 
-        # Add any additional attributes from kwargs
-        # Note: 'filemanager' is often passed via kwargs by PipelineOrchestrator.create_context
-        for key, value in kwargs.items():
-            setattr(self, key, value) # This will now go through our __setattr__
+    def bind_execution_runtime(
+        self,
+        *,
+        execution_id: str,
+        plate_id: str,
+        worker_slot: str,
+        owned_wells: tuple[str, ...],
+    ) -> None:
+        """Bind worker-owned execution identity after compilation freeze."""
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        """
-        Set an attribute, preventing modification if the context is frozen.
+        self.execution_id = execution_id
+        self.plate_id = plate_id
+        self.worker_slot = worker_slot
+        self.owned_wells = list(owned_wells)
 
-        All fields are immutable once frozen - no exceptions.
-        """
-        if self._is_frozen and name != '_is_frozen':
-            raise AttributeError(f"Cannot modify attribute '{name}' of a frozen ProcessingContext.")
-        super().__setattr__(name, value)
+    def install_debug_event_sink(self, debug_event_sink: DebugEventSink) -> None:
+        """Install the debug sink selected for this execution context."""
+
+        if not isinstance(debug_event_sink, DebugEventSink):
+            raise TypeError(
+                "debug_event_sink must be DebugEventSink, "
+                f"got {type(debug_event_sink).__name__}."
+            )
+        self.debug_event_sink = debug_event_sink
 
     def inject_plan(self, step_id: int, plan: CompiledStepPlan) -> None:
         """
@@ -125,13 +168,15 @@ class ProcessingContext:
         if not self.axis_id:
             raise RuntimeError("Cannot freeze ProcessingContext: 'axis_id' is not set.")
         if self.filemanager is None:
-            raise RuntimeError("Cannot freeze ProcessingContext: 'filemanager' is not set.")
-        # step_plans can be empty if the pipeline is empty, but it must exist.
-        # Trust dataclass contract - if step_plans doesn't exist, that's a bug
+            raise RuntimeError(
+                "Cannot freeze ProcessingContext: 'filemanager' is not set."
+            )
         if self.step_plans is None:
-             raise RuntimeError("Cannot freeze ProcessingContext: 'step_plans' is not set.")
+            raise RuntimeError(
+                "Cannot freeze ProcessingContext: 'step_plans' is not set."
+            )
 
-        self._is_frozen = True # This assignment is allowed by __setattr__
+        self._is_frozen = True
 
     def is_frozen(self) -> bool:
         """
@@ -142,208 +187,5 @@ class ProcessingContext:
         """
         return self._is_frozen
 
-    # update_from_step_result method is removed as per plan.
 
-    # --- Config Getters ---
-    # NOTE: These are only used outside compilation (e.g., in workers after context is frozen)
-    # During compilation, code should access orchestrator.pipeline_config directly
-
-    def get_vfs_config(self) -> VFSConfig:
-        """Returns the VFSConfig part of the global configuration."""
-        if self.global_config is None:
-            raise RuntimeError("GlobalPipelineConfig not set on ProcessingContext.")
-        return self.global_config.vfs_config
-
-    def get_path_planning_config(self) -> PathPlanningConfig:
-        """Returns the PathPlanningConfig part of the global configuration."""
-        if self.global_config is None:
-            raise RuntimeError("GlobalPipelineConfig not set on ProcessingContext.")
-        return self.global_config.path_planning_config
-
-    def get_num_workers(self) -> int:
-        """Returns the number of workers from the global configuration."""
-        if self.global_config is None:
-            raise RuntimeError("GlobalPipelineConfig not set on ProcessingContext.")
-        return self.global_config.num_workers
-
-    def __getstate__(self) -> Dict[str, Any]:
-        """
-        Prepare context for pickling (e.g., for multiprocessing).
-
-        Excludes the filemanager from pickling to avoid copying the storage registry
-        across process boundaries. The filemanager will be recreated in the worker
-        process using the worker's local global registry.
-
-        Uses self-describing backend pickling: iterates over all backends and preserves
-        connection params for any that implement PicklableBackend, storing their class
-        info for dynamic recreation.
-
-        Returns:
-            Dictionary of state to pickle
-        """
-        from openhcs.constants.constants import Backend
-        from polystore.base import PicklableBackend
-
-        state = self.__dict__.copy()
-
-        # Preserve zarr config from global_config for filemanager recreation
-        # Trust dataclass contract - if global_config doesn't exist, that's a bug
-        state['_zarr_config'] = self.global_config.zarr_config if self.global_config else None
-
-        # Preserve plate_path for virtual_workspace backend recreation
-        # Trust dataclass contract - plate_path is a defined field
-        state['_plate_path'] = self.plate_path
-
-        # Self-describing backend pickling: iterate over all backends and preserve
-        # connection params for any that implement PicklableBackend
-        state['_picklable_backends'] = {}
-
-        if self.filemanager is not None:
-            # Track virtual_workspace separately for backward compatibility
-            state['_has_virtual_workspace'] = Backend.VIRTUAL_WORKSPACE.value in self.filemanager.registry
-            state['_has_bioformats'] = Backend.BIOFORMATS.value in self.filemanager.registry
-
-            # Iterate over all registered backends and preserve picklable ones
-            for backend_key, backend_instance in self.filemanager.registry.items():
-                if isinstance(backend_instance, PicklableBackend):
-                    params = backend_instance.get_connection_params()
-                    if params is not None:
-                        # Store backend class info for dynamic recreation
-                        state['_picklable_backends'][backend_key] = {
-                            'class_name': type(backend_instance).__name__,
-                            'module_name': type(backend_instance).__module__,
-                            'params': params
-                        }
-        else:
-            state['_has_virtual_workspace'] = False
-            state['_has_bioformats'] = False
-
-        # Remove filemanager - will be recreated in worker process
-        state.pop('filemanager', None)
-
-        return state
-
-    def __setstate__(self, state: Dict[str, Any]) -> None:
-        """
-        Restore context after unpickling (e.g., in worker process).
-
-        Recreates the filemanager using the worker's local global registry,
-        ensuring that all processes share the same memory backend instance
-        within their own process space.
-
-        Uses self-describing backend recreation: dynamically recreates all
-        picklable backends based on stored class info and connection params.
-
-        Args:
-            state: Dictionary of state from __getstate__
-        """
-        import logging
-        import os
-        import importlib
-        from pathlib import Path
-
-        from polystore.base import storage_registry as global_storage_registry, ensure_storage_registry
-        from polystore.filemanager import FileManager
-        from polystore.zarr import ZarrStorageBackend
-        from openhcs.constants.constants import Backend
-
-        logger = logging.getLogger(__name__)
-
-        # Extract preserved state
-        zarr_config = state.pop('_zarr_config', None)
-        plate_path = state.pop('_plate_path', None)
-        has_virtual_workspace = state.pop('_has_virtual_workspace', False)
-        has_bioformats = state.pop('_has_bioformats', False)
-        picklable_backends = state.pop('_picklable_backends', {})
-
-        # Restore all other attributes
-        self.__dict__.update(state)
-
-        # Ensure worker's registry is initialized
-        ensure_storage_registry()
-
-        # Override zarr backend with preserved config (same as orchestrator does)
-        if zarr_config is not None:
-            zarr_backend_with_config = ZarrStorageBackend(zarr_config)
-            global_storage_registry[Backend.ZARR.value] = zarr_backend_with_config
-
-        # Recreate virtual_workspace backend if it was registered in main process
-        if has_virtual_workspace and plate_path is not None:
-            try:
-                from polystore.virtual_workspace import VirtualWorkspaceBackend
-            except ImportError:
-                logger.debug("VirtualWorkspaceBackend module not available in worker")
-            else:
-                try:
-                    virtual_backend = VirtualWorkspaceBackend(plate_root=Path(plate_path))
-                    global_storage_registry[Backend.VIRTUAL_WORKSPACE.value] = virtual_backend
-                except (ValueError, TypeError, OSError) as e:
-                    # Expected: Invalid config or missing directory
-                    logger.warning(f"Failed to recreate virtual_workspace backend: {e}")
-                except Exception as e:
-                    # Unexpected: This is a bug
-                    logger.error(f"BUG: Unexpected error recreating virtual_workspace backend: {e}", exc_info=True)
-
-        if has_bioformats and plate_path is not None:
-            try:
-                from polystore.bioformats_storage import BioFormatsStorageBackend
-            except ImportError:
-                logger.debug("BioFormatsStorageBackend module not available in worker")
-            else:
-                global_storage_registry[Backend.BIOFORMATS.value] = BioFormatsStorageBackend(
-                    plate_root=Path(plate_path),
-                )
-
-        # Self-describing backend recreation: dynamically recreate all picklable backends
-        for backend_key, backend_info in picklable_backends.items():
-            try:
-                # Dynamically import the backend class
-                module = importlib.import_module(backend_info['module_name'])
-                backend_class = getattr(module, backend_info['class_name'])
-
-                # Create backend instance
-                backend_instance = backend_class()
-
-                # Restore connection parameters
-                backend_instance.set_connection_params(backend_info['params'])
-
-                # Backend-specific connection logic
-                if backend_info['class_name'] == 'OMEROLocalBackend':
-                    # OMERO requires establishing connection
-                    try:
-                        from omero.gateway import BlitzGateway
-                        password = os.getenv('OMERO_PASSWORD', 'openhcs')
-                        params = backend_info['params']
-                        conn = BlitzGateway(
-                            params['username'],
-                            password,
-                            host=params['host'],
-                            port=params['port']
-                        )
-                        if conn.connect():
-                            backend_instance._initial_conn = conn
-                            global_storage_registry[backend_key] = backend_instance
-                            logger.info(f"✓ Recreated {backend_info['class_name']} in worker (connected to {params['host']}:{params['port']})")
-                        else:
-                            logger.warning(f"Failed to connect {backend_info['class_name']} in worker - backend not registered")
-                    except Exception as e:
-                        logger.warning(f"Failed to establish connection for {backend_info['class_name']}: {e}")
-                else:
-                    # Generic picklable backend - just register it
-                    global_storage_registry[backend_key] = backend_instance
-                    logger.info(f"✓ Recreated {backend_info['class_name']} in worker")
-
-            except (ImportError, AttributeError, KeyError, ValueError, TypeError) as e:
-                # Expected: Module not available, class not found, invalid params
-                logger.warning(f"Failed to recreate backend '{backend_key}' ({backend_info.get('class_name', 'unknown')}): {e}")
-            except Exception as e:
-                # Unexpected: This is a bug
-                logger.error(f"BUG: Unexpected error recreating backend '{backend_key}': {e}", exc_info=True)
-
-        # Create filemanager using worker's local global registry
-        # This ensures the worker uses its own memory backend instance
-        # Use __dict__ directly to bypass frozen check
-        self.__dict__['filemanager'] = FileManager(global_storage_registry)
-
-
-DebugSnapshotFileManagerContext.register(ProcessingContext)
+DebugExecutionContext.register(ProcessingContext)

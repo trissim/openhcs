@@ -10,6 +10,7 @@ from typing import ClassVar, Mapping
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.component_set import ComponentSet
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -18,13 +19,16 @@ from openhcs.core.source_bindings import (
     SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceAssignmentBase,
-    SourceBindingTypedValues,
     SourceFilterClause,
     SourceSelector,
+    normalize_source_binding_values,
 )
 
 
 SOURCE_IMAGE_TYPE_METADATA_FIELD = "OpenHCSImageType"
+SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS = (AllComponents.SITE,)
+
+
 @dataclass(frozen=True, slots=True)
 class ImagePlaneSource:
     """One explicit CellProfiler image-plane source URI embedded in a pipeline."""
@@ -54,11 +58,11 @@ class ImagesRule:
         object.__setattr__(
             self,
             "filters",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "ImagesRule.filters",
                 self.filters,
                 SourceFilterClause,
-            ).normalized(),
+            ),
         )
 
 
@@ -76,6 +80,12 @@ class ImageAssignment(SourceAssignmentBase):
     @property
     def artifact_kind(self) -> ArtifactKind:
         return ArtifactKind.IMAGE
+
+    @property
+    def participates_in_image_stack(self) -> bool:
+        return ImageTypeSourceRole.for_image_type(
+            self.image_type
+        ).participates_in_image_stack
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -107,6 +117,10 @@ class SourceArtifactAssignment(SourceAssignmentBase):
             origin=assignment.origin,
             payload_type=assignment.image_type,
         )
+
+    @property
+    def participates_in_image_stack(self) -> bool:
+        return False
 
 
 class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
@@ -310,6 +324,27 @@ class GroupingPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceImageStackPlan:
+    """Pipeline-level source components that form one logical source image."""
+
+    components: tuple[AllComponents, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "components",
+            ComponentSet.collect(self.components).as_tuple(),
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.components
+
+    def merge(self, other: "SourceImageStackPlan") -> "SourceImageStackPlan":
+        return SourceImageStackPlan((*self.components, *other.components))
+
+
+@dataclass(frozen=True, slots=True)
 class ImportedMetadataJoin:
     """One join key between image metadata and an imported metadata table."""
 
@@ -352,11 +387,11 @@ class ImportedMetadataTable:
         object.__setattr__(
             self,
             "joins",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "ImportedMetadataTable.joins",
                 self.joins,
                 ImportedMetadataJoin,
-            ).normalized(),
+            ),
         )
 
 
@@ -366,6 +401,7 @@ class PipelineImageSchema:
 
     images_rule: ImagesRule | None = None
     image_plane_sources: tuple[ImagePlaneSource, ...] = ()
+    source_image_stack: SourceImageStackPlan = field(default_factory=SourceImageStackPlan)
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = field(
@@ -381,29 +417,35 @@ class PipelineImageSchema:
         object.__setattr__(
             self,
             "image_plane_sources",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "PipelineImageSchema.image_plane_sources",
                 self.image_plane_sources,
                 ImagePlaneSource,
-            ).normalized(),
+            ),
         )
+        if not isinstance(self.source_image_stack, SourceImageStackPlan):
+            raise TypeError(
+                "PipelineImageSchema.source_image_stack must be "
+                "SourceImageStackPlan, got "
+                f"{type(self.source_image_stack).__name__}."
+            )
         object.__setattr__(
             self,
             "metadata_rules",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "PipelineImageSchema.metadata_rules",
                 self.metadata_rules,
                 MetadataExtractionRule,
-            ).normalized(),
+            ),
         )
         object.__setattr__(
             self,
             "imported_metadata_tables",
-            SourceBindingTypedValues(
+            normalize_source_binding_values(
                 "PipelineImageSchema.imported_metadata_tables",
                 self.imported_metadata_tables,
                 ImportedMetadataTable,
-            ).normalized(),
+            ),
         )
         object.__setattr__(
             self,
@@ -443,6 +485,7 @@ class PipelineImageSchema:
         return (
             self.images_rule is None
             and not self.image_plane_sources
+            and self.source_image_stack.is_empty
             and not self.metadata_rules
             and not self.imported_metadata_tables
             and not self.assignments_by_alias
@@ -468,9 +511,43 @@ class PipelineImageSchema:
         if artifact_assignment is not None:
             return artifact_assignment
         image_assignment = self.resolved_assignment_for_alias(alias)
-        if image_assignment is not None:
+        if (
+            image_assignment is not None
+            and not image_assignment.participates_in_image_stack
+        ):
             return SourceArtifactAssignment.from_image_assignment(image_assignment)
         return None
+
+    def source_assignment_for_alias(
+        self,
+        alias: str,
+        kind: ArtifactKind,
+    ) -> SourceAssignmentBase | None:
+        artifact_assignment = self.source_artifact_for_alias(alias)
+        if artifact_assignment is not None:
+            if artifact_assignment.artifact_kind is not kind:
+                raise ValueError(
+                    f"Pipeline source artifact {alias!r} is declared as "
+                    f"{artifact_assignment.artifact_kind.value}, not {kind.value}."
+                )
+            return artifact_assignment
+        if kind is ArtifactKind.IMAGE:
+            return self.resolved_assignment_for_alias(alias)
+        return None
+
+    @property
+    def source_stack_components(self) -> tuple[AllComponents, ...]:
+        """Return source components that must be kept inside one source image."""
+        return self.source_image_stack.components
+
+    @property
+    def loaded_image_aliases(self) -> tuple[str, ...]:
+        """Return aliases for source images loaded into the image set."""
+        return tuple(
+            assignment.alias
+            for assignment in self.assignments_by_alias.values()
+            if assignment.participates_in_image_stack
+        )
 
     @property
     def measurement_source_names(self) -> tuple[str, ...]:
@@ -504,6 +581,7 @@ class PipelineImageSchemaBuilder:
     def __init__(self) -> None:
         self.images_rule: ImagesRule | None = None
         self.image_plane_sources: list[ImagePlaneSource] = []
+        self.source_image_stack = SourceImageStackPlan()
         self.metadata_rules: list[MetadataExtractionRule] = []
         self.imported_metadata_tables: list[ImportedMetadataTable] = []
         self.assignments_by_alias: dict[str, ImageAssignment] = {}
@@ -515,6 +593,7 @@ class PipelineImageSchemaBuilder:
         return PipelineImageSchema(
             images_rule=self.images_rule,
             image_plane_sources=tuple(self.image_plane_sources),
+            source_image_stack=self.source_image_stack,
             metadata_rules=tuple(self.metadata_rules),
             imported_metadata_tables=tuple(self.imported_metadata_tables),
             assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
@@ -532,6 +611,12 @@ class PipelineImageSchemaBuilder:
     def add_image_plane_source(self, source: ImagePlaneSource) -> None:
         if source not in self.image_plane_sources:
             self.image_plane_sources.append(source)
+
+    def declare_source_image_stack(
+        self,
+        stack_plan: SourceImageStackPlan,
+    ) -> None:
+        self.source_image_stack = self.source_image_stack.merge(stack_plan)
 
     def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
         self.imported_metadata_tables.append(table)

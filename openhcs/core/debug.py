@@ -9,7 +9,7 @@ import time
 import traceback
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -20,7 +20,12 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactPlan
 from openhcs.core.function_patterns import CompiledFunctionInvocation
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.core.vfs_protocol import FileManagerLike
 
 
@@ -30,6 +35,10 @@ class DebugEventType(Enum):
     BEFORE_INVOCATION = "before_invocation"
     AFTER_INVOCATION = "after_invocation"
     EXCEPTION = "exception"
+
+    @property
+    def reports_output_artifacts(self) -> bool:
+        return self is not DebugEventType.BEFORE_INVOCATION
 
 
 class DebugCommandType(Enum):
@@ -236,10 +245,7 @@ class DebugJsonCodec:
                 "DebugJsonCodec.dataclass_record requires a dataclass instance, "
                 f"got {type(value).__name__}."
             )
-        return {
-            field_info.name: getattr(value, field_info.name)
-            for field_info in fields(value)
-        }
+        return asdict(value)
 
     @staticmethod
     def dataclass_from_record(dataclass_type: type, record: Mapping[str, Any]):
@@ -248,9 +254,18 @@ class DebugJsonCodec:
                 "DebugJsonCodec.dataclass_from_record requires a dataclass type, "
                 f"got {dataclass_type!r}."
             )
+        missing_fields = tuple(
+            field_info.name
+            for field_info in fields(dataclass_type)
+            if field_info.name not in record
+        )
+        if missing_fields:
+            raise KeyError(
+                f"Debug record missing dataclass fields: {', '.join(missing_fields)}"
+            )
         return dataclass_type(
             **{
-                field_info.name: record.get(field_info.name)
+                field_info.name: record[field_info.name]
                 for field_info in fields(dataclass_type)
             }
         )
@@ -962,7 +977,7 @@ class DebugArtifactHydrationContext:
         cls,
         context: object,
     ) -> "DebugArtifactHydrationContext":
-        if isinstance(context, DebugSnapshotFileManagerContext):
+        if isinstance(context, DebugExecutionContext):
             return cls(filemanager=context.filemanager)
         return cls()
 
@@ -1187,10 +1202,9 @@ class DebugWorkerCommandRequest(DebugSessionRequest):
     def __post_init__(self) -> None:
         DebugSessionRequest.__post_init__(self)
         if not isinstance(self.command_type, DebugCommandType):
-            object.__setattr__(
-                self,
-                "command_type",
-                DebugCommandType(str(self.command_type)),
+            raise TypeError(
+                "DebugWorkerCommandRequest.command_type must be DebugCommandType, "
+                f"got {type(self.command_type).__name__}."
             )
 
 
@@ -1275,32 +1289,51 @@ class DebugEvent(DebugBoundaryState):
     timestamp: float = field(default_factory=time.time)
 
     @classmethod
-    def for_exception(
+    def for_invocation(
         cls,
         *,
+        event_type: DebugEventType,
         cursor: DebugCursor,
         step_name: str,
         callable_name: str | None,
         axis_id: str | None,
-        exception: BaseException,
-        input_artifact_refs: tuple[DebugArtifactRef, ...] = (),
-        output_artifact_refs: tuple[DebugArtifactRef, ...] = (),
-        measurement_refs: tuple[DebugArtifactRef, ...] = (),
-        relationship_refs: tuple[DebugArtifactRef, ...] = (),
+        input_artifacts: DebugArtifactRefProjection,
+        output_artifacts: DebugArtifactRefProjection = DebugArtifactRefProjection(),
+        exception: BaseException | None = None,
+        timing_seconds: float | None = None,
         invocation_parameters: tuple[DebugInvocationParameter, ...] = (),
     ) -> "DebugEvent":
+        if event_type is DebugEventType.EXCEPTION and exception is None:
+            raise ValueError("Exception debug events require an exception.")
+        if event_type is not DebugEventType.EXCEPTION and exception is not None:
+            raise ValueError("Only exception debug events can carry an exception.")
+
+        reported_output_artifacts = (
+            output_artifacts.refs if event_type.reports_output_artifacts else ()
+        )
+        event_ref_projection = (
+            output_artifacts
+            if event_type.reports_output_artifacts
+            else input_artifacts
+        )
+        exception_text = None
+        traceback_text = None
+        if exception is not None:
+            exception_text = f"{type(exception).__name__}: {exception}"
+            traceback_text = traceback.format_exc()
         return cls(
-            event_type=DebugEventType.EXCEPTION,
+            event_type=event_type,
             cursor=cursor,
             step_name=step_name,
             callable_name=callable_name,
             axis_id=axis_id,
-            input_artifact_refs=input_artifact_refs,
-            output_artifact_refs=output_artifact_refs,
-            measurement_refs=measurement_refs,
-            relationship_refs=relationship_refs,
-            exception=f"{type(exception).__name__}: {exception}",
-            traceback_text=traceback.format_exc(),
+            input_artifact_refs=input_artifacts.refs,
+            output_artifact_refs=reported_output_artifacts,
+            measurement_refs=event_ref_projection.measurement_refs,
+            relationship_refs=event_ref_projection.relationship_refs,
+            timing_seconds=timing_seconds,
+            exception=exception_text,
+            traceback_text=traceback_text,
             invocation_parameters=invocation_parameters,
         )
 
@@ -1419,11 +1452,17 @@ class DebugProgressEventRequest(DebugSessionRequest):
         )
 
     def to_progress_event(self) -> ProgressEvent:
+        if self.debug_event.axis_id is None:
+            raise ValueError(
+                "DebugProgressEventRequest requires debug_event.axis_id."
+            )
         return ProgressEvent(
-            execution_id=self.execution_id,
-            plate_id=self.plate_id,
-            axis_id=self.debug_event.axis_id or "",
-            step_name=self.debug_event.step_name,
+            identity=ProgressIdentity(
+                execution_id=self.execution_id,
+                plate_id=self.plate_id,
+                axis_id=self.debug_event.axis_id,
+                step_name=self.debug_event.step_name,
+            ),
             phase=ProgressPhase.PATTERN_GROUP,
             status=DebugProgressStatus.for_event_type(self.debug_event.event_type),
             percent=self.percent,
@@ -1601,7 +1640,7 @@ class DebugSession:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class DebugExecutionConfig:
     """Serializable debug execution settings carried by existing run requests."""
 
@@ -1621,23 +1660,13 @@ class DebugExecutionConfig:
         if not self.debug_session_id:
             raise ValueError("DebugExecutionConfig.debug_session_id cannot be empty.")
         if not isinstance(self.command_type, DebugCommandType):
-            object.__setattr__(
-                self,
-                "command_type",
-                DebugCommandType(str(self.command_type)),
-            )
-        object.__setattr__(
-            self,
-            "pause_step_indices",
-            tuple(int(index) for index in self.pause_step_indices),
+            self.command_type = DebugCommandType(str(self.command_type))
+        self.pause_step_indices = tuple(
+            int(index) for index in self.pause_step_indices
         )
         if not isinstance(self.replay_mode, DebugReplayMode):
-            object.__setattr__(
-                self,
-                "replay_mode",
-                DebugReplayMode(str(self.replay_mode)),
-            )
-        object.__setattr__(self, "start_step_index", int(self.start_step_index))
+            self.replay_mode = DebugReplayMode(str(self.replay_mode))
+        self.start_step_index = int(self.start_step_index)
         if self.start_step_index < 0:
             raise ValueError("start_step_index cannot be negative.")
 
@@ -1831,8 +1860,9 @@ class StepDebugStepStopStrategy(DebugStepStopStrategy):
         step_name: str,
     ) -> bool:
         del step_name
-        start_step_index = 0 if self.config is None else self.config.start_step_index
-        return step_index == start_step_index
+        if self.config is None:
+            raise RuntimeError("Step debug strategy requires a config.")
+        return step_index == self.config.start_step_index
 
 
 class RunToPauseDebugStepStopStrategy(DebugStepStopStrategy):
@@ -1922,26 +1952,39 @@ class DebugExecutionPolicy(ABC, metaclass=AutoRegisterMeta):
         """Return the axis IDs this execution policy should compile/run."""
 
 
-class DebugSnapshotFileManagerContext(ABC):
-    """Execution context capable of writing debug snapshots through FileManager."""
+class DebugExecutionContext(ABC):
+    """Execution context owned by a running pipeline worker."""
 
     @property
     @abstractmethod
     def filemanager(self) -> FileManagerLike:
         """Return the FileManager used by the active execution context."""
 
+    @property
+    @abstractmethod
+    def debug_event_sink(self) -> "DebugEventSink":
+        """Return the debug sink installed for the active execution."""
+
+    @abstractmethod
+    def install_debug_event_sink(self, debug_event_sink: "DebugEventSink") -> None:
+        """Install the debug sink selected for this execution context."""
+
 
 @dataclass(frozen=True, slots=True)
 class DebugSinkInstallRequest:
     """Execution identity needed to install one worker debug sink."""
 
-    context: object
+    context: DebugExecutionContext
     execution_id: str
     plate_id: str
     worker_slot: str
     owned_wells: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.context, DebugExecutionContext):
+            raise TypeError(
+                "DebugSinkInstallRequest.context must implement DebugExecutionContext."
+            )
         for field_name, value in (
             ("execution_id", self.execution_id),
             ("plate_id", self.plate_id),
@@ -2014,11 +2057,7 @@ class ProgressDebugExecutionPolicy(DebugExecutionPolicy):
                 invocation_strategy=invocation_strategy,
                 pause_controller=pause_controller,
             )
-        object.__setattr__(
-            request.context,
-            "debug_event_sink",
-            debug_event_sink,
-        )
+        request.context.install_debug_event_sink(debug_event_sink)
 
     def step_stop_strategy(self) -> DebugStepStopStrategy:
         return DebugStepStopStrategy.for_config(self.config)
@@ -2067,17 +2106,16 @@ class ProgressDebugExecutionPolicy(DebugExecutionPolicy):
             return [self.config.selected_source_group]
         return [] if not available_axis_ids else [available_axis_ids[0]]
 
-    def snapshot_store_for_context(self, context: object) -> "DebugSnapshotStore":
+    def snapshot_store_for_context(
+        self,
+        context: DebugExecutionContext,
+    ) -> "DebugSnapshotStore":
         if self.config.snapshot_store_ref is None:
             raise RuntimeError("snapshot_store_ref is required for debug snapshot storage.")
         if self.config.snapshot_store_backend is None:
             return LocalDebugSnapshotStore(
                 root_path=Path(self.config.snapshot_store_ref),
                 debug_session_id=self.config.debug_session_id,
-            )
-        if not isinstance(context, DebugSnapshotFileManagerContext):
-            raise RuntimeError(
-                "snapshot_store_backend requires ProcessingContext.filemanager."
             )
         return FileManagerDebugSnapshotStore(
             filemanager=context.filemanager,
@@ -2261,7 +2299,7 @@ class LocalSnapshotProgressDebugEventSink(DebugEventSink):
         return self.invocation_strategy.should_stop_after_invocation(event)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class DebugStoreManifest:
     """Serializable manifest for local filesystem/VFS-backed debug snapshots."""
 
@@ -2271,11 +2309,7 @@ class DebugStoreManifest:
     )
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "snapshots",
-            MappingProxyType(dict(self.snapshots)),
-        )
+        self.snapshots = MappingProxyType(dict(self.snapshots))
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -2326,7 +2360,7 @@ class DebugSnapshotStore(ABC, metaclass=AutoRegisterMeta):
         """Persist the current manifest and return the concrete storage reference."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class LocalDebugSnapshotStore(DebugSnapshotStore):
     """Local filesystem-backed debug snapshot metadata store."""
 
@@ -2336,7 +2370,7 @@ class LocalDebugSnapshotStore(DebugSnapshotStore):
     debug_session_id: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "root_path", Path(self.root_path))
+        self.root_path = Path(self.root_path)
 
     @classmethod
     def for_session(
@@ -2473,11 +2507,12 @@ class FileManagerDebugSnapshotStore(DebugSnapshotStore):
 NO_OP_DEBUG_EVENT_SINK = NoOpDebugEventSink()
 
 
-def debug_event_sink_from_context(context: object) -> DebugEventSink:
-    try:
-        sink = context.debug_event_sink  # type: ignore[attr-defined]
-    except AttributeError:
-        sink = NO_OP_DEBUG_EVENT_SINK
+def debug_event_sink_from_context(context: DebugExecutionContext) -> DebugEventSink:
+    if not isinstance(context, DebugExecutionContext):
+        raise TypeError(
+            "Function runtime context must implement DebugExecutionContext."
+        )
+    sink = context.debug_event_sink
     if not isinstance(sink, DebugEventSink):
         raise TypeError(
             "ProcessingContext.debug_event_sink must be DebugEventSink, "

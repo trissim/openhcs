@@ -1,18 +1,35 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
-from openhcs.core.steps.function_runtime import (
+from openhcs.core.steps.function_output_manifest import StepOutputManifestStore
+from openhcs.core.aligned_image_payload import AlignedImageSliceContext
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind
+from openhcs.core.steps.function_output_identity import (
+    FunctionOutputIdentity,
+    FunctionOutputIdentityAuthority,
+    FunctionOutputPathAuthority,
+    FunctionOutputPathRequest,
+)
+from openhcs.core.steps.function_output_manifest import ProducedOutputSemantics
+from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
     VirtualWorkspaceSourceProjection,
-    _stack_payload_context,
 )
+from openhcs.core.aligned_image_payload import (
+    stack_image_payload_context,
+)
+from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
+    RuntimeImagePayloadContext,
+    SourceImageProvenancePlanes,
     image_payload_data,
     image_payload_metadata,
-    image_payload_with_context,
 )
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
 def test_virtual_workspace_pipeline_start_files_preserve_virtual_identity(tmp_path: Path) -> None:
@@ -48,24 +65,20 @@ def test_virtual_workspace_pipeline_start_files_preserve_virtual_identity(tmp_pa
 
 
 def test_stack_payload_context_promotes_single_channel_slice_metadata() -> None:
-    first = image_payload_with_context(
+    first = RuntimeImagePayloadContext(
         np.zeros((4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            channel_source_paths=("/input/A01_s001_w1_z001_t001.tif",),
-            channel_source_component_metadata=(
+            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s001_w1_z001_t001.tif",), component_metadata = (
                 {"well": "A01", "site": 1, "channel": 1},
-            ),
-        ),
-    )
-    second = image_payload_with_context(
+            ))),
+    mask = None).payload()
+    second = RuntimeImagePayloadContext(
         np.ones((4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            channel_source_paths=("/input/A01_s002_w1_z001_t001.tif",),
-            channel_source_component_metadata=(
+            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s002_w1_z001_t001.tif",), component_metadata = (
                 {"well": "A01", "site": 2, "channel": 1},
-            ),
-        ),
-    )
+            ))),
+    mask = None).payload()
     stack = np.stack(
         (
             image_payload_data(first),
@@ -73,14 +86,539 @@ def test_stack_payload_context_promotes_single_channel_slice_metadata() -> None:
         )
     )
 
-    payload = _stack_payload_context((first, second), stack)
+    payload = stack_image_payload_context((first, second), stack)
     metadata = image_payload_metadata(payload)
 
-    assert metadata.channel_source_paths == (
+    assert metadata.source_image_provenance_planes.paths == (
         "/input/A01_s001_w1_z001_t001.tif",
         "/input/A01_s002_w1_z001_t001.tif",
     )
-    assert tuple(dict(item) for item in metadata.channel_source_component_metadata) == (
+    assert tuple(dict(item) for item in metadata.source_image_provenance_planes.component_metadata) == (
         {"well": "A01", "site": 1, "channel": 1},
         {"well": "A01", "site": 2, "channel": 1},
     )
+
+
+def test_step_output_manifest_scopes_previous_step_inputs(tmp_path: Path) -> None:
+    output_dir = tmp_path / "images"
+    producer = SimpleNamespace(
+        step_scope_id="enhance",
+        step_name="Enhance",
+        pipeline_position=1,
+        axis_id="A14",
+        output_dir=output_dir,
+    )
+    consumer = SimpleNamespace(
+        axis_id="A14",
+        main_input_dependency=StepInputDependency.step_output(
+            source_step_index=3,
+            source_step_scope_id="enhance",
+        ),
+    )
+    store = StepOutputManifestStore()
+
+    store.begin_step(producer)
+    store.record_outputs(
+        producer,
+        [
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A14_s001_w1_z001_t001.tif",
+                FunctionOutputIdentity(
+                    component_values={
+                        "well": "A14",
+                        "site": 1,
+                        "channel": 1,
+                        "z_index": 1,
+                        "timepoint": 1,
+                    },
+                    extension=".tif",
+                    source="test",
+                ),
+            )
+        ],
+    )
+    store.begin_step(producer)
+    store.record_outputs(
+        producer,
+        [
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A14_s001_w3_z001_t001.tif",
+                FunctionOutputIdentity(
+                    component_values={
+                        "well": "A14",
+                        "site": 1,
+                        "channel": 3,
+                        "z_index": 1,
+                        "timepoint": 1,
+                    },
+                    extension=".tif",
+                    source="test",
+                ),
+            ),
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A14_s002_w3_z001_t001.tif",
+                FunctionOutputIdentity(
+                    component_values={
+                        "well": "A14",
+                        "site": 2,
+                        "channel": 3,
+                        "z_index": 1,
+                        "timepoint": 1,
+                    },
+                    extension=".tif",
+                    source="test",
+                ),
+            ),
+        ],
+    )
+
+    assert store.producer_paths_for(consumer) == (
+        "A14_s001_w3_z001_t001.tif",
+        "A14_s002_w3_z001_t001.tif",
+    )
+
+
+def test_step_output_manifest_filters_declared_artifact_output_identity(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "images"
+    producer = SimpleNamespace(
+        step_scope_id="correct_illumination",
+        step_name="CorrectIlluminationApply",
+        pipeline_position=1,
+        axis_id="A01",
+        output_dir=output_dir,
+    )
+    consumer = SimpleNamespace(
+        axis_id="A01",
+        main_input_dependency=StepInputDependency.step_output(
+            source_step_index=1,
+            source_step_scope_id="correct_illumination",
+        ),
+        artifact_inputs={
+            "CorrDNA": ArtifactInputPlan(
+                name="CorrDNA",
+                path="CorrDNA",
+                kind=ArtifactKind.IMAGE,
+                source_step_id=1,
+            )
+        },
+    )
+    store = StepOutputManifestStore()
+
+    store.begin_step(producer)
+    store.record_outputs(
+        producer,
+        (
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A01_s001_w1_z001_t001.tif",
+                FunctionOutputIdentity(
+                    component_values={
+                        "well": "A01",
+                        "site": 1,
+                        "channel": 1,
+                    },
+                    extension=".tif",
+                    source="test",
+                ),
+                output_context=AlignedImageSliceContext.main_flow(
+                    output_key="CorrProtein",
+                    artifact_kind=ArtifactKind.IMAGE.value,
+                ),
+            ),
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A01_s001_w2_z001_t001.tif",
+                FunctionOutputIdentity(
+                    component_values={
+                        "well": "A01",
+                        "site": 1,
+                        "channel": 2,
+                    },
+                    extension=".tif",
+                    source="test",
+                ),
+                output_context=AlignedImageSliceContext.main_flow(
+                    output_key="CorrDNA",
+                    artifact_kind=ArtifactKind.IMAGE.value,
+                ),
+            ),
+        ),
+    )
+
+    assert store.filter_to_producer_paths(
+        consumer,
+        [
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        ],
+        SourceSchemaFilenameParser(),
+    ) == ["A01_s001_w2_z001_t001.tif"]
+
+
+def test_step_output_manifest_preserves_anonymous_side_effect_main_flow(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "images"
+    producer = SimpleNamespace(
+        step_scope_id="identify_primary",
+        step_name="IdentifyPrimaryObjects",
+        pipeline_position=2,
+        axis_id="A01",
+        output_dir=output_dir,
+    )
+    consumer = SimpleNamespace(
+        axis_id="A01",
+        main_input_dependency=StepInputDependency.step_output(
+            source_step_index=2,
+            source_step_scope_id="identify_primary",
+        ),
+        artifact_inputs={
+            "Nuclei": ArtifactInputPlan(
+                name="Nuclei",
+                path="Nuclei",
+                kind=ArtifactKind.OBJECT_LABELS,
+                source_step_id=2,
+            )
+        },
+    )
+    store = StepOutputManifestStore()
+
+    store.begin_step(producer)
+    store.record_outputs(
+        producer,
+        (
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A01_s001_w2_z001_t001.tif",
+                FunctionOutputIdentity(
+                    component_values={
+                        "well": "A01",
+                        "site": 1,
+                        "channel": 2,
+                    },
+                    extension=".tif",
+                    source="test",
+                ),
+            ),
+        ),
+    )
+
+    assert store.filter_to_producer_paths(
+        consumer,
+        ["A01_s001_w2_z001_t001.tif"],
+        SourceSchemaFilenameParser(),
+    ) == ["A01_s001_w2_z001_t001.tif"]
+
+
+def test_step_output_manifest_accepts_source_anchor_for_qualified_output(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "images"
+    producer = SimpleNamespace(
+        step_scope_id="correct_illumination_apply",
+        step_name="CorrectIlluminationApply",
+        pipeline_position=4,
+        axis_id="A01",
+        output_dir=output_dir,
+    )
+    consumer = SimpleNamespace(
+        axis_id="A01",
+        main_input_dependency=StepInputDependency.step_output(
+            source_step_index=4,
+            source_step_scope_id="correct_illumination_apply",
+        ),
+        artifact_inputs={
+            "CorrBlue": ArtifactInputPlan(
+                name="CorrBlue",
+                path="CorrBlue",
+                kind=ArtifactKind.IMAGE,
+                source_step_id=4,
+            )
+        },
+    )
+    store = StepOutputManifestStore()
+    identity = FunctionOutputIdentity(
+        component_values={
+            "well": "A01",
+            "site": 1,
+            "channel": 1,
+            "z_index": 1,
+            "timepoint": 1,
+        },
+        extension=".jpg",
+        source="test",
+    ).with_filename_qualifier("CorrBlue")
+
+    store.begin_step(producer)
+    store.record_outputs(
+        producer,
+        (
+            ProducedOutputSemantics.from_output(
+                producer,
+                output_dir / "A01_s001_w1_z001_t001_CorrBlue.jpg",
+                identity,
+                output_context=AlignedImageSliceContext.main_flow(
+                    output_key="CorrBlue",
+                    artifact_kind=ArtifactKind.IMAGE.value,
+                ),
+            ),
+        ),
+    )
+
+    assert store.filter_to_producer_paths(
+        consumer,
+        ["A01_s001_w1_z001_t001.jpg"],
+        SourceSchemaFilenameParser(),
+    ) == ["A01_s001_w1_z001_t001.jpg"]
+
+
+def test_function_output_path_uses_payload_identity_over_input_carrier(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/source/plate1_A14_site2_Ch3.tif",
+            source_component_metadata={
+                "well": "A14",
+                "site": "2",
+                "channel": "3",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    output_path = FunctionOutputPathAuthority.output_path(
+        FunctionOutputPathRequest(
+            parser=SourceSchemaFilenameParser(),
+            output_dir=tmp_path,
+            output_payload=payload,
+            input_path="A14_s001_w1_z001_t001.tif",
+        )
+    )
+
+    assert output_path.name == "A14_s002_w3_z001_t001.tif"
+
+
+def test_function_output_path_uses_payload_identity_without_input_path(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/source/plate1_A14_site1_Ch5.tif",
+            source_component_metadata={
+                "well": "A14",
+                "site": "1",
+                "channel": "5",
+                "z_index": "1",
+                "timepoint": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    output_path = FunctionOutputPathAuthority.output_path(
+        FunctionOutputPathRequest(
+            parser=SourceSchemaFilenameParser(),
+            output_dir=tmp_path,
+            output_payload=payload,
+            input_path=None,
+        )
+    )
+
+    assert output_path.name == "A14_s001_w5_z001_t001.tif"
+
+
+def test_function_output_path_uses_input_identity_for_multi_plane_carrier(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A14",
+                "site": "1",
+                "channel": "1",
+                "timepoint": "1",
+                "extension": ".tif",
+            },
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A14_s001_w1_z001_t001.tif",
+                    "/source/A14_s001_w2_z001_t001.tif",
+                ),
+                component_metadata=(
+                    {"well": "A14", "site": "1", "channel": "1"},
+                    {"well": "A14", "site": "1", "channel": "2"},
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+
+    output_path = FunctionOutputPathAuthority.output_path(
+        FunctionOutputPathRequest(
+            parser=SourceSchemaFilenameParser(),
+            output_dir=tmp_path,
+            output_payload=payload,
+            input_path="A14_s001_w1_z001_t001.tif",
+        )
+    )
+
+    assert output_path.name == "A14_s001_w1_z001_t001.tif"
+
+
+def test_function_output_path_rejects_multi_plane_carrier_without_input_path(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A14_s001_w1_z001_t001.tif",
+                    "/source/A14_s001_w2_z001_t001.tif",
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+
+    with pytest.raises(ValueError, match="multi-plane source provenance"):
+        FunctionOutputPathAuthority.output_path(
+            FunctionOutputPathRequest(
+                parser=SourceSchemaFilenameParser(),
+                output_dir=tmp_path,
+                output_payload=payload,
+                input_path=None,
+            )
+        )
+
+
+def test_function_output_path_uses_declared_source_stack_identity(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A14_s001_w1_z001_t001.tif",
+                    "/source/A14_s001_w1_z002_t001.tif",
+                ),
+                component_metadata=(
+                    {
+                        "well": "A14",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "1",
+                        "timepoint": "1",
+                    },
+                    {
+                        "well": "A14",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "2",
+                        "timepoint": "1",
+                    },
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+    request = FunctionOutputPathRequest(
+        parser=SourceSchemaFilenameParser(),
+        output_dir=tmp_path,
+        output_payload=payload,
+        input_path=None,
+        source_identity_stack_axes=frozenset({"z_index"}),
+    )
+
+    identity = FunctionOutputIdentityAuthority.identity(request)
+    output_path = FunctionOutputPathAuthority.output_path_for_identity(
+        request,
+        identity,
+    )
+
+    assert output_path.name == "A14_s001_w1_z001_t001.tif"
+    assert identity.component_values == {
+        "well": "A14",
+        "site": 1,
+        "channel": 1,
+        "timepoint": 1,
+    }
+    assert identity.filename_component_values is not None
+    assert identity.filename_component_values["z_index"] == 1
+
+
+def test_declared_main_flow_output_context_qualifies_output_filename(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/source/A01_s001_w1_z001_t001.jpg",
+        ),
+        mask=None,
+    ).payload()
+    request = FunctionOutputPathRequest(
+        parser=SourceSchemaFilenameParser(),
+        output_dir=tmp_path,
+        output_payload=payload,
+        input_path="A01_s001_w1_z001_t001.jpg",
+    )
+    identity = FunctionOutputIdentityAuthority.identity(request)
+
+    red_path = FunctionOutputPathAuthority.output_path_for_identity(
+        request,
+        identity.with_filename_qualifier("CorrRed"),
+    )
+    green_path = FunctionOutputPathAuthority.output_path_for_identity(
+        request,
+        identity.with_filename_qualifier("CorrGreen"),
+    )
+
+    assert red_path.name == "A01_s001_w1_z001_t001_CorrRed.jpg"
+    assert green_path.name == "A01_s001_w1_z001_t001_CorrGreen.jpg"
+    assert SourceSchemaFilenameParser().parse_filename(red_path.name) == {
+        "well": "A01",
+        "site": 1,
+        "channel": 1,
+        "z_index": 1,
+        "timepoint": 1,
+        "extension": ".jpg",
+    }
+
+
+def test_function_output_path_rejects_source_stack_variation_outside_declared_axes(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A14_s001_w1_z001_t001.tif",
+                    "/source/A14_s001_w2_z002_t001.tif",
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+
+    with pytest.raises(ValueError, match="varies outside declared"):
+        FunctionOutputIdentityAuthority.identity(
+            FunctionOutputPathRequest(
+                parser=SourceSchemaFilenameParser(),
+                output_dir=tmp_path,
+                output_payload=payload,
+                input_path=None,
+                source_identity_stack_axes=frozenset({"z_index"}),
+            )
+        )

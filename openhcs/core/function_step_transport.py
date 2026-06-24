@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from types import FunctionType, ModuleType
-from typing import Any, Callable, Mapping
+from types import ModuleType
+from typing import Any, Mapping
 
-from openhcs.core.callable_contract import (
-    CallableContract,
-    PROCESSING_PREPARE_ATTR,
-    RAW_PROCESSING_FUNCTION_ATTR,
-)
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
     CompiledFunctionPattern,
 )
-from openhcs.core.pipeline.compiler import FunctionReference
+from openhcs.core.function_reference import (
+    FunctionReference,
+    FunctionReferenceTransportAuthority,
+)
 from openhcs.core.steps.function_step import FunctionStep
 
 
@@ -77,7 +76,9 @@ class FunctionStepTransportAuthority:
                 return func_spec
             return (normalized_func, *func_spec[1:])
         if isinstance(func_spec, ModuleType):
-            resolved = cls.resolve_module_callable(func_spec)
+            resolved = FunctionReferenceTransportAuthority.cellprofiler_catalog_module(
+                func_spec
+            )
             if resolved is not None:
                 return resolved
             raise TypeError(
@@ -85,7 +86,9 @@ class FunctionStepTransportAuthority:
                 f"{func_spec.__name__}. Reload or edit the step to select a function."
             )
         if callable(func_spec):
-            resolved = cls.resolve_callable(func_spec)
+            resolved = FunctionReferenceTransportAuthority.cellprofiler_catalog_function(
+                func_spec
+            )
             if resolved is not None:
                 return resolved
         return func_spec
@@ -95,26 +98,21 @@ class FunctionStepTransportAuthority:
         cls,
         reference: FunctionReference,
     ) -> FunctionReference:
-        preserved_attrs = reference.preserved_attrs
-        normalized_raw = (
-            cls.normalize_function_spec(preserved_attrs[RAW_PROCESSING_FUNCTION_ATTR])
-            if RAW_PROCESSING_FUNCTION_ATTR in preserved_attrs
-            else None
-        )
-        raw_is_normalized = (
-            RAW_PROCESSING_FUNCTION_ATTR not in preserved_attrs
-            or normalized_raw is preserved_attrs[RAW_PROCESSING_FUNCTION_ATTR]
-        )
+        raw_processing_function = reference.metadata.raw_processing_function
+        if raw_processing_function is None:
+            normalized_raw = None
+        else:
+            normalized_raw = cls.normalize_function_spec(raw_processing_function)
+        raw_is_normalized = normalized_raw is raw_processing_function
         if (
-            PROCESSING_PREPARE_ATTR not in preserved_attrs
+            reference.metadata.prepare is None
             and raw_is_normalized
         ):
             return reference
-        preserved_attrs = dict(reference.preserved_attrs)
-        preserved_attrs.pop(PROCESSING_PREPARE_ATTR, None)
-        if normalized_raw is not None:
-            preserved_attrs[RAW_PROCESSING_FUNCTION_ATTR] = normalized_raw
-        return replace(reference, preserved_attrs=preserved_attrs)
+        metadata = reference.metadata.without_prepare()
+        if not raw_is_normalized:
+            metadata = metadata.with_raw_processing_function(normalized_raw)
+        return replace(reference, metadata=metadata)
 
     @classmethod
     def normalize_compiled_pattern(
@@ -176,39 +174,11 @@ class FunctionStepTransportAuthority:
             and normalized_raw is contract.raw_processing_function
         ):
             return contract
+        metadata = contract.metadata
+        if normalized_raw is not contract.raw_processing_function:
+            metadata = metadata.with_raw_processing_function(normalized_raw)
         return replace(
             contract,
             func=normalized_func,
-            raw_processing_function=normalized_raw,
+            metadata=metadata,
         )
-
-    @classmethod
-    def resolve_module_callable(cls, module: ModuleType) -> Callable | None:
-        module_name = module.__name__
-        cellprofiler_prefix = "openhcs.processing.backends.cellprofiler."
-        if not module_name.startswith(cellprofiler_prefix):
-            return None
-        function_name = module_name.removeprefix(cellprofiler_prefix)
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
-
-        try:
-            return CellProfilerFunctionCatalog.get_function(function_name)
-        except KeyError:
-            return None
-
-    @classmethod
-    def resolve_callable(cls, func: Callable) -> Callable | None:
-        if not isinstance(func, FunctionType):
-            return None
-        cellprofiler_module = "openhcs.processing.backends.cellprofiler"
-        if (
-            func.__module__ != cellprofiler_module
-            and not func.__module__.startswith(f"{cellprofiler_module}.")
-        ):
-            return None
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
-
-        try:
-            return CellProfilerFunctionCatalog.get_function(func.__name__)
-        except KeyError:
-            return None

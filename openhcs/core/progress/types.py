@@ -1,9 +1,9 @@
 """Immutable progress types following OpenHCS patterns."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Mapping, Optional, List, Protocol
 import time
 from zmqruntime.messages import TaskProgress
 
@@ -228,19 +228,54 @@ class ProgressIdentity:
             step_name=str(data["step_name"]),
         )
 
-    def replace(
-        self,
-        *,
-        execution_id: str | None = None,
-        plate_id: str | None = None,
-        axis_id: str | None = None,
-        step_name: str | None = None,
-    ) -> "ProgressIdentity":
+
+class ProgressQueue(Protocol):
+    """Queue contract for serialized progress updates."""
+
+    def put(self, progress_update: dict) -> None:
+        """Enqueue a serialized progress update."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressExecutionContext:
+    """Execution identity carried with progress queue setup."""
+
+    execution_id: str
+    plate_id: str
+
+    @classmethod
+    def from_transport_fields(
+        cls,
+        data: Mapping[str, object],
+    ) -> "ProgressExecutionContext":
+        return cls(
+            execution_id=str(data["execution_id"]),
+            plate_id=str(data["plate_id"]),
+        )
+
+    @classmethod
+    def from_value(
+        cls,
+        value: "ProgressExecutionContext | Mapping[str, object]",
+    ) -> "ProgressExecutionContext":
+        if isinstance(value, cls):
+            return value
+        return cls.from_transport_fields(value)
+
+    def to_transport_fields(self) -> dict[str, str]:
+        return {
+            "execution_id": self.execution_id,
+            "plate_id": self.plate_id,
+        }
+
+    def identity_for_event(self, *, axis_id: str, step_name: str) -> ProgressIdentity:
+        """Return a progress-event identity scoped by this execution."""
+
         return ProgressIdentity(
-            execution_id=self.execution_id if execution_id is None else str(execution_id),
-            plate_id=self.plate_id if plate_id is None else str(plate_id),
-            axis_id=self.axis_id if axis_id is None else str(axis_id),
-            step_name=self.step_name if step_name is None else str(step_name),
+            execution_id=self.execution_id,
+            plate_id=self.plate_id,
+            axis_id=axis_id,
+            step_name=step_name,
         )
 
 
@@ -288,7 +323,7 @@ class ProgressEventPayload:
         )
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class ProgressEvent:
     """Immutable progress event - single source of truth.
 
@@ -327,92 +362,7 @@ class ProgressEvent:
     context: Optional[Dict[str, Any]] = None  # Generic context for arbitrary data
     step_names: Optional[List[str]] = None  # Step names for the pipeline
 
-    def __init__(
-        self,
-        *,
-        phase: ProgressPhase,
-        status: ProgressStatus,
-        percent: float,
-        completed: int,
-        total: int,
-        timestamp: float,
-        pid: int,
-        identity: ProgressIdentity | None = None,
-        execution_id: str | None = None,
-        plate_id: str | None = None,
-        axis_id: str | None = None,
-        step_name: str | None = None,
-        error: Optional[str] = None,
-        traceback: Optional[str] = None,
-        total_wells: Optional[List[str]] = None,
-        worker_assignments: Optional[Dict[str, List[str]]] = None,
-        worker_slot: Optional[str] = None,
-        owned_wells: Optional[List[str]] = None,
-        message: Optional[str] = None,
-        component: Optional[str] = None,
-        pattern: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        step_names: Optional[List[str]] = None,
-    ) -> None:
-        if identity is None:
-            missing = [
-                name
-                for name, value in (
-                    ("execution_id", execution_id),
-                    ("plate_id", plate_id),
-                    ("axis_id", axis_id),
-                    ("step_name", step_name),
-                )
-                if value is None
-            ]
-            if missing:
-                raise ValueError(
-                    "ProgressEvent requires identity or identity fields; "
-                    f"missing {missing}"
-                )
-            identity = ProgressIdentity(
-                execution_id=str(execution_id),
-                plate_id=str(plate_id),
-                axis_id=str(axis_id),
-                step_name=str(step_name),
-            )
-        else:
-            overrides = {
-                "execution_id": execution_id,
-                "plate_id": plate_id,
-                "axis_id": axis_id,
-                "step_name": step_name,
-            }
-            mismatches = [
-                name
-                for name, value in overrides.items()
-                if value is not None and str(value) != getattr(identity, name)
-            ]
-            if mismatches:
-                raise ValueError(
-                    "ProgressEvent identity fields conflict with identity: "
-                    f"{mismatches}"
-                )
-
-        object.__setattr__(self, "identity", identity)
-        object.__setattr__(self, "phase", phase)
-        object.__setattr__(self, "status", status)
-        object.__setattr__(self, "percent", percent)
-        object.__setattr__(self, "completed", completed)
-        object.__setattr__(self, "total", total)
-        object.__setattr__(self, "timestamp", timestamp)
-        object.__setattr__(self, "pid", pid)
-        object.__setattr__(self, "error", error)
-        object.__setattr__(self, "traceback", traceback)
-        object.__setattr__(self, "total_wells", total_wells)
-        object.__setattr__(self, "worker_assignments", worker_assignments)
-        object.__setattr__(self, "worker_slot", worker_slot)
-        object.__setattr__(self, "owned_wells", owned_wells)
-        object.__setattr__(self, "message", message)
-        object.__setattr__(self, "component", component)
-        object.__setattr__(self, "pattern", pattern)
-        object.__setattr__(self, "context", context)
-        object.__setattr__(self, "step_names", step_names)
+    def __post_init__(self) -> None:
         self._validate()
 
     @property
@@ -575,41 +525,18 @@ class ProgressEvent:
 
         return result
 
-    def replace(self, **kwargs) -> "ProgressEvent":
-        """Create a copy with replaced fields (immutable update pattern).
-
-        Returns:
-            New ProgressEvent with specified fields replaced
-        """
-        values = {
-            "identity": self.identity,
-            "phase": self.phase,
-            "status": self.status,
-            "percent": self.percent,
-            "completed": self.completed,
-            "total": self.total,
-            "timestamp": self.timestamp,
-            "pid": self.pid,
-            "error": self.error,
-            "traceback": self.traceback,
-            "total_wells": self.total_wells,
-            "worker_assignments": self.worker_assignments,
-            "worker_slot": self.worker_slot,
-            "owned_wells": self.owned_wells,
-            "message": self.message,
-            "component": self.component,
-            "pattern": self.pattern,
-            "context": self.context,
-            "step_names": self.step_names,
-        }
-        values["identity"] = self.identity.replace(
-            execution_id=kwargs.pop("execution_id", None),
-            plate_id=kwargs.pop("plate_id", None),
-            axis_id=kwargs.pop("axis_id", None),
-            step_name=kwargs.pop("step_name", None),
+    def with_worker_topology(
+        self,
+        *,
+        worker_assignments: Dict[str, List[str]],
+        total_wells: List[str],
+    ) -> "ProgressEvent":
+        """Return this event with execution topology attached."""
+        return dataclass_replace(
+            self,
+            worker_assignments=worker_assignments,
+            total_wells=total_wells,
         )
-        values.update(kwargs)
-        return ProgressEvent(**values)
 
     def is_complete(self) -> bool:
         """Check if this event represents a completed/terminal state.

@@ -28,6 +28,7 @@ class ArtifactKindOptions:
     """Optional semantic flags attached to one artifact kind."""
 
     uses_label_representation_payload_shape: bool = False
+    materialization_uses_source_identity_filename: bool = False
     participates_in_measurement_source_names: bool = False
     participates_in_main_flow_output: bool = False
     participates_in_axis_plane_identity: bool = False
@@ -64,6 +65,9 @@ class ArtifactKind(str, Enum):
         obj.uses_label_representation_payload_shape = (
             options.uses_label_representation_payload_shape
         )
+        obj.materialization_uses_source_identity_filename = (
+            options.materialization_uses_source_identity_filename
+        )
         obj.participates_in_measurement_source_names = (
             options.participates_in_measurement_source_names
         )
@@ -88,6 +92,7 @@ class ArtifactKind(str, Enum):
         "image",
         ArtifactPayloadShape.ARRAY,
         ArtifactKindOptions(
+            materialization_uses_source_identity_filename=True,
             participates_in_measurement_source_names=True,
             participates_in_main_flow_output=True,
         ),
@@ -96,6 +101,7 @@ class ArtifactKind(str, Enum):
         "object_labels",
         ArtifactPayloadShape.ARRAY,
         ArtifactKindOptions(
+            materialization_uses_source_identity_filename=True,
             participates_in_main_flow_output=True,
             participates_in_object_domain_scope=True,
             participates_in_pairwise_object_domain_input=True,
@@ -106,12 +112,16 @@ class ArtifactKind(str, Enum):
     MEASUREMENTS = (
         "measurements",
         ArtifactPayloadShape.TABLE,
-        ArtifactKindOptions(participates_in_axis_plane_identity=True),
+        ArtifactKindOptions(
+            materialization_uses_source_identity_filename=True,
+            participates_in_axis_plane_identity=True,
+        ),
     )
     RELATIONSHIPS = (
         "relationships",
         ArtifactPayloadShape.TABLE,
         ArtifactKindOptions(
+            materialization_uses_source_identity_filename=True,
             participates_in_axis_plane_identity=True,
             participates_in_object_domain_scope=True,
             participates_in_pairwise_object_domain_input=True,
@@ -246,6 +256,22 @@ class ArtifactSpecCollection:
         resolved_kind = kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
         return tuple(spec for spec in self.specs if spec.kind is resolved_kind)
 
+    def names(self) -> tuple[str, ...]:
+        """Return artifact names in collection order."""
+        return tuple(spec.name for spec in self.specs)
+
+    def name_set(self) -> frozenset[str]:
+        """Return artifact names as a set."""
+        return frozenset(self.names())
+
+    def names_of_kind(self, kind: ArtifactKind) -> tuple[str, ...]:
+        """Return names for specs with the requested kind, preserving order."""
+        return ArtifactSpecCollection(self.of_kind(kind)).names()
+
+    def name_set_of_kind(self, kind: ArtifactKind) -> frozenset[str]:
+        """Return names for specs with the requested kind as a set."""
+        return frozenset(self.names_of_kind(kind))
+
     def by_name(self, name: str) -> ArtifactSpec | None:
         """Return the first spec with a matching artifact name."""
         for spec in self.specs:
@@ -316,6 +342,7 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
     kind: ArtifactKind = ArtifactKind.SPECIAL
     group_keys: tuple[str | None, ...] = (None,)
     paths_by_group: Mapping[str | None, str] | None = None
+    sidecar_role: ArtifactSidecarRole | None = None
 
     _missing_group_uses_default_path: ClassVar[bool] = False
 
@@ -330,6 +357,16 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
         if len(group_keys) == 1:
             return group_keys[0]
         return None
+
+    def require_single_group_key(self) -> str | None:
+        """Return the only artifact group key, failing for ambiguous groups."""
+        group_keys = self.group_keys or (None,)
+        if len(group_keys) == 1:
+            return group_keys[0]
+        raise RuntimeError(
+            f"Artifact plan '{self.name}' requires one group key, "
+            f"got {group_keys!r}."
+        )
 
     def artifact_key(self, *, axis_id: str) -> ArtifactKey:
         return ArtifactKey(
@@ -437,6 +474,13 @@ class ArtifactInputPlan(ArtifactPlan):
     def for_group(self, group_key: str | None) -> "ArtifactInputPlan | None":
         """Return a group-specific input plan, or None if not available."""
         return self._plan_for_group(group_key)
+
+    def path_for_runtime_query(self, group_key: str | None) -> str:
+        """Return the persisted input path addressed by a runtime query."""
+        group_path = self._path_for_group(group_key)
+        if group_path is not None:
+            return group_path
+        return self.path
 
 
 @dataclass(frozen=True)

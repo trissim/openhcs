@@ -15,7 +15,7 @@ from openhcs.core.runtime_values import RuntimeValue, RuntimeValueSchema
 
 def test_runtime_execution_validation_detects_missing_artifact_kind() -> None:
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=RuntimeValueStore())},
+        {"A01": SimpleNamespace(runtime_value_store=RuntimeValueStore(), step_plans={})},
         output_root="/tmp/unused",
     )
 
@@ -53,7 +53,7 @@ def test_runtime_execution_observation_reads_context_stores() -> None:
     )
 
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         output_root="/tmp/unused",
     )
 

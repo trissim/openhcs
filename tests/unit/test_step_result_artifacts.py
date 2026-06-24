@@ -1,6 +1,11 @@
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from types import SimpleNamespace
+
 import pytest
 import numpy as np
 
+from openhcs.constants.constants import MEMORY_TYPE_NUMPY
 from openhcs.core.artifacts import (
     CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactInputPlan,
@@ -8,19 +13,39 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     StepResult,
 )
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
+from openhcs.core.function_patterns import (
+    CompiledFunctionGroup,
+    CompiledFunctionInvocation,
+    FunctionInvocationKey,
+)
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_adapters import (
+    runtime_adapter,
+    runtime_adapter_spec_from_callable,
+)
 from openhcs.core.image_shapes import is_image_stack
 from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    SourceBindingRuntimeContext,
+)
+from openhcs.core.runtime_semantics import RuntimePlaneProjection
 from openhcs.core.steps.function_runtime import (
-    FunctionExecutionRequest,
-    _execute_function_core,
-    _unstack_payload_context,
+    ComponentArtifactPlans,
+    FunctionCoreExecutor,
+    FunctionRuntimeScope,
+)
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    unstack_image_payload_context,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ObjectLabelPayload,
+    image_payload_data,
     image_payload_metadata,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
     image_payload_mask,
 )
 
@@ -64,6 +89,81 @@ class ContextStub:
         self.runtime_value_store = RuntimeValueStore()
 
 
+@dataclass(frozen=True, slots=True)
+class CoreExecutionRequest:
+    func_callable: Callable
+    main_data_arg: object
+    base_kwargs: Mapping[str, object]
+    context: ContextStub
+    artifact_inputs: Mapping[str, ArtifactInputPlan]
+    artifact_outputs: Mapping[str, ArtifactOutputPlan]
+    group_key: str = "default"
+
+
+def _execute_function_core(request: CoreExecutionRequest):
+    contract = CallableContract(
+        func=request.func_callable,
+        function_name=request.func_callable.__name__,
+        module_name=request.func_callable.__module__,
+        metadata=CallableMetadata(
+            input_memory_type=MEMORY_TYPE_NUMPY,
+            output_memory_type=MEMORY_TYPE_NUMPY,
+            runtime_adapter=runtime_adapter_spec_from_callable(request.func_callable),
+        ),
+    )
+    invocation = CompiledFunctionInvocation(
+        key=FunctionInvocationKey.from_contract(
+            contract,
+            request.group_key,
+            0,
+        ),
+        contract=contract,
+        kwargs=tuple(request.base_kwargs.items()),
+        artifact_input_keys=tuple(request.artifact_inputs),
+        artifact_output_keys=tuple(request.artifact_outputs),
+    )
+    runtime_scope = FunctionRuntimeScope(
+        context=request.context,
+        execution_plan=SimpleNamespace(
+            step_index=0,
+            step_scope_id="test::function_step",
+            step_name="test",
+            axis_id=request.context.axis_id,
+            input_memory_type=MEMORY_TYPE_NUMPY,
+            device_id=0,
+            source_binding_plan=CompiledSourceBindingPlan.empty(),
+            source_identity_stack_axes=frozenset(),
+            group_by_value=None,
+            group_projects_runtime_plane=False,
+        ),
+        compiled_group=CompiledFunctionGroup(
+            group_key=request.group_key,
+            invocations=(invocation,),
+        ),
+        artifacts=ComponentArtifactPlans(
+            inputs=request.artifact_inputs,
+            outputs=request.artifact_outputs,
+        ),
+        source_binding_context=SourceBindingRuntimeContext.empty(),
+        runtime_plane_index=0,
+        runtime_plane_count=1,
+    )
+    group_key = invocation.key.runtime_group_key(runtime_scope.component_value)
+    return FunctionCoreExecutor(
+        main_data_arg=request.main_data_arg,
+        source_memory_type=MEMORY_TYPE_NUMPY,
+        runtime_scope=runtime_scope,
+        invocation=invocation,
+        artifacts=runtime_scope.artifacts.select_for_invocation(invocation),
+        group_key=group_key,
+        plane_projection=RuntimePlaneProjection.for_execution_group(
+            group_key,
+            plane_index=None,
+            projects_runtime_plane=False,
+        ),
+    ).execute()
+
+
 def test_crop_mask_sidecar_names_derive_from_core_artifact_role():
     assert CROP_MASK_ARTIFACT_SIDECAR.name_for("CroppedImage") == (
         "CroppedImage__crop_mask"
@@ -73,9 +173,9 @@ def test_crop_mask_sidecar_names_derive_from_core_artifact_role():
 def test_unstack_payload_context_slices_volume_stack_mask_with_volume_data():
     data = np.ones((1, 3, 4, 5), dtype=np.float32)
     mask = np.ones((1, 3, 4, 5), dtype=bool)
-    payload = image_payload_with_context(data, mask=mask)
+    payload = RuntimeImagePayloadContext(data, mask=mask, metadata = ImagePayloadMetadata()).payload()
 
-    [slice_payload] = _unstack_payload_context(payload, [data[0]])
+    [slice_payload] = unstack_image_payload_context(payload, [data[0]])
 
     assert image_payload_mask(slice_payload).shape == data[0].shape
 
@@ -90,7 +190,7 @@ def test_execute_function_core_saves_named_step_result_artifacts():
         )
 
     result = _execute_function_core(
-        FunctionExecutionRequest(
+        CoreExecutionRequest(
             func_callable=analyze,
             main_data_arg=41,
             base_kwargs={},
@@ -117,6 +217,97 @@ def test_execute_function_core_saves_named_step_result_artifacts():
     assert stored[0].value.data == [{"count": 2}]
 
 
+def test_execute_function_core_preserves_tuple_main_output_without_artifact_plan():
+    context = ContextStub()
+    first = RuntimeImagePayloadContext(
+        np.full((4, 5), 1, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(source_image_names=("OrigRed",)),
+    ).payload()
+    second = RuntimeImagePayloadContext(
+        np.full((4, 5), 2, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(source_image_names=("OrigGreen",)),
+    ).payload()
+
+    def split_outputs(image):
+        del image
+        return first, second
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=split_outputs,
+            main_data_arg=np.zeros((2, 4, 5), dtype=np.float32),
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={},
+        )
+    )
+
+    assert isinstance(result, AlignedImageStack)
+    assert tuple(image_payload_data(payload)[0, 0] for payload in result.slices) == (
+        1,
+        2,
+    )
+    assert tuple(
+        image_payload_metadata(payload).source_image_names
+        for payload in result.slices
+    ) == (("OrigRed",), ("OrigGreen",))
+
+
+def test_execute_function_core_routes_exact_image_artifact_tuple_to_main_flow():
+    context = ContextStub()
+    red = RuntimeImagePayloadContext(
+        np.full((4, 5), 1, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(source_image_names=("OrigRed",)),
+    ).payload()
+    green = RuntimeImagePayloadContext(
+        np.full((4, 5), 2, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(source_image_names=("OrigGreen",)),
+    ).payload()
+
+    def corrected_images(image):
+        del image
+        return red, green
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=corrected_images,
+            main_data_arg=np.zeros((2, 4, 5), dtype=np.float32),
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "Red": ArtifactOutputPlan(
+                    name="Red",
+                    path="/memory/red.pkl",
+                    kind=ArtifactKind.IMAGE,
+                ),
+                "Green": ArtifactOutputPlan(
+                    name="Green",
+                    path="/memory/green.pkl",
+                    kind=ArtifactKind.IMAGE,
+                ),
+            },
+        )
+    )
+
+    assert isinstance(result, AlignedImageStack)
+    assert tuple(image_payload_data(payload)[0, 0] for payload in result.slices) == (
+        1,
+        2,
+    )
+    red_records = context.runtime_value_store.find(name="Red", axis_id="A01")
+    green_records = context.runtime_value_store.find(name="Green", axis_id="A01")
+    assert len(red_records) == 1
+    assert len(green_records) == 1
+    assert image_payload_data(red_records[0].value.data)[0, 0] == 1
+    assert image_payload_data(green_records[0].value.data)[0, 0] == 2
+
+
 def test_execute_function_core_saves_artifact_to_runtime_group_path():
     context = ContextStub()
 
@@ -127,7 +318,7 @@ def test_execute_function_core_saves_artifact_to_runtime_group_path():
         )
 
     _execute_function_core(
-        FunctionExecutionRequest(
+        CoreExecutionRequest(
             func_callable=analyze,
             main_data_arg=41,
             base_kwargs={},
@@ -164,7 +355,7 @@ def test_execute_function_core_saves_artifact_to_runtime_group_path():
 
 def test_execute_function_core_preserves_main_output_source_metadata():
     context = ContextStub()
-    source = image_payload_with_context(
+    source = RuntimeImagePayloadContext(
         np.zeros((2, 3), dtype=np.uint16),
         metadata=ImagePayloadMetadata(
             source_path="/input/01_POS002_D.TIF",
@@ -174,13 +365,13 @@ def test_execute_function_core_preserves_main_output_source_metadata():
                 "channel": "D",
             },
         ),
-    )
+    mask = None).payload()
 
     def threshold(image):
         return np.asarray(image) > 0
 
     result = _execute_function_core(
-        FunctionExecutionRequest(
+        CoreExecutionRequest(
             func_callable=threshold,
             main_data_arg=source,
             base_kwargs={},
@@ -199,9 +390,71 @@ def test_execute_function_core_preserves_main_output_source_metadata():
     }
 
 
+def test_managed_runtime_adapter_output_preserves_authoritative_source_metadata():
+    context = ContextStub()
+    ambient_source = RuntimeImagePayloadContext(
+        np.zeros((2, 3), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s1_w1.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+    adapter_output = RuntimeImagePayloadContext(
+        np.ones((2, 3), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s1_w3.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "3",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_inputs=True,
+    )
+    def enhance(image, *, runtime):
+        del image, runtime
+        return adapter_output
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=enhance,
+            main_data_arg=ambient_source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={
+                "source_image": ArtifactInputPlan(
+                    name="source_image",
+                    path="/memory/source_image.pkl",
+                    kind=ArtifactKind.IMAGE,
+                )
+            },
+            artifact_outputs={},
+        )
+    )
+
+    metadata = image_payload_metadata(result)
+    assert metadata.source_path == "/input/A01_s1_w3.tif"
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "3",
+    }
+
+
 def test_execute_function_core_contextualizes_bare_object_label_artifact():
     context = ContextStub()
-    source = image_payload_with_context(
+    source = RuntimeImagePayloadContext(
         np.zeros((2, 3), dtype=np.uint16),
         metadata=ImagePayloadMetadata(
             source_path="/input/01_POS002_D.TIF",
@@ -211,7 +464,7 @@ def test_execute_function_core_contextualizes_bare_object_label_artifact():
                 "channel": "D",
             },
         ),
-    )
+    mask = None).payload()
 
     def segment(image):
         return StepResult(
@@ -222,7 +475,7 @@ def test_execute_function_core_contextualizes_bare_object_label_artifact():
         )
 
     _execute_function_core(
-        FunctionExecutionRequest(
+        CoreExecutionRequest(
             func_callable=segment,
             main_data_arg=source,
             base_kwargs={},
@@ -256,7 +509,7 @@ def test_execute_function_core_loads_artifact_input_from_vfs_via_store_record():
         return StepResult(image=image, artifacts={"positions": {"x": 1}})
 
     _execute_function_core(
-        FunctionExecutionRequest(
+        CoreExecutionRequest(
             func_callable=produce,
             main_data_arg=41,
             base_kwargs={},
@@ -282,7 +535,7 @@ def test_execute_function_core_loads_artifact_input_from_vfs_via_store_record():
         return image
 
     result = _execute_function_core(
-        FunctionExecutionRequest(
+        CoreExecutionRequest(
             func_callable=consume,
             main_data_arg=41,
             base_kwargs={},
@@ -310,7 +563,7 @@ def test_execute_function_core_refuses_direct_vfs_artifact_input_fallback():
 
     with pytest.raises(RuntimeError, match="Refusing direct VFS fallback"):
         _execute_function_core(
-            FunctionExecutionRequest(
+            CoreExecutionRequest(
                 func_callable=consume,
                 main_data_arg=41,
                 base_kwargs={},
@@ -334,7 +587,7 @@ def test_execute_function_core_requires_planned_step_result_artifacts():
 
     with pytest.raises(ValueError, match="planned artifact 'measurements'"):
         _execute_function_core(
-            FunctionExecutionRequest(
+            CoreExecutionRequest(
                 func_callable=analyze,
                 main_data_arg=41,
                 base_kwargs={},
@@ -358,7 +611,7 @@ def test_execute_function_core_validates_step_result_artifact_kind():
 
     with pytest.raises(TypeError, match="expected metadata mapping"):
         _execute_function_core(
-            FunctionExecutionRequest(
+            CoreExecutionRequest(
                 func_callable=analyze,
                 main_data_arg=41,
                 base_kwargs={},
@@ -381,9 +634,9 @@ def test_execute_function_core_validates_tuple_artifact_kind():
     def analyze(image):
         return image, {"not": "labels"}
 
-    with pytest.raises(TypeError, match="expected object_labels payload"):
+    with pytest.raises(TypeError, match="Object-label output must be"):
         _execute_function_core(
-            FunctionExecutionRequest(
+            CoreExecutionRequest(
                 func_callable=analyze,
                 main_data_arg=41,
                 base_kwargs={},

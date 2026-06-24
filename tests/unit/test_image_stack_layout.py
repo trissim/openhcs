@@ -2,6 +2,7 @@ import numpy as np
 
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
+    AlignedImageSliceContext,
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
     payload_slices_for_alignment,
@@ -18,7 +19,7 @@ from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MaskedImagePayload,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
 )
 
 
@@ -110,10 +111,10 @@ def test_payload_alignment_unstacks_grayscale_volume_stacks():
 
 def test_payload_alignment_preserves_single_source_volume():
     volume = np.zeros((3, 4, 5), dtype=np.uint16)
-    payload = image_payload_with_context(
+    payload = RuntimeImagePayloadContext(
         volume,
         metadata=ImagePayloadMetadata.for_array(volume, source_path="/tmp/source.tif"),
-    )
+    mask = None).payload()
 
     slices = payload_slices_for_alignment(payload)
 
@@ -124,13 +125,13 @@ def test_payload_alignment_preserves_single_source_volume():
 def test_aligned_image_payload_composes_multiple_source_volumes_as_image_bundle():
     volumes = tuple(np.full((3, 4, 5), index, dtype=np.uint16) for index in range(3))
     payloads = tuple(
-        image_payload_with_context(
+        RuntimeImagePayloadContext(
             volume,
             metadata=ImagePayloadMetadata.for_array(
                 volume,
                 source_path=f"/tmp/source_{index}.tif",
             ),
-        )
+        mask = None).payload()
         for index, volume in enumerate(volumes)
     )
 
@@ -140,6 +141,31 @@ def test_aligned_image_payload_composes_multiple_source_volumes_as_image_bundle(
     assert composition.payload.data.shape == (3, 3, 4, 5)
     for index, volume in enumerate(volumes):
         np.testing.assert_array_equal(composition.payload.data[index], volume)
+
+
+def test_aligned_image_payload_preserves_declared_slice_contexts():
+    payloads = tuple(np.full((4, 5), index, dtype=np.uint16) for index in range(2))
+    contexts = (
+        AlignedImageSliceContext.main_flow(
+            output_key="CorrProtein",
+            artifact_kind="image",
+        ),
+        AlignedImageSliceContext.main_flow(
+            output_key="CorrDNA",
+            artifact_kind="image",
+        ),
+    )
+
+    composition = compose_aligned_image_payload(
+        "CorrectIlluminationApply",
+        payloads,
+        slice_contexts=contexts,
+    )
+
+    assert composition.execution_mode is ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+    assert isinstance(composition.payload, AlignedImageStack)
+    assert composition.payload.slices == payloads
+    assert composition.payload.slice_contexts == contexts
 
 
 def test_aligned_image_payload_cycles_factorized_runtime_axes():
@@ -186,14 +212,14 @@ def test_image_stack_layout_preserves_unambiguous_single_volume_stack():
 def test_singleton_stack_image_domain_projects_volume_payload_context():
     volume_stack = np.ones((1, 3, 4, 5), dtype=np.float32)
     mask_stack = np.ones((1, 3, 4, 5), dtype=bool)
-    payload = image_payload_with_context(
+    payload = RuntimeImagePayloadContext(
         volume_stack,
         mask=mask_stack,
         metadata=ImagePayloadMetadata.for_array(
             volume_stack,
             source_path="/tmp/source.tif",
         ),
-    )
+    ).payload()
 
     projected = project_singleton_stack_image_domain(payload)
 
@@ -225,6 +251,36 @@ def test_image_stack_layout_unstacks_result_matching_source_volume_as_single_sli
 
     assert len(observed) == 1
     np.testing.assert_array_equal(observed[0], volume)
+
+
+def test_image_stack_layout_unstacks_single_grayscale_result_from_color_source():
+    image = np.zeros((4, 5), dtype=np.float32)
+
+    observed = SourceSliceUnstackRequest(
+        array=image,
+        source_slice_shapes=((4, 5, 3),),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    ).slices()
+
+    assert len(observed) == 1
+    np.testing.assert_array_equal(observed[0], image)
+
+
+def test_image_stack_layout_rejects_multiple_source_slices_without_stack_axis():
+    image = np.zeros((4, 5), dtype=np.float32)
+
+    try:
+        SourceSliceUnstackRequest(
+            array=image,
+            source_slice_shapes=((4, 5, 3), (4, 5, 3)),
+            memory_type=MEMORY_TYPE_NUMPY,
+            gpu_id=0,
+        ).slices()
+    except ValueError as exc:
+        assert "OpenHCS image stack must be shaped" in str(exc)
+    else:
+        raise AssertionError("Expected single-slice result to reject multi-source output")
 
 
 def test_image_stack_layout_unstacks_masked_volume_stack_payload_with_slice_context():

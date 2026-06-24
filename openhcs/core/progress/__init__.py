@@ -51,7 +51,9 @@ __version__ = "1.0.0"
 from .types import (
     ProgressEvent,
     ProgressEventPayload,
+    ProgressExecutionContext,
     ProgressIdentity,
+    ProgressQueue,
     ProgressPhase,
     ProgressStatus,
     ProgressChannel,
@@ -102,7 +104,29 @@ def set_progress_queue(queue):
     _progress_queue = queue
 
 
-def emit(**kwargs) -> None:
+def emit(
+    *,
+    execution_id: str,
+    plate_id: str,
+    axis_id: str,
+    step_name: str,
+    phase: ProgressPhase,
+    status: ProgressStatus,
+    percent: float,
+    completed: int = 0,
+    total: int = 1,
+    error: str | None = None,
+    traceback: str | None = None,
+    total_wells: list[str] | None = None,
+    worker_assignments: dict[str, list[str]] | None = None,
+    worker_slot: str | None = None,
+    owned_wells: list[str] | None = None,
+    message: str | None = None,
+    component: str | None = None,
+    pattern: str | None = None,
+    context: dict | None = None,
+    step_names: list[str] | None = None,
+) -> None:
     """Emit progress event (replaces emit_progress()).
 
     Invariant emission path:
@@ -120,39 +144,44 @@ def emit(**kwargs) -> None:
         percent (float): Progress percentage 0-100 (required)
         completed (int): Number of completed items (default: 0)
         total (int): Total number of items (default: 1)
-        **kwargs: Additional metadata fields (optional)
+        context: Optional progress context payload.
 
     Raises:
         ValueError: If required fields missing or invalid
         ProgressError: If progress queue is not configured
     """
-    # Validate required fields
-    required_fields = {
-        "execution_id",
-        "plate_id",
-        "axis_id",
-        "step_name",
-        "phase",
-        "status",
-        "percent",
-    }
-    missing = required_fields - set(kwargs.keys())
-    if missing:
-        raise ValueError(f"Missing required fields: {missing}")
-
-    # Set defaults for optional fields
-    if "completed" not in kwargs:
-        kwargs["completed"] = 0
-    if "total" not in kwargs:
-        kwargs["total"] = 1
-
     if _progress_queue is None:
         raise ProgressError(
             "emit() requires explicit progress queue configuration via "
             "set_progress_queue(queue). No fallback path is allowed."
         )
 
-    event = ProgressEvent(timestamp=time.time(), pid=os.getpid(), **kwargs)
+    event = ProgressEvent(
+        identity=ProgressIdentity(
+            execution_id=str(execution_id),
+            plate_id=str(plate_id),
+            axis_id=str(axis_id),
+            step_name=str(step_name),
+        ),
+        timestamp=time.time(),
+        pid=os.getpid(),
+        phase=phase,
+        status=status,
+        percent=percent,
+        completed=completed,
+        total=total,
+        error=error,
+        traceback=traceback,
+        total_wells=total_wells,
+        worker_assignments=worker_assignments,
+        worker_slot=worker_slot,
+        owned_wells=owned_wells,
+        message=message,
+        component=component,
+        pattern=pattern,
+        context=context,
+        step_names=step_names,
+    )
     _progress_queue.put(event.to_dict())
 
 
@@ -187,4 +216,6 @@ __all__ = [
     "emit",
     "emit_event",
     "get_registry",
+    "ProgressExecutionContext",
+    "ProgressQueue",
 ]

@@ -1,7 +1,12 @@
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
-from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactGroupTarget,
+    RuntimeArtifactLocationTarget,
+    RuntimeArtifactQuery,
+    RuntimeValueStore,
+)
 from openhcs.core.runtime_values import MeasurementTable, normalize_artifact_value
 
 
@@ -73,6 +78,75 @@ def test_runtime_value_store_replace_updates_current_binding_and_keeps_locations
         path="/other/measurements.pkl",
         backend="memory",
     ) == (replacement,)
+
+
+def test_runtime_value_store_find_matching_cache_invalidates_after_replace():
+    store = RuntimeValueStore()
+    value = _runtime_value()
+    original = store.record(value, path="/memory/measurements.pkl", backend="memory")
+    query = RuntimeArtifactQuery(
+        name="measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+        target=RuntimeArtifactGroupTarget("DAPI"),
+    )
+
+    assert store.find_matching(query) == (original,)
+
+    replacement = store.replace(
+        value,
+        path="/other/measurements.pkl",
+        backend="memory",
+    )
+
+    assert store.find_matching(query) == (original, replacement)
+
+
+def test_runtime_artifact_query_from_input_plan_uses_group_path():
+    query = RuntimeArtifactQuery.from_input_plan(
+        ArtifactInputPlan(
+            name="DNA",
+            path="/memory/DNA.pkl",
+            kind=ArtifactKind.IMAGE,
+            group_keys=("1", "2"),
+            paths_by_group={"1": "/memory/DNA_s1.pkl", "2": "/memory/DNA_s2.pkl"},
+        ),
+        axis_id="A01",
+        backend="memory",
+        group_key="2",
+    )
+
+    assert isinstance(query.target, RuntimeArtifactLocationTarget)
+    assert query.target.location.path == "/memory/DNA_s2.pkl"
+    assert query.target.location.backend == "memory"
+
+
+def test_runtime_artifact_query_from_self_input_plan_requires_single_group():
+    query = RuntimeArtifactQuery.from_input_plan(
+        ArtifactInputPlan(
+            name="Nuclei",
+            path="self",
+            kind=ArtifactKind.OBJECT_LABELS,
+            group_keys=("DNA",),
+        ),
+        axis_id="A01",
+        backend="memory",
+    )
+
+    assert isinstance(query.target, RuntimeArtifactGroupTarget)
+    assert query.target.group_key == "DNA"
+
+    with pytest.raises(RuntimeError, match="requires one group key"):
+        RuntimeArtifactQuery.from_input_plan(
+            ArtifactInputPlan(
+                name="Nuclei",
+                path="self",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=("DNA", "Mito"),
+            ),
+            axis_id="A01",
+            backend="memory",
+        )
 
 
 def test_runtime_value_store_observation_cursor_returns_delta_only():

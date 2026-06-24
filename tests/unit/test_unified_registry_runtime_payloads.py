@@ -13,9 +13,9 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
     with_image_payload_data,
-)
+SourceImageProvenancePlanes)
 from openhcs.processing.backends.lib_registry.unified_registry import (
     LibraryRegistryBase,
     ProcessingContract,
@@ -57,8 +57,7 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     payload = ImageMetadataPayload(
         data=stack,
         metadata=ImagePayloadMetadata(
-            channel_source_paths=("z0.tif", "z1.tif"),
-            channel_source_dtypes=("float32", "float32"),
+            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("z0.tif", "z1.tif")), source_plane_dtypes=("float32", "float32"),
         ),
     )
     seen_paths: list[str | None] = []
@@ -80,16 +79,16 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     assert isinstance(result, ImageMetadataPayload)
     np.testing.assert_array_equal(image_payload_data(result), stack + 1)
     assert seen_paths == ["z0.tif", "z1.tif"]
-    assert image_payload_metadata(result).channel_source_paths == ("z0.tif", "z1.tif")
+    assert image_payload_metadata(result).source_image_provenance_planes.paths == ("z0.tif", "z1.tif")
 
 
 def test_with_image_payload_data_projects_channel_last_mask_to_grayscale() -> None:
     mask = np.zeros((4, 5, 2), dtype=bool)
     mask[:, :, 0] = True
-    source = image_payload_with_context(
+    source = RuntimeImagePayloadContext(
         np.ones((4, 5, 2), dtype=np.float32),
         mask=mask,
-    )
+    metadata = ImagePayloadMetadata()).payload()
 
     result = with_image_payload_data(
         source,
@@ -104,18 +103,18 @@ def test_with_image_payload_data_projects_channel_last_mask_to_grayscale() -> No
 
 
 def test_runtime_callable_invocation_can_call_raw_signature_filtered_callable() -> None:
-    source = image_payload_with_context(
+    source = RuntimeImagePayloadContext(
         np.ones((4, 5), dtype=np.float32),
         mask=np.ones((4, 5), dtype=bool),
-    )
+    metadata = ImagePayloadMetadata()).payload()
 
     def raw(image: RuntimeArrayPayload, *, scale: int) -> RuntimeArrayPayload:
         assert isinstance(image, RuntimeArrayPayload)
-        return image_payload_with_context(
+        return RuntimeImagePayloadContext(
             image_payload_data(image) * scale,
             mask=image_payload_mask(image),
             metadata=image_payload_metadata(image),
-        )
+        ).payload()
 
     @wraps(raw)
     def decorated(image: Any, **kwargs: Any) -> np.ndarray:

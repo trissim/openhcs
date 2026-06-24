@@ -49,9 +49,18 @@ from openhcs.core.source_schema_workspace import (
     materialize_source_schema_workspace as materialize_A01_schema_workspace,
     source_schema_metadata_with_virtual_components,
 )
+from openhcs.core.source_binding_selection import (
+    SourceAnchorSelectionStatus,
+    SourceBindingCandidateMatcher,
+    SourceBindingMatchedImageSet,
+)
+from openhcs.core.source_matching import (
+    ORIGINAL_SOURCE_METADATA_FIELD,
+    source_component_metadata_values,
+    source_metadata_value,
+)
 from openhcs.core.steps.function_execution import (
     SourceBoundAnchorPatternPolicy,
-    SourceAnchorSelectionStatus,
     SourcePatternResolutionContext,
 )
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -97,12 +106,17 @@ def test_source_schema_metadata_with_virtual_components_overlays_canonical_axes(
         {
             "OpenHCSImageType": "Grayscale image",
             "Site": "POS002",
+            "ChannelNumber": "2",
             "ChannelName": "DNA",
         },
     )
 
     assert metadata == {
         "OpenHCSImageType": "Grayscale image",
+        ORIGINAL_SOURCE_METADATA_FIELD: {
+            "ChannelNumber": "2",
+            "Site": "POS002",
+        },
         "ChannelName": "DNA",
         "well": "A01",
         "site": "2",
@@ -111,6 +125,11 @@ def test_source_schema_metadata_with_virtual_components_overlays_canonical_axes(
         "timepoint": "1",
         "extension": ".TIF",
     }
+    assert source_metadata_value(metadata, "ChannelNumber") == "2"
+    assert source_metadata_value(metadata, "channel") == "3"
+    assert source_metadata_value(metadata, "Site") == "POS002"
+    assert source_metadata_value(metadata, "site") == "2"
+    assert source_component_metadata_values(metadata, AllComponents.CHANNEL) == ("3",)
 
 
 def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
@@ -118,6 +137,9 @@ def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
 ) -> None:
     source_root = tmp_path / "openhcs_workspace"
     source_root.mkdir()
+    (source_root / "raw").mkdir()
+    _write_image(source_root / "raw" / "source.ome.tiff", value=1)
+    _write_image(source_root / "raw_source_that_should_not_win.tif", value=2)
     virtual_path = "A01_s001_w1_z001_t001.tif"
     (source_root / "openhcs_metadata.json").write_text(
         json.dumps(
@@ -130,6 +152,9 @@ def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
                         "source_metadata": {
                             virtual_path: {
                                 "plate": "Plate1",
+                                ORIGINAL_SOURCE_METADATA_FIELD: {
+                                    "ChannelNumber": "2",
+                                },
                             },
                         },
                         "channels": {
@@ -162,9 +187,168 @@ def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
         )
     ).candidates()
 
-    assert tuple(candidate.relative_path for candidate in candidates) == (virtual_path,)
+    assert tuple(candidate.relative_path for candidate in candidates) == (
+        virtual_path,
+    )
+    assert tuple(candidate.source_filter_paths for candidate in candidates) == (
+        ("raw/source.ome.tiff",),
+    )
+    assert candidates[0].path == source_root / "raw/source.ome.tiff"
     assert candidates[0].metadata["channel_name"] == "DAPI"
     assert candidates[0].metadata["plate"] == "Plate1"
+    assert source_metadata_value(candidates[0].metadata, "ChannelNumber") == "2"
+
+
+def test_source_schema_candidate_discovery_auto_skips_incompatible_metadata_provider(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "mixed_source"
+    source_root.mkdir()
+    local_image = source_root / "Channel1.tif"
+    _write_image(local_image, value=1)
+    (source_root / "openhcs_metadata.json").write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    "default": {
+                        "workspace_mapping": {
+                            "A01_s001_w9_z001_t001.tif": "raw/source.ome.tiff",
+                        },
+                        "source_metadata": {},
+                        "channels": {
+                            "9": "Other",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "DNA": ImageAssignment(
+                alias="DNA",
+                image_type="Grayscale image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="Channel1",
+                        ),
+                    ),
+                ),
+            ),
+        },
+    )
+
+    candidates = SourceSchemaCandidateDiscovery(
+        SourceSchemaCandidateDiscoveryRequest(
+            source_root,
+            source_files=(local_image,),
+            schema=schema,
+        )
+    ).candidates()
+
+    assert tuple(candidate.relative_path for candidate in candidates) == (
+        "Channel1.tif",
+    )
+
+
+def test_materialize_openhcs_workspace_preserves_mapped_source_selector_semantics(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "openhcs_workspace"
+    workspace_root = tmp_path / "materialized"
+    source_root.mkdir()
+    virtual_dna_path = "A01_s001_w1_z001_t001.tif"
+    virtual_gfp_path = "A01_s001_w2_z001_t001.tif"
+    dna_source_path = "raw/BBBC013_A01_s1_w2.tif"
+    gfp_source_path = "raw/BBBC013_A01_s1_w1.tif"
+    (source_root / "openhcs_metadata.json").write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    "default": {
+                        "workspace_mapping": {
+                            virtual_dna_path: dna_source_path,
+                            virtual_gfp_path: gfp_source_path,
+                        },
+                        "source_metadata": {
+                            virtual_dna_path: {
+                                "Plate": "BBBC013",
+                                "well": "A01",
+                                "site": "1",
+                                "z_index": "1",
+                                "timepoint": "1",
+                                "channel": "1",
+                            },
+                            virtual_gfp_path: {
+                                "Plate": "BBBC013",
+                                "well": "A01",
+                                "site": "1",
+                                "z_index": "1",
+                                "timepoint": "1",
+                                "channel": "2",
+                            },
+                        },
+                        "channels": {
+                            "1": "rawDNA",
+                            "2": "rawGFP",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "rawDNA": ImageAssignment(
+                alias="rawDNA",
+                image_type="Grayscale image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="w2",
+                        ),
+                    ),
+                ),
+            ),
+            "rawGFP": ImageAssignment(
+                alias="rawGFP",
+                image_type="Grayscale image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="w1",
+                        ),
+                    ),
+                ),
+            ),
+        },
+    )
+
+    materialize_A01_schema_workspace(source_root, workspace_root, schema)
+
+    materialized = json.loads(
+        (workspace_root / "openhcs_metadata.json").read_text(encoding="utf-8")
+    )["subdirectories"]["."]
+    assert materialized["workspace_mapping"][virtual_dna_path].endswith(
+        "/raw/BBBC013_A01_s1_w2.tif"
+    )
+    assert materialized["workspace_mapping"][virtual_gfp_path].endswith(
+        "/raw/BBBC013_A01_s1_w1.tif"
+    )
+    assert materialized["source_metadata"][virtual_dna_path]["channel_label"] == "rawDNA"
+    assert materialized["source_metadata"][virtual_gfp_path]["channel_label"] == "rawGFP"
 
 
 def test_source_binding_plan_views_are_registered_nominal_family() -> None:
@@ -548,6 +732,358 @@ def test_source_bound_anchor_filter_does_not_defer_available_metadata_mismatch()
 
     assert selection.status is SourceAnchorSelectionStatus.SELECTED
     assert selection.patterns == ()
+
+
+def test_runtime_source_binding_metadata_selector_uses_literal_metadata_fields() -> None:
+    binding = NamedSourceBinding(
+        alias="origDNA",
+        selector=SourceSelector(
+            metadata=(MetadataSelector("ChannelNumber", "2"),),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/3d_monolayer_xy1_ch1.tif",
+            "A01_s001_w2_z001_t001.tif": "/source/3d_monolayer_xy1_ch2.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {
+                "ChannelNumber": "1",
+                "channel": "1",
+                "well": "A01",
+            },
+            "A01_s001_w2_z001_t001.tif": {
+                "ChannelNumber": "2",
+                "channel": "2",
+                "well": "A01",
+            },
+        },
+    )
+
+    assert source_context.has_metadata_field(
+        ("A01_s001_w1_z001_t001.tif",),
+        "ChannelNumber",
+    )
+    assert SourceBindingCandidateMatcher.compatible_candidates(
+        (
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        ),
+        bindings=(binding,),
+        source_context=source_context,
+    ) == ("A01_s001_w2_z001_t001.tif",)
+
+
+def test_runtime_source_binding_component_selector_uses_component_metadata() -> None:
+    binding = NamedSourceBinding(
+        alias="origDNA",
+        selector=SourceSelector(
+            components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/3d_monolayer_xy1_ch1.tif",
+            "A01_s001_w2_z001_t001.tif": "/source/3d_monolayer_xy1_ch2.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"channel": "1", "well": "A01"},
+            "A01_s001_w2_z001_t001.tif": {"channel": "2", "well": "A01"},
+        },
+    )
+
+    assert SourceBindingCandidateMatcher.compatible_candidates(
+        (
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        ),
+        bindings=(binding,),
+        source_context=source_context,
+    ) == ("A01_s001_w2_z001_t001.tif",)
+
+
+def test_matched_image_set_rebases_single_alias_source_stack_from_source_universe() -> None:
+    binding = NamedSourceBinding(
+        alias="origDNA",
+        selector=SourceSelector(
+            metadata=(MetadataSelector("ChannelNumber", "2"),),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/3d_monolayer_xy1_ch2.tif",
+            "A01_s001_w2_z001_t001.tif": "/source/3d_monolayer_xy1_ch1.tif",
+            "A01_s001_w1_z002_t001.tif": "/source/3d_monolayer_xy1_ch2.tif",
+            "A01_s001_w2_z002_t001.tif": "/source/3d_monolayer_xy1_ch1.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {
+                "well": "A01",
+                "site": "1",
+                "timepoint": "1",
+                "z_index": "1",
+                "channel": "1",
+                ORIGINAL_SOURCE_METADATA_FIELD: {"ChannelNumber": "2"},
+            },
+            "A01_s001_w2_z001_t001.tif": {
+                "well": "A01",
+                "site": "1",
+                "timepoint": "1",
+                "z_index": "1",
+                "channel": "2",
+                ORIGINAL_SOURCE_METADATA_FIELD: {"ChannelNumber": "1"},
+            },
+            "A01_s001_w1_z002_t001.tif": {
+                "well": "A01",
+                "site": "1",
+                "timepoint": "1",
+                "z_index": "2",
+                "channel": "1",
+                ORIGINAL_SOURCE_METADATA_FIELD: {"ChannelNumber": "2"},
+            },
+            "A01_s001_w2_z002_t001.tif": {
+                "well": "A01",
+                "site": "1",
+                "timepoint": "1",
+                "z_index": "2",
+                "channel": "2",
+                ORIGINAL_SOURCE_METADATA_FIELD: {"ChannelNumber": "1"},
+            },
+        },
+    )
+
+    assert SourceBindingMatchedImageSet.from_plan(
+        bindings=(binding,),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        source_context=source_context,
+        source_identity_stack_axes=frozenset((AllComponents.Z_INDEX.value,)),
+    ).expand(
+        (
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w2_z002_t001.tif",
+        ),
+        source_universe=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w1_z002_t001.tif",
+            "A01_s001_w2_z002_t001.tif",
+        ),
+    ) == (
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w1_z002_t001.tif",
+    )
+
+
+def test_matched_image_set_prefers_complete_alias_set_from_mapped_sources() -> None:
+    hoechst = NamedSourceBinding(
+        alias="OrigHoechst",
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.CONTAINS,
+                    value="_w1",
+                ),
+            ),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    ph_golgi = NamedSourceBinding(
+        alias="OrigPh_golgi",
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.CONTAINS,
+                    value="_w4",
+                ),
+            ),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/IXMtest_A01_s1_w2.tif",
+            "A01_s001_w2_z001_t001.tif": "/source/IXMtest_A01_s1_w1.tif",
+            "A01_s001_w4_z001_t001.tif": "/source/IXMtest_A01_s1_w4.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"Plate": "20585", "well": "A01", "site": "1"},
+            "A01_s001_w2_z001_t001.tif": {"Plate": "20585", "well": "A01", "site": "1"},
+            "A01_s001_w4_z001_t001.tif": {"Plate": "20585", "well": "A01", "site": "1"},
+        },
+    )
+    match_plan = SourceBindingMatchPlan(
+        method=SourceBindingMatchMethod.METADATA,
+        dimensions=(
+            SourceBindingMatchDimension(
+                fields=(
+                    SourceBindingMatchField(alias="OrigHoechst", metadata_field="Plate"),
+                    SourceBindingMatchField(alias="OrigPh_golgi", metadata_field="Plate"),
+                )
+            ),
+            SourceBindingMatchDimension(
+                fields=(
+                    SourceBindingMatchField(alias="OrigHoechst", metadata_field="well"),
+                    SourceBindingMatchField(alias="OrigPh_golgi", metadata_field="well"),
+                )
+            ),
+            SourceBindingMatchDimension(
+                fields=(
+                    SourceBindingMatchField(alias="OrigHoechst", metadata_field="site"),
+                    SourceBindingMatchField(alias="OrigPh_golgi", metadata_field="site"),
+                )
+            ),
+        ),
+    )
+
+    assert SourceBindingMatchedImageSet.from_plan(
+        bindings=(hoechst, ph_golgi),
+        match_plan=match_plan,
+        source_context=source_context,
+    ).expand(
+        (
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w4_z001_t001.tif",
+        ),
+        source_universe=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w4_z001_t001.tif",
+        ),
+    ) == (
+        "A01_s001_w2_z001_t001.tif",
+        "A01_s001_w4_z001_t001.tif",
+    )
+
+
+def test_source_bound_anchor_filter_uses_metadata_rules_for_mapped_source_paths() -> None:
+    binding = NamedSourceBinding(
+        alias="origMemb",
+        selector=SourceSelector(
+            metadata=(MetadataSelector("ChannelNumber", "0"),),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    metadata_rules = (
+        MetadataExtractionRule(
+            source=MetadataSource.FILE_NAME,
+            pattern=r"^(?P<Plate>.*)_xy(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
+        ),
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: (binding,)},
+        metadata_rules=metadata_rules,
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/3d_monolayer_xy1_ch2.tif",
+            "A01_s001_w2_z001_t001.tif": "/source/3d_monolayer_xy1_ch1.tif",
+            "A01_s001_w3_z001_t001.tif": "/source/3d_monolayer_xy1_ch0.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"channel": "1", "well": "A01"},
+            "A01_s001_w2_z001_t001.tif": {"channel": "2", "well": "A01"},
+            "A01_s001_w3_z001_t001.tif": {"channel": "3", "well": "A01"},
+        },
+        metadata_rules=metadata_rules,
+    )
+
+    assert SourceBindingCandidateMatcher.compatible_candidates(
+        (
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w3_z001_t001.tif",
+        ),
+        bindings=(binding,),
+        source_context=source_context,
+    ) == ("A01_s001_w3_z001_t001.tif",)
+    assert SourceBoundAnchorPatternPolicy.for_plan(plan).select(
+        ["A01_s001_w{iii}_z001_t001.tif"],
+        bindings=plan.bindings_for_group(None),
+        source_context=source_context,
+    ) == ["A01_s001_w{iii}_z001_t001.tif"]
+
+
+def test_source_bound_anchor_metadata_rules_do_not_override_workspace_metadata() -> None:
+    metadata_rules = (
+        MetadataExtractionRule(
+            source=MetadataSource.FOLDER_NAME,
+            pattern=r"(?P<Folder>.*)$",
+        ),
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/Channel 1-01-A-01.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {
+                "Folder": "/source",
+                "well": "A01",
+            },
+        },
+        metadata_rules=metadata_rules,
+    )
+
+    assert source_context.candidate_metadata(
+        "A01_s001_w1_z001_t001.tif"
+    ).first_required("A01_s001_w1_z001_t001.tif")["Folder"] == "/source"
+
+
+def test_runtime_source_binding_file_filters_use_mapped_source_paths() -> None:
+    binding = NamedSourceBinding(
+        alias="rawGFP",
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.CONTAINS,
+                    value="w1",
+                ),
+            ),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/BBBC013_A01_s1_w2.tif",
+            "A01_s001_w2_z001_t001.tif": "/source/BBBC013_A01_s1_w1.tif",
+            "A12_s001_w1_z001_t001.tif": "/source/BBBC013_A12_s1_w2.tif",
+            "A12_s001_w2_z001_t001.tif": "/source/BBBC013_A12_s1_w1.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"channel": "1", "channel_label": "rawDNA"},
+            "A01_s001_w2_z001_t001.tif": {"channel": "2", "channel_label": "rawGFP"},
+            "A12_s001_w1_z001_t001.tif": {"channel": "1", "channel_label": "rawDNA"},
+            "A12_s001_w2_z001_t001.tif": {"channel": "2", "channel_label": "rawGFP"},
+        },
+    )
+
+    assert SourceBindingCandidateMatcher.compatible_candidates(
+        (
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A12_s001_w1_z001_t001.tif",
+            "A12_s001_w2_z001_t001.tif",
+        ),
+        bindings=(binding,),
+        source_context=source_context,
+    ) == (
+        "A01_s001_w2_z001_t001.tif",
+        "A12_s001_w2_z001_t001.tif",
+    )
 
 
 def test_metadata_matched_source_workspace_defers_when_template_matches_no_alias() -> None:
@@ -1329,6 +1865,59 @@ def test_materialize_A01_schema_workspace_uses_complete_ordered_image_sets(
     )
 
 
+def test_materialize_A01_schema_workspace_allows_multichannel_image_set_metadata(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "A01_s001_w1_z001_t001.tif", value=1)
+    _write_image(source_root / "A01_s001_w2_z001_t001.tif", value=2)
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "rawDNA": ImageAssignment(
+                    alias="rawDNA",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "w1",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "rawGFP": ImageAssignment(
+                    alias="rawGFP",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "w2",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
+
+    assert primary["channels"] == {"1": "rawDNA", "2": "rawGFP"}
+    assert primary["source_metadata"]["A01_s001_w1_z001_t001.tif"]["channel"] == "1"
+    assert primary["source_metadata"]["A01_s001_w2_z001_t001.tif"]["channel"] == "2"
+
+
 def test_materialize_A01_schema_workspace_projects_ordered_channel_site_sets(
     tmp_path: Path,
 ) -> None:
@@ -1481,6 +2070,67 @@ def test_materialize_A01_schema_workspace_matches_numeric_component_values(
 
     assert primary["workspace_mapping"]["A01_s001_w1_z001_t001.tif"].endswith(
         "source/Sample_ch00.tif"
+    )
+
+
+def test_materialize_A01_schema_workspace_preserves_raw_metadata_selectors(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Plate_xy1_ch2.tif", value=1)
+    _write_image(source_root / "Plate_xy1_ch1.tif", value=2)
+    _write_image(source_root / "Plate_xy1_ch0.tif", value=3)
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^Plate_xy(?P<Site>[0-9]+)_ch(?P<ChannelNumber>[0-9]+)",
+                ),
+            ),
+            assignments_by_alias={
+                "origDNA": ImageAssignment(
+                    alias="origDNA",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        metadata=(MetadataSelector("ChannelNumber", "2"),),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "origMito": ImageAssignment(
+                    alias="origMito",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        metadata=(MetadataSelector("ChannelNumber", "1"),),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "origMemb": ImageAssignment(
+                    alias="origMemb",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        metadata=(MetadataSelector("ChannelNumber", "0"),),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    primary = metadata["subdirectories"]["."]
+    dna_metadata = primary["source_metadata"]["A01_s001_w1_z001_t001.tif"]
+
+    assert dna_metadata["channel"] == "1"
+    assert dna_metadata[ORIGINAL_SOURCE_METADATA_FIELD]["ChannelNumber"] == "2"
+    assert source_metadata_value(dna_metadata, "ChannelNumber") == "2"
+    assert source_component_metadata_values(dna_metadata, AllComponents.CHANNEL) == (
+        "1",
     )
 
 
@@ -1909,6 +2559,32 @@ def test_materialize_A01_schema_workspace_resolves_stale_imported_metadata_locat
 
     result = materialize_A01_schema_workspace(
         source_root,
+        tmp_path / "workspace",
+        _imported_metadata_A01_schema_with_location(
+            "/old/default/input/folder/metadata.csv"
+        ),
+    )
+
+    assert result.source_metadata["A01_s001_w1_z001_t001.tif"]["Compound"] == "DMSO"
+
+
+def test_materialize_A01_schema_workspace_resolves_imported_metadata_through_visible_symlink(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / ".cache" / "dataset" / "images"
+    source_root.mkdir(parents=True)
+    _write_image(source_root / "Channel1-A-01.tif", value=1)
+    _write_image(source_root / "Channel2-A-01.tif", value=2)
+    (source_root.parent / "metadata.csv").write_text(
+        "Row,Compound\nA,DMSO\n",
+        encoding="utf-8",
+    )
+    visible_root = tmp_path / "visible" / "images_alias"
+    visible_root.parent.mkdir()
+    visible_root.symlink_to(source_root, target_is_directory=True)
+
+    result = materialize_A01_schema_workspace(
+        visible_root,
         tmp_path / "workspace",
         _imported_metadata_A01_schema_with_location(
             "/old/default/input/folder/metadata.csv"

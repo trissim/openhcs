@@ -7,7 +7,9 @@ from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
 from zmqruntime.progress import (
+    GenericAxisProjection,
     GenericExecutionProjection,
+    GenericPlateProjection,
     ProgressProjectionAdapterABC,
     build_execution_projection,
 )
@@ -21,12 +23,22 @@ from .types import (
 
 
 class PlateRuntimeState(str, Enum):
-    IDLE = "idle"
-    COMPILING = "compiling"
-    COMPILED = "compiled"
-    EXECUTING = "executing"
-    COMPLETE = "complete"
-    FAILED = "failed"
+    def __new__(cls, value: str, is_terminal: bool):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj._is_terminal = is_terminal
+        return obj
+
+    IDLE = ("idle", False)
+    COMPILING = ("compiling", False)
+    COMPILED = ("compiled", False)
+    EXECUTING = ("executing", False)
+    COMPLETE = ("complete", True)
+    FAILED = ("failed", True)
+
+    @property
+    def is_terminal(self) -> bool:
+        return self._is_terminal
 
 
 @dataclass(frozen=True)
@@ -37,15 +49,67 @@ class AxisRuntimeProjection:
     is_complete: bool
     is_failed: bool
 
+    @classmethod
+    def from_generic_axis(
+        cls,
+        generic_axis: GenericAxisProjection,
+    ) -> "AxisRuntimeProjection":
+        return cls(
+            axis_id=generic_axis.axis_id,
+            percent=generic_axis.percent,
+            step_name=generic_axis.step_name,
+            is_complete=generic_axis.is_complete,
+            is_failed=generic_axis.is_failed,
+        )
+
+
+@dataclass(frozen=True)
+class PlateRuntimeIdentity:
+    execution_id: str
+    plate_id: str
+
+    @classmethod
+    def from_generic_plate(
+        cls,
+        generic_plate: GenericPlateProjection[PlateRuntimeState],
+    ) -> "PlateRuntimeIdentity":
+        return cls(
+            execution_id=generic_plate.execution_id,
+            plate_id=generic_plate.plate_id,
+        )
+
 
 @dataclass(frozen=True)
 class PlateRuntimeProjection:
-    execution_id: str
-    plate_id: str
+    identity: PlateRuntimeIdentity
     state: PlateRuntimeState
     percent: float
     axis_progress: Tuple[AxisRuntimeProjection, ...]
     latest_timestamp: float
+
+    @classmethod
+    def from_generic_plate(
+        cls,
+        generic_plate: GenericPlateProjection[PlateRuntimeState],
+    ) -> "PlateRuntimeProjection":
+        return cls(
+            identity=PlateRuntimeIdentity.from_generic_plate(generic_plate),
+            state=generic_plate.state,
+            percent=generic_plate.percent,
+            axis_progress=tuple(
+                AxisRuntimeProjection.from_generic_axis(axis)
+                for axis in generic_plate.axis_progress
+            ),
+            latest_timestamp=generic_plate.latest_timestamp,
+        )
+
+    @property
+    def execution_id(self) -> str:
+        return self.identity.execution_id
+
+    @property
+    def plate_id(self) -> str:
+        return self.identity.plate_id
 
     @property
     def active_axes(self) -> Tuple[AxisRuntimeProjection, ...]:
@@ -59,7 +123,9 @@ class PlateRuntimeProjection:
 @dataclass
 class ExecutionRuntimeProjection:
     plates: List[PlateRuntimeProjection] = field(default_factory=list)
-    by_key: Dict[Tuple[str, str], PlateRuntimeProjection] = field(default_factory=dict)
+    by_identity: Dict[PlateRuntimeIdentity, PlateRuntimeProjection] = field(
+        default_factory=dict
+    )
     by_plate_latest: Dict[str, PlateRuntimeProjection] = field(default_factory=dict)
     compiling_count: int = 0
     compiled_count: int = 0
@@ -68,11 +134,52 @@ class ExecutionRuntimeProjection:
     failed_count: int = 0
     overall_percent: float = 0.0
 
+    @classmethod
+    def from_generic_projection(
+        cls,
+        generic_projection: GenericExecutionProjection[PlateRuntimeState],
+    ) -> "ExecutionRuntimeProjection":
+        projection = cls()
+
+        for generic_plate in generic_projection.plates:
+            projection.add_plate(
+                PlateRuntimeProjection.from_generic_plate(generic_plate)
+            )
+
+        for generic_plate in generic_projection.by_plate_latest.values():
+            projection.mark_latest(
+                PlateRuntimeIdentity.from_generic_plate(generic_plate)
+            )
+
+        projection.compiling_count = generic_projection.count_state(
+            PlateRuntimeState.COMPILING
+        )
+        projection.compiled_count = generic_projection.count_state(
+            PlateRuntimeState.COMPILED
+        )
+        projection.executing_count = generic_projection.count_state(
+            PlateRuntimeState.EXECUTING
+        )
+        projection.complete_count = generic_projection.count_state(
+            PlateRuntimeState.COMPLETE
+        )
+        projection.failed_count = generic_projection.count_state(PlateRuntimeState.FAILED)
+        projection.overall_percent = generic_projection.overall_percent
+
+        return projection
+
+    def add_plate(self, plate_projection: PlateRuntimeProjection) -> None:
+        self.plates.append(plate_projection)
+        self.by_identity[plate_projection.identity] = plate_projection
+
+    def mark_latest(self, identity: PlateRuntimeIdentity) -> None:
+        self.by_plate_latest[identity.plate_id] = self.by_identity[identity]
+
     def get_plate(
         self, plate_id: str, execution_id: Optional[str] = None
     ) -> Optional[PlateRuntimeProjection]:
         if execution_id is not None:
-            return self.by_key.get((execution_id, plate_id))
+            return self.by_identity.get(PlateRuntimeIdentity(execution_id, plate_id))
         return self.by_plate_latest.get(plate_id)
 
 
@@ -132,50 +239,6 @@ class _OpenHCSProjectionAdapter(
 _PROJECTION_ADAPTER = _OpenHCSProjectionAdapter()
 
 
-def _from_generic_projection(
-    generic_projection: GenericExecutionProjection[PlateRuntimeState],
-) -> ExecutionRuntimeProjection:
-    projection = ExecutionRuntimeProjection()
-
-    for generic_plate in generic_projection.plates:
-        axis_progress = tuple(
-            AxisRuntimeProjection(
-                axis_id=axis.axis_id,
-                percent=axis.percent,
-                step_name=axis.step_name,
-                is_complete=axis.is_complete,
-                is_failed=axis.is_failed,
-            )
-            for axis in generic_plate.axis_progress
-        )
-        plate_projection = PlateRuntimeProjection(
-            execution_id=generic_plate.execution_id,
-            plate_id=generic_plate.plate_id,
-            state=generic_plate.state,
-            percent=generic_plate.percent,
-            axis_progress=axis_progress,
-            latest_timestamp=generic_plate.latest_timestamp,
-        )
-        projection.plates.append(plate_projection)
-        projection.by_key[(plate_projection.execution_id, plate_projection.plate_id)] = (
-            plate_projection
-        )
-
-    for plate_id, generic_plate in generic_projection.by_plate_latest.items():
-        projection.by_plate_latest[plate_id] = projection.by_key[
-            (generic_plate.execution_id, generic_plate.plate_id)
-        ]
-
-    projection.compiling_count = generic_projection.count_state(PlateRuntimeState.COMPILING)
-    projection.compiled_count = generic_projection.count_state(PlateRuntimeState.COMPILED)
-    projection.executing_count = generic_projection.count_state(PlateRuntimeState.EXECUTING)
-    projection.complete_count = generic_projection.count_state(PlateRuntimeState.COMPLETE)
-    projection.failed_count = generic_projection.count_state(PlateRuntimeState.FAILED)
-    projection.overall_percent = generic_projection.overall_percent
-
-    return projection
-
-
 def build_execution_runtime_projection(
     events_by_execution: Mapping[str, List[ProgressEvent]],
 ) -> ExecutionRuntimeProjection:
@@ -183,4 +246,4 @@ def build_execution_runtime_projection(
         events_by_execution,
         adapter=_PROJECTION_ADAPTER,
     )
-    return _from_generic_projection(generic_projection)
+    return ExecutionRuntimeProjection.from_generic_projection(generic_projection)

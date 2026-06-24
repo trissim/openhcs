@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from dataclasses import MISSING, dataclass, fields, is_dataclass
+from collections.abc import Callable, Hashable, MutableMapping
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
+from enum import Enum
 from functools import lru_cache, wraps
 from threading import Lock
 from types import MappingProxyType
@@ -21,6 +23,7 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.core.module_artifact_contract import (
+    MODULE_ARTIFACT_CONTRACT_ATTR,
     ModuleArtifactContract,
     module_artifact_contract_from_namespace,
 )
@@ -42,6 +45,9 @@ CALLABLE_REQUEST_BINDING_ATTR = "__openhcs_callable_request_binding__"
 _PREPARED_CALLABLE_KEYS: set[tuple[str, str, int]] = set()
 _PREPARED_CALLABLE_LOCK = Lock()
 
+CallableContractCacheKey = tuple[Hashable | None, ...]
+CallableRuntimeCacheKey = int | tuple[str, CallableContractCacheKey]
+
 
 class CompilerPreparedAutoRegisterFamily(ABC):
     """AutoRegisterMeta family that can prepare runtime compiler substrates."""
@@ -53,78 +59,38 @@ class CompilerPreparedAutoRegisterFamily(ABC):
 
 
 @dataclass(frozen=True, slots=True)
-class CallableContract(ArtifactPlanKeySelector):
-    """Compiler-visible contract declared by one processing callable."""
+class CallableMetadata:
+    """Compiler-visible metadata declared by one processing callable."""
 
-    func: Any
-    function_name: str
-    module_name: str | None
-    input_memory_type: str | None
-    output_memory_type: str | None
+    input_memory_type: str | None = None
+    output_memory_type: str | None = None
     artifact_inputs: ArtifactSpecItems = ()
     artifact_outputs: ArtifactSpecItems = ()
     runtime_adapter: RuntimeAdapterSpec | None = None
-    processing_contract: Any | None = None
+    processing_contract: Enum | None = None
     declared_processing_contract: str | None = None
     module_artifact_contract: ModuleArtifactContract | None = None
-    raw_processing_function: Any | None = None
+    raw_processing_function: Callable[..., object] | "FunctionReference" | None = None
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
-    runtime_batch_executors: Mapping[Any, Any] | None = None
     request_binding: "CallableRequestBinding | None" = None
-
-    def __post_init__(self) -> None:
-        if self.runtime_batch_executors is not None and not isinstance(
-            self.runtime_batch_executors,
-            MappingProxyType,
-        ):
-            object.__setattr__(
-                self,
-                "runtime_batch_executors",
-                MappingProxyType(dict(self.runtime_batch_executors)),
-            )
-
-    def __reduce__(
-        self,
-    ) -> tuple[type["CallableContract"], tuple[Any, ...]]:
-        """Serialize immutable mapping-backed metadata across worker queues."""
-        return (
-            self.__class__,
-            (
-                self.func,
-                self.function_name,
-                self.module_name,
-                self.input_memory_type,
-                self.output_memory_type,
-                self.artifact_inputs,
-                self.artifact_outputs,
-                self.runtime_adapter,
-                self.processing_contract,
-                self.declared_processing_contract,
-                self.module_artifact_contract,
-                self.raw_processing_function,
-                self.runtime_image_execution_mode,
-                (
-                    dict(self.runtime_batch_executors)
-                    if self.runtime_batch_executors is not None
-                    else None
-                ),
-                self.request_binding,
-            ),
-        )
+    prepare: Callable[..., object] | None = None
 
     @classmethod
-    def from_callable(cls, func: Any) -> "CallableContract":
-        """Build a contract from callable attributes once at compiler boundary."""
-        projection = CallableProjection.from_callable(func)
+    def from_callable(cls, func: Callable[..., object]) -> "CallableMetadata":
+        """Build metadata from a callable or compiler function reference."""
+        return cls.from_projection(CallableProjection.from_callable(func))
+
+    @classmethod
+    def from_projection(
+        cls,
+        projection: "CallableProjection",
+    ) -> "CallableMetadata":
+        """Build metadata from an already resolved callable projection."""
         namespace = projection.namespace
-        metadata = CallableMetadataReader(namespace, projection.name)
-        raw_processing_function = namespace.get(RAW_PROCESSING_FUNCTION_ATTR)
+        reader = CallableMetadataReader(namespace, projection.name)
         return cls(
-            func=func,
-            function_name=projection.name,
-            module_name=projection.module_name,
-            input_memory_type=metadata.optional_string("input_memory_type"),
-            output_memory_type=metadata.optional_string("output_memory_type"),
+            input_memory_type=reader.optional_string("input_memory_type"),
+            output_memory_type=reader.optional_string("output_memory_type"),
             artifact_inputs=_artifact_spec_items(
                 namespace,
                 projection.name,
@@ -135,27 +101,184 @@ class CallableContract(ArtifactPlanKeySelector):
                 projection.name,
                 "__artifact_outputs__",
             ),
-            runtime_adapter=runtime_adapter_spec_from_callable(func),
-            processing_contract=namespace.get(PROCESSING_CONTRACT_ATTR),
-            declared_processing_contract=metadata.optional_string(
+            runtime_adapter=runtime_adapter_spec_from_callable(projection.func),
+            processing_contract=reader.optional_enum(PROCESSING_CONTRACT_ATTR),
+            declared_processing_contract=reader.optional_string(
                 DECLARED_PROCESSING_CONTRACT_ATTR,
             ),
             module_artifact_contract=module_artifact_contract_from_namespace(
                 namespace,
                 owner_name=projection.name,
             ),
-            raw_processing_function=raw_processing_function,
-            runtime_image_execution_mode=metadata.optional_execution_mode(
+            raw_processing_function=reader.optional_raw_processing_function(
+                RAW_PROCESSING_FUNCTION_ATTR,
+            ),
+            runtime_image_execution_mode=reader.optional_execution_mode(
                 RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
             ),
-            runtime_batch_executors=RuntimeBatchCallableFamily(
-                func=func,
-                raw_processing_function=raw_processing_function,
-            ).executors(),
-            request_binding=metadata.optional_request_binding(
+            request_binding=reader.optional_request_binding(
                 CALLABLE_REQUEST_BINDING_ATTR,
             ),
+            prepare=reader.optional_callable(PROCESSING_PREPARE_ATTR),
         )
+
+    def without_prepare(self) -> "CallableMetadata":
+        """Return this metadata without a process-local prepare hook."""
+        return dataclasses.replace(self, prepare=None)
+
+    def with_raw_processing_function(
+        self,
+        raw_processing_function: Callable[..., object] | "FunctionReference" | None,
+    ) -> "CallableMetadata":
+        """Return this metadata with a normalized raw processing callable."""
+        return dataclasses.replace(
+            self,
+            raw_processing_function=raw_processing_function,
+        )
+
+    def as_namespace(self) -> dict[str, object]:
+        """Project typed metadata into callable declaration keys."""
+        namespace: dict[str, object] = {}
+        if self.input_memory_type is not None:
+            namespace["input_memory_type"] = self.input_memory_type
+        if self.output_memory_type is not None:
+            namespace["output_memory_type"] = self.output_memory_type
+        if self.artifact_inputs:
+            namespace["__artifact_inputs__"] = dict(self.artifact_inputs)
+        if self.artifact_outputs:
+            namespace["__artifact_outputs__"] = dict(self.artifact_outputs)
+        if self.runtime_adapter is not None:
+            namespace["__runtime_adapter__"] = self.runtime_adapter
+        if self.processing_contract is not None:
+            namespace[PROCESSING_CONTRACT_ATTR] = self.processing_contract
+        if self.declared_processing_contract is not None:
+            namespace[DECLARED_PROCESSING_CONTRACT_ATTR] = (
+                self.declared_processing_contract
+            )
+        if self.module_artifact_contract is not None:
+            namespace[MODULE_ARTIFACT_CONTRACT_ATTR] = self.module_artifact_contract
+        if self.raw_processing_function is not None:
+            namespace[RAW_PROCESSING_FUNCTION_ATTR] = self.raw_processing_function
+        if self.runtime_image_execution_mode is not None:
+            namespace[RUNTIME_IMAGE_EXECUTION_MODE_ATTR] = (
+                self.runtime_image_execution_mode
+            )
+        if self.request_binding is not None:
+            namespace[CALLABLE_REQUEST_BINDING_ATTR] = self.request_binding
+        if self.prepare is not None:
+            namespace[PROCESSING_PREPARE_ATTR] = self.prepare
+        return namespace
+
+
+@dataclass(frozen=True, slots=True)
+class CallableContract(ArtifactPlanKeySelector):
+    """Compiler contract declared by one processing callable."""
+
+    func: Callable[..., object] | "FunctionReference"
+    function_name: str
+    module_name: str | None
+    metadata: CallableMetadata = dataclasses.field(default_factory=CallableMetadata)
+    runtime_batch_executors: Mapping[object, object] | None = None
+
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[..., "CallableContract"], tuple[Any, ...]]:
+        """Serialize immutable mapping-backed metadata across worker queues."""
+        return (
+            _rebuild_callable_contract,
+            (
+                self.func,
+                self.function_name,
+                self.module_name,
+                self.metadata,
+                (
+                    dict(self.runtime_batch_executors)
+                    if self.runtime_batch_executors is not None
+                    else None
+                ),
+            ),
+        )
+
+    @classmethod
+    def from_callable(
+        cls,
+        func: Callable[..., object] | "FunctionReference",
+    ) -> "CallableContract":
+        """Build a contract from callable attributes once at compiler boundary."""
+        projection = CallableProjection.from_callable(func)
+        metadata = CallableMetadata.from_projection(projection)
+        batch_raw_processing_function = (
+            metadata.raw_processing_function
+            if callable(metadata.raw_processing_function)
+            else None
+        )
+        return cls(
+            func=func,
+            function_name=projection.name,
+            module_name=projection.module_name,
+            metadata=metadata,
+            runtime_batch_executors=RuntimeBatchCallableFamily(
+                func=func,
+                raw_processing_function=batch_raw_processing_function,
+            ).executors(),
+        )
+
+    @property
+    def input_memory_type(self) -> str | None:
+        """Declared input memory type."""
+        return self.metadata.input_memory_type
+
+    @property
+    def output_memory_type(self) -> str | None:
+        """Declared output memory type."""
+        return self.metadata.output_memory_type
+
+    @property
+    def artifact_inputs(self) -> ArtifactSpecItems:
+        """Declared artifact inputs."""
+        return self.metadata.artifact_inputs
+
+    @property
+    def artifact_outputs(self) -> ArtifactSpecItems:
+        """Declared artifact outputs."""
+        return self.metadata.artifact_outputs
+
+    @property
+    def runtime_adapter(self) -> RuntimeAdapterSpec | None:
+        """Declared runtime adapter."""
+        return self.metadata.runtime_adapter
+
+    @property
+    def processing_contract(self) -> Enum | None:
+        """Declared nominal processing contract."""
+        return self.metadata.processing_contract
+
+    @property
+    def declared_processing_contract(self) -> str | None:
+        """Declared processing contract name."""
+        return self.metadata.declared_processing_contract
+
+    @property
+    def module_artifact_contract(self) -> ModuleArtifactContract | None:
+        """Declared module artifact contract."""
+        return self.metadata.module_artifact_contract
+
+    @property
+    def raw_processing_function(
+        self,
+    ) -> Callable[..., object] | "FunctionReference" | None:
+        """Declared raw processing callable or transport reference."""
+        return self.metadata.raw_processing_function
+
+    @property
+    def runtime_image_execution_mode(self) -> ImagePayloadExecutionMode | None:
+        """Declared runtime image execution mode."""
+        return self.metadata.runtime_image_execution_mode
+
+    @property
+    def request_binding(self) -> "CallableRequestBinding | None":
+        """Declared callable request binding."""
+        return self.metadata.request_binding
 
     artifact_input_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
         AliasProperty("input_names")
@@ -193,6 +316,67 @@ class CallableContract(ArtifactPlanKeySelector):
         if self.runtime_batch_executors is None:
             return None
         return self.runtime_batch_executors.get(domain)
+
+    def contract_cache_identity(self) -> CallableContractCacheKey:
+        """Return the contract dimensions that affect reference rehydration."""
+        return (
+            self.module_artifact_contract,
+            self.declared_processing_contract,
+            self.processing_contract,
+            self.runtime_adapter,
+            self.runtime_image_execution_mode,
+        )
+
+    def runtime_callable_cache_identity(
+        self,
+    ) -> CallableRuntimeCacheKey:
+        """Return the process-local cache identity for this callable contract."""
+        if _is_function_reference(self.func):
+            return (self.func.composite_key, self.contract_cache_identity())
+        if callable(self.func):
+            return id(self.func)
+        raise TypeError(f"Invalid callable contract function: {self.func}")
+
+    def resolve_runtime_callable(self) -> Callable[..., object]:
+        """Return the executable callable for this contract."""
+        if _is_function_reference(self.func):
+            from openhcs.core.function_reference_rehydration import (
+                FunctionReferenceRehydrationRequest,
+                FunctionReferenceRehydrator,
+            )
+
+            return FunctionReferenceRehydrator.rehydrate_reference(
+                FunctionReferenceRehydrationRequest(
+                    reference=self.func,
+                    contract=self,
+                    resolved_callable=self.func.resolve(),
+                )
+            )
+        if callable(self.func):
+            return self.func
+        raise TypeError(f"Invalid callable contract function: {self.func}")
+
+
+def _rebuild_callable_contract(
+    func: Callable[..., object] | "FunctionReference",
+    function_name: str,
+    module_name: str | None,
+    metadata: CallableMetadata,
+    runtime_batch_executors: Mapping[object, object] | None,
+) -> CallableContract:
+    """Rebuild a CallableContract with immutable executor metadata."""
+    immutable_executors = (
+        None
+        if runtime_batch_executors is None
+        else MappingProxyType(dict(runtime_batch_executors))
+    )
+    return CallableContract(
+        func=func,
+        function_name=function_name,
+        module_name=module_name,
+        metadata=metadata,
+        runtime_batch_executors=immutable_executors,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,8 +524,9 @@ def callable_request(
             bound.apply_defaults()
             return func(**binding.implementation_kwargs(bound.arguments))
 
-        setattr(wrapper, CALLABLE_REQUEST_BINDING_ATTR, binding)
-        setattr(wrapper, "__signature__", public_signature)
+        wrapper_namespace = _mutable_callable_namespace(wrapper)
+        wrapper_namespace[CALLABLE_REQUEST_BINDING_ATTR] = binding
+        wrapper_namespace["__signature__"] = public_signature
         return wrapper
 
     return decorator
@@ -355,11 +540,8 @@ def _public_defaults_mapping(
         return {}
     if isinstance(public_defaults, Mapping):
         return public_defaults
-    if is_dataclass(public_defaults):
-        return {
-            field.name: getattr(public_defaults, field.name)
-            for field in fields(public_defaults)
-        }
+    if is_dataclass(public_defaults) and not isinstance(public_defaults, type):
+        return asdict(public_defaults)
     raise TypeError(
         "public_defaults must be a mapping, dataclass instance, or None; "
         f"got {type(public_defaults).__name__}."
@@ -383,11 +565,8 @@ def attach_callable_contract_metadata(
             raise ValueError(
                 "declared_processing_contract must be a non-empty string."
             )
-        setattr(
-            func,
-            DECLARED_PROCESSING_CONTRACT_ATTR,
-            declared_processing_contract,
-        )
+        namespace = _mutable_callable_namespace(func)
+        namespace[DECLARED_PROCESSING_CONTRACT_ATTR] = declared_processing_contract
         _attach_nominal_processing_contract_if_supported(
             func,
             declared_processing_contract,
@@ -398,32 +577,31 @@ def attach_callable_contract_metadata(
                 "raw_processing_function must be callable, "
                 f"got {type(raw_processing_function).__name__}."
             )
-        setattr(func, RAW_PROCESSING_FUNCTION_ATTR, raw_processing_function)
-        raw_prepare = getattr(raw_processing_function, PROCESSING_PREPARE_ATTR, None)
-        if raw_prepare is not None and not hasattr(func, PROCESSING_PREPARE_ATTR):
+        namespace = _mutable_callable_namespace(func)
+        namespace[RAW_PROCESSING_FUNCTION_ATTR] = raw_processing_function
+        raw_prepare = CallableMetadata.from_callable(raw_processing_function).prepare
+        if raw_prepare is not None and PROCESSING_PREPARE_ATTR not in namespace:
             if not callable(raw_prepare):
                 raise TypeError(
                     "raw_processing_function prepare hook must be callable, "
                     f"got {type(raw_prepare).__name__}."
                 )
-            setattr(func, PROCESSING_PREPARE_ATTR, raw_prepare)
+            namespace[PROCESSING_PREPARE_ATTR] = raw_prepare
     if prepare is not None:
         if not callable(prepare):
             raise TypeError(
                 "prepare must be callable, "
                 f"got {type(prepare).__name__}."
             )
-        setattr(func, PROCESSING_PREPARE_ATTR, prepare)
+        _mutable_callable_namespace(func)[PROCESSING_PREPARE_ATTR] = prepare
     if runtime_image_execution_mode is not None:
         if not isinstance(runtime_image_execution_mode, ImagePayloadExecutionMode):
             raise TypeError(
                 "runtime_image_execution_mode must be ImagePayloadExecutionMode, "
                 f"got {type(runtime_image_execution_mode).__name__}."
             )
-        setattr(
-            func,
-            RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
-            runtime_image_execution_mode,
+        _mutable_callable_namespace(func)[RUNTIME_IMAGE_EXECUTION_MODE_ATTR] = (
+            runtime_image_execution_mode
         )
 
 
@@ -432,14 +610,15 @@ def _attach_nominal_processing_contract_if_supported(
     declared_processing_contract: str,
 ) -> None:
     """Coerce declared contract names to nominal metadata at the declaration boundary."""
-    if hasattr(func, PROCESSING_CONTRACT_ATTR):
+    namespace = _mutable_callable_namespace(func)
+    if PROCESSING_CONTRACT_ATTR in namespace:
         return
 
     from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
     contract = ProcessingContract.from_declared_name(declared_processing_contract)
     if contract is not None:
-        setattr(func, PROCESSING_CONTRACT_ATTR, contract)
+        namespace[PROCESSING_CONTRACT_ATTR] = contract
 
 
 def processing_prepare(*targets: Any) -> Any:
@@ -483,7 +662,7 @@ def attach_processing_prepare(func: Any, prepare: Any) -> None:
             f"got {type(prepare).__name__}."
         )
     for target in CallableProjection.from_callable(func).prepare_targets():
-        setattr(target, PROCESSING_PREPARE_ATTR, prepare)
+        _mutable_callable_namespace(target)[PROCESSING_PREPARE_ATTR] = prepare
 
 
 def runtime_image_execution_mode(
@@ -497,7 +676,7 @@ def runtime_image_execution_mode(
         )
 
     def decorator(func: Any) -> Any:
-        setattr(func, RUNTIME_IMAGE_EXECUTION_MODE_ATTR, mode)
+        _mutable_callable_namespace(func)[RUNTIME_IMAGE_EXECUTION_MODE_ATTR] = mode
         return func
 
     return decorator
@@ -518,9 +697,13 @@ def prepare_processing_callable(func: Any) -> None:
             f"{projection.name!r}.{PROCESSING_PREPARE_ATTR} must be "
             f"callable, got {type(prepare).__name__}."
         )
+    if projection.module_name is None:
+        module_label = "<unknown>"
+    else:
+        module_label = projection.module_name
     prepare_key = (
         "callable",
-        f"{projection.module_name or '<unknown>'}.{projection.name}",
+        f"{module_label}.{projection.name}",
         _prepare_callable_identity(prepare),
     )
     with _PREPARED_CALLABLE_LOCK:
@@ -539,7 +722,7 @@ def _prepare_callable_identity(prepare: Callable[..., Any]) -> tuple[str, str]:
 def _prepare_processing_module(module_name: str) -> None:
     """Run an optional module-level preparation hook exactly once."""
     module = importlib.import_module(module_name)
-    prepare = getattr(module, PROCESSING_PREPARE_ATTR, None)
+    prepare = vars(module).get(PROCESSING_PREPARE_ATTR)
     if prepare is None:
         return
     if not callable(prepare):
@@ -560,19 +743,31 @@ def _prepare_processing_module(module_name: str) -> None:
 def _prepare_module_autoregister_families(module_name: str) -> None:
     """Prepare AutoRegisterMeta families imported by a callable module."""
     module = importlib.import_module(module_name)
-    for _name, candidate in inspect.getmembers(module, inspect.isclass):
-        if not issubclass(candidate, CompilerPreparedAutoRegisterFamily):
-            continue
-        if candidate is CompilerPreparedAutoRegisterFamily:
-            continue
-        candidate.prepare_registered_family()
+    from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
+
+    AutoRegisterRegistryPreparation.prepare_module_registered_families((module,))
 
 
 def _is_function_reference(func: Any) -> bool:
     """Return whether func is the compiler's nominal picklable reference."""
-    from openhcs.core.pipeline.compiler import FunctionReference
+    from openhcs.core.function_reference import FunctionReference
 
     return isinstance(func, FunctionReference)
+
+
+def _callable_namespace(func: Any) -> CallableNamespace:
+    """Return the readable metadata namespace for a callable-like object."""
+    if _is_function_reference(func):
+        return func.metadata.as_namespace()
+    return vars(func)
+
+
+def _mutable_callable_namespace(func: Any) -> MutableMapping[str, Any]:
+    """Return the writable metadata namespace for a Python callable."""
+    namespace = vars(func)
+    if not isinstance(namespace, MutableMapping):
+        raise TypeError(f"{func!r} does not expose a mutable metadata namespace.")
+    return namespace
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,11 +785,10 @@ class CallableProjection:
         if _is_function_reference(func):
             name = func.function_name
             module_name = func.original_module
-            namespace = func.preserved_attrs
         else:
             name = func.__name__
             module_name = func.__module__
-            namespace = func.__dict__
+        namespace = _callable_namespace(func)
         if not isinstance(name, str):
             raise TypeError(
                 f"Callable name must be a string, got {type(name).__name__}."
@@ -618,10 +812,11 @@ class CallableProjection:
                 continue
             seen.add(target_id)
             targets.append(target)
-            raw = getattr(target, RAW_PROCESSING_FUNCTION_ATTR, None)
+            namespace = _callable_namespace(target)
+            raw = namespace.get(RAW_PROCESSING_FUNCTION_ATTR)
             if callable(raw):
                 pending.append(raw)
-            wrapped = getattr(target, "__wrapped__", None)
+            wrapped = namespace.get("__wrapped__")
             if callable(wrapped):
                 pending.append(wrapped)
         return tuple(targets)
@@ -661,6 +856,48 @@ class CallableMetadataReader:
                 f"got {type(value).__name__}."
             )
         return value
+
+    def optional_enum(self, field_name: str) -> Enum | None:
+        """Return an optional enum metadata field."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, Enum):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be Enum, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    def optional_callable(
+        self,
+        field_name: str,
+    ) -> Callable[..., object] | None:
+        """Return an optional callable metadata field."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if not callable(value):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be callable, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    def optional_raw_processing_function(
+        self,
+        field_name: str,
+    ) -> Callable[..., object] | "FunctionReference" | None:
+        """Return an optional raw callable or transport reference."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if callable(value) or _is_function_reference(value):
+            return value
+        raise TypeError(
+            f"{self.function_name!r}.{field_name} must be callable or "
+            f"FunctionReference, got {type(value).__name__}."
+        )
 
     def optional_request_binding(
         self,

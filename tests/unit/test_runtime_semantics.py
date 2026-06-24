@@ -9,10 +9,13 @@ from openhcs.core.aligned_image_payload import (
     ImagePayloadBundleContext,
     ObjectLabelPayloadSourceSpatialDomainAdapter,
 )
+from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.runtime_semantics import (
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     ObjectLabelRepresentation,
+    ObjectInstanceKey,
+    ParentChildRelationshipPayload,
     GroupRuntimePlaneProjection,
     RuntimePlaneProjection,
     SourceSpatialDomainAdapter,
@@ -24,6 +27,7 @@ from openhcs.core.runtime_semantics import (
     dense_object_label_extent_id_domain,
     dense_object_label_id_domain,
     dense_object_label_identity_domains,
+    dense_object_label_measurement_row_domain,
     dense_object_label_plane_id_domains,
     object_label_lineage_geometry,
     object_label_lineage_payload,
@@ -36,25 +40,67 @@ from openhcs.core.runtime_values import (
     SparseIJVLabelRows,
     image_payload_data,
     image_payload_metadata,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
 )
 
 
 def test_runtime_plane_projection_is_nominal_and_validated() -> None:
-    stack_projection = RuntimePlaneProjection.for_group_key(None, plane_index=None)
-    group_projection = RuntimePlaneProjection.for_group_key("2", plane_index=1)
+    stack_projection = RuntimePlaneProjection.for_execution_group(
+        None,
+        plane_index=None,
+        projects_runtime_plane=False,
+    )
+    grouped_non_plane_projection = RuntimePlaneProjection.for_execution_group(
+        "site-1",
+        plane_index=None,
+        projects_runtime_plane=False,
+    )
+    group_projection = RuntimePlaneProjection.for_execution_group(
+        "2",
+        plane_index=1,
+        projects_runtime_plane=True,
+    )
 
     assert isinstance(stack_projection, StackRuntimePlaneProjection)
     assert stack_projection.runtime_slice_plane_index() is None
+    assert grouped_non_plane_projection.runtime_slice_plane_index() is None
     assert isinstance(group_projection, GroupRuntimePlaneProjection)
     assert group_projection.runtime_slice_plane_index() == 1
 
     with pytest.raises(ValueError, match="Ungrouped runtime execution"):
-        RuntimePlaneProjection.for_group_key(None, plane_index=0)
-    with pytest.raises(ValueError, match="Grouped runtime execution requires"):
-        RuntimePlaneProjection.for_group_key("2", plane_index=None)
+        RuntimePlaneProjection.for_execution_group(
+            None,
+            plane_index=0,
+            projects_runtime_plane=False,
+        )
+    with pytest.raises(ValueError, match="requires grouped execution identity"):
+        RuntimePlaneProjection.for_execution_group(
+            None,
+            plane_index=None,
+            projects_runtime_plane=True,
+        )
+    with pytest.raises(ValueError, match="requires the OpenHCS component"):
+        RuntimePlaneProjection.for_execution_group(
+            "2",
+            plane_index=None,
+            projects_runtime_plane=True,
+        )
     with pytest.raises(ValueError, match="cannot be negative"):
         RuntimePlaneProjection.group(-1)
+
+
+def test_object_instance_key_prefers_runtime_slice_index_over_image_number() -> None:
+    key = ObjectInstanceKey.from_measurement_row(
+        {
+            "slice_index": 1,
+            "image_number": 1,
+            "object_label": 7,
+        },
+        7,
+        image_number_offset=0,
+    )
+
+    assert key == ObjectInstanceKey(7, slice_index=1)
 
 
 def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
@@ -84,7 +130,7 @@ def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
 
 
 def test_object_label_domain_project_slice_selects_declared_plane_domain() -> None:
-    domain = ObjectLabelDomain(
+    domain=ObjectLabelDomain(
         declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
         scope=ObjectLabelDomainScope.PLANE,
     )
@@ -97,7 +143,7 @@ def test_object_label_domain_project_slice_selects_declared_plane_domain() -> No
 
 
 def test_object_label_domain_project_slice_broadcasts_single_declared_plane_domain() -> None:
-    domain = ObjectLabelDomain(
+    domain=ObjectLabelDomain(
         declared_object_id_domains=((1, 2),),
         scope=ObjectLabelDomainScope.PLANE,
     )
@@ -110,7 +156,7 @@ def test_object_label_domain_project_slice_broadcasts_single_declared_plane_doma
 
 
 def test_object_label_domain_project_slice_selects_grouped_plane_domains() -> None:
-    domain = ObjectLabelDomain(
+    domain=ObjectLabelDomain(
         declared_object_id_domains=((1,), (2,), (3,), (4,)),
         scope=ObjectLabelDomainScope.PLANE,
     )
@@ -123,7 +169,7 @@ def test_object_label_domain_project_slice_selects_grouped_plane_domains() -> No
 
 
 def test_object_label_domain_project_slice_repeats_declared_plane_domains() -> None:
-    domain = ObjectLabelDomain(
+    domain=ObjectLabelDomain(
         declared_object_id_domains=((1,), (2,)),
         scope=ObjectLabelDomainScope.PLANE,
     )
@@ -136,7 +182,7 @@ def test_object_label_domain_project_slice_repeats_declared_plane_domains() -> N
 
 
 def test_object_label_domain_project_planes_selects_noncontiguous_domains() -> None:
-    domain = ObjectLabelDomain(
+    domain=ObjectLabelDomain(
         declared_object_id_domains=((1,), (2,), (3,), (4,)),
         scope=ObjectLabelDomainScope.PLANE,
     )
@@ -148,20 +194,19 @@ def test_object_label_domain_project_planes_selects_noncontiguous_domains() -> N
     assert projected.scope is ObjectLabelDomainScope.PLANE
 
 
-def test_plane_domain_strategy_rederives_single_output_plane_from_labels() -> None:
+def test_plane_domain_strategy_rejects_mismatched_single_output_plane() -> None:
     labels = np.array([[0, 2], [3, 0]], dtype=np.int32)
 
-    domains = dense_object_label_plane_id_domains(
-        labels,
-        domain_scope=ObjectLabelDomainScope.PLANE,
-        declared_object_id_domains=((1,), (2,), (3,)),
-    )
-
-    assert domains == ((2, 3),)
+    with pytest.raises(ValueError, match="must match dense label plane count"):
+        dense_object_label_plane_id_domains(
+            labels,
+            domain_scope=ObjectLabelDomainScope.PLANE,
+            declared_object_id_domains=((1,), (2,), (3,)),
+        )
 
 
 def test_object_label_domain_project_slice_rejects_mismatched_plane_domains() -> None:
-    domain = ObjectLabelDomain(
+    domain=ObjectLabelDomain(
         declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
         scope=ObjectLabelDomainScope.PLANE,
     )
@@ -177,14 +222,14 @@ def test_compose_one_image_bundle_preserves_shared_crop_domain() -> None:
         offset_yx=(1, 2),
         physical_border_edges_yx=(False, False, False, False),
     )
-    first = image_payload_with_context(
+    first = RuntimeImagePayloadContext(
         np.ones((5, 5), dtype=np.float32),
         metadata=metadata,
-    )
-    second = image_payload_with_context(
+    mask = None).payload()
+    second = RuntimeImagePayloadContext(
         np.full((5, 5), 2, dtype=np.float32),
         metadata=metadata,
-    )
+    mask = None).payload()
 
     bundle = ImagePayloadBundleContext.from_payloads((first, second)).compose()
 
@@ -200,10 +245,10 @@ def test_aligned_image_stack_exposes_slice_source_spatial_domain() -> None:
         offset_yx=(1, 2),
         physical_border_edges_yx=(False, False, False, False),
     )
-    reference = image_payload_with_context(
+    reference = RuntimeImagePayloadContext(
         np.ones((5, 5), dtype=np.float32),
         metadata=metadata,
-    )
+    mask = None).payload()
     stack = AlignedImageStack((reference,))
     adapter = stack.first_slice_source_spatial_adapter()
 
@@ -234,10 +279,10 @@ def test_source_spatial_domain_adapter_extracts_source_array_to_payload_domain()
         offset_yx=(1, 2),
         physical_border_edges_yx=(False, False, False, False),
     )
-    image = image_payload_with_context(
+    image = RuntimeImagePayloadContext(
         np.ones((5, 5), dtype=np.float32),
         metadata=metadata,
-    )
+    mask = None).payload()
     labels = np.arange(72, dtype=np.int32).reshape(8, 9)
     adapter = SourceSpatialDomainAdapter.for_value(image)
 
@@ -291,8 +336,8 @@ def test_object_label_parent_child_payload_preserves_plane_scoped_stack_identity
             ),
             dtype=np.int32,
         ),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+    ))
     child_stack = ObjectLabelPayload(
         labels=np.asarray(
             (
@@ -301,8 +346,8 @@ def test_object_label_parent_child_payload_preserves_plane_scoped_stack_identity
             ),
             dtype=np.int32,
         ),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     payload = object_label_parent_child_payload(parent_stack, child_stack)
 
@@ -310,6 +355,12 @@ def test_object_label_parent_child_payload_preserves_plane_scoped_stack_identity
     assert payload.child_ids == (1, 1)
     assert payload.slice_indices == (0, 1)
     assert payload.slice_count == 2
+
+
+def test_parent_child_payload_explicit_slice_indices_default_to_plane_zero() -> None:
+    payload = ParentChildRelationshipPayload(parent_ids=(1, 2), child_ids=(3, 4))
+
+    assert payload.explicit_slice_indices() == (0, 0)
 
 
 def test_aligned_dense_object_label_arrays_applies_payload_domain_to_matching_raw_labels() -> None:
@@ -329,8 +380,10 @@ def test_aligned_dense_object_label_arrays_applies_payload_domain_to_matching_ra
     )
     parent_payload = ObjectLabelPayload(
         labels=compact_parent,
-        spatial_origin_yx=(2, 3),
-        source_spatial_shape_yx=(6, 7),
+        source_spatial_domain=SourceSpatialDomain(
+            origin_yx=(2, 3),
+            source_shape_yx=(6, 7),
+        ),
     )
 
     assert isinstance(
@@ -358,8 +411,10 @@ def test_aligned_dense_object_label_stacks_share_payload_source_domain() -> None
     compact_secondary = compact_primary.copy()
     primary_payload = ObjectLabelPayload(
         labels=compact_primary,
-        spatial_origin_yx=(1, 2),
-        source_spatial_shape_yx=(5, 6),
+        source_spatial_domain=SourceSpatialDomain(
+            origin_yx=(1, 2),
+            source_shape_yx=(5, 6),
+        ),
     )
 
     stacks = DenseObjectLabelPairAligner(
@@ -385,8 +440,10 @@ def test_aligned_dense_object_label_stack_alignment_restores_secondary_domain() 
     compact_secondary = compact_primary.copy()
     primary_payload = ObjectLabelPayload(
         labels=compact_primary,
-        spatial_origin_yx=(1, 2),
-        source_spatial_shape_yx=(5, 6),
+        source_spatial_domain=SourceSpatialDomain(
+            origin_yx=(1, 2),
+            source_shape_yx=(5, 6),
+        ),
     )
     alignment = DenseObjectLabelPairAligner(
         primary_payload,
@@ -450,8 +507,8 @@ def test_dense_object_label_pair_alignment_cycles_factorized_runtime_axes() -> N
 def test_dense_object_label_id_domain_uses_declared_count_for_empty_labels() -> None:
     payload = ObjectLabelPayload(
         labels=np.zeros((3, 3), dtype=np.int32),
-        declared_object_count=4,
-    )
+        domain=ObjectLabelDomain(declared_object_count=4,
+    ))
 
     assert dense_object_label_id_domain(payload) == (1, 2, 3, 4)
     assert dense_object_label_extent_id_domain(payload) == ()
@@ -462,6 +519,58 @@ def test_dense_object_label_id_domain_uses_present_dense_ids_without_declaration
 
     assert dense_object_label_id_domain(labels) == (1, 3)
     assert dense_object_label_extent_id_domain(labels) == (1, 2, 3)
+
+
+def test_dense_object_label_measurement_row_domain_preserves_raw_sparse_ids() -> None:
+    labels = np.array([[1, 0, 3]], dtype=np.int32)
+
+    assert dense_object_label_measurement_row_domain(labels, labels) == (1, 3)
+
+
+def test_dense_object_label_measurement_row_domain_uses_declared_count_extent() -> None:
+    labels = np.array([[1, 0, 3]], dtype=np.int32)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        domain=ObjectLabelDomain(declared_object_count=4),
+    )
+
+    assert dense_object_label_measurement_row_domain(payload, labels) == (1, 2, 3)
+
+
+def test_dense_object_label_measurement_row_domain_uses_compact_declared_extent() -> None:
+    labels = np.array([[1, 0, 3]], dtype=np.int32)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        domain=ObjectLabelDomain(declared_object_ids=(1, 2, 3, 4)),
+    )
+
+    assert dense_object_label_measurement_row_domain(payload, labels) == (1, 2, 3)
+
+
+def test_dense_object_label_measurement_row_domain_expands_compact_declared_ids() -> None:
+    labels = np.array([[1, 0, 3], [0, 0, 5]], dtype=np.int32)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        domain=ObjectLabelDomain(declared_object_ids=(1, 3, 5)),
+    )
+
+    assert dense_object_label_measurement_row_domain(payload, labels) == (
+        1,
+        2,
+        3,
+        4,
+        5,
+    )
+
+
+def test_dense_object_label_measurement_row_domain_preserves_explicit_high_ids() -> None:
+    labels = np.zeros((3, 3), dtype=np.int32)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        domain=ObjectLabelDomain(declared_object_ids=(10, 20, 30)),
+    )
+
+    assert dense_object_label_measurement_row_domain(payload, labels) == (10, 20, 30)
 
 
 def test_object_label_lineage_uses_identity_domain_for_3d_resize_geometry() -> None:
@@ -539,9 +648,9 @@ def test_dense_object_label_plane_id_domains_repeat_plane_scoped_stack_declarati
             ],
             dtype=np.int32,
         ),
-        declared_object_count=4,
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_count=4,
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     assert dense_object_label_plane_id_domains(labels) == (
         (1, 2, 3, 4),
@@ -558,9 +667,9 @@ def test_dense_object_label_plane_id_domains_preserve_single_plane_declaration()
             ],
             dtype=np.int32,
         ),
-        declared_object_count=4,
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_count=4,
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     assert dense_object_label_plane_id_domains(labels) == ((1, 2, 3, 4),)
     assert dense_object_label_identity_domains(labels) == ((1, 2, 3, 4),)

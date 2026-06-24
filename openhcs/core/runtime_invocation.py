@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Generic, TypeVar
 
@@ -82,6 +82,7 @@ class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
     kwargs: Mapping[str, object]
     batch_index: int
     batch_count: int
+    semantic_group_key: tuple[Hashable, ...] | None = None
 
 
 def requested_image_execution_mode(

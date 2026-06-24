@@ -11,7 +11,9 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from metaclass_registry import (
     AutoRegisterMeta,
+    LazyDiscoveryDict,
     RegistryFamily,
+    RegistryConfig,
     RegistryKeyAttribute,
     RegisteredEnumMeta,
     extract_key_from_class_name,
@@ -29,6 +31,37 @@ _ContextStrategyT = TypeVar(
 ContextStrategyTypes = tuple[type[_ContextStrategyT], ...]
 
 
+class RegisteredStrategyTypesMixin(Generic[_StrategyT]):
+    """Shared projection of an AutoRegisterMeta registry into concrete classes."""
+
+    @classmethod
+    def registered_strategy_types(
+        cls: type[_StrategyT],
+    ) -> tuple[type[_StrategyT], ...]:
+        """Return registered concrete strategy classes."""
+        return tuple(cast(type[_StrategyT], item) for item in cls.__registry__.values())
+
+
+def enum_key_from_class(name: str, cls: type[object]) -> str | None:
+    """Return the enum-value registry key declared directly on one strategy."""
+    del name
+    member_attr = cls.__enum_member_attr__
+    member = cls.__dict__.get(member_attr)
+    if isinstance(member, Enum):
+        return member.value
+    return None
+
+
+class StrategyLabelRegistryMixin:
+    """Shared AutoRegister protocol for strategy roots keyed by strategy_label."""
+
+    __registry_key__ = RegistryKeyAttribute.STRATEGY_LABEL.value
+    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+    stable_key_axis: ClassVar[str] = RegistryKeyAttribute.STRATEGY_LABEL.value
+    strategy_label: ClassVar[str | None] = None
+
+
 class EnumKeyedStrategyMixin(Generic[_EnumT]):
     """Mixin for AutoRegisterMeta ABC families keyed by enum member values.
 
@@ -37,29 +70,18 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
     concrete class, avoiding repeated ``label = enum.value`` boilerplate.
     """
 
+    __registry_key__ = RegistryKeyAttribute.STRATEGY_LABEL.value
+    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__: ClassVar[str] = "strategy_key"
     __enum_label_attr__: ClassVar[str] = "strategy_label"
+    stable_key_axis: ClassVar[str] = "enum_member"
+    strategy_label: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        member = cls.__dict__.get(cls.__enum_member_attr__)
-        if not isinstance(member, Enum):
-            return
-        label_attr = cls._enum_label_attr()
-        if cls.__dict__.get(label_attr) is None:
-            setattr(cls, label_attr, member.value)
-
-    @classmethod
-    def _enum_label_attr(cls) -> str:
-        """Return the class attribute AutoRegisterMeta should read as a key."""
-        label_attr = cls.__enum_label_attr__
-        registry_key = getattr(cls, "__registry_key__", None)
-        if (
-            label_attr == EnumKeyedStrategyMixin.__enum_label_attr__
-            and isinstance(registry_key, str)
-        ):
-            return registry_key
-        return label_attr
+        if "__key_extractor__" not in cls.__dict__:
+            cls.__key_extractor__ = staticmethod(enum_key_from_class)
 
     @classmethod
     def for_enum_member(cls: type[_StrategyT], member: _EnumT) -> _StrategyT:
@@ -94,11 +116,12 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
                 key = (type(member), member)
             else:
                 key = id(strategy_type)
-            strategy_types.setdefault(key, cast(type[_StrategyT], strategy_type))
+            if key not in strategy_types:
+                strategy_types[key] = cast(type[_StrategyT], strategy_type)
         return tuple(strategy_types.values())
 
 
-class NominalTypeKeyedStrategyMixin:
+class NominalTypeKeyedStrategyMixin(RegisteredStrategyTypesMixin[_TypeStrategyT]):
     """Mixin for strategies selected by nominal runtime value types.
 
     Concrete strategies declare their owning Python type in ``value_type``.
@@ -118,27 +141,29 @@ class NominalTypeKeyedStrategyMixin:
             cls.value_type_label = _nominal_type_key(member)
 
     @classmethod
-    def registered_strategy_types(
-        cls: type[_TypeStrategyT],
-    ) -> tuple[type[_TypeStrategyT], ...]:
-        """Return registered concrete strategy classes."""
-        return tuple(cast(type[_TypeStrategyT], item) for item in cls.__registry__.values())
-
-    @classmethod
     def for_nominal_value(
         cls: type[_TypeStrategyT],
         value: object,
     ) -> _TypeStrategyT | None:
         """Instantiate the most specific registered strategy owning ``value``."""
+        strategy_types = cls.strategy_types_for_nominal_value(value)
+        return None if not strategy_types else strategy_types[0]()
+
+    @classmethod
+    def strategy_types_for_nominal_value(
+        cls: type[_TypeStrategyT],
+        value: object,
+    ) -> tuple[type[_TypeStrategyT], ...]:
+        """Return registered strategy classes ordered by runtime MRO specificity."""
         value_mro = type(value).mro()
-        best_match: tuple[int, type[_TypeStrategyT]] | None = None
+        matches: list[tuple[int, type[_TypeStrategyT]]] = []
         for strategy_type in cls.registered_strategy_types():
             member = strategy_type.value_type
             if _is_nominal_type_member(member) and isinstance(value, member):
                 distance = cls.nominal_type_distance(value_mro, member)
-                if best_match is None or distance < best_match[0]:
-                    best_match = (distance, strategy_type)
-        return None if best_match is None else best_match[1]()
+                matches.append((distance, strategy_type))
+        matches.sort(key=lambda item: item[0])
+        return tuple(strategy_type for _, strategy_type in matches)
 
     @staticmethod
     def nominal_type_distance(
@@ -151,10 +176,9 @@ class NominalTypeKeyedStrategyMixin:
                 NominalTypeKeyedStrategyMixin.nominal_type_distance(value_mro, item)
                 for item in member
             )
-        try:
-            return value_mro.index(member)
-        except ValueError:
+        if member not in value_mro:
             return len(value_mro)
+        return value_mro.index(member)
 
 
 def _is_nominal_type_member(value: object) -> bool:
@@ -171,7 +195,57 @@ def _nominal_type_key(value: type[object] | tuple[type[object], ...]) -> str:
     return f"{value.__module__}.{value.__qualname__}"
 
 
-class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
+class NominalTypeStrategyFamilyMixin(NominalTypeKeyedStrategyMixin):
+    """AutoRegisterMeta declaration surface for nominal-type strategy roots."""
+
+    __registry_key__ = RegistryKeyAttribute.VALUE_TYPE_LABEL.value
+    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+    stable_key_axis: ClassVar[str] = RegistryKeyAttribute.VALUE_TYPE_LABEL.value
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+
+
+class MostDerivedContextStrategyMeta(AutoRegisterMeta):
+    """Create one registry for each most-derived context strategy family."""
+
+    REGISTRY_KEY = "strategy_key"
+    FAMILY_ROOT_MARKER = "__most_derived_context_strategy_template__"
+
+    def __new__(mcs, name: str, bases: tuple[type, ...], attrs: dict):
+        starts_context_family = any(
+            base.__dict__.get(mcs.FAMILY_ROOT_MARKER) is True
+            for base in bases
+        )
+        if starts_context_family:
+            registry_key = attrs.get("__registry_key__", mcs.REGISTRY_KEY)
+            registry = LazyDiscoveryDict()
+            attrs["__registry__"] = registry
+            attrs["__registry_key__"] = registry_key
+            attrs["__skip_if_no_key__"] = True
+            attrs["__registry_family__"] = RegistryFamily(registry_key)
+            attrs["stable_key_axis"] = registry_key
+            return super().__new__(
+                mcs,
+                name,
+                bases,
+                attrs,
+                registry_config=RegistryConfig(
+                    registry_dict=registry,
+                    key_attribute=registry_key,
+                    skip_if_no_key=True,
+                    registry_name=f"{name} most-derived context strategy",
+                ),
+            )
+        return super().__new__(mcs, name, bases, attrs)
+
+
+class MostDerivedContextStrategyMixin(
+    RegisteredStrategyTypesMixin[Any],
+    Generic[_ContextT],
+    ABC,
+    metaclass=MostDerivedContextStrategyMeta,
+):
     """Mixin for registry families selected by context and strategy inheritance.
 
     Concrete strategies implement ``matches`` and express precedence through
@@ -180,16 +254,13 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
     priority numbers, or repeated registry scans.
     """
 
+    __registry_key__: ClassVar[str] = "strategy_key"
+    __skip_if_no_key__: ClassVar[bool] = True
+    __registry_family__ = RegistryFamily("strategy_key")
+    __most_derived_context_strategy_template__: ClassVar[bool] = True
+    stable_key_axis: ClassVar[str] = "strategy_key"
+    strategy_key: ClassVar[Any | None] = None
     strategy_key_attr: ClassVar[str] = "strategy_key"
-
-    @classmethod
-    def registered_strategy_types(
-        cls: type[_ContextStrategyT],
-    ) -> ContextStrategyTypes[_ContextStrategyT]:
-        """Return registered concrete strategy classes."""
-        return tuple(
-            cast(type[_ContextStrategyT], item) for item in cls.__registry__.values()
-        )
 
     @classmethod
     def for_context(
@@ -216,7 +287,7 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
                 f"{cls._error_subject(error_subject)} requires exactly one "
                 f"most-derived strategy, got {names!r}."
             )
-        return owning_strategy_types[0]()
+        return owning_strategy_types[0].build_for_context(context)
 
     @classmethod
     def owning_strategy_types(
@@ -227,7 +298,7 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
         matching_strategy_types = tuple(
             strategy_type
             for strategy_type in cls.registered_strategy_types()
-            if strategy_type().matches(context)
+            if strategy_type.matches_context(context)
         )
         return tuple(
             candidate_type
@@ -245,11 +316,38 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
 
     @classmethod
     def _strategy_name(cls, strategy_type: type[_ContextStrategyT]) -> object:
-        return strategy_type.__dict__.get(cls.strategy_key_attr, strategy_type.__name__)
+        if cls.strategy_key_attr in strategy_type.__dict__:
+            return strategy_type.__dict__[cls.strategy_key_attr]
+        return strategy_type.__name__
+
+    @classmethod
+    def build_for_context(
+        cls: type[_ContextStrategyT],
+        context: _ContextT,
+    ) -> _ContextStrategyT:
+        """Instantiate this strategy after context selection."""
+        del context
+        return cls()
+
+    @classmethod
+    def matches_context(
+        cls: type[_ContextStrategyT],
+        context: _ContextT,
+    ) -> bool:
+        """Return whether this strategy owns ``context`` without custom construction."""
+        return cls().matches(context)
 
     @abstractmethod
     def matches(self, context: _ContextT) -> bool:
         """Return whether this registered strategy owns ``context``."""
+
+
+class AlwaysMatchesContextMixin(Generic[_ContextT]):
+    """Mixin for terminal context strategies whose match predicate is unconditional."""
+
+    def matches(self, context: _ContextT) -> bool:
+        del context
+        return True
 
 
 class RegisteredLeafClassSpec(ABC, metaclass=AutoRegisterMeta):
@@ -291,7 +389,7 @@ def enum_member_with_payload(
     """Construct an enum member while attaching one payload attribute."""
     member = object.__new__(enum_type)
     member._value_ = value
-    setattr(member, payload_attribute, payload)
+    member.__dict__[payload_attribute] = payload
     return member
 
 
@@ -305,7 +403,7 @@ def str_enum_member_with_payload(
     """Construct a string enum member while attaching one payload attribute."""
     member = str.__new__(enum_type, value)
     member._value_ = value
-    setattr(member, payload_attribute, payload)
+    member.__dict__[payload_attribute] = payload
     return member
 
 

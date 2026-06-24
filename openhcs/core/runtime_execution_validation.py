@@ -9,15 +9,16 @@ from pathlib import Path
 from types import MappingProxyType
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.runtime_exports import (
     RuntimeExportExpectation,
     RuntimeExportObservation,
     runtime_export_failures,
 )
-from openhcs.core.runtime_stores import StoredRuntimeValue, require_runtime_value_store
+from openhcs.core.runtime_stores import StoredRuntimeValue
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RuntimeArtifactExecutionExpectation:
     """Runtime artifacts and file exports expected from one execution."""
 
@@ -37,13 +38,9 @@ class RuntimeArtifactExecutionExpectation:
         )
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "artifact_kinds",
-            frozenset(
-                kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
-                for kind in self.artifact_kinds
-            ),
+        self.artifact_kinds = frozenset(
+            kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
+            for kind in self.artifact_kinds
         )
         if not isinstance(self.exports, RuntimeExportExpectation):
             raise TypeError(
@@ -52,7 +49,7 @@ class RuntimeArtifactExecutionExpectation:
             )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RuntimeArtifactExecutionObservation:
     """Observed runtime artifacts and file exports from one execution."""
 
@@ -62,7 +59,7 @@ class RuntimeArtifactExecutionObservation:
     @classmethod
     def from_contexts(
         cls,
-        execution_contexts: Mapping[object, object],
+        execution_contexts: Mapping[str, ProcessingContext],
         output_root: Path | None = None,
     ) -> "RuntimeArtifactExecutionObservation":
         return cls(
@@ -73,15 +70,11 @@ class RuntimeArtifactExecutionObservation:
         )
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "records_by_axis",
-            MappingProxyType(
-                {
-                    str(axis): tuple(records)
-                    for axis, records in self.records_by_axis.items()
-                }
-            ),
+        self.records_by_axis = MappingProxyType(
+            {
+                str(axis): tuple(records)
+                for axis, records in self.records_by_axis.items()
+            }
         )
         if not isinstance(self.exports, RuntimeExportObservation):
             raise TypeError(
@@ -100,21 +93,18 @@ class RuntimeArtifactExecutionObservation:
 
 
 def runtime_records_by_axis(
-    execution_contexts: Mapping[object, object],
+    execution_contexts: Mapping[str, ProcessingContext],
 ) -> Mapping[str, tuple[StoredRuntimeValue, ...]]:
     """Return stored runtime records from compiled execution contexts."""
     records_by_axis: dict[str, tuple[StoredRuntimeValue, ...]] = {}
     for axis_id, context in execution_contexts.items():
-        store = require_runtime_value_store(
-            context,
-            owner_name=f"compiled context {axis_id!r}",
-        )
+        store = context.runtime_value_store
         records_by_axis[str(axis_id)] = tuple(store.observed_values)
     return MappingProxyType(records_by_axis)
 
 
 def runtime_output_roots(
-    execution_contexts: Mapping[object, object],
+    execution_contexts: Mapping[str, ProcessingContext],
     explicit_output_root: Path | None = None,
 ) -> tuple[Path, ...]:
     """Return authoritative runtime output roots for compiled contexts."""
@@ -122,26 +112,18 @@ def runtime_output_roots(
 
 
 def _runtime_output_roots(
-    execution_contexts: Mapping[object, object],
+    execution_contexts: Mapping[str, ProcessingContext],
     explicit_output_root: Path | None,
 ) -> tuple[Path, ...]:
     roots: list[Path] = []
     for context in execution_contexts.values():
-        step_plans = getattr(context, "step_plans", None)
-        if not step_plans:
+        if not context.step_plans:
             continue
-        for plan in step_plans.values():
-            output_plate_root = getattr(plan, "output_plate_root", None)
-            if output_plate_root is not None:
-                roots.append(Path(output_plate_root))
-            materialized_output = getattr(plan, "materialized_output", None)
-            materialized_plate_root = getattr(
-                materialized_output,
-                "plate_root",
-                None,
-            )
-            if materialized_plate_root is not None:
-                roots.append(Path(materialized_plate_root))
+        for plan in context.step_plans.values():
+            if plan.output_plate_root is not None:
+                roots.append(Path(plan.output_plate_root))
+            if plan.materialized_output is not None:
+                roots.append(Path(plan.materialized_output.plate_root))
 
     if roots:
         return tuple(dict.fromkeys(roots))

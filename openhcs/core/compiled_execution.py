@@ -46,6 +46,21 @@ class CompiledExecutionBundle:
             },
         )
 
+    @classmethod
+    def from_unassigned_runtime_contexts(
+        cls,
+        *,
+        pipeline_definition: Sequence[AbstractStep],
+        runtime_contexts: Mapping[str, ProcessingContext],
+    ) -> "CompiledExecutionBundle":
+        """Create a bundle before worker ownership has been assigned."""
+
+        return cls.from_runtime_contexts(
+            pipeline_definition=pipeline_definition,
+            runtime_contexts=runtime_contexts,
+            worker_assignments={},
+        )
+
     def as_compilation_result(self) -> dict[str, Any]:
         return {
             "pipeline_definition": self.pipeline_definition,

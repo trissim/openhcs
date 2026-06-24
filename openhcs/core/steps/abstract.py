@@ -158,6 +158,7 @@ class AbstractStep(abc.ABC):
         self.streaming_defaults = streaming_defaults
         self.napari_streaming_config = napari_streaming_config
         self.fiji_streaming_config = fiji_streaming_config
+        self._scope_token: str | None = None
 
         # Internal compiler hints - set by path planner during compilation
         self.__input_dir__ = None

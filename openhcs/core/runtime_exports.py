@@ -19,7 +19,10 @@ from openhcs.core.image_file_serialization import (
     image_payload_as_uint8,
 )
 from openhcs.core.runtime_stores import StoredRuntimeValue
-from openhcs.core.runtime_values import ColumnarRows, MeasurementTable
+from openhcs.core.runtime_values import (
+    ColumnarRows,
+    MeasurementTable,
+)
 
 
 class RuntimeExportFormat(str, Enum):

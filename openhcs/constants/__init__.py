@@ -21,12 +21,9 @@ from openhcs.constants.constants import (  # Backend constants; Memory constants
     VALID_GPU_MEMORY_TYPES, VALID_MEMORY_TYPES, WRITE_BACKEND, Backend,
     AllComponents, GroupBy, MemoryType, SequentialComponents, VariableComponents, DtypeConversion, LiteralDtype)
 
-# Backward compatibility and lazy loading using functional approach
-__getattr__ = lambda name: {
-    'DEFAULT_VARIABLE_COMPONENTS': get_default_variable_components,
-    'DEFAULT_GROUP_BY': get_default_group_by,
-    'MULTIPROCESSING_AXIS': get_multiprocessing_axis
-}.get(name, lambda: (_ for _ in ()).throw(AttributeError(f"module '{__name__}' has no attribute '{name}'")))()
+DEFAULT_VARIABLE_COMPONENTS = get_default_variable_components()
+DEFAULT_GROUP_BY = get_default_group_by()
+MULTIPROCESSING_AXIS = get_multiprocessing_axis()
 from openhcs.constants.input_source import InputSource
 
 __all__ = [

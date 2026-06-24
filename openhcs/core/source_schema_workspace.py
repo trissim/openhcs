@@ -9,9 +9,9 @@ import shutil
 import urllib.request
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from enum import IntEnum
+from enum import Enum, IntEnum
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, ClassVar, TypeAlias
@@ -27,6 +27,7 @@ from openhcs.core.pipeline_image_schema import (
     ImportedMetadataJoin,
     ImportedMetadataTable,
     PipelineImageSchema,
+    SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS,
     SOURCE_IMAGE_TYPE_METADATA_FIELD,
     SourceAssignmentBase,
     SourceArtifactAssignment,
@@ -35,6 +36,14 @@ from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.core.source_bindings import (
     SourceBindingMatchMethod,
     SourceSelector,
+)
+from openhcs.core.source_metadata import (
+    SourceMetadataIdentityItems,
+    SourceMetadataIdentityProjection,
+    SourceMetadataMapping,
+    SourceMetadataRoleView,
+    SourceMetadataScalar,
+    SourceMetadataValue,
 )
 from openhcs.core.source_matching import (
     is_image_path,
@@ -47,8 +56,15 @@ from openhcs.core.source_matching import (
     source_metadata_values_equal,
     source_metadata_value,
     with_source_component_metadata,
+    with_original_source_metadata,
 )
 from openhcs.core.source_projection import SourcePixelRef
+from openhcs.core.virtual_workspace_metadata import (
+    OpenHCSMetadataSubdirectories,
+    VirtualWorkspaceChannelLabels,
+    VirtualWorkspaceMapping,
+    VirtualWorkspaceSourceMetadataEntries,
+)
 from openhcs.microscopes.openhcs import (
     FIELDS,
     OpenHCSMetadata,
@@ -78,7 +94,7 @@ WorkspaceComponentValues: TypeAlias = Mapping[
     AllComponents,
     Mapping[str, str | None],
 ]
-WorkspaceSourceMetadata: TypeAlias = Mapping[str, Mapping[str, str]]
+WorkspaceSourceMetadata: TypeAlias = Mapping[str, SourceMetadataMapping]
 SourceSchemaCandidatesByAlias: TypeAlias = Mapping[
     str,
     tuple["SourceSchemaCandidate", ...],
@@ -100,6 +116,13 @@ WorkspaceMappingResult: TypeAlias = tuple[
     WorkspaceSourceMetadata,
     WorkspaceComponentValues,
 ]
+
+
+class SourceSchemaCandidateDiscoveryMode(Enum):
+    """Provider selection semantics for source-schema candidate discovery."""
+
+    AUTO = "auto"
+    LOCAL_FILES = "local_files"
 
 
 def cache_source_schema_auxiliary_payload(path: str | Path, payload: object) -> None:
@@ -367,18 +390,32 @@ class SourceSchemaCandidate:
 
     path: Path
     relative_path: str
-    metadata: Mapping[str, str]
+    metadata: SourceMetadataMapping
     source_plane_index: int | None = None
     source_plane_count: int | None = None
+    source_filter_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
         object.__setattr__(self, "relative_path", self.relative_path.replace(os.sep, "/"))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(
+            self,
+            "source_filter_paths",
+            tuple(
+                dict.fromkeys(path.replace(os.sep, "/") for path in self.source_filter_paths)
+            ),
+        )
         if self.source_plane_index is not None:
             object.__setattr__(self, "source_plane_index", int(self.source_plane_index))
         if self.source_plane_count is not None:
             object.__setattr__(self, "source_plane_count", int(self.source_plane_count))
+
+    def source_filter_path_identities(self) -> tuple[str, ...]:
+        """Return path identities that source-filter clauses may target."""
+        if self.source_filter_paths:
+            return self.source_filter_paths
+        return (self.relative_path,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,8 +424,9 @@ class SourceSchemaCandidateIdentity:
 
     path: str
     relative_path: str
-    metadata_items: tuple[tuple[str, str], ...]
+    metadata_items: SourceMetadataIdentityItems
     source_plane_index: int | None
+    source_filter_paths: tuple[str, ...] = ()
 
     @classmethod
     def from_candidate(
@@ -398,8 +436,9 @@ class SourceSchemaCandidateIdentity:
         return cls(
             path=str(candidate.path),
             relative_path=candidate.relative_path,
-            metadata_items=tuple(sorted(candidate.metadata.items())),
+            metadata_items=SourceMetadataIdentityProjection(candidate.metadata).items(),
             source_plane_index=candidate.source_plane_index,
+            source_filter_paths=candidate.source_filter_paths,
         )
 
 
@@ -410,6 +449,9 @@ class SourceSchemaCandidateDiscoveryRequest:
     source_root: Path
     source_files: tuple[Path, ...]
     schema: PipelineImageSchema
+    discovery_mode: SourceSchemaCandidateDiscoveryMode = (
+        SourceSchemaCandidateDiscoveryMode.AUTO
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_root", Path(self.source_root))
@@ -417,6 +459,11 @@ class SourceSchemaCandidateDiscoveryRequest:
             self,
             "source_files",
             tuple(Path(path) for path in self.source_files),
+        )
+        object.__setattr__(
+            self,
+            "discovery_mode",
+            SourceSchemaCandidateDiscoveryMode(self.discovery_mode),
         )
         if not isinstance(self.schema, PipelineImageSchema):
             raise TypeError(
@@ -508,13 +555,79 @@ class SourceSchemaCandidateDiscovery:
     request: SourceSchemaCandidateDiscoveryRequest
 
     def candidates(self) -> tuple[SourceSchemaCandidate, ...]:
+        if (
+            self.request.discovery_mode
+            is SourceSchemaCandidateDiscoveryMode.LOCAL_FILES
+        ):
+            return LocalFileSourceSchemaCandidateProvider().candidates(self.request)
+        unusable_errors: list[str] = []
         for provider_type in SourceSchemaCandidateProvider.provider_types_by_mro():
             provider = provider_type()
             if provider.available(self.request):
-                return provider.candidates(self.request)
+                candidates = provider.candidates(self.request)
+                image_set_probe = self._image_set_probe(provider, candidates)
+                if image_set_probe.usable:
+                    return candidates
+                unusable_errors.append(
+                    f"{provider.provider_key}: {image_set_probe.error_message}"
+                )
+        if unusable_errors:
+            details = "; ".join(unusable_errors)
+            raise RuntimeError(
+                "No source-schema candidate provider could satisfy "
+                f"{self.request.source_root}: {details}"
+            )
         raise RuntimeError(
             f"No source-schema candidate provider available for {self.request.source_root}."
         )
+
+    def _image_set_probe(
+        self,
+        provider: SourceSchemaCandidateProvider,
+        candidates: tuple["SourceSchemaCandidate", ...],
+    ) -> "SourceSchemaImageSetProbeResult":
+        try:
+            image_set_count = SourceSchemaCandidateImageSetViability(
+                self.request.schema,
+                candidates,
+            ).image_set_count()
+        except Exception as exc:
+            return SourceSchemaImageSetProbeResult(
+                source_root=self.request.source_root,
+                image_set_count=0,
+                error_message=(
+                    f"{provider.provider_key} candidates do not satisfy schema: {exc}"
+                ),
+            )
+        return SourceSchemaImageSetProbeResult(
+            source_root=self.request.source_root,
+            image_set_count=image_set_count,
+            error_message=None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateImageSetViability:
+    """Evaluate whether discovered candidates can assemble the schema."""
+
+    schema: PipelineImageSchema
+    candidates: tuple["SourceSchemaCandidate", ...]
+
+    def image_set_count(self) -> int:
+        candidate_matches = SourceSchemaCandidateMatches(self.candidates, self.schema)
+        stack_assignments = candidate_matches.stack_assignments()
+        if stack_assignments:
+            stack_candidates = candidate_matches.stack_candidates()
+            return len(
+                ImageSetAssembler.for_schema(self.schema).image_sets(
+                    self.schema,
+                    stack_candidates,
+                )
+            )
+        auxiliary_assignments = candidate_matches.auxiliary_assignments()
+        if auxiliary_assignments:
+            return len(candidate_matches.auxiliary_candidates())
+        return len(self.candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,6 +650,9 @@ class SourceSchemaImageSetProbe:
     source_root: Path
     source_files: tuple[Path, ...]
     schema: PipelineImageSchema
+    discovery_mode: SourceSchemaCandidateDiscoveryMode = (
+        SourceSchemaCandidateDiscoveryMode.AUTO
+    )
 
     def result(self) -> SourceSchemaImageSetProbeResult:
         try:
@@ -545,6 +661,7 @@ class SourceSchemaImageSetProbe:
                     self.source_root,
                     self.source_files,
                     self.schema,
+                    self.discovery_mode,
                 )
             ).candidates()
             candidate_matches = SourceSchemaCandidateMatches(candidates, self.schema)
@@ -647,46 +764,27 @@ class OpenHCSWorkspaceSourceSchemaCandidateProvider(SourceSchemaCandidateProvide
         request: SourceSchemaCandidateDiscoveryRequest,
     ) -> tuple[SourceSchemaCandidate, ...]:
         payload = json.loads(self.metadata_path(request).read_text(encoding="utf-8"))
-        subdirectories = payload.get(FIELDS.SUBDIRECTORIES)
-        if not isinstance(subdirectories, Mapping):
+        if not isinstance(payload, Mapping):
             raise ValueError(
-                f"OpenHCS metadata {self.metadata_path(request)} must contain "
-                f"a {FIELDS.SUBDIRECTORIES!r} mapping."
+                f"OpenHCS metadata {self.metadata_path(request)} must be a mapping."
             )
         candidates: list[SourceSchemaCandidate] = []
-        for subdirectory_name, metadata in subdirectories.items():
-            if not isinstance(metadata, Mapping):
-                raise ValueError(
-                    f"OpenHCS metadata subdirectory {subdirectory_name!r} must be a mapping."
-                )
-            workspace_mapping = metadata.get(FIELDS.WORKSPACE_MAPPING) or {}
-            source_metadata = metadata.get(FIELDS.SOURCE_METADATA) or {}
-            channels = metadata.get(FIELDS.CHANNELS) or {}
-            if not isinstance(workspace_mapping, Mapping):
-                raise ValueError(
-                    f"OpenHCS metadata subdirectory {subdirectory_name!r} has malformed "
-                    f"{FIELDS.WORKSPACE_MAPPING}."
-                )
-            if not isinstance(source_metadata, Mapping):
-                raise ValueError(
-                    f"OpenHCS metadata subdirectory {subdirectory_name!r} has malformed "
-                    f"{FIELDS.SOURCE_METADATA}."
-                )
-            if not isinstance(channels, Mapping):
-                raise ValueError(
-                    f"OpenHCS metadata subdirectory {subdirectory_name!r} has malformed "
-                    f"{FIELDS.CHANNELS}."
-                )
-            candidates.extend(
-                self.candidate_for_virtual_path(
+        for _, subdirectory in OpenHCSMetadataSubdirectories(payload).items():
+            workspace_mapping = VirtualWorkspaceMapping.from_subdirectory(subdirectory)
+            source_metadata = VirtualWorkspaceSourceMetadataEntries.from_subdirectory(
+                subdirectory
+            )
+            channels = VirtualWorkspaceChannelLabels.from_subdirectory(subdirectory)
+            for virtual_path in workspace_mapping.entries:
+                candidate = self.candidate_for_virtual_path(
                     request,
                     str(virtual_path),
+                    workspace_mapping,
                     source_metadata,
                     channels,
                 )
-                for virtual_path in workspace_mapping
-                if self.schema_admits_path(request.schema, str(virtual_path))
-            )
+                if self.schema_admits_candidate(request.schema, candidate):
+                    candidates.append(candidate)
         return tuple(candidates)
 
     @staticmethod
@@ -700,37 +798,52 @@ class OpenHCSWorkspaceSourceSchemaCandidateProvider(SourceSchemaCandidateProvide
             return True
         return source_filters_match(relative_path, images_rule.filters)
 
+    @staticmethod
+    def schema_admits_candidate(
+        schema: PipelineImageSchema,
+        candidate: SourceSchemaCandidate,
+    ) -> bool:
+        images_rule = schema.images_rule
+        if images_rule is None:
+            return True
+        return any(
+            source_filters_match(path, images_rule.filters)
+            for path in candidate.source_filter_path_identities()
+        )
+
     def candidate_for_virtual_path(
         self,
         request: SourceSchemaCandidateDiscoveryRequest,
         virtual_path: str,
-        source_metadata: Mapping[str, object],
-        channels: Mapping[str, object],
+        workspace_mapping: VirtualWorkspaceMapping,
+        source_metadata: VirtualWorkspaceSourceMetadataEntries,
+        channels: VirtualWorkspaceChannelLabels,
     ) -> SourceSchemaCandidate:
-        metadata_for_source = source_metadata.get(virtual_path) or {}
-        if not isinstance(metadata_for_source, Mapping):
-            raise ValueError(
-                f"OpenHCS source_metadata for {virtual_path!r} must be a mapping."
-            )
         enriched = dict(
             source_schema_metadata_with_virtual_components(
                 virtual_path,
-                {str(key): str(value) for key, value in metadata_for_source.items()},
+                source_metadata.metadata_for(virtual_path),
             )
         )
         for channel_value in source_component_metadata_values(
             enriched,
             AllComponents.CHANNEL,
         ):
-            channel_label = channels.get(str(channel_value))
+            channel_label = channels.label_for(channel_value)
             if channel_label is None:
                 continue
-            enriched.setdefault("channel_name", str(channel_label))
-            enriched.setdefault("channel_label", str(channel_label))
+            if "channel_name" not in enriched:
+                enriched["channel_name"] = channel_label
+            if "channel_label" not in enriched:
+                enriched["channel_label"] = channel_label
+        source_ref = workspace_mapping_source_ref(
+            workspace_mapping.require_source_ref(virtual_path)
+        )
         return SourceSchemaCandidate(
-            path=request.source_root / virtual_path,
+            path=request.source_root / source_ref,
             relative_path=virtual_path,
             metadata=enriched,
+            source_filter_paths=(source_ref,),
         )
 
 
@@ -1230,7 +1343,7 @@ class SourceVirtualPathMetadata:
     virtual_path: str | None = None
     assignment: SourceAssignmentBase | None = None
 
-    def metadata(self) -> Mapping[str, str]:
+    def metadata(self) -> SourceMetadataMapping:
         metadata = dict(self.image_set_metadata)
         metadata.pop(_SOURCE_PLANE_GROUP_KEY, None)
         merge_source_metadata(metadata, self.candidate_metadata, path="source_metadata")
@@ -1248,6 +1361,43 @@ class SourceVirtualPathMetadata:
                 path="source_metadata",
             )
         return MappingProxyType(metadata)
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualComponentOriginalMetadataProjection:
+    """Project hidden source-literal component fields into the reserved role."""
+
+    metadata: SourceMetadataMapping
+    component: AllComponents
+    canonical_value: str
+
+    def fields(self) -> Mapping[str, SourceMetadataScalar]:
+        canonical_key = normalize_source_metadata_key(self.component.value)
+        original_fields: dict[str, SourceMetadataScalar] = {}
+        for field_name, value in SourceMetadataRoleView(self.metadata).scalar_items():
+            if source_metadata_component(field_name) is not self.component:
+                continue
+            field_is_canonical = normalize_source_metadata_key(field_name) == canonical_key
+            if field_is_canonical and source_metadata_values_equal(
+                str(value),
+                self.canonical_value,
+            ):
+                continue
+            original_fields[field_name] = value
+        return MappingProxyType(original_fields)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceMetadataJsonRecord:
+    """JSON-ready representation of one source metadata record."""
+
+    metadata: SourceMetadataMapping
+
+    def as_dict(self) -> dict[str, SourceMetadataValue]:
+        return {
+            key: dict(value) if isinstance(value, Mapping) else value
+            for key, value in self.metadata.items()
+        }
 
 
 @dataclass(slots=True)
@@ -1273,8 +1423,8 @@ class SourcePlaneGroupSiteAllocator:
 
 def source_schema_metadata_with_virtual_components(
     virtual_path: str,
-    metadata: Mapping[str, str],
-) -> Mapping[str, str]:
+    metadata: SourceMetadataMapping,
+) -> SourceMetadataMapping:
     """Return metadata enriched with canonical components from a virtual path."""
     parsed = SourceSchemaFilenameParser().parse_filename(virtual_path)
     if parsed is None:
@@ -1284,6 +1434,17 @@ def source_schema_metadata_with_virtual_components(
     for component in AllComponents:
         value = parsed.get(component.value)
         if value is not None:
+            original_fields = VirtualComponentOriginalMetadataProjection(
+                enriched,
+                component,
+                str(value),
+            ).fields()
+            if original_fields:
+                enriched = with_original_source_metadata(
+                    enriched,
+                    original_fields,
+                    path=virtual_path,
+                )
             enriched = with_source_component_metadata(enriched, component, value)
     extension = parsed.get("extension")
     if extension is not None:
@@ -1306,11 +1467,11 @@ class ImageSetMetadataMerge:
     ) -> "ImageSetMetadataMerge":
         return cls(group_metadata, tuple(candidates))
 
-    def metadata(self) -> Mapping[str, str]:
+    def metadata(self) -> SourceMetadataMapping:
         merged = dict(self.group_metadata)
         merge_source_metadata(
             merged,
-            _shared_candidate_metadata(self.candidates),
+            SharedCandidateMetadataProjection(self.candidates).metadata(),
             path="image_set",
         )
         merge_source_metadata(
@@ -1319,6 +1480,29 @@ class ImageSetMetadataMerge:
             path="image_set",
         )
         return MappingProxyType(merged)
+
+
+@dataclass(frozen=True, slots=True)
+class SharedCandidateMetadataProjection:
+    """Project scalar metadata shared by every candidate in one image set."""
+
+    candidates: tuple[SourceSchemaCandidate, ...]
+
+    def metadata(self) -> SourceMetadataMapping:
+        value_sets_by_key: dict[str, set[SourceMetadataScalar]] = {}
+        counts_by_key: dict[str, int] = {}
+        for candidate in self.candidates:
+            for key, value in SourceMetadataRoleView(candidate.metadata).scalar_items():
+                value_sets_by_key.setdefault(key, set()).add(value)
+                counts_by_key[key] = counts_by_key.get(key, 0) + 1
+        candidate_count = len(self.candidates)
+        return MappingProxyType(
+            {
+                key: next(iter(values))
+                for key, values in value_sets_by_key.items()
+                if counts_by_key[key] == candidate_count and len(values) == 1
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1701,8 +1885,16 @@ class SourceSchemaSingletonZIndexProjection(ComponentProjection):
 
 
 class OrdinalSiteProjection(ComponentProjection):
+    """Project metadata-free ordered image sets onto the schema default axis."""
+
     component = AllComponents.SITE
     metadata_derived = False
+
+    if SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS != (AllComponents.SITE,):
+        raise TypeError(
+            "OrdinalSiteProjection must match "
+            "SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS."
+        )
 
     def value(
         self,
@@ -1838,6 +2030,10 @@ def materialize_source_schema_workspace(
     filemanager: FileManagerLike | None = None,
     source_backend: Backend | str = Backend.DISK,
     workspace_backend: Backend | str = Backend.DISK,
+    source_files: Sequence[Path] | None = None,
+    candidate_discovery_mode: SourceSchemaCandidateDiscoveryMode = (
+        SourceSchemaCandidateDiscoveryMode.AUTO
+    ),
     max_image_set_count: int | None = None,
     image_set_selection: SourceSchemaImageSetSelection | None = None,
 ) -> SourceSchemaWorkspaceMaterialization:
@@ -1862,13 +2058,22 @@ def materialize_source_schema_workspace(
         backend=workspace_backend_name,
     )
 
-    source_files = _source_files(
-        source_root,
-        filemanager=filemanager,
-        backend=source_backend_name,
+    source_files = (
+        tuple(Path(path) for path in source_files)
+        if source_files is not None
+        else _source_files(
+            source_root,
+            filemanager=filemanager,
+            backend=source_backend_name,
+        )
     )
     local_candidates = SourceSchemaCandidateDiscovery(
-        SourceSchemaCandidateDiscoveryRequest(source_root, source_files, schema)
+        SourceSchemaCandidateDiscoveryRequest(
+            source_root,
+            source_files,
+            schema,
+            candidate_discovery_mode,
+        )
     ).candidates()
     candidates = SourceSchemaCandidateCollection.merge(
         local_candidates,
@@ -2314,17 +2519,24 @@ class ImportedMetadataPathResolver:
         return tuple(dict.fromkeys(self._path_candidates_for_location(location)))
 
     def _path_candidates_for_location(self, location: Path) -> tuple[Path, ...]:
+        resolved_source_root = self.source_root.resolve()
         if location.is_absolute():
             return (
                 location,
                 self.source_root / location.name,
                 self.source_root.parent / location.name,
+                resolved_source_root / location.name,
+                resolved_source_root.parent / location.name,
             )
         return (
             self.source_root / location,
             self.source_root / location.name,
             self.source_root.parent / location,
             self.source_root.parent / location.name,
+            resolved_source_root / location,
+            resolved_source_root / location.name,
+            resolved_source_root.parent / location,
+            resolved_source_root.parent / location.name,
         )
 
 
@@ -2424,7 +2636,10 @@ def _candidate_matches_selector(
     return (
         _candidate_matches_components(candidate, selector)
         and _candidate_matches_metadata(candidate, selector)
-        and source_filters_match(candidate.relative_path, selector.filters)
+        and any(
+            source_filters_match(path, selector.filters)
+            for path in candidate.source_filter_path_identities()
+        )
     )
 
 
@@ -2486,25 +2701,6 @@ def _validated_image_sets(
     return tuple(image_sets)
 
 
-def _shared_candidate_metadata(
-    candidates: tuple[SourceSchemaCandidate, ...],
-) -> Mapping[str, str]:
-    value_sets_by_key: dict[str, set[str]] = {}
-    counts_by_key: dict[str, int] = {}
-    for candidate in candidates:
-        for key, value in candidate.metadata.items():
-            value_sets_by_key.setdefault(key, set()).add(str(value))
-            counts_by_key[key] = counts_by_key.get(key, 0) + 1
-    candidate_count = len(candidates)
-    return MappingProxyType(
-        {
-            key: next(iter(values))
-            for key, values in value_sets_by_key.items()
-            if counts_by_key[key] == candidate_count and len(values) == 1
-        }
-    )
-
-
 def _projected_candidate_components(
     group_metadata: Mapping[str, str],
     candidates: tuple[SourceSchemaCandidate, ...],
@@ -2523,10 +2719,13 @@ def _projected_candidate_components(
             is not None
         }
         if len(values) > 1:
-            raise ValueError(
-                f"Source image set has conflicting {component.value!r} component "
-                f"values {sorted(values)!r}."
-            )
+            existing = source_metadata_value(group_metadata, component.value)
+            if existing is not None:
+                raise ValueError(
+                    f"Source image set has conflicting {component.value!r} component "
+                    f"values {existing!r} and {sorted(values)!r}."
+                )
+            continue
         if not values:
             continue
         value = next(iter(values))
@@ -2967,7 +3166,7 @@ def _metadata_dict(
             },
             workspace_mapping=dict(workspace_mapping),
             source_metadata={
-                path: dict(metadata)
+                path: SourceMetadataJsonRecord(metadata).as_dict()
                 for path, metadata in source_metadata.items()
             },
             main=main,

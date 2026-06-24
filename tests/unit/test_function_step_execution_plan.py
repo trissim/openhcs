@@ -16,8 +16,13 @@ from openhcs.core.step_dependencies import (
 from openhcs.core.steps.function_artifact_materialization import (
     AnalysisOutputDescriptorAuthority,
 )
+from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
+from openhcs.core.steps.function_output_manifest import (
+    ProducedOutputSemantics,
+    step_output_manifest,
+)
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
-from openhcs.core.steps.function_runtime import _select_artifact_plan_for_component
+from openhcs.core.steps.function_runtime import ComponentArtifactPlans
 
 
 def noop(image):
@@ -29,7 +34,8 @@ class ContextStub:
         self.step_plans = {2: compiled_plan}
         self.filemanager = object()
         self.microscope_handler = SimpleNamespace(
-            parser=SimpleNamespace(parse_filename=lambda _filename: None)
+            parser=SimpleNamespace(parse_filename=lambda _filename: None),
+            microscope_type="test",
         )
 
 
@@ -82,7 +88,7 @@ def _compiled_plan(**overrides):
 
 
 def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
-    compiled_plan = _compiled_plan()
+    compiled_plan = _compiled_plan(source_identity_stack_axes=frozenset({"z_index"}))
     context = ContextStub(compiled_plan)
 
     plan = FunctionStepExecutionPlan.from_context(context, 2)
@@ -101,16 +107,93 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
     assert plan.has_materialized_output
     assert plan.materialized_output_dir == Path("/tmp/materialized")
     assert plan.artifact_analysis_output_dir == Path("/tmp/materialized_results")
+    assert plan.source_identity_stack_axes == frozenset({"z_index"})
+
+
+def test_function_step_execution_does_not_prepare_callables_in_hot_path(monkeypatch):
+    from openhcs.core.steps import function_execution
+
+    events = []
+
+    class ManifestStub:
+        def begin_step(self, plan):
+            events.append(("begin", plan.step_name))
+
+    class ExecutionStub(function_execution.FunctionStepExecutor):
+        def __init__(self):
+            self.context = SimpleNamespace()
+            self.plan = SimpleNamespace(
+                step_index=3,
+                step_name="prepared-at-compile",
+                axis_id="A01",
+            )
+
+        def _log_execution_start(self):
+            events.append(("start", self.plan.step_name))
+
+        def _detect_patterns(self):
+            return {"A01": ["image.tif"]}
+
+        def _log_discovered_patterns(self, patterns_by_axis):
+            events.append(("patterns", tuple(patterns_by_axis)))
+
+        def _convert_input_if_needed(self):
+            events.append(("convert", self.plan.step_name))
+
+        def _require_patterns(self, patterns_by_axis):
+            events.append(("require", tuple(patterns_by_axis)))
+
+        def _apply_sequential_filter(self, patterns_by_axis):
+            events.append(("filter", tuple(patterns_by_axis)))
+
+        def _prepare_groups(self, patterns_by_axis):
+            events.append(("groups", tuple(patterns_by_axis)))
+            return function_execution.PatternGroups.from_prepared(
+                {"default": ["image.tif"]}
+            )
+
+        def _preload_inputs_if_needed(self, grouped_patterns):
+            events.append(("preload", tuple(grouped_patterns.groups)))
+
+        def _prepare_callables(self, grouped_patterns):
+            raise AssertionError("callable warmup belongs to compilation")
+
+        def _execute_pattern_groups(self, grouped_patterns, total_groups):
+            events.append(("execute", total_groups))
+
+    monkeypatch.setattr(
+        function_execution,
+        "step_output_manifest",
+        lambda _context: ManifestStub(),
+    )
+    monkeypatch.setattr(
+        function_execution,
+        "finalize_function_step_outputs",
+        lambda _context, plan: events.append(("finalize", plan.step_name)),
+    )
+
+    ExecutionStub().run()
+
+    assert ("execute", 1) in events
+    assert ("finalize", "prepared-at-compile") in events
 
 
 def test_build_analysis_filename_uses_pipeline_position_for_image_derived_name():
     context = ContextStub(_compiled_plan(pipeline_position=7))
     plan = FunctionStepExecutionPlan.from_context(context, 2)
-    def get_paths_for_axis(_dir, _backend):
-        return ["/tmp/output/A01_site1.tif"]
-
-    plan = FunctionStepExecutionPlan(
-        **{**plan.__dict__, "get_paths_for_axis": get_paths_for_axis}
+    step_output_manifest(context).record_outputs(
+        plan,
+        (
+            ProducedOutputSemantics.from_output(
+                plan,
+                "/tmp/output/A01_site1.tif",
+                FunctionOutputIdentity(
+                    component_values={"well": "A01", "site": "1"},
+                    extension=".tif",
+                    source="test",
+                ),
+            ),
+        ),
     )
 
     assert (
@@ -135,7 +218,7 @@ def test_component_artifact_plan_selection_merges_global_and_group_outputs():
         kind=ArtifactKind.MEASUREMENTS,
     )
 
-    selected = _select_artifact_plan_for_component(
+    selected = ComponentArtifactPlans._select_plan_for_component(
         {
             None: {"objects": global_output},
             "A01": {"measurements": grouped_output},

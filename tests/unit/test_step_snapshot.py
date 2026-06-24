@@ -2,6 +2,7 @@ from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
+from openhcs.constants.constants import AllComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import StepMaterializationConfig, WellFilterMode
 from openhcs.core.pipeline.step_snapshot import (
@@ -65,7 +66,11 @@ def _state_values(**overrides):
 
 
 def test_step_snapshot_captures_saved_values_without_object_conversion():
-    step = FunctionStep(func=_identity, name="identity")
+    step = FunctionStep(
+        func=_identity,
+        name="identity",
+        source_identity_stack_axes=(AllComponents.CHANNEL,),
+    )
     state = StateStub(_state_values())
 
     snapshot = StepSnapshot.from_resolved_step(
@@ -81,6 +86,8 @@ def test_step_snapshot_captures_saved_values_without_object_conversion():
     assert snapshot.is_function_step is True
     assert snapshot.func is _identity
     assert snapshot.source_bindings == state.values["source_bindings"]
+    assert snapshot.source_identity_stack_axes == (AllComponents.CHANNEL,)
+    assert snapshot.source_identity_stack_axis_values == frozenset({"channel"})
     assert snapshot.input_source is InputSource.PIPELINE_START
     assert snapshot.variable_components == ("site",)
     assert isinstance(snapshot.injectable_values, MappingProxyType)

@@ -3,67 +3,374 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from enum import Enum
+from typing import Any, ClassVar, TypeAlias, cast
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
+import numpy.typing as npt
 
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
-from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    NominalTypeKeyedStrategyMixin,
+)
+from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_OBJECT_NAME_FIELD,
-    MeasurementTableAxisProjection,
-    measurement_row_mapping,
-    measurement_rows,
-    measurement_table_slice_indices as runtime_measurement_table_slice_indices,
+    MeasurementRowsAxisProjection,
     measurement_table_object_name,
 )
+from openhcs.core.runtime_artifact_queries import (
+    MeasurementTableAxisProjection,
+    measurement_table_slice_indices as runtime_measurement_table_slice_indices,
+)
+from openhcs.core.measurement_row_materialization import measurement_rows
 from openhcs.core.runtime_semantics import (
     FieldSpec,
     MeasurementRowAxisField,
     MeasurementTableRowLayout,
     ParentChildRelationshipPayload,
+    RuntimeSliceIdentityProjectableValue,
+    RuntimeSliceProjectableValue,
     RuntimePlaneAxis,
     RuntimePlaneAxisSliceProjectionPolicy,
+    carries_measurement_row_semantics,
     measurement_table_row_layout,
     measurement_table_row_layouts,
     measurement_table_row_layout_from_fields,
+    measurement_row_mapping,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
     MeasurementTable,
     ObjectLabelPayload,
     ObjectLabelSet,
+    ObjectLabelValue,
     ObjectRelationship,
+    RuntimeArrayData,
+    RuntimeImagePayloadContext,
     SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
+    dense_label_stack_reduce_planes,
+    dense_label_stack_supports_plane_reduction,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    image_payload_with_context,
     object_label_dense_array,
     project_image_mask_to_data_domain,
 )
+from openhcs.core.source_image_provenance import SourceComponentMetadata
 
+SINGLE_OBSERVED_ROW_LAYOUT_COUNT = 1
+RuntimeProjectionPrimitive: TypeAlias = str | bytes | int | float | bool | None
+RuntimeProjectionMapping: TypeAlias = Mapping[str, "RuntimeProjectionData"]
+RuntimeProjectionSequence: TypeAlias = Sequence["RuntimeProjectionData"]
+RuntimeProjectionDType: TypeAlias = npt.DTypeLike
+MeasurementTableSchemaRow: TypeAlias = Mapping[str, "RuntimeProjectionData"]
+RuntimeProjectionData: TypeAlias = (
+    RuntimeArrayData
+    | MeasurementTable
+    | ParentChildRelationshipPayload
+    | ObjectRelationship
+    | SparseIJVLabelRows
+    | ObjectLabelSet
+    | ObjectLabelPayload
+    | RuntimeSliceAlignedValueSet
+    | RuntimeProjectionPrimitive
+    | RuntimeProjectionMapping
+    | RuntimeProjectionSequence
+)
+
+class RuntimeProjectionSourceIdentityRequirement(str, Enum):
+    """Source-identity requirement for runtime-slice projected payloads."""
+
+    OPTIONAL = "optional"
+    REQUIRED_COMPONENT_METADATA = "required_component_metadata"
+
+    def project_payload_items(
+        self,
+        value: "RuntimeProjectionData",
+        *,
+        source_description: str,
+    ) -> tuple["RuntimeProjectedPayloadItem", ...]:
+        """Return runtime-slice-projected payload items under this identity policy."""
+        slice_count = RuntimeSliceProjection.slice_count_from_values((value,))
+        if slice_count is None:
+            return (
+                RuntimeProjectedPayloadItem(
+                    value=value,
+                    source_description=source_description,
+                ),
+            )
+        if slice_count == 1:
+            return (
+                RuntimeProjectedPayloadItem(
+                    value=RuntimeSliceProjection.value_for_slice(
+                        value,
+                        RuntimeProjectionAxis(
+                            slice_index=0,
+                            extent=slice_count,
+                        ),
+                    ),
+                    source_description=f"{source_description} runtime slice 0",
+                ),
+            )
+        RuntimeProjectionSourceIdentityRequirementStrategy.for_requirement(
+            self
+        ).validate_stack_value(
+            value,
+            slice_count,
+            source_description=source_description,
+        )
+        return tuple(
+            RuntimeProjectedPayloadItem(
+                value=RuntimeSliceProjection.value_for_slice(
+                    value,
+                    RuntimeProjectionAxis(
+                        slice_index=slice_index,
+                        extent=slice_count,
+                    ),
+                ),
+                source_description=(
+                    f"{source_description} runtime slice {slice_index}"
+                ),
+            )
+            for slice_index in range(slice_count)
+        )
+
+class RuntimeProjectionSourceIdentityError(ValueError):
+    """Raised when runtime-slice projection cannot preserve source identity."""
+
+class RuntimeProjectionSourceIdentityRequirementStrategy(
+    EnumKeyedStrategyMixin[RuntimeProjectionSourceIdentityRequirement],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Validation policy for one source-identity requirement."""
+
+    __registry_key__ = "requirement_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "requirement"
+    __enum_label_attr__ = "requirement_label"
+
+    requirement: ClassVar[RuntimeProjectionSourceIdentityRequirement | None] = None
+    requirement_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_requirement(
+        cls,
+        requirement: RuntimeProjectionSourceIdentityRequirement,
+    ) -> "RuntimeProjectionSourceIdentityRequirementStrategy":
+        return cls.for_enum_member(requirement)
+
+    @abstractmethod
+    def validate_stack_value(
+        self,
+        value: "RuntimeProjectionData",
+        slice_count: int,
+        *,
+        source_description: str,
+    ) -> None:
+        """Validate whether the requirement can address projected stack slices."""
+
+class OptionalRuntimeProjectionSourceIdentityRequirementStrategy(
+    RuntimeProjectionSourceIdentityRequirementStrategy
+):
+    """Validation policy for payloads that may omit per-slice source identity."""
+
+    requirement = RuntimeProjectionSourceIdentityRequirement.OPTIONAL
+
+    def validate_stack_value(
+        self,
+        value: "RuntimeProjectionData",
+        slice_count: int,
+        *,
+        source_description: str,
+    ) -> None:
+        del value, slice_count, source_description
+
+class ComponentMetadataRuntimeProjectionSourceIdentityRequirementStrategy(
+    RuntimeProjectionSourceIdentityRequirementStrategy
+):
+    """Validation policy for payloads that must preserve source component metadata."""
+
+    requirement = RuntimeProjectionSourceIdentityRequirement.REQUIRED_COMPONENT_METADATA
+
+    def validate_stack_value(
+        self,
+        value: "RuntimeProjectionData",
+        slice_count: int,
+        *,
+        source_description: str,
+    ) -> None:
+        validate_source_plane_component_metadata(
+            value,
+            slice_count,
+            source_description=source_description,
+        )
 
 @dataclass(frozen=True, slots=True)
-class RuntimeSliceProjectionContext:
+class RuntimeProjectionAxis:
     """Execution context for projecting one runtime slice from a value."""
 
     slice_index: int
-    slice_count: int
+    extent: int
 
     def __post_init__(self) -> None:
-        if self.slice_count <= 0:
-            raise ValueError("RuntimeSliceProjectionContext.slice_count must be positive.")
-        if self.slice_index < 0 or self.slice_index >= self.slice_count:
+        if self.extent <= 0:
             raise ValueError(
-                "RuntimeSliceProjectionContext.slice_index must be within "
-                f"[0, {self.slice_count}), got {self.slice_index}."
-)
+                "RuntimeProjectionAxis.extent must be positive."
+            )
+        if self.slice_index < 0 or self.slice_index >= self.extent:
+            raise ValueError(
+                "RuntimeProjectionAxis.slice_index must be within "
+                f"[0, {self.extent}), got {self.slice_index}."
+            )
 
+    def identity_projected(
+        self,
+        value: RuntimeSliceIdentityProjectableValue,
+    ) -> RuntimeProjectionData:
+        """Stamp a value with this context's runtime-axis identity."""
+        return cast(
+            RuntimeProjectionData,
+            value.with_runtime_slice_identity(
+                slice_index=self.slice_index,
+                slice_count=self.extent,
+            ),
+        )
+
+    def aligned_value(
+        self,
+        value: RuntimeSliceAlignedValueSet,
+    ) -> RuntimeProjectionData:
+        """Project a value already aligned to the context's runtime axis."""
+        return value.value_for_aligned_slice(
+            self.slice_index,
+            self.extent,
+        )
+
+    def object_label_projection(
+        self,
+        value: ObjectLabelValue,
+        *,
+        plane_indices: tuple[int, ...] | None,
+    ) -> RuntimeProjectionData:
+        """Project object labels through this context's runtime axis."""
+        return value.with_runtime_slice_projection(
+            slice_index=self.slice_index,
+            slice_count=self.extent,
+            plane_indices=plane_indices,
+        )
+
+    def stack_view(
+        self,
+        value: RuntimeProjectionData,
+    ) -> np.ndarray | None:
+        """Return a stack view whose first axis is this context's runtime axis."""
+        return RuntimeSliceProjection.stack_view(
+            value,
+            slice_count=self.extent,
+        )
+
+    def grayscale_stack_view(
+        self,
+        value: RuntimeProjectionData,
+        *,
+        flatten_high_rank: bool = False,
+    ) -> np.ndarray | None:
+        """Return a non-color stack view for object-label plane semantics."""
+        return RuntimeSliceProjection.grayscale_plane_stack_view(
+            value,
+            slice_count=self.extent,
+            flatten_high_rank=flatten_high_rank,
+        )
+
+    def axis_matches(self, axis_size: int) -> bool:
+        """Return whether a first-axis length directly matches this context."""
+        return axis_size == self.extent
+
+    def axis_groups_runtime_positions(self, axis_size: int) -> bool:
+        """Return whether a first axis contains grouped planes per runtime position."""
+        return axis_size > self.extent and axis_size % self.extent == 0
+
+    def axis_repeats_over_runtime_positions(self, axis_size: int) -> bool:
+        """Return whether a shorter first axis repeats across runtime positions."""
+        return axis_size < self.extent and self.extent % axis_size == 0
+
+    def grouped_axis_indices(self, axis_size: int) -> tuple[int, ...]:
+        """Return the grouped first-axis indexes represented by this context."""
+        return tuple(range(self.slice_index, axis_size, self.extent))
+
+    def contiguous_plane_indices(self, planes_per_position: int) -> tuple[int, ...]:
+        """Return contiguous plane indexes represented by this context."""
+        start = self.slice_index * planes_per_position
+        return tuple(range(start, start + planes_per_position))
+
+    def grouped_stack_slice(self, stack: np.ndarray) -> np.ndarray:
+        """Return grouped first-axis planes represented by this context."""
+        return stack[self.slice_index :: self.extent]
+
+    def repeated_axis_index(self, axis_size: int) -> int:
+        """Return the repeated first-axis index represented by this context."""
+        return self.slice_index % axis_size
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProjectedPayloadItem:
+    """One runtime payload projected into an execution-addressable value."""
+
+    value: RuntimeProjectionData
+    source_description: str
+
+    @property
+    def data(self) -> RuntimeProjectionData:
+        return image_payload_data(self.value)
+
+    @property
+    def metadata(self) -> ImagePayloadMetadata:
+        return image_payload_metadata(self.value)
+
+    @property
+    def source_component_metadata(self) -> SourceComponentMetadata | None:
+        return self.metadata.source_component_metadata
+
+    def require_source_component_metadata(self) -> SourceComponentMetadata:
+        metadata = self.source_component_metadata
+        if metadata is None:
+            raise ValueError(
+                "Runtime payload projection requires source component metadata "
+                f"for {self.source_description}."
+            )
+        return metadata
+
+def validate_source_plane_component_metadata(
+    value: RuntimeProjectionData,
+    slice_count: int,
+    *,
+    source_description: str,
+) -> None:
+    """Require one source component-metadata record per projected slice."""
+    plane_metadata = (
+        image_payload_metadata(value)
+        .source_image_provenance_planes
+        .component_metadata
+    )
+    if not plane_metadata or any(item is None for item in plane_metadata):
+        raise RuntimeProjectionSourceIdentityError(
+            "Runtime payload stack projection requires complete per-slice "
+            f"component metadata for {source_description}; refusing to drop "
+            "unaddressed slices."
+        )
+    if len(plane_metadata) == slice_count:
+        return
+    raise RuntimeProjectionSourceIdentityError(
+        "Runtime payload stack metadata cardinality mismatch: "
+        f"{len(plane_metadata)} metadata entries for {slice_count} runtime "
+        f"slices in {source_description}."
+    )
 
 @dataclass(frozen=True, slots=True)
 class MeasurementTableRepeatedScalarGroupKey:
@@ -82,116 +389,388 @@ class MeasurementTableRepeatedScalarGroupKey:
             source_image_name=table.source_image_name,
         )
 
-
 class RuntimeSliceProjectionStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
     metaclass=AutoRegisterMeta,
 ):
-    """Registered strategy for projecting values into runtime-slice scope."""
+    """Nominal strategy for projecting one runtime value family."""
 
     __registry_key__ = "value_type_label"
     __skip_if_no_key__ = True
-    value_type: ClassVar[type[Any] | tuple[type[Any], ...] | None] = None
+    value_type: ClassVar[type | tuple[type, ...] | None] = None
     value_type_label: ClassVar[str | None] = None
 
     @classmethod
-    def strategy_for_value(cls, value: Any) -> "RuntimeSliceProjectionStrategy":
-        if isinstance(value, RuntimeSliceAlignedValueSet):
-            return RuntimeSliceAlignedValueProjectionStrategy()
+    def strategy_for_value(
+        cls,
+        value: RuntimeProjectionData,
+    ) -> "RuntimeSliceProjectionStrategy":
         strategy = cls.for_nominal_value(value)
-        return strategy if strategy is not None else DefaultRuntimeSliceProjectionStrategy()
+        if strategy is None:
+            return DefaultRuntimeSliceProjectionStrategy()
+        return strategy
 
-    @abstractmethod
     def value_for_slice(
         self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        """Return the value projected into one runtime slice."""
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        return RuntimeSliceProjection.default_value_for_slice(value, context)
 
-    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
-        """Return stack views that declare runtime-slice cardinality."""
-        stack = self.stack_view(value)
-        return () if stack is None else (stack,)
-
-    def stack_view(
+    def identity_projected_value(
         self,
-        value: Any,
-        *,
-        slice_count: int | None = None,
-    ) -> np.ndarray | None:
-        """Return a plane-stack view when this value carries slice planes."""
-        return RuntimeSliceProjection.stack_view(value, slice_count=slice_count)
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        del context
+        return value
 
+    def slice_count_for_value(
+        self,
+        value: RuntimeProjectionData,
+    ) -> int | None:
+        del value
+        return None
+
+    def stack_views(
+        self,
+        value: RuntimeProjectionData,
+    ) -> tuple[np.ndarray, ...]:
+        return RuntimeSliceProjection.default_stack_views(value)
+
+class DefaultRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
+    """Projection strategy for image-like values without a narrower owner."""
+
+    def identity_projected_value(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        if not carries_measurement_row_semantics(value):
+            return value
+        projected_rows = MeasurementRowsAxisProjection.from_rows(
+            (value,),
+        ).project_runtime_slice_index(context.slice_index)
+        if len(projected_rows) != 1:
+            raise ValueError(
+                "Single measurement-row identity projection returned "
+                f"{len(projected_rows)} rows."
+            )
+        return cast(RuntimeProjectionData, projected_rows[0])
+
+class RuntimeSliceIdentityProjectionMixin:
+    """Mixin for value families that own execution-slice identity stamping."""
+
+    def identity_projected_value(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        identity_projectable = cast(RuntimeSliceIdentityProjectableValue, value)
+        return context.identity_projected(identity_projectable)
+
+class RuntimeSliceNoStackViewsMixin:
+    """Mixin for value families whose slice contract is not stack-view based."""
+
+    def stack_views(
+        self,
+        value: RuntimeProjectionData,
+    ) -> tuple[np.ndarray, ...]:
+        del value
+        return ()
+
+class RuntimeSliceRelationshipProjectionMixin:
+    """Mixin for relationship payloads that carry the same slice-count contract."""
+
+    def slice_count_for_value(
+        self,
+        value: RuntimeProjectionData,
+    ) -> int | None:
+        return RuntimeSliceProjection.relationship_slice_count(
+            cast(ParentChildRelationshipPayload | ObjectRelationship, value)
+        )
+
+class RuntimeSliceIdentityProjectableValueProjectionStrategy(
+    RuntimeSliceIdentityProjectionMixin,
+    RuntimeSliceProjectionStrategy,
+):
+    """Projection strategy for identity-stamping values without slice projection."""
+
+    value_type = RuntimeSliceIdentityProjectableValue
+
+class RuntimeSliceAlignedValueProjectionStrategy(
+    RuntimeSliceNoStackViewsMixin,
+    RuntimeSliceProjectionStrategy,
+):
+    """Projection strategy for values already aligned to runtime slices."""
+
+    value_type = RuntimeSliceAlignedValueSet
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        aligned = cast(RuntimeSliceAlignedValueSet, value)
+        return context.aligned_value(aligned)
+
+    def slice_count_for_value(
+        self,
+        value: RuntimeProjectionData,
+    ) -> int | None:
+        return cast(RuntimeSliceAlignedValueSet, value).slice_count
+
+class MeasurementTableRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
+    """Projection strategy for measurement rows keyed by runtime-slice index."""
+
+    value_type = MeasurementTable
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        return MeasurementTableAxisProjection(
+            axis=MeasurementRowAxisField.SLICE_INDEX,
+            value=context.slice_index,
+            table=cast(MeasurementTable, value),
+        ).apply()
+
+class RuntimeSliceProjectableValueProjectionStrategy(
+    RuntimeSliceNoStackViewsMixin,
+    RuntimeSliceProjectionStrategy,
+):
+    """Projection strategy for values that implement the runtime-slice hook."""
+
+    value_type = RuntimeSliceProjectableValue
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        projectable = cast(RuntimeSliceProjectableValue, value)
+        return cast(
+            RuntimeProjectionData,
+            projectable.project_runtime_slice(context.slice_index),
+        )
+
+class ParentChildRelationshipRuntimeSliceProjectionStrategy(
+    RuntimeSliceIdentityProjectionMixin,
+    RuntimeSliceRelationshipProjectionMixin,
+    RuntimeSliceProjectableValueProjectionStrategy
+):
+    """Projection strategy for generic parent-child relationship payloads."""
+
+    value_type = ParentChildRelationshipPayload
+
+class ObjectRelationshipRuntimeSliceProjectionStrategy(
+    RuntimeSliceRelationshipProjectionMixin,
+    RuntimeSliceProjectableValueProjectionStrategy
+):
+    """Projection strategy for named object relationship payloads."""
+
+    value_type = ObjectRelationship
+
+class SparseIJVLabelRowsRuntimeSliceProjectionStrategy(
+    RuntimeSliceNoStackViewsMixin,
+    RuntimeSliceProjectionStrategy,
+):
+    """Projection strategy for sparse IJV label rows."""
+
+    value_type = SparseIJVLabelRows
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        return cast(SparseIJVLabelRows, value).slice(context.slice_index)
+
+class ObjectLabelValueRuntimeSliceProjectionStrategy(
+    RuntimeSliceIdentityProjectionMixin,
+    RuntimeSliceProjectionStrategy,
+):
+    """Projection strategy for native object-label values."""
+
+    value_type = ObjectLabelValue
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        labels = cast(ObjectLabelValue, value)
+        return context.object_label_projection(
+            labels,
+            plane_indices=RuntimeSliceProjection.object_label_plane_indices_for_slice(
+                labels,
+                context,
+            ),
+        )
+
+    def stack_views(
+        self,
+        value: RuntimeProjectionData,
+    ) -> tuple[np.ndarray, ...]:
+        return RuntimeSliceProjection.object_label_stack_views(
+            cast(ObjectLabelValue, value)
+        )
+
+class SequenceRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
+    """Projection strategy for tuple/list containers."""
+
+    value_type = (tuple, list)
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        return RuntimeSliceProjection.sequence_value_for_slice(
+            cast(RuntimeProjectionSequence, value),
+            context,
+        )
+
+    def identity_projected_value(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        return cast(
+            RuntimeProjectionData,
+            RuntimeSliceProjection.sequence_identity_projected_value(
+                cast(RuntimeProjectionSequence, value),
+                context,
+            ),
+        )
+
+    def stack_views(
+        self,
+        value: RuntimeProjectionData,
+    ) -> tuple[np.ndarray, ...]:
+        return RuntimeSliceProjection.sequence_stack_views(
+            cast(RuntimeProjectionSequence, value)
+        )
 
 class RuntimeSliceProjection:
     """SSOT for runtime-slice count and value projection."""
 
     @classmethod
+    def context_for_value(
+        cls,
+        value: RuntimeProjectionData,
+        *,
+        slice_index: int,
+        slice_count: int | None = None,
+        source_description: str,
+    ) -> RuntimeProjectionAxis | None:
+        effective_slice_count = (
+            slice_count
+            if slice_count is not None
+            else cls.slice_count_from_values((value,))
+        )
+        if effective_slice_count is not None:
+            return RuntimeProjectionAxis(
+                slice_index=slice_index,
+                extent=effective_slice_count,
+            )
+        stack_views = RuntimeSliceProjectionStrategy.strategy_for_value(
+            value
+        ).stack_views(value)
+        if not stack_views:
+            return None
+        stack_counts = {
+            int(stack.shape[0])
+            for stack in stack_views
+            if stack.shape[0] > slice_index
+        }
+        effective_slice_count = cls.single_slice_count(
+            stack_counts,
+            source_description=source_description,
+        )
+        if effective_slice_count is None:
+            raise ValueError(
+                "Cannot project runtime slice without a declared runtime slice "
+                f"count for {source_description}."
+            )
+        return RuntimeProjectionAxis(
+            slice_index=slice_index,
+            extent=effective_slice_count,
+        )
+
+    @classmethod
     def value_for_slice(
         cls,
-        value: Any,
-        slice_index: int,
-        slice_count: int,
-    ) -> Any:
-        return RuntimeSliceProjectionStrategy.strategy_for_value(value).value_for_slice(
-            value,
-            RuntimeSliceProjectionContext(
-                slice_index=slice_index,
-                slice_count=slice_count,
-            ),
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        normalized_value = cls.runtime_slice_normalized_value(value)
+        return RuntimeSliceProjectionStrategy.strategy_for_value(
+            normalized_value
+        ).value_for_slice(normalized_value, context)
+
+    @classmethod
+    def sequence_identity_projected_value(
+        cls,
+        value: RuntimeProjectionSequence,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        """Project execution-slice identity recursively through nested outputs."""
+        if cls.sequence_is_measurement_row_sequence(value):
+            return MeasurementRowsAxisProjection.from_rows(
+                value,
+            ).project_runtime_slice_index(context.slice_index)
+        projected_items = tuple(
+            RuntimeSliceProjectionStrategy.strategy_for_value(
+                item
+            ).identity_projected_value(item, context)
+            for item in value
+        )
+        if all(
+            projected_item is item
+            for projected_item, item in zip(projected_items, value, strict=True)
+        ):
+            return value
+        if isinstance(value, tuple):
+            return projected_items
+        return list(projected_items)
+
+    @staticmethod
+    def sequence_is_measurement_row_sequence(
+        value: RuntimeProjectionSequence,
+    ) -> bool:
+        return bool(value) and all(
+            carries_measurement_row_semantics(item)
+            for item in value
         )
 
     @classmethod
     def object_label_endpoint(
         cls,
-        value: Any,
+        value: RuntimeProjectionData,
         *,
-        slice_index: int | None = None,
-        slice_count: int | None = None,
-    ) -> Any:
+        context: RuntimeProjectionAxis | None = None,
+    ) -> RuntimeProjectionData:
         """Resolve one object-label endpoint through runtime-slice semantics."""
-        if slice_index is None:
+        if context is None:
             return value
-        effective_slice_count = slice_count or cls.slice_count_from_values((value,))
-        if effective_slice_count is None:
-            stack_views = RuntimeSliceProjectionStrategy.strategy_for_value(
-                value
-            ).stack_views(value)
-            stack_counts = {
-                int(stack.shape[0])
-                for stack in stack_views
-                if stack.shape[0] > slice_index
-            }
-            if not stack_views:
-                return value
-            effective_slice_count = cls.single_slice_count(
-                stack_counts,
-                source_description="object-label endpoint stack views",
-            )
-        if effective_slice_count is None:
-            raise ValueError(
-                "Cannot project object-label endpoint without a declared "
-                "runtime slice count."
-            )
-        return cls.value_for_slice(value, slice_index, effective_slice_count)
+        return cls.value_for_slice(value, context)
 
     @classmethod
     def object_label_endpoint_dense_array(
         cls,
-        value: Any,
+        value: RuntimeProjectionData,
         *,
-        slice_index: int | None = None,
-        slice_count: int | None = None,
-        dtype: object | None = None,
+        context: RuntimeProjectionAxis | None = None,
+        dtype: RuntimeProjectionDType | None = None,
     ) -> np.ndarray:
         """Resolve and materialize one object-label endpoint as dense labels."""
         return object_label_dense_array(
             cls.object_label_endpoint(
                 value,
-                slice_index=slice_index,
-                slice_count=slice_count,
+                context=context,
             ),
             dtype=dtype,
         )
@@ -199,23 +778,21 @@ class RuntimeSliceProjection:
     @classmethod
     def kwargs_for_slice(
         cls,
-        kwargs: Mapping[str, Any],
-        slice_index: int,
-        slice_count: int,
+        kwargs: Mapping[str, RuntimeProjectionData],
+        context: RuntimeProjectionAxis,
         *,
         sequence_kwargs: frozenset[str] = frozenset(),
-    ) -> dict[str, Any]:
+    ) -> dict[str, RuntimeProjectionData]:
         return {
             name: (
                 tuple(
-                    cls.value_for_slice(item, slice_index, slice_count)
+                    cls.value_for_slice(item, context)
                     for item in cls.runtime_slice_normalized_value(value)
                 )
                 if name in sequence_kwargs and isinstance(value, tuple)
                 else cls.value_for_slice(
-                    cls.runtime_slice_normalized_value(value),
-                    slice_index,
-                    slice_count,
+                    value,
+                    context,
                 )
             )
             for name, value in kwargs.items()
@@ -224,7 +801,7 @@ class RuntimeSliceProjection:
     @classmethod
     def slice_count_from_kwargs(
         cls,
-        kwargs: Mapping[str, Any],
+        kwargs: Mapping[str, RuntimeProjectionData],
         *,
         sequence_kwargs: frozenset[str] = frozenset(),
     ) -> int | None:
@@ -239,7 +816,10 @@ class RuntimeSliceProjection:
         )
 
     @classmethod
-    def runtime_slice_normalized_value(cls, value: Any) -> Any:
+    def runtime_slice_normalized_value(
+        cls,
+        value: RuntimeProjectionData,
+    ) -> RuntimeProjectionData:
         if (
             isinstance(value, tuple)
             and value
@@ -249,7 +829,10 @@ class RuntimeSliceProjection:
         return value
 
     @classmethod
-    def slice_count_from_values(cls, values: Any) -> int | None:
+    def slice_count_from_values(
+        cls,
+        values: Iterable[RuntimeProjectionData],
+    ) -> int | None:
         values = tuple(values)
         tensor_slice_counts = {
             stack.shape[0]
@@ -259,18 +842,20 @@ class RuntimeSliceProjection:
             ).stack_views(value)
             if stack.shape[0] > 1
         }
-        tensor_slice_counts.update(
-            value.slice_count
+        declared_slice_counts = tuple(
+            count
             for value in values
-            if isinstance(value, RuntimeSliceAlignedValueSet)
-            and value.slice_count >= 1
+            for count in (
+                RuntimeSliceProjectionStrategy.strategy_for_value(
+                    value
+                ).slice_count_for_value(value),
+            )
+            if count is not None
         )
         tensor_slice_counts.update(
             count
-            for value in values
-            if isinstance(value, (ParentChildRelationshipPayload, ObjectRelationship))
-            for count in (cls.relationship_slice_count(value),)
-            if count is not None and count > 1
+            for count in declared_slice_counts
+            if count > 1
         )
         tensor_slice_count = cls.compatible_runtime_slice_count(
             tensor_slice_counts,
@@ -291,12 +876,84 @@ class RuntimeSliceProjection:
             for stack in RuntimeSliceProjectionStrategy.strategy_for_value(
                 value
             ).stack_views(value)
-        ):
+        ) or any(count == 1 for count in declared_slice_counts):
             return 1
         return None
 
     @classmethod
-    def first_axis_slice_count_from_values(cls, values: Any) -> int | None:
+    def default_stack_views(
+        cls,
+        value: RuntimeProjectionData,
+    ) -> tuple[np.ndarray, ...]:
+        """Return stack views for image-like array payloads."""
+        metadata = image_payload_metadata(value)
+        source_plane_count = metadata.source_provenance.source_plane_count
+        if source_plane_count > 1:
+            stack = cls.stack_view(
+                value,
+                slice_count=source_plane_count,
+            )
+            if stack is not None:
+                return (stack,)
+        stack = cls.stack_view(value)
+        if stack is None:
+            return ()
+        return (stack,)
+
+    @classmethod
+    def sequence_stack_views(
+        cls,
+        value: RuntimeProjectionSequence,
+    ) -> tuple[np.ndarray, ...]:
+        stack = None
+        if len(value) > 1:
+            stack = cls.stack_view(value)
+        if stack is not None:
+            return (stack,)
+        return tuple(
+            stack
+            for item in value
+            for stack in RuntimeSliceProjectionStrategy.strategy_for_value(
+                item
+            ).stack_views(item)
+        )
+
+    @classmethod
+    def object_label_stack_views(
+        cls,
+        value: ObjectLabelValue,
+    ) -> tuple[np.ndarray, ...]:
+        if not RuntimePlaneAxisSliceProjectionPolicy.for_enum_member(
+            value.plane_axis
+        ).supports_slice_projection():
+            return ()
+
+        stacks: list[np.ndarray] = []
+        for item in value.runtime_slice_stack_view_sources():
+            array = image_payload_data(item)
+            if (
+                isinstance(array, np.ndarray)
+                and array.ndim > 3
+                and not is_color_image_slice(array)
+                and not is_color_image_stack(array)
+            ):
+                stack = cls.grayscale_plane_stack_view(
+                    item,
+                    slice_count=int(array.shape[0]),
+                )
+                if stack is not None:
+                    stacks.append(stack)
+                continue
+            stack = cls.stack_view(item)
+            if stack is not None:
+                stacks.append(stack)
+        return tuple(stacks)
+
+    @classmethod
+    def first_axis_slice_count_from_values(
+        cls,
+        values: Iterable[RuntimeProjectionData],
+    ) -> int | None:
         """Return runtime count for high-rank values beside one 2D image plane."""
         slice_counts = {
             int(array.shape[0])
@@ -316,7 +973,7 @@ class RuntimeSliceProjection:
     @classmethod
     def stack_view(
         cls,
-        value: Any,
+        value: RuntimeProjectionData,
         *,
         slice_count: int | None = None,
     ) -> np.ndarray | None:
@@ -328,10 +985,17 @@ class RuntimeSliceProjection:
             value = np.asarray(value)
         elif not isinstance(value, np.ndarray):
             value = np.asarray(value)
+        if (
+            slice_count is not None
+            and isinstance(value, np.ndarray)
+            and is_color_image_stack(value)
+            and value.shape[0] == slice_count
+        ):
+            return value
         return cls.grayscale_plane_stack_view(value, slice_count=slice_count)
 
     @staticmethod
-    def _sequence_is_ragged(value: Sequence[Any]) -> bool:
+    def _sequence_is_ragged(value: Sequence[RuntimeProjectionData]) -> bool:
         """Return whether a Python sequence lacks a rectangular array shape."""
         if not value:
             return False
@@ -341,7 +1005,7 @@ class RuntimeSliceProjection:
     @classmethod
     def grayscale_plane_stack_view(
         cls,
-        value: Any,
+        value: RuntimeProjectionData,
         *,
         slice_count: int | None = None,
         flatten_high_rank: bool = False,
@@ -366,94 +1030,142 @@ class RuntimeSliceProjection:
         return array.reshape((-1, *array.shape[-2:]))
 
     @classmethod
-    def plane_indices_for_slice(
-        cls,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> tuple[int, ...] | None:
-        """Return source plane indexes represented by one runtime-slice projection."""
-        array = image_payload_data(value)
-        if is_color_image_slice(array) or is_color_image_stack(array):
-            return None
-        if not isinstance(array, np.ndarray) or array.ndim < 3:
-            return None
-        if array.ndim > 3 and array.shape[0] == context.slice_count:
-            planes_per_slice = int(np.prod(array.shape[1:-2]))
-            start = context.slice_index * planes_per_slice
-            return tuple(range(start, start + planes_per_slice))
-        stack = cls.grayscale_plane_stack_view(
-            value,
-            slice_count=context.slice_count,
-            flatten_high_rank=True,
-        )
-        if stack is None:
-            return None
-        if stack.shape[0] == context.slice_count:
-            return (context.slice_index,)
-        if stack.shape[0] > context.slice_count and stack.shape[0] % context.slice_count == 0:
-            return tuple(range(context.slice_index, stack.shape[0], context.slice_count))
-        return None
-
-    @classmethod
     def first_axis_slice_if_aligned(
         cls,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData | None:
         array = image_payload_data(value)
         if is_color_image_slice(array) or is_color_image_stack(array):
             return None
         if not isinstance(array, np.ndarray):
             return None
-        if array.ndim < 3 or array.shape[0] != context.slice_count:
+        if array.ndim < 3 or not context.axis_matches(int(array.shape[0])):
             return None
         return array[context.slice_index]
 
     @classmethod
-    def grouped_label_stack_slice(
+    def sequence_value_for_slice(
         cls,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        if stack.shape[0] <= context.slice_count:
-            return None
-        if stack.shape[0] % context.slice_count != 0:
-            return None
-        dtype = getattr(stack, "dtype", None)
-        if dtype is None:
-            return None
-        if not (
-            np.issubdtype(dtype, np.integer)
-            or np.issubdtype(dtype, np.bool_)
-        ):
-            return None
-        grouped = stack[context.slice_index :: context.slice_count]
-        if grouped.shape[0] == 1:
-            return grouped[0]
-        if np.issubdtype(dtype, np.bool_):
-            return np.any(grouped, axis=0)
-        return np.max(grouped, axis=0).astype(dtype, copy=False)
+        value: RuntimeProjectionSequence,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        """Project tuple/list containers through their item semantics."""
+        stack = None
+        if len(value) > 1:
+            stack = cls.stack_view(value)
+        if stack is not None:
+            return cls.stack_slice_value(stack, context, value)
+        projected = [
+            cls.value_for_slice(
+                item,
+                context,
+            )
+            for item in value
+        ]
+        return tuple(projected) if isinstance(value, tuple) else projected
 
     @classmethod
-    def repeated_label_stack_slice(
+    def object_label_plane_indices_for_slice(
+        cls,
+        value: ObjectLabelValue,
+        context: RuntimeProjectionAxis,
+    ) -> tuple[int, ...] | None:
+        """Return source plane indexes represented by one object-label projection."""
+        array = image_payload_data(value)
+        if is_color_image_slice(array) or is_color_image_stack(array):
+            return None
+        if not isinstance(array, np.ndarray) or array.ndim < 3:
+            return None
+        if array.ndim > 3 and context.axis_matches(int(array.shape[0])):
+            planes_per_slice = int(np.prod(array.shape[1:-2]))
+            return context.contiguous_plane_indices(planes_per_slice)
+        stack = context.grayscale_stack_view(value, flatten_high_rank=True)
+        if stack is None:
+            return None
+        if context.axis_matches(int(stack.shape[0])):
+            return (context.slice_index,)
+        if context.axis_groups_runtime_positions(int(stack.shape[0])):
+            return context.grouped_axis_indices(int(stack.shape[0]))
+        if context.axis_repeats_over_runtime_positions(int(stack.shape[0])):
+            return (context.repeated_axis_index(int(stack.shape[0])),)
+        return None
+
+    @classmethod
+    def default_value_for_slice(
+        cls,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        """Default projection for image-like array payloads."""
+        metadata = image_payload_metadata(value)
+        mask = image_payload_mask(value)
+        if mask is not None or metadata.has_values:
+            data = cls.value_for_slice(
+                image_payload_data(value),
+                context,
+            )
+            return RuntimeImagePayloadContext(
+                data,
+                project_image_mask_to_data_domain(mask, data),
+                metadata.for_source_plane(context.slice_index),
+            ).payload()
+        axis_sliced = cls.first_axis_slice_if_aligned(
+            value,
+            context,
+        )
+        if axis_sliced is not None:
+            return axis_sliced
+        stack = context.stack_view(value)
+        if stack is None:
+            return value
+        return cls.stack_slice_value(
+            stack,
+            context,
+            value,
+        )
+
+    @classmethod
+    def stack_slice_value(
         cls,
         stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        """Project label planes repeated across a larger runtime-slice domain."""
-        if stack.shape[0] >= context.slice_count:
-            return None
-        if context.slice_count % stack.shape[0] != 0:
-            return None
-        dtype = getattr(stack, "dtype", None)
-        if dtype is None:
-            return None
-        if not (
-            np.issubdtype(dtype, np.integer)
-            or np.issubdtype(dtype, np.bool_)
-        ):
-            return None
-        return stack[context.slice_index % stack.shape[0]]
+        context: RuntimeProjectionAxis,
+        original_value: RuntimeProjectionData,
+    ) -> RuntimeProjectionData:
+        """Project one runtime slice from a stack-shaped value."""
+        if context.axis_matches(int(stack.shape[0])):
+            return stack[context.slice_index]
+        if stack.shape[0] == 1:
+            return stack[0]
+        if cls.is_grouped_label_stack(stack, context):
+            return dense_label_stack_reduce_planes(
+                context.grouped_stack_slice(stack)
+            )
+        if cls.is_repeated_label_stack(stack, context):
+            return stack[context.repeated_axis_index(int(stack.shape[0]))]
+        return original_value
+
+    @staticmethod
+    def is_grouped_label_stack(
+        stack: np.ndarray,
+        context: RuntimeProjectionAxis,
+    ) -> bool:
+        """Return whether stack planes are interleaved groups per runtime slice."""
+        return (
+            context.axis_groups_runtime_positions(int(stack.shape[0]))
+            and dense_label_stack_supports_plane_reduction(stack)
+        )
+
+    @staticmethod
+    def is_repeated_label_stack(
+        stack: np.ndarray,
+        context: RuntimeProjectionAxis,
+    ) -> bool:
+        """Return whether fewer label planes repeat across runtime slices."""
+        return (
+            context.axis_repeats_over_runtime_positions(int(stack.shape[0]))
+            and dense_label_stack_supports_plane_reduction(stack)
+        )
 
     @staticmethod
     def relationship_slice_count(
@@ -466,7 +1178,7 @@ class RuntimeSliceProjection:
         return max(value.slice_indices) + 1
 
     @staticmethod
-    def measurement_table_slice_count(value: Any) -> int | None:
+    def measurement_table_slice_count(value: RuntimeProjectionData) -> int | None:
         if isinstance(value, (tuple, list)):
             return RuntimeSliceProjection.measurement_table_collection_slice_count(value)
         if not isinstance(value, MeasurementTable):
@@ -504,7 +1216,9 @@ class RuntimeSliceProjection:
         return all(field.name != slice_field for field in value.fields)
 
     @staticmethod
-    def measurement_table_collection_slice_count(values: Any) -> int | None:
+    def measurement_table_collection_slice_count(
+        values: Iterable[RuntimeProjectionData],
+    ) -> int | None:
         values = RuntimeSliceProjection.runtime_slice_normalized_value(tuple(values))
         slice_indices: set[int] = set()
         slice_counts: set[int] = set()
@@ -563,20 +1277,26 @@ class RuntimeSliceProjection:
     ) -> MeasurementTable:
         """Return a table with row slice indexes shifted by ``slice_offset``."""
         fields = RuntimeSliceProjection.measurement_table_slice_index_fields(table)
-        rows = [
-            {
-                **dict(measurement_row_mapping(row)),
-                "slice_index": int(
-                    measurement_row_mapping(row).get("slice_index", 0)
-                )
-                + slice_offset,
-            }
-            for row in measurement_rows((table,))
-        ]
+        rows = []
+        for row in measurement_rows((table,)):
+            row_mapping = dict(measurement_row_mapping(row))
+            if "slice_index" in row_mapping:
+                row_slice_index = int(row_mapping["slice_index"])
+            else:
+                row_slice_index = 0
+            rows.append(
+                {
+                    **row_mapping,
+                    "slice_index": row_slice_index + slice_offset,
+                }
+            )
         schema_validated = RuntimeSliceProjection.measurement_table_schema_matches_rows(
             fields,
             rows,
         )
+        schema_loss_reasons = frozenset()
+        if not schema_validated:
+            schema_loss_reasons = frozenset(("row_layout",))
         return MeasurementTable(
             name=table.name,
             rows=rows,
@@ -586,7 +1306,8 @@ class RuntimeSliceProjection:
             source_image_name=table.source_image_name,
             subject=table.subject,
             validated_runtime_schema=schema_validated,
-            schema_loss_reasons=frozenset(() if schema_validated else ("row_layout",)),
+            schema_loss_reasons=schema_loss_reasons,
+            source_provenance=table.source_provenance,
         )
 
     @staticmethod
@@ -610,6 +1331,9 @@ class RuntimeSliceProjection:
             fields,
             rows,
         )
+        schema_loss_reasons = frozenset()
+        if not schema_validated:
+            schema_loss_reasons = frozenset(("row_layout",))
         return MeasurementTable(
             name=table.name,
             rows=rows,
@@ -619,7 +1343,8 @@ class RuntimeSliceProjection:
             source_image_name=table.source_image_name,
             subject=table.subject,
             validated_runtime_schema=schema_validated,
-            schema_loss_reasons=frozenset(() if schema_validated else ("row_layout",)),
+            schema_loss_reasons=schema_loss_reasons,
+            source_provenance=table.source_provenance,
         )
 
     @staticmethod
@@ -640,7 +1365,7 @@ class RuntimeSliceProjection:
     @staticmethod
     def measurement_table_schema_matches_rows(
         fields: tuple[FieldSpec, ...],
-        rows: Sequence[object],
+        rows: Sequence[MeasurementTableSchemaRow],
     ) -> bool:
         """Return whether declared fields still describe projected row layout."""
         declared_layout = measurement_table_row_layout_from_fields(fields)
@@ -649,7 +1374,7 @@ class RuntimeSliceProjection:
         observed_layouts = measurement_table_row_layouts(rows)
         if not observed_layouts:
             observed_layout = MeasurementTableRowLayout.EMPTY
-        elif len(observed_layouts) == 1:
+        elif len(observed_layouts) == SINGLE_OBSERVED_ROW_LAYOUT_COUNT:
             observed_layout = next(iter(observed_layouts))
         else:
             return False
@@ -662,10 +1387,14 @@ class RuntimeSliceProjection:
         """Offset repeated scalar measurement tables onto consecutive slice indexes."""
         grouped: dict[tuple[str, str | None, str | None], list[int]] = {}
         for index, table in enumerate(tables):
-            grouped.setdefault(
-                (table.name, measurement_table_object_name(table), table.source_image_name),
-                [],
-            ).append(index)
+            key = (
+                table.name,
+                measurement_table_object_name(table),
+                table.source_image_name,
+            )
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(index)
 
         aligned = list(tables)
         for indexes in grouped.values():
@@ -771,509 +1500,4 @@ class RuntimeSliceProjection:
         return RuntimeSliceProjection.single_slice_count(
             slice_counts,
             source_description=source_description,
-        )
-
-
-class RuntimeSliceAlignedValueProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project nominal slice-aligned value sets through their own contract."""
-
-    value_type = RuntimeSliceAlignedValueSet
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, RuntimeSliceAlignedValueSet):
-            raise TypeError("RuntimeSliceAlignedValueProjectionStrategy requires RuntimeSliceAlignedValueSet.")
-        return value.value_for_slice(context.slice_index)
-
-    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
-        return ()
-
-
-class MeasurementTableRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project measurement tables by their declared slice-index rows."""
-
-    value_type = MeasurementTable
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, MeasurementTable):
-            raise TypeError("MeasurementTableRuntimeSliceProjectionStrategy requires MeasurementTable.")
-        return MeasurementTableAxisProjection(
-            value,
-            MeasurementRowAxisField.SLICE_INDEX,
-            context.slice_index,
-        ).apply()
-
-
-class ParentChildRelationshipRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project relationship payloads by their runtime slice ids."""
-
-    value_type = ParentChildRelationshipPayload
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, ParentChildRelationshipPayload):
-            raise TypeError(
-                "ParentChildRelationshipRuntimeSliceProjectionStrategy requires "
-                "ParentChildRelationshipPayload."
-            )
-        if not value.slice_indices:
-            if value.slice_count is not None and value.slice_count > 1 and value.parent_ids:
-                raise ValueError(
-                    "Cannot slice multi-plane ParentChildRelationshipPayload "
-                    "without slice_indices."
-                )
-            return value
-        parent_ids: list[int] = []
-        child_ids: list[int] = []
-        for parent_id, child_id, relationship_slice_index in zip(
-            value.parent_ids,
-            value.child_ids,
-            value.slice_indices,
-            strict=True,
-        ):
-            if relationship_slice_index != context.slice_index:
-                continue
-            parent_ids.append(parent_id)
-            child_ids.append(child_id)
-        return ParentChildRelationshipPayload(
-            parent_ids=tuple(parent_ids),
-            child_ids=tuple(child_ids),
-            slice_count=1,
-        )
-
-
-class ObjectRelationshipRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project object relationship wrappers by runtime slice ids."""
-
-    value_type = ObjectRelationship
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, ObjectRelationship):
-            raise TypeError("ObjectRelationshipRuntimeSliceProjectionStrategy requires ObjectRelationship.")
-        source_ids_all = tuple(int(source_id) for source_id in value.source_ids)
-        target_ids_all = tuple(int(target_id) for target_id in value.target_ids)
-        if not value.slice_indices:
-            if value.slice_count is not None and value.slice_count > 1 and source_ids_all:
-                raise ValueError(
-                    "Cannot slice multi-plane ObjectRelationship without "
-                    "slice_indices."
-                )
-            return value
-        source_ids: list[int] = []
-        target_ids: list[int] = []
-        for source_id, target_id, relationship_slice_index in zip(
-            source_ids_all,
-            target_ids_all,
-            value.slice_indices,
-            strict=True,
-        ):
-            if relationship_slice_index != context.slice_index:
-                continue
-            source_ids.append(source_id)
-            target_ids.append(target_id)
-        return ObjectRelationship(
-            name=value.name,
-            source=value.source,
-            target=value.target,
-            source_ids=tuple(source_ids),
-            target_ids=tuple(target_ids),
-            relationship_type=value.relationship_type,
-            slice_count=1,
-        )
-
-
-class SparseIJVLabelRowsRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project sparse IJV label rows by their declared slice-index column."""
-
-    value_type = SparseIJVLabelRows
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, SparseIJVLabelRows):
-            raise TypeError(
-                "SparseIJVLabelRowsRuntimeSliceProjectionStrategy requires "
-                "SparseIJVLabelRows."
-            )
-        return value.slice(context.slice_index)
-
-    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
-        if not isinstance(value, SparseIJVLabelRows):
-            raise TypeError(
-                "SparseIJVLabelRowsRuntimeSliceProjectionStrategy requires "
-                "SparseIJVLabelRows."
-            )
-        return ()
-
-
-class ObjectLabelSetRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project runtime-slice object label sets while preserving label metadata."""
-
-    value_type = ObjectLabelSet
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, ObjectLabelSet):
-            raise TypeError("ObjectLabelSetRuntimeSliceProjectionStrategy requires ObjectLabelSet.")
-        if not RuntimePlaneAxisSliceProjectionPolicy.for_enum_member(
-            value.plane_axis
-        ).supports_slice_projection():
-            return value
-        plane_indices = RuntimeSliceProjection.plane_indices_for_slice(value, context)
-        slice_domain = (
-            value.object_label_domain().project_planes(plane_indices)
-            if plane_indices is not None
-            else value.object_label_domain().project_slice(
-                context.slice_index,
-                context.slice_count,
-            )
-        )
-        slice_metadata = image_payload_metadata(value.runtime_payload()).for_channel(
-            context.slice_index
-        )
-        return ObjectLabelSet(
-            name=value.name,
-            labels=RuntimeSliceProjection.value_for_slice(
-                value.labels,
-                context.slice_index,
-                context.slice_count,
-            ),
-            unedited_labels=(
-                None
-                if value.unedited_labels is None
-                else RuntimeSliceProjection.value_for_slice(
-                    value.unedited_labels,
-                    context.slice_index,
-                    context.slice_count,
-                )
-            ),
-            small_removed_labels=(
-                None
-                if value.small_removed_labels is None
-                else RuntimeSliceProjection.value_for_slice(
-                    value.small_removed_labels,
-                    context.slice_index,
-                    context.slice_count,
-                )
-            ),
-            representation=value.representation,
-            declared_object_count=slice_domain.declared_object_count,
-            declared_object_ids=slice_domain.declared_object_ids,
-            declared_object_id_domains=slice_domain.declared_object_id_domains,
-            domain_scope=slice_domain.scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            spatial_origin_yx=value.spatial_origin_yx,
-            source_spatial_shape_yx=value.source_spatial_shape_yx,
-            source_path=slice_metadata.source_path,
-            source_component_metadata=slice_metadata.source_component_metadata,
-            channel_source_paths=slice_metadata.channel_source_paths,
-            channel_source_component_metadata=(
-                slice_metadata.channel_source_component_metadata
-            ),
-            source_image_names=slice_metadata.source_image_names,
-            dimensions=value.dimensions,
-            source_image_name=value.source_image_name,
-        )
-
-    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
-        if not isinstance(value, ObjectLabelSet):
-            raise TypeError("ObjectLabelSetRuntimeSliceProjectionStrategy requires ObjectLabelSet.")
-        if not RuntimePlaneAxisSliceProjectionPolicy.for_enum_member(
-            value.plane_axis
-        ).supports_slice_projection():
-            return ()
-        runtime_payload = value.runtime_payload()
-        return RuntimeSliceProjectionStrategy.strategy_for_value(
-            runtime_payload
-        ).stack_views(runtime_payload)
-
-
-class ObjectLabelPayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project runtime-slice object label payloads while preserving metadata."""
-
-    value_type = ObjectLabelPayload
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        if not isinstance(value, ObjectLabelPayload):
-            raise TypeError("ObjectLabelPayloadRuntimeSliceProjectionStrategy requires ObjectLabelPayload.")
-        if not RuntimePlaneAxisSliceProjectionPolicy.for_enum_member(
-            value.plane_axis
-        ).supports_slice_projection():
-            return value
-        plane_indices = RuntimeSliceProjection.plane_indices_for_slice(value, context)
-        slice_domain = (
-            value.object_label_domain().project_planes(plane_indices)
-            if plane_indices is not None
-            else value.object_label_domain().project_slice(
-                context.slice_index,
-                context.slice_count,
-            )
-        )
-        slice_metadata = image_payload_metadata(value).for_channel(context.slice_index)
-        return ObjectLabelPayload(
-            labels=RuntimeSliceProjection.value_for_slice(
-                value.labels,
-                context.slice_index,
-                context.slice_count,
-            ),
-            unedited_labels=(
-                None
-                if value.unedited_labels is None
-                else RuntimeSliceProjection.value_for_slice(
-                    value.unedited_labels,
-                    context.slice_index,
-                    context.slice_count,
-                )
-            ),
-            small_removed_labels=(
-                None
-                if value.small_removed_labels is None
-                else RuntimeSliceProjection.value_for_slice(
-                    value.small_removed_labels,
-                    context.slice_index,
-                    context.slice_count,
-                )
-            ),
-            declared_object_count=slice_domain.declared_object_count,
-            declared_object_ids=slice_domain.declared_object_ids,
-            declared_object_id_domains=slice_domain.declared_object_id_domains,
-            domain_scope=slice_domain.scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            spatial_origin_yx=value.spatial_origin_yx,
-            source_spatial_shape_yx=value.source_spatial_shape_yx,
-            source_path=slice_metadata.source_path,
-            source_component_metadata=slice_metadata.source_component_metadata,
-            channel_source_paths=slice_metadata.channel_source_paths,
-            channel_source_component_metadata=(
-                slice_metadata.channel_source_component_metadata
-            ),
-            source_image_names=slice_metadata.source_image_names,
-        )
-
-    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
-        if not isinstance(value, ObjectLabelPayload):
-            raise TypeError("ObjectLabelPayloadRuntimeSliceProjectionStrategy requires ObjectLabelPayload.")
-        if not RuntimePlaneAxisSliceProjectionPolicy.for_enum_member(
-            value.plane_axis
-        ).supports_slice_projection():
-            return ()
-        values = (value.labels, value.unedited_labels, value.small_removed_labels)
-        stacks: list[np.ndarray] = []
-        for item in values:
-            if item is None:
-                continue
-            array = image_payload_data(item)
-            if (
-                isinstance(array, np.ndarray)
-                and array.ndim > 3
-                and not is_color_image_slice(array)
-                and not is_color_image_stack(array)
-            ):
-                stack = RuntimeSliceProjection.grayscale_plane_stack_view(
-                    item,
-                    slice_count=int(array.shape[0]),
-                )
-                if stack is not None:
-                    stacks.append(stack)
-                continue
-            stack = RuntimeSliceProjection.stack_view(item)
-            if stack is not None:
-                stacks.append(stack)
-        return tuple(stacks)
-
-
-class SequenceRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Project tuple/list containers through their item semantics."""
-
-    value_type = (tuple, list)
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        stack = (
-            RuntimeSliceProjection.stack_view(value)
-            if len(value) > 1
-            else None
-        )
-        if stack is not None:
-            return RuntimeStackSliceProjectionStrategy.project(stack, context, value)
-        projected = [
-            RuntimeSliceProjection.value_for_slice(
-                item,
-                context.slice_index,
-                context.slice_count,
-            )
-            for item in value
-        ]
-        return tuple(projected) if isinstance(value, tuple) else projected
-
-    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
-        stack = RuntimeSliceProjection.stack_view(value) if len(value) > 1 else None
-        if stack is not None:
-            return (stack,)
-        return tuple(
-            stack
-            for item in value
-            for stack in RuntimeSliceProjectionStrategy.strategy_for_value(
-                item
-            ).stack_views(item)
-        )
-
-
-class RuntimeStackSliceProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Registered projection rule for stack-shaped runtime values."""
-
-    __registry_key__ = "strategy_name"
-    __skip_if_no_key__ = True
-    strategy_name: ClassVar[str | None] = None
-    priority: ClassVar[int] = 0
-
-    @classmethod
-    def project(
-        cls,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-        original_value: Any,
-    ) -> Any:
-        for strategy_type in sorted(
-            cls.__registry__.values(),
-            key=lambda registered: registered.priority,
-        ):
-            projected = strategy_type().project_stack(stack, context)
-            if projected is not None:
-                return projected
-        return original_value
-
-    @abstractmethod
-    def project_stack(
-        self,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        """Return a projected slice, or ``None`` when this rule does not apply."""
-
-
-class AlignedRuntimeStackSliceProjectionStrategy(RuntimeStackSliceProjectionStrategy):
-    """Project stacks whose first axis is the runtime slice axis."""
-
-    strategy_name = "aligned_runtime_slice"
-    priority = 10
-
-    def project_stack(
-        self,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        if stack.shape[0] != context.slice_count:
-            return None
-        return stack[context.slice_index]
-
-
-class SingletonRuntimeStackSliceProjectionStrategy(RuntimeStackSliceProjectionStrategy):
-    """Broadcast singleton first-axis stacks across runtime slices."""
-
-    strategy_name = "singleton_runtime_slice"
-    priority = 20
-
-    def project_stack(
-        self,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        del context
-        if stack.shape[0] != 1:
-            return None
-        return stack[0]
-
-
-class GroupedLabelStackSliceProjectionStrategy(RuntimeStackSliceProjectionStrategy):
-    """Project grouped label stacks by runtime slice context."""
-
-    strategy_name = "grouped_label_stack"
-    priority = 30
-
-    def project_stack(
-        self,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        return RuntimeSliceProjection.grouped_label_stack_slice(stack, context)
-
-
-class RepeatedLabelStackSliceProjectionStrategy(RuntimeStackSliceProjectionStrategy):
-    """Project repeated label-stack groups by runtime slice context."""
-
-    strategy_name = "repeated_label_stack"
-    priority = 40
-
-    def project_stack(
-        self,
-        stack: np.ndarray,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any | None:
-        return RuntimeSliceProjection.repeated_label_stack_slice(stack, context)
-
-
-class DefaultRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
-    """Default projection for image-like array payloads."""
-
-    def value_for_slice(
-        self,
-        value: Any,
-        context: RuntimeSliceProjectionContext,
-    ) -> Any:
-        metadata = image_payload_metadata(value)
-        mask = image_payload_mask(value)
-        if mask is not None or metadata.has_values:
-            data = RuntimeSliceProjection.value_for_slice(
-                image_payload_data(value),
-                context.slice_index,
-                context.slice_count,
-            )
-            return image_payload_with_context(
-                data=data,
-                mask=project_image_mask_to_data_domain(mask, data),
-                metadata=metadata.for_channel(context.slice_index),
-            )
-        axis_sliced = RuntimeSliceProjection.first_axis_slice_if_aligned(
-            value,
-            context,
-        )
-        if axis_sliced is not None:
-            return axis_sliced
-        stack = RuntimeSliceProjection.stack_view(
-            value,
-            slice_count=context.slice_count,
-        )
-        if stack is None:
-            return value
-        return RuntimeStackSliceProjectionStrategy.project(
-            stack,
-            context,
-            value,
         )

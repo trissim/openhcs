@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 
 F = TypeVar("F", bound=Callable[..., Any])
 MODULE_ARTIFACT_CONTRACT_ATTR = "__openhcs_module_artifact_contract__"
@@ -37,18 +37,63 @@ class ModuleArtifactContract:
             "declared_outputs",
             tuple(self.declared_outputs or self.outputs),
         )
-        for field_name in (
-            "inputs",
-            "runtime_artifact_inputs",
-            "outputs",
-            "declared_outputs",
-        ):
-            for spec in getattr(self, field_name):
-                if not isinstance(spec, ArtifactSpec):
-                    raise TypeError(
-                        f"ModuleArtifactContract.{field_name} must contain "
-                        f"ArtifactSpec values, got {type(spec).__name__}."
-                    )
+        self._validate_specs("inputs", self.inputs)
+        self._validate_specs("runtime_artifact_inputs", self.runtime_artifact_inputs)
+        self._validate_specs("outputs", self.outputs)
+        self._validate_specs("declared_outputs", self.declared_outputs)
+
+    @staticmethod
+    def _validate_specs(field_name: str, specs: tuple[ArtifactSpec, ...]) -> None:
+        for spec in specs:
+            if not isinstance(spec, ArtifactSpec):
+                raise TypeError(
+                    f"ModuleArtifactContract.{field_name} must contain "
+                    f"ArtifactSpec values, got {type(spec).__name__}."
+                )
+
+    def input_collection(self) -> ArtifactSpecCollection:
+        """Return declared source inputs as an ordered artifact collection."""
+        return ArtifactSpecCollection(self.inputs)
+
+    def runtime_artifact_input_collection(self) -> ArtifactSpecCollection:
+        """Return runtime-provided artifact inputs as an ordered collection."""
+        return ArtifactSpecCollection(self.runtime_artifact_inputs)
+
+    def output_collection(self) -> ArtifactSpecCollection:
+        """Return module outputs as an ordered artifact collection."""
+        return ArtifactSpecCollection(self.outputs)
+
+    def declared_output_collection(self) -> ArtifactSpecCollection:
+        """Return originally declared module outputs as an ordered collection."""
+        return ArtifactSpecCollection(self.declared_outputs)
+
+    def declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
+        """Return explicit inputs plus runtime-only inputs in contract order."""
+        runtime_extras = tuple(
+            spec for spec in self.runtime_artifact_inputs if spec not in self.inputs
+        )
+        return (*self.inputs, *runtime_extras)
+
+    def declared_input_collection(self) -> ArtifactSpecCollection:
+        """Return all inputs the module can resolve at execution time."""
+        return ArtifactSpecCollection(self.declared_input_specs())
+
+    def runtime_input_names(self, kind: ArtifactKind) -> tuple[str, ...]:
+        """Return runtime-provided input names of one artifact kind."""
+        return self.runtime_artifact_input_collection().names_of_kind(kind)
+
+    def runtime_input_name_set(self, kind: ArtifactKind) -> frozenset[str]:
+        """Return runtime-provided input names of one artifact kind as a set."""
+        return self.runtime_artifact_input_collection().name_set_of_kind(kind)
+
+    def external_input_names(self, kind: ArtifactKind) -> tuple[str, ...]:
+        """Return source-resolved input names after excluding runtime inputs."""
+        runtime_names = self.runtime_input_name_set(kind)
+        return tuple(
+            name
+            for name in self.input_collection().names_of_kind(kind)
+            if name not in runtime_names
+        )
 
 
 def module_artifact_contract(contract: ModuleArtifactContract) -> Callable[[F], F]:

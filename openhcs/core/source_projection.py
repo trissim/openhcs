@@ -6,10 +6,24 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 
 
-_COMPONENT_FIELDS = ("well", "site", "channel", "z_index", "timepoint")
+_ADDRESS_COMPONENTS = (
+    AllComponents.WELL,
+    AllComponents.SITE,
+    AllComponents.CHANNEL,
+    AllComponents.Z_INDEX,
+    AllComponents.TIMEPOINT,
+)
+_METADATA_COMPONENT_KEYS = {
+    AllComponents.CHANNEL: "channels",
+    AllComponents.WELL: "wells",
+    AllComponents.SITE: "sites",
+    AllComponents.Z_INDEX: "z_indexes",
+    AllComponents.TIMEPOINT: "timepoints",
+}
 _SOURCE_REF_FIELDS = (
     "backend",
     "reader",
@@ -33,39 +47,51 @@ class OpenHCSPlaneAddress:
     timepoint: str
 
     def __post_init__(self) -> None:
-        for name in _COMPONENT_FIELDS:
-            value = getattr(self, name)
+        for component, value in self.component_values().items():
             if value is None or value == "":
-                raise ValueError(f"{name} cannot be empty in an OpenHCS plane address.")
-            object.__setattr__(self, name, str(value))
+                raise ValueError(
+                    f"{component.value} cannot be empty in an OpenHCS plane address."
+                )
+            object.__setattr__(self, component.value, str(value))
+
+    def component_values(self) -> dict[AllComponents, str]:
+        """Return address values keyed by OpenHCS component enum."""
+
+        return {
+            AllComponents.WELL: self.well,
+            AllComponents.SITE: self.site,
+            AllComponents.CHANNEL: self.channel,
+            AllComponents.Z_INDEX: self.z_index,
+            AllComponents.TIMEPOINT: self.timepoint,
+        }
 
     def as_component_metadata(self) -> dict[str, str]:
         """Return parser-compatible component metadata."""
 
         return {
-            "well": self.well,
-            "site": self.site,
-            "channel": self.channel,
-            "z_index": self.z_index,
-            "timepoint": self.timepoint,
+            component.value: value
+            for component, value in self.component_values().items()
         }
 
     @classmethod
     def from_parsed(cls, parsed: Mapping[str, Any]) -> "OpenHCSPlaneAddress":
         """Create an address from parser output."""
 
-        missing = [name for name in _COMPONENT_FIELDS if parsed.get(name) is None]
+        missing = [
+            component.value
+            for component in _ADDRESS_COMPONENTS
+            if parsed.get(component.value) is None
+        ]
         if missing:
             raise ValueError(
                 "Parsed OpenHCS virtual filename lacks required components: "
                 + ", ".join(missing)
             )
         return cls(
-            well=str(parsed["well"]),
-            site=str(parsed["site"]),
-            channel=str(parsed["channel"]),
-            z_index=str(parsed["z_index"]),
-            timepoint=str(parsed["timepoint"]),
+            **{
+                component.value: str(parsed[component.value])
+                for component in _ADDRESS_COMPONENTS
+            }
         )
 
 
@@ -236,11 +262,10 @@ class SourceProjectionMetadataSerializer:
             "grid_dimensions": list(grid_dimensions),
             "pixel_size": pixel_size,
             "image_files": [path for _, path in projection_paths],
-            "channels": self._component_values(projection_set, "channel"),
-            "wells": self._component_values(projection_set, "well"),
-            "sites": self._component_values(projection_set, "site"),
-            "z_indexes": self._component_values(projection_set, "z_index"),
-            "timepoints": self._component_values(projection_set, "timepoint"),
+            **{
+                metadata_key: self._component_values(projection_set, component)
+                for component, metadata_key in _METADATA_COMPONENT_KEYS.items()
+            },
             "available_backends": dict(
                 available_backends
                 if available_backends is not None
@@ -290,16 +315,16 @@ class SourceProjectionMetadataSerializer:
     def _component_values(
         self,
         projection_set: SourceProjectionSet,
-        component: str,
+        component: AllComponents,
     ) -> dict[str, str | None]:
         values: dict[str, str | None] = {}
         for projection in projection_set.projections:
-            key = getattr(projection.address, component)
-            label = projection.component_labels.get(component)
+            key = projection.address.component_values()[component]
+            label = projection.component_labels.get(component.value)
             previous = values.get(key)
             if previous is not None and label is not None and previous != label:
                 raise ValueError(
-                    f"Conflicting label for {component}={key!r}: "
+                    f"Conflicting label for {component.value}={key!r}: "
                     f"{previous!r} vs {label!r}."
                 )
             values[key] = label if label is not None else previous

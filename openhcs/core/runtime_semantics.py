@@ -4,18 +4,22 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import asdict, dataclass, fields as dataclass_fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
 import math
 import re
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
+from openhcs.core.source_spatial_domain import (
+    SourceSpatialDomainAdapter,
+    SourceSpatialDomain,
+)
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     GeneratedEnumClassSpec,
@@ -26,224 +30,40 @@ from openhcs.core.registry_strategies import (
 )
 from openhcs.core.process_local_cache import ProcessLocalBoundedCache
 
+if TYPE_CHECKING:
+    from openhcs.core.runtime_values import (
+        ObjectLabelMeasurementSource,
+        ObjectLabelPayload,
+        ObjectLabelSet,
+        ObjectLabelValue,
+        RuntimeArrayData,
+        SparseIJVLabelRows,
+    )
+
 
 DeclaredObjectIds = tuple[int, ...] | list[int] | None
 
 
-@dataclass(frozen=True, slots=True)
-class SourceSpatialDomain:
-    """Dense XY placement contract for a source-image coordinate domain."""
+class RuntimeSliceProjectableValue(ABC):
+    """Nominal contract for values that own runtime-slice row projection."""
 
-    origin_yx: tuple[int, int] | None = None
-    source_shape_yx: tuple[int, int] | None = None
-    fill_value: Any = 0
-    value_name: str = "Dense array"
+    @abstractmethod
+    def project_runtime_slice(self, slice_index: int) -> object:
+        """Return the value represented by one runtime-slice index."""
 
-    def materialize(self, value: Any) -> Any:
-        """Place an array-like value into this source spatial domain."""
-        return dense_array_in_source_spatial_domain(
-            value,
-            spatial_origin_yx=self.origin_yx,
-            source_spatial_shape_yx=self.source_shape_yx,
-            fill_value=self.fill_value,
-            value_name=self.value_name,
-        )
 
-    def materialize_for_slice(
+class RuntimeSliceIdentityProjectableValue(ABC):
+    """Nominal contract for values that can be stamped with execution-slice identity."""
+
+    @abstractmethod
+    def with_runtime_slice_identity(
         self,
-        value: Any,
+        *,
         slice_index: int,
         slice_count: int,
-    ) -> Any:
-        """Place an array-like value and return one aligned execution slice."""
-        import numpy as np
+    ) -> Self:
+        """Return the value with execution-slice identity applied."""
 
-        materialized = self.materialize(value)
-        array = np.asarray(materialized)
-        if array.ndim >= 3 and array.shape[0] == slice_count:
-            return array[slice_index]
-        return materialized
-
-
-@dataclass(frozen=True, slots=True)
-class SourceSpatialPayloadDomain:
-    """Native payload placement identity inside an optional source XY domain."""
-
-    origin_yx: tuple[int, int]
-    spatial_shape_yx: tuple[int, int]
-    source_shape_yx: tuple[int, int] | None
-
-
-@dataclass(frozen=True, slots=True)
-class CommonRuntimeValue:
-    """Projection of a value family that is only valid when all values agree."""
-
-    values: tuple[Any, ...]
-
-    @classmethod
-    def from_values(
-        cls,
-        values: Iterable[Any],
-        *,
-        ignore_none: bool = False,
-    ) -> "CommonRuntimeValue":
-        unique_values: list[Any] = []
-        for value in values:
-            if ignore_none and value is None:
-                continue
-            if not any(value == existing for existing in unique_values):
-                unique_values.append(value)
-        return cls(tuple(unique_values))
-
-    @property
-    def single(self) -> Any | None:
-        """Return the shared value, or None when values disagree or are absent."""
-        if len(self.values) == 1:
-            return self.values[0]
-        return None
-
-
-class SourceSpatialDomainAdapter(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Adapter for dense XY payloads that carry source-domain coordinates."""
-
-    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
-    value_type_label: ClassVar[str | None] = None
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
-
-    @classmethod
-    def for_value(
-        cls,
-        value: Any,
-        *,
-        source_shape_override_yx: tuple[int, int] | None = None,
-    ) -> "SourceSpatialDomainAdapter | None":
-        for adapter_type in cls.registered_strategy_types():
-            adapter = adapter_type.for_value(
-                value,
-                source_shape_override_yx=source_shape_override_yx,
-            )
-            if adapter is not None:
-                return adapter
-        return None
-
-    @property
-    @abstractmethod
-    def array(self) -> Any:
-        ...
-
-    @property
-    @abstractmethod
-    def domain(self) -> SourceSpatialDomain:
-        ...
-
-    @property
-    def spatial_shape_yx(self) -> tuple[int, int]:
-        """Return the payload's native XY shape before source-domain expansion."""
-        import numpy as np
-
-        array = np.asarray(self.array)
-        if array.ndim < 2:
-            raise ValueError(
-                "Source-spatial payloads require at least two dimensions, "
-                f"got {array.ndim}."
-            )
-        return tuple(int(axis) for axis in array.shape[-2:])
-
-    @property
-    def payload_domain(self) -> SourceSpatialPayloadDomain:
-        """Return this payload's native placement identity."""
-        return SourceSpatialPayloadDomain(
-            origin_yx=self.domain.origin_yx or (0, 0),
-            spatial_shape_yx=self.spatial_shape_yx,
-            source_shape_yx=self.domain.source_shape_yx,
-        )
-
-    @classmethod
-    def common_payload_domain(
-        cls,
-        adapters: tuple["SourceSpatialDomainAdapter", ...],
-    ) -> SourceSpatialPayloadDomain | None:
-        """Return the shared native payload domain, if every adapter agrees."""
-        return CommonRuntimeValue.from_values(
-            adapter.payload_domain for adapter in adapters
-        ).single
-
-    @classmethod
-    def common_source_shape_yx(
-        cls,
-        adapters: tuple["SourceSpatialDomainAdapter", ...],
-    ) -> tuple[int, int] | None:
-        """Return the shared source XY shape, if every declared source agrees."""
-        return CommonRuntimeValue.from_values(
-            (adapter.domain.source_shape_yx for adapter in adapters),
-            ignore_none=True,
-        ).single
-
-    @classmethod
-    def requires_source_domain_alignment(
-        cls,
-        adapters: tuple["SourceSpatialDomainAdapter", ...],
-    ) -> bool:
-        """Return whether payloads must be expanded before joint execution."""
-        source_shape = cls.common_source_shape_yx(adapters)
-        if source_shape is None:
-            return False
-        common_payload_domain = cls.common_payload_domain(adapters)
-        if common_payload_domain is not None:
-            return False
-        return True
-
-    def materialize(self) -> Any:
-        """Return the payload array in source-image XY coordinates."""
-        return self.domain.materialize(self.array)
-
-    def materialize_for_slice(self, slice_index: int, slice_count: int) -> Any:
-        """Return one aligned execution slice from the materialized payload."""
-        return self.domain.materialize_for_slice(
-            self.array,
-            slice_index,
-            slice_count,
-        )
-
-    def extract_source_array(self, value: Any) -> Any:
-        """Project a source-domain dense array into this payload's native domain."""
-        import numpy as np
-
-        array = np.asarray(value)
-        payload_domain = self.payload_domain
-        source_shape_yx = payload_domain.source_shape_yx
-        if source_shape_yx is None:
-            return value
-        if array.ndim < 2 or tuple(array.shape[-2:]) != tuple(source_shape_yx):
-            return value
-        if tuple(array.shape[-2:]) == payload_domain.spatial_shape_yx:
-            return value
-        origin_y, origin_x = payload_domain.origin_yx
-        height, width = payload_domain.spatial_shape_yx
-        return array[..., origin_y : origin_y + height, origin_x : origin_x + width]
-
-
-@dataclass(frozen=True, slots=True)
-class DenseArraySourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
-    """Source-domain adapter for dense array-like payloads."""
-
-    value: Any
-    source_domain: SourceSpatialDomain = SourceSpatialDomain()
-    array = AliasProperty[Any]("value")
-    domain = AliasProperty[SourceSpatialDomain]("source_domain")
-
-    @classmethod
-    def for_value(
-        cls,
-        value: Any,
-        *,
-        source_shape_override_yx: tuple[int, int] | None = None,
-    ) -> "DenseArraySourceSpatialDomainAdapter | None":
-        return None
 
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
@@ -301,6 +121,10 @@ RuntimePlaneAxisPlaneIndexResolver = Callable[
     ["RuntimePlaneAxisProjector", tuple[str, ...]],
     int | None,
 ]
+RuntimePlaneAxisSizeResolver = Callable[
+    ["RuntimePlaneAxisProjector", tuple[str, ...]],
+    int | None,
+]
 
 
 def runtime_slice_axis_plane_index(
@@ -311,12 +135,29 @@ def runtime_slice_axis_plane_index(
     return projector.runtime_slice_plane_index()
 
 
+def runtime_slice_axis_size(
+    projector: "RuntimePlaneAxisProjector",
+    source_aliases: tuple[str, ...],
+) -> int | None:
+    """Resolve runtime-slice axis cardinality through the projector."""
+    del source_aliases
+    return projector.runtime_slice_axis_size()
+
+
 def source_binding_axis_plane_index(
     projector: "RuntimePlaneAxisProjector",
     source_aliases: tuple[str, ...],
 ) -> int | None:
     """Resolve a source-binding axis through the projector."""
     return projector.source_binding_axis_plane_index(source_aliases)
+
+
+def source_binding_axis_size(
+    projector: "RuntimePlaneAxisProjector",
+    source_aliases: tuple[str, ...],
+) -> int | None:
+    """Resolve source-binding axis cardinality through the projector."""
+    return projector.source_binding_axis_size(source_aliases)
 
 
 class RuntimePlaneAxis(str, Enum):
@@ -326,18 +167,32 @@ class RuntimePlaneAxis(str, Enum):
         cls,
         value: str,
         plane_index_resolver: RuntimePlaneAxisPlaneIndexResolver,
+        axis_size_resolver: RuntimePlaneAxisSizeResolver,
     ):
-        return str_enum_member_with_payload(
+        member = str_enum_member_with_payload(
             cls,
             value,
             payload_attribute="_plane_index_resolver",
             payload=plane_index_resolver,
         )
+        member.__dict__["_axis_size_resolver"] = axis_size_resolver
+        return member
 
-    RUNTIME_SLICE = ("runtime_slice", runtime_slice_axis_plane_index)
-    SOURCE_BINDING = ("source_binding", source_binding_axis_plane_index)
+    RUNTIME_SLICE = (
+        "runtime_slice",
+        runtime_slice_axis_plane_index,
+        runtime_slice_axis_size,
+    )
+    SOURCE_BINDING = (
+        "source_binding",
+        source_binding_axis_plane_index,
+        source_binding_axis_size,
+    )
     plane_index_resolver = AliasProperty[RuntimePlaneAxisPlaneIndexResolver](
         "_plane_index_resolver"
+    )
+    axis_size_resolver = AliasProperty[RuntimePlaneAxisSizeResolver](
+        "_axis_size_resolver"
     )
 
     @classmethod
@@ -363,6 +218,15 @@ class RuntimePlaneAxis(str, Enum):
     ) -> int | None:
         """Resolve this semantic axis against the execution-local projector."""
         return self.plane_index_resolver(projector, source_aliases)
+
+    def axis_size(
+        self,
+        projector: "RuntimePlaneAxisProjector",
+        *,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Resolve this semantic axis cardinality against the projector."""
+        return self.axis_size_resolver(projector, source_aliases)
 
 
 class RuntimePlaneAxisSliceProjectionPolicy(
@@ -420,6 +284,7 @@ class RuntimePlaneProjection:
 
     scope: RuntimePlaneProjectionScope
     plane_index: int | None = None
+    plane_count: int | None = None
 
     def __post_init__(self) -> None:
         scope = coerce_enum(
@@ -433,6 +298,10 @@ class RuntimePlaneProjection:
                 raise ValueError(
                     "Stack runtime-plane projection cannot carry a plane index."
                 )
+            if self.plane_count is not None:
+                raise ValueError(
+                    "Stack runtime-plane projection cannot carry a plane count."
+                )
             return
         if self.plane_index is None:
             raise ValueError(
@@ -444,6 +313,19 @@ class RuntimePlaneProjection:
                 "Grouped runtime-plane projection plane_index cannot be negative."
             )
         object.__setattr__(self, "plane_index", plane_index)
+        if self.plane_count is None:
+            return
+        plane_count = int(self.plane_count)
+        if plane_count <= 0:
+            raise ValueError(
+                "Grouped runtime-plane projection plane_count must be positive."
+            )
+        if plane_index >= plane_count:
+            raise ValueError(
+                "Grouped runtime-plane projection plane_index must be within "
+                f"plane_count: index {plane_index}, count {plane_count}."
+            )
+        object.__setattr__(self, "plane_count", plane_count)
 
     @classmethod
     def stack(cls) -> "RuntimePlaneProjection":
@@ -451,16 +333,22 @@ class RuntimePlaneProjection:
         return cls(RuntimePlaneProjectionScope.STACK)
 
     @classmethod
-    def group(cls, plane_index: int) -> "RuntimePlaneProjection":
+    def group(
+        cls,
+        plane_index: int,
+        plane_count: int | None = None,
+    ) -> "RuntimePlaneProjection":
         """Select one runtime-slice plane for grouped execution."""
-        return cls(RuntimePlaneProjectionScope.GROUP, plane_index)
+        return cls(RuntimePlaneProjectionScope.GROUP, plane_index, plane_count)
 
     @classmethod
-    def for_group_key(
+    def for_execution_group(
         cls,
-        group_key: Any,
+        group_key: str | None,
         *,
         plane_index: int | None,
+        plane_count: int | None = None,
+        projects_runtime_plane: bool,
     ) -> "RuntimePlaneProjection":
         """Derive validated projection semantics from compiled group identity."""
         if group_key is None:
@@ -468,17 +356,31 @@ class RuntimePlaneProjection:
                 raise ValueError(
                     "Ungrouped runtime execution cannot carry a plane index."
                 )
+            if plane_count is not None:
+                raise ValueError(
+                    "Ungrouped runtime execution cannot carry a plane count."
+                )
+            if projects_runtime_plane:
+                raise ValueError(
+                    "Runtime-plane projection requires grouped execution identity."
+                )
+            return cls.stack()
+        if not projects_runtime_plane:
             return cls.stack()
         if plane_index is None:
             raise ValueError(
-                "Grouped runtime execution requires the OpenHCS component plane "
-                "index."
+                "Runtime-plane grouped execution requires the OpenHCS component "
+                "plane index."
             )
-        return cls.group(plane_index)
+        return cls.group(plane_index, plane_count)
 
     def runtime_slice_plane_index(self) -> int | None:
         """Return selected runtime-slice plane, or None when stacks are preserved."""
         return self.plane_index
+
+    def runtime_slice_axis_size(self) -> int | None:
+        """Return the grouped runtime-slice axis size when known."""
+        return self.plane_count
 
 
 StackRuntimePlaneProjection = RuntimePlaneProjection
@@ -491,6 +393,10 @@ class RuntimePlaneAxisProjector(ABC):
     @abstractmethod
     def runtime_slice_plane_index(self) -> int | None:
         """Return the execution-local runtime-slice plane index."""
+
+    def runtime_slice_axis_size(self) -> int | None:
+        """Return the runtime-slice axis size for the current execution scope."""
+        return None
 
     def source_binding_axis_plane_index(
         self,
@@ -538,6 +444,169 @@ class RuntimePlaneAxisProjectionRequest:
     def resolve(self, projector: RuntimePlaneAxisProjector) -> int | None:
         """Resolve this request through the typed projector contract."""
         return self.axis.plane_index(projector, source_aliases=self.source_aliases)
+
+
+def bounded_runtime_plane_index(
+    plane_count: int,
+    plane_index: int | None,
+) -> int | None:
+    """Return a selected runtime plane index only when it is in range."""
+    if plane_index is None:
+        return None
+    if plane_index >= plane_count:
+        return None
+    return plane_index
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneAxisValueProjection:
+    """Projection of values that explicitly carry a declared runtime plane axis."""
+
+    axis: RuntimePlaneAxis
+    source_aliases: tuple[str, ...]
+    plane_index: int | None
+    axis_size: int
+
+    @classmethod
+    def from_projector(
+        cls,
+        projector: RuntimePlaneAxisProjector | None,
+        axis: RuntimePlaneAxis,
+        source_aliases: tuple[str, ...],
+    ) -> "RuntimePlaneAxisValueProjection | None":
+        """Return the runtime-axis projection declared by a runtime projector."""
+        if projector is None:
+            return None
+        if not isinstance(projector, RuntimePlaneAxisProjector):
+            raise TypeError(
+                "Runtime plane-axis projection requires RuntimePlaneAxisProjector, "
+                f"got {type(projector).__name__}."
+            )
+        source_aliases = tuple(source_aliases)
+        axis_size = axis.axis_size(projector, source_aliases=source_aliases)
+        if axis_size is None:
+            return None
+        return cls(
+            axis=axis,
+            source_aliases=source_aliases,
+            plane_index=projector.plane_index_for_axis(
+                RuntimePlaneAxisProjectionRequest(
+                    axis=axis,
+                    source_aliases=source_aliases,
+                )
+            ),
+            axis_size=axis_size,
+        )
+
+    @classmethod
+    def from_selected_plane(
+        cls,
+        *,
+        axis: RuntimePlaneAxis,
+        plane_index: int,
+        axis_size: int,
+    ) -> "RuntimePlaneAxisValueProjection":
+        """Return a projection whose explicit plane proof is already resolved."""
+        return cls(
+            axis=axis,
+            source_aliases=(),
+            plane_index=plane_index,
+            axis_size=axis_size,
+        )
+
+    def project(
+        self,
+        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+    ) -> "RuntimeArrayData | ObjectLabelMeasurementSource":
+        """Return the selected plane when the value carries this runtime axis."""
+        plane_index = self.plane_index_for_value(value)
+        if plane_index is None:
+            return value
+        from openhcs.core.runtime_values import ObjectLabelPayload, ObjectLabelSet
+
+        if isinstance(value, (ObjectLabelPayload, ObjectLabelSet)):
+            return self.project_object_labels(value, plane_index)
+        return self.project_array_payload(value, plane_index)
+
+    def plane_index_for_value(
+        self,
+        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+    ) -> int | None:
+        """Return the selected runtime-axis plane for this value."""
+        alias_plane_index = self.source_alias_plane_index(value)
+        if alias_plane_index is not None:
+            return alias_plane_index
+        return self.plane_index
+
+    def source_alias_plane_index(
+        self,
+        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+    ) -> int | None:
+        """Return a source-alias plane index only for a complete alias axis."""
+        if self.axis is RuntimePlaneAxis.SOURCE_BINDING:
+            from openhcs.core.runtime_values import source_image_context_plane_index
+
+            return source_image_context_plane_index(
+                value,
+                self.source_aliases,
+                self.axis_size,
+            )
+        return None
+
+    def project_array_payload(
+        self,
+        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+        plane_index: int,
+    ) -> "RuntimeArrayData | ObjectLabelMeasurementSource":
+        """Project image-like values carrying this leading runtime axis."""
+        from openhcs.core.runtime_values import (
+            image_payload_data,
+            image_payload_slice_context,
+        )
+
+        data = image_payload_data(value)
+        if not isinstance(data, np.ndarray):
+            return value
+        if not self.data_carries_axis(data):
+            return value
+        self.validate_plane_index(plane_index, data.shape)
+        return image_payload_slice_context(value, data[plane_index], plane_index)
+
+    def project_object_labels(
+        self,
+        value: "ObjectLabelValue",
+        plane_index: int,
+    ) -> "ObjectLabelValue":
+        """Project object labels while preserving their nominal metadata."""
+        if value.plane_axis is not self.axis:
+            return value
+        from openhcs.core.runtime_values import (
+            ObjectLabelMeasurementPayloadStrategy,
+            ObjectLabelSourcePlaneProjectionRequest,
+            object_label_dense_array,
+        )
+
+        labels = object_label_dense_array(value)
+        if not self.data_carries_axis(labels):
+            return value
+        self.validate_plane_index(plane_index, labels.shape)
+        return ObjectLabelMeasurementPayloadStrategy.for_source(value).materialize(
+            value,
+            ObjectLabelSourcePlaneProjectionRequest(labels[plane_index], plane_index),
+        )
+
+    def data_carries_axis(self, data: np.ndarray) -> bool:
+        """Return whether dense data explicitly carries this runtime axis."""
+        return data.ndim >= 3 and data.shape[0] == self.axis_size
+
+    @staticmethod
+    def validate_plane_index(plane_index: int, shape: tuple[int, ...]) -> None:
+        """Validate a selected source-binding plane against dense data shape."""
+        if plane_index < 0 or plane_index >= shape[0]:
+            raise RuntimeError(
+                "Runtime plane-axis projection produced an out-of-range plane "
+                f"index {plane_index} for shape {shape!r}."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,6 +678,30 @@ class ObjectLabelDomain:
         if self.declared_object_count is not None:
             return tuple(range(1, self.declared_object_count + 1))
         return None
+
+    def with_missing_declarations_from(
+        self,
+        fallback: "ObjectLabelDomain",
+    ) -> "ObjectLabelDomain":
+        """Return this domain with absent declarations filled from another domain."""
+        return ObjectLabelDomain(
+            declared_object_count=(
+                self.declared_object_count
+                if self.declared_object_count is not None
+                else fallback.declared_object_count
+            ),
+            declared_object_ids=(
+                self.declared_object_ids
+                if self.declared_object_ids
+                else fallback.declared_object_ids
+            ),
+            declared_object_id_domains=(
+                self.declared_object_id_domains
+                if self.declared_object_id_domains
+                else fallback.declared_object_id_domains
+            ),
+            scope=fallback.scope,
+        )
 
     def with_runtime_declaration_overrides(
         self,
@@ -780,24 +873,33 @@ class RuntimeObjectFeatureMeasurementQuery(RuntimeObjectMeasurementQuery):
         )
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeObjectLabelMeasurementQuery(RuntimeObjectMeasurementQuery):
-    """Store-stable identity for label-aligned object measurement queries."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeObjectImageMeasurementQuery(RuntimeObjectMeasurementQuery):
+    """Object measurement query scoped by CellProfiler image number."""
 
-    axis_id: str
-    label_domain: tuple[int, ...]
     image_number: int | None = None
 
     def __post_init__(self) -> None:
         RuntimeObjectMeasurementQuery.__post_init__(self)
+        if self.image_number is not None:
+            object.__setattr__(self, "image_number", int(self.image_number))
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeObjectLabelMeasurementQuery(RuntimeObjectImageMeasurementQuery):
+    """Store-stable identity for label-aligned object measurement queries."""
+
+    axis_id: str
+    label_domain: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        RuntimeObjectImageMeasurementQuery.__post_init__(self)
         object.__setattr__(self, "axis_id", str(self.axis_id))
         object.__setattr__(
             self,
             "label_domain",
             ObjectLabelDomain._normalize_ids(tuple(self.label_domain), "label_domain"),
         )
-        if self.image_number is not None:
-            object.__setattr__(self, "image_number", int(self.image_number))
 
 
 class ObjectLabelDomainMetadata(ABC, metaclass=AutoRegisterMeta):
@@ -1002,8 +1104,19 @@ class ObjectMeasurementVectorDomain:
     def label_slices(self) -> tuple[Any, ...]:
         label_array = np.asarray(self.labels)
         if label_array.ndim <= 2:
-            return (label_array,)
-        return tuple(label_array[index] for index in range(label_array.shape[0]))
+            return (self.labels,)
+        from openhcs.core.runtime_slice_projection import (
+            RuntimeProjectionAxis,
+            RuntimeSliceProjection,
+        )
+        slice_count = int(label_array.shape[0])
+        return tuple(
+            RuntimeSliceProjection.value_for_slice(
+                self.labels,
+                RuntimeProjectionAxis(index, slice_count),
+            )
+            for index in range(slice_count)
+        )
 
     @property
     def aligned_value_slices(self) -> tuple[np.ndarray, ...]:
@@ -1231,8 +1344,6 @@ class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         label_array = np.asarray(labels)
         if declared_object_id_domains:
             plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
-            if plane_count == 1 and len(declared_object_id_domains) != 1:
-                return (dense_object_label_id_domain(labels),)
             if len(declared_object_id_domains) != plane_count:
                 raise ValueError(
                     "Plane-scoped object-label domains must match dense label "
@@ -1950,9 +2061,10 @@ class MeasurementScalarLiteral:
 
     @property
     def numeric_value(self) -> float | None:
-        if not self.is_numeric:
+        token = self.token
+        if token is None or self._NUMERIC_LITERAL_RE.match(token) is None:
             return None
-        return float(self.token or "")
+        return float(token)
 
     @property
     def is_finite_numeric(self) -> bool:
@@ -1995,6 +2107,86 @@ class MeasurementScalarLiteral:
     @property
     def is_padding_measurement_value(self) -> bool:
         return not self.is_present_measurement_value
+
+
+def measurement_axis_integer_value(
+    value: object,
+    axis: MeasurementRowAxisField,
+) -> int | None:
+    """Return one present integer axis value, or ``None`` for absent values."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        literal = MeasurementScalarLiteral(stripped)
+        if not literal.is_present_axis_value:
+            return None
+        integer_value = literal.integer_value
+        if integer_value is None:
+            raise ValueError(
+                f"Measurement axis field {axis.value!r} requires integer-compatible "
+                f"values, got {value!r}."
+            )
+        return integer_value
+    if isinstance(value, (bool, np.bool_)):
+        return int(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        if not math.isfinite(float(value)):
+            return None
+        integer = int(value)
+        if float(integer) == float(value):
+            return integer
+        raise ValueError(
+            f"Measurement axis field {axis.value!r} requires integer-compatible "
+            f"values, got {value!r}."
+        )
+    literal = MeasurementScalarLiteral(value)
+    if not literal.is_present_axis_value:
+        return None
+    integer_value = literal.integer_value
+    if integer_value is None:
+        raise ValueError(
+            f"Measurement axis field {axis.value!r} requires integer-compatible "
+            f"values, got {value!r}."
+        )
+    return integer_value
+
+
+def measurement_axis_integer_domain(
+    values: Sequence[object],
+    axis: MeasurementRowAxisField,
+) -> tuple[int, ...]:
+    """Return the present integer domain for one row-axis value vector."""
+    if isinstance(values, np.ndarray) and values.size == 0:
+        return ()
+    if isinstance(values, np.ndarray) and np.issubdtype(values.dtype, np.bool_):
+        return tuple(int(value) for value in np.unique(values))
+    if isinstance(values, np.ndarray) and np.issubdtype(values.dtype, np.integer):
+        return tuple(int(value) for value in np.unique(values))
+    if isinstance(values, np.ndarray) and np.issubdtype(values.dtype, np.floating):
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size == 0:
+            return ()
+        integer_values = finite_values.astype(np.int64)
+        if not bool(np.all(finite_values == integer_values)):
+            invalid_value = finite_values[finite_values != integer_values][0]
+            raise ValueError(
+                f"Measurement axis field {axis.value!r} requires "
+                f"integer-compatible values, got {invalid_value!r}."
+            )
+        return tuple(int(value) for value in np.unique(integer_values))
+    return tuple(
+        dict.fromkeys(
+            integer_value
+            for value in values
+            for integer_value in (measurement_axis_integer_value(value, axis),)
+            if integer_value is not None
+        )
+    )
 
 
 class MeasurementRowAxisState(str, Enum):
@@ -2506,18 +2698,45 @@ def measurement_row_value_field_names() -> frozenset[str]:
     return frozenset(field.value for field in MeasurementRowValueField)
 
 
+def measurement_row_semantic_field_names() -> frozenset[str]:
+    """Return fields that identify a payload as a measurement row."""
+    return measurement_row_axis_field_names() | measurement_row_value_field_names()
+
+
+def carries_measurement_row_semantics(row: object) -> bool:
+    """Return whether a row-like object declares measurement-row fields."""
+    semantic_fields = measurement_row_semantic_field_names()
+    if isinstance(row, Mapping):
+        field_names = frozenset(str(field_name) for field_name in row.keys())
+    elif is_dataclass(row):
+        field_names = frozenset(field.name for field in dataclass_fields(row))
+    elif type(row).__dictoffset__ != 0:
+        field_names = frozenset(str(field_name) for field_name in vars(row).keys())
+    else:
+        return False
+    return bool(field_names & semantic_fields)
+
+
+def supports_measurement_row_mapping(row: object) -> bool:
+    """Return whether ``measurement_row_mapping`` can project this row."""
+    return (
+        isinstance(row, Mapping)
+        or is_dataclass(row)
+        or type(row).__dictoffset__ != 0
+    )
+
+
 def measurement_row_mapping(row: object) -> Mapping[str, object]:
     """Return a mapping view for a supported measurement row payload."""
     if isinstance(row, Mapping):
         return row
     if is_dataclass(row):
         return MeasurementRowMappingCache.process_cache().mapping(row)
-    try:
+    if type(row).__dictoffset__ != 0:
         return vars(row)
-    except TypeError as exc:
-        raise TypeError(
-            f"Unsupported measurement row type {type(row).__name__}."
-        ) from exc
+    raise TypeError(
+        f"Unsupported measurement row type {type(row).__name__}."
+    )
 
 
 @dataclass(slots=True)
@@ -2537,12 +2756,55 @@ class MeasurementRowMappingCache(
                 return row_mapping
             del self.entries[row_id]
 
-        row_mapping = {
-            field_name: getattr(row, field_name)
-            for field_name in _dataclass_field_names(type(row))
-        }
+        row_mapping = asdict(row)
+        row_mapping.update(MeasurementRowDescriptorFields.mapping(row, row_mapping))
         self.store_value(row_id, (row, row_mapping))
         return row_mapping
+
+
+class MeasurementRowDescriptorFields:
+    """Project class-declared descriptor columns for dataclass measurement rows."""
+
+    @classmethod
+    def mapping(
+        cls,
+        row: object,
+        dataclass_mapping: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        field_names = frozenset(dataclass_mapping)
+        descriptor_values: dict[str, object] = {}
+        for owner in reversed(type(row).__mro__):
+            annotations = vars(owner).get("__annotations__", {})
+            for field_name in annotations:
+                if field_name in field_names or field_name in descriptor_values:
+                    continue
+                descriptor = vars(owner).get(field_name)
+                if not cls.is_descriptor_column(descriptor):
+                    continue
+                descriptor_values[field_name] = cls.value(
+                    row,
+                    descriptor,
+                    field_name,
+                )
+        return descriptor_values
+
+    @staticmethod
+    def is_descriptor_column(descriptor: object) -> bool:
+        return descriptor is not None and callable(vars(type(descriptor)).get("__get__"))
+
+    @staticmethod
+    def value(
+        row: object,
+        descriptor: object,
+        field_name: str,
+    ) -> object:
+        try:
+            return descriptor.__get__(row, type(row))
+        except Exception as exc:
+            raise ValueError(
+                "Measurement row descriptor field "
+                f"{type(row).__name__}.{field_name} could not be projected."
+            ) from exc
 
 
 def measurement_table_row_layout(rows: object) -> MeasurementTableRowLayout:
@@ -2657,12 +2919,6 @@ class MeasurementRowLayoutAuthority:
             if has_feature_field
             else MeasurementTableRowLayout.WIDE
         )
-
-
-@lru_cache(maxsize=256)
-def _dataclass_field_names(row_type: type[object]) -> tuple[str, ...]:
-    """Return dataclass field names without per-row reflection overhead."""
-    return tuple(field.name for field in fields(row_type))
 
 
 class MeasurementObjectRowIdentity(str, Enum):
@@ -2966,7 +3222,10 @@ def parent_child_relationship_artifact_endpoints(
 
 
 @dataclass(frozen=True, slots=True)
-class ParentChildRelationshipPayload:
+class ParentChildRelationshipPayload(
+    RuntimeSliceProjectableValue,
+    RuntimeSliceIdentityProjectableValue,
+):
     """Generic parent-child id pairs emitted before endpoint names are bound."""
 
     parent_ids: tuple[int, ...]
@@ -3007,6 +3266,57 @@ class ParentChildRelationshipPayload:
         object.__setattr__(self, "child_ids", child_ids)
         object.__setattr__(self, "slice_indices", slice_indices)
         object.__setattr__(self, "slice_count", slice_count)
+
+    def with_runtime_slice_identity(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> "ParentChildRelationshipPayload":
+        """Return relationships stamped with the execution runtime-slice identity."""
+        return ParentChildRelationshipPayload(
+            parent_ids=self.parent_ids,
+            child_ids=self.child_ids,
+            slice_indices=tuple(int(slice_index) for _child_id in self.child_ids),
+            slice_count=int(slice_count),
+        )
+
+    def explicit_slice_indices(self) -> tuple[int, ...]:
+        """Return per-relationship slice ids for persisted relationship records."""
+        if self.slice_indices:
+            return self.slice_indices
+        return tuple(0 for _child_id in self.child_ids)
+
+    def project_runtime_slice(
+        self,
+        slice_index: int,
+    ) -> "ParentChildRelationshipPayload":
+        """Return only relationship rows belonging to one runtime slice."""
+        if not self.slice_indices:
+            if self.slice_count is not None and self.slice_count > 1 and self.parent_ids:
+                raise ValueError(
+                    "Cannot slice multi-plane ParentChildRelationshipPayload "
+                    "without slice_indices."
+                )
+            return self
+
+        parent_ids: list[int] = []
+        child_ids: list[int] = []
+        for parent_id, child_id, relationship_slice_index in zip(
+            self.parent_ids,
+            self.child_ids,
+            self.slice_indices,
+            strict=True,
+        ):
+            if relationship_slice_index != int(slice_index):
+                continue
+            parent_ids.append(parent_id)
+            child_ids.append(child_id)
+        return ParentChildRelationshipPayload(
+            parent_ids=tuple(parent_ids),
+            child_ids=tuple(child_ids),
+            slice_count=1,
+        )
 
 
 class ObjectRelationshipPayloadKernel(ABC):
@@ -3146,15 +3456,14 @@ DEFAULT_OBJECT_RELATIONSHIP_PAYLOAD_KERNEL = DefaultObjectRelationshipPayloadKer
 class ObjectRelationshipPayloadRequest:
     """Semantic request for deriving parent-child payloads from label values."""
 
-    parent_labels: Any
-    child_labels: Any
+    parent_labels: ObjectLabelMeasurementSource
+    child_labels: ObjectLabelMeasurementSource
     kernel: ObjectRelationshipPayloadKernel = DEFAULT_OBJECT_RELATIONSHIP_PAYLOAD_KERNEL
 
 
 class ObjectRelationshipPayloadStrategy(
     MostDerivedContextStrategyMixin[ObjectRelationshipPayloadRequest],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
     """Derive parent-child payloads by nominal object-label representation."""
 
@@ -3312,16 +3621,25 @@ class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadS
     strategy_key = "sparse_ijv"
 
     def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
-        return self.is_sparse_ijv(context.parent_labels) or self.is_sparse_ijv(
-            context.child_labels
+        from openhcs.core.runtime_values import SparseIJVReplacementLabelsStrategy
+
+        return any(
+            SparseIJVReplacementLabelsStrategy.source_is_sparse_ijv(labels)
+            for labels in (context.parent_labels, context.child_labels)
         )
 
     def payload(
         self,
         context: ObjectRelationshipPayloadRequest,
     ) -> ParentChildRelationshipPayload:
-        parent_rows = self.sparse_rows(context.parent_labels)
-        child_rows = self.sparse_rows(context.child_labels)
+        from openhcs.core.runtime_values import SparseIJVReplacementLabelsStrategy
+
+        parent_rows = SparseIJVReplacementLabelsStrategy.replacement_for(
+            context.parent_labels
+        )
+        child_rows = SparseIJVReplacementLabelsStrategy.replacement_for(
+            context.child_labels
+        )
         parent_array = parent_rows.as_yx_label_array()
         child_array = child_rows.as_yx_label_array()
         parent_count = self.label_count(parent_array, parent_rows)
@@ -3339,41 +3657,10 @@ class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadS
             self.present_sparse_child_ids(child_array, child_rows),
         )
 
-    @classmethod
-    def is_sparse_ijv(cls, labels: Any) -> bool:
-        from openhcs.core.runtime_values import (
-            ObjectLabelRepresentation,
-            ObjectLabelSet,
-            SparseIJVLabelRows,
-        )
-
-        if isinstance(labels, SparseIJVLabelRows):
-            return True
-        return (
-            isinstance(labels, ObjectLabelSet)
-            and labels.representation is ObjectLabelRepresentation.SPARSE_IJV
-        )
-
-    @classmethod
-    def sparse_rows(cls, labels: Any) -> Any:
-        from openhcs.core.runtime_values import (
-            ObjectLabelRepresentation,
-            ObjectLabelSet,
-            SparseIJVLabelRows,
-        )
-
-        if isinstance(labels, ObjectLabelSet):
-            if labels.representation is not ObjectLabelRepresentation.SPARSE_IJV:
-                return SparseIJVLabelRows.from_dense_labels(labels.labels)
-            labels = labels.labels
-        if isinstance(labels, SparseIJVLabelRows):
-            return labels
-        return SparseIJVLabelRows.from_dense_labels(labels)
-
     @staticmethod
     def label_count(
         array: np.ndarray,
-        rows: Any,
+        rows: SparseIJVLabelRows,
     ) -> int:
         if array.size == 0:
             return 0
@@ -3382,7 +3669,7 @@ class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadS
     @staticmethod
     def present_sparse_child_ids(
         child_array: np.ndarray,
-        child_rows: Any,
+        child_rows: SparseIJVLabelRows,
     ) -> np.ndarray:
         if child_array.size == 0:
             return np.empty(0, dtype=np.int32)
@@ -3480,15 +3767,15 @@ class ObjectInstanceKey:
         slice_index_field: MeasurementRowAxisField = MeasurementRowAxisField.SLICE_INDEX,
     ) -> "ObjectInstanceKey":
         """Build object identity from the row's nominal axis fields."""
+        raw_slice_index = row.get(slice_index_field.value)
+        if raw_slice_index is not None and str(raw_slice_index).strip() != "":
+            return cls(object_id, slice_index=int(raw_slice_index))
         raw_image_number = row.get(image_number_field.value)
         if raw_image_number is not None and str(raw_image_number).strip() != "":
             slice_index = int(float(raw_image_number) - float(image_number_offset) - 1)
             if slice_index >= 0:
                 return cls(object_id, slice_index=slice_index)
-        raw_slice_index = row.get(slice_index_field.value)
-        if raw_slice_index is None or str(raw_slice_index).strip() == "":
-            return cls(object_id)
-        return cls(object_id, slice_index=int(raw_slice_index))
+        return cls(object_id)
 
     @classmethod
     def domain(
@@ -4369,6 +4656,55 @@ def dense_object_label_extent_id_domain(labels: Any) -> tuple[int, ...]:
     return tuple(range(1, max_present_id + 1))
 
 
+def dense_object_label_declared_or_extent_id_domain(labels: Any) -> tuple[int, ...]:
+    """Return declared object IDs when present, otherwise the dense material extent."""
+    declared_domain = (
+        ObjectLabelDomainMetadataStrategy.for_value(labels)
+        .object_label_domain(labels)
+        .explicit_id_domain()
+    )
+    if declared_domain is not None:
+        return declared_domain
+    return dense_object_label_extent_id_domain(labels)
+
+
+def dense_object_label_measurement_row_domain(
+    labels: Any,
+    dense_labels: Any,
+) -> tuple[int, ...]:
+    """Return the direct object-measurement row domain for dense labels.
+
+    Undeclared labels use materially present IDs. Declared counts use the
+    measured dense extent so positive gaps become explicit missing rows.
+    Declared ID sets remain explicit unless the measured/declared labels show
+    the compact dense extent emitted by CellProfiler object measurement arrays.
+    """
+    payload_domain = ObjectLabelDomainMetadataStrategy.for_value(
+        labels
+    ).object_label_domain(labels)
+    if payload_domain.declared_object_count is not None:
+        return dense_object_label_extent_id_domain(dense_labels)
+
+    declared_ids = payload_domain.declared_object_ids
+    if not declared_ids:
+        return dense_object_label_id_domain(labels)
+    if len(declared_ids) == 1:
+        return declared_ids
+
+    dense_domain = dense_object_label_extent_id_domain(dense_labels)
+    if declared_ids == tuple(range(1, len(declared_ids) + 1)):
+        return dense_domain
+    max_label = dense_domain[-1] if dense_domain else 0
+    max_declared = max(declared_ids)
+    compact_limit = max(len(declared_ids) * 4, len(declared_ids) + 16)
+    if max_declared > len(declared_ids) and max_declared >= max_label:
+        if max_declared <= compact_limit:
+            return tuple(range(1, max_declared + 1))
+    if max_label > len(declared_ids) and max_label <= len(declared_ids) + 16:
+        return dense_domain
+    return dense_object_label_id_domain(labels)
+
+
 class ObjectLabelDomainDeclaration(ABC, metaclass=AutoRegisterMeta):
     """Nominal declaration for transformed object-label identity domains."""
 
@@ -4455,16 +4791,8 @@ def dense_object_label_plane_id_domains(
         resolved_scope,
     ).plane_domains(
         labels,
-        declared_object_count=(
-            declared_object_count
-            if declared_object_count is not None
-            else payload_domain.declared_object_count
-        ),
-        declared_object_ids=(
-            declared_object_ids
-            if declared_object_ids is not None
-            else payload_domain.declared_object_ids
-        ),
+        declared_object_count=payload_domain.declared_object_count,
+        declared_object_ids=payload_domain.declared_object_ids,
         declared_object_id_domains=payload_domain.declared_object_id_domains,
     )
 
@@ -4490,66 +4818,10 @@ def dense_object_label_identity_domains(
         resolved_scope,
     ).identity_domains(
         labels,
-        declared_object_count=(
-            declared_object_count
-            if declared_object_count is not None
-            else payload_domain.declared_object_count
-        ),
-        declared_object_ids=(
-            declared_object_ids
-            if declared_object_ids is not None
-            else payload_domain.declared_object_ids
-        ),
+        declared_object_count=payload_domain.declared_object_count,
+        declared_object_ids=payload_domain.declared_object_ids,
         declared_object_id_domains=payload_domain.declared_object_id_domains,
     )
-
-
-def dense_array_in_source_spatial_domain(
-    value: Any,
-    *,
-    spatial_origin_yx: tuple[int, int] | None,
-    source_spatial_shape_yx: tuple[int, int] | None,
-    fill_value: Any = 0,
-    value_name: str = "Dense array",
-) -> Any:
-    """Place a dense XY array payload into its declared source XY domain."""
-    import numpy as np
-
-    label_array = np.asarray(value)
-    origin = spatial_origin_yx
-    source_shape = source_spatial_shape_yx
-    if origin is None or source_shape is None:
-        return label_array
-
-    source_y, source_x = (int(source_shape[0]), int(source_shape[1]))
-    origin_y, origin_x = (int(origin[0]), int(origin[1]))
-    if source_y < 0 or source_x < 0 or origin_y < 0 or origin_x < 0:
-        raise ValueError(
-            f"{value_name} spatial domains require non-negative source shape "
-            f"and origin; got source={source_shape!r}, origin={origin!r}."
-        )
-    if label_array.shape[-2:] == (source_y, source_x) and origin == (0, 0):
-        return label_array
-
-    if label_array.ndim < 2:
-        raise ValueError(
-            f"{value_name} spatial domains require at least 2D arrays; got "
-            f"shape {label_array.shape!r}."
-        )
-    if origin_y + label_array.shape[-2] > source_y or origin_x + label_array.shape[-1] > source_x:
-        raise ValueError(
-            f"{value_name} crop exceeds its declared source domain; got array "
-            f"{label_array.shape!r}, source={source_shape!r}, origin={origin!r}."
-        )
-
-    expanded_shape = (*label_array.shape[:-2], source_y, source_x)
-    expanded = np.full(expanded_shape, fill_value, dtype=label_array.dtype)
-    expanded[
-        ...,
-        origin_y : origin_y + label_array.shape[-2],
-        origin_x : origin_x + label_array.shape[-1],
-    ] = label_array
-    return expanded
 
 
 def object_label_parent_child_payload(

@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 
 class FileManagerLike(ABC):
     """Minimal FileManager surface required by backend-explicit callers."""
+
+    @property
+    def registry(self) -> Mapping[str, object]:
+        """Return backend registry metadata when the filemanager exposes it."""
+        return MappingProxyType({})
 
     @abstractmethod
     def list_files(
