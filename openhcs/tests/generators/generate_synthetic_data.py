@@ -475,6 +475,7 @@ class SyntheticMicroscopyGenerator:
             # Add wavelength information
             htd_content += "\n\"Waves\", TRUE"
             htd_content += f"\n\"NWavelengths\", {self.wavelengths}"
+            htd_content += "\n\"PixelSizeUM\", 0.65"
 
             # Add wavelength names and collection flags
             for w in range(self.wavelengths):

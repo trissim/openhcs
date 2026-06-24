@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
-from openhcs.microscopes.microscope_interfaces import FilenameParser
+from openhcs.core.components.parser_metaprogramming import (
+    format_filename_component,
+    require_filename_component,
+)
+from openhcs.microscopes.microscope_interfaces import (
+    FilenameParseResult,
+    FilenameParser,
+)
 
 
 class SourceSchemaFilenameParser(FilenameParser):
@@ -28,22 +34,22 @@ class SourceSchemaFilenameParser(FilenameParser):
         self.pattern_format = pattern_format
 
     @classmethod
-    def can_parse(cls, filename: str | Any) -> bool:
+    def can_parse(cls, filename: str) -> bool:
         return cls._pattern.match(Path(str(filename)).name) is not None
 
-    def parse_filename(self, filename: str | Any) -> dict[str, Any] | None:
+    def parse_filename(self, filename: str) -> FilenameParseResult | None:
         match = self._pattern.match(Path(str(filename)).name)
         if match is None:
             return None
         values = match.groupdict()
-        return {
+        return FilenameParseResult({
             "well": values["well"],
             "site": _parse_component(values["site"]),
             "channel": _parse_component(values["channel"]),
             "z_index": _parse_component(values["z_index"]),
             "timepoint": _parse_component(values["timepoint"]),
             "extension": values["extension"],
-        }
+        })
 
     def extract_component_coordinates(self, component_value: str) -> tuple[str, str]:
         match = re.match(r"^([A-Za-z]+)([0-9]+)$", component_value)
@@ -59,14 +65,11 @@ class SourceSchemaFilenameParser(FilenameParser):
         timepoint_padding: int = 3,
         **component_values,
     ) -> str:
-        well = _required_component(component_values, "well")
-        site = _component_token(component_values.get("site", 1), site_padding)
-        channel = _component_token(component_values.get("channel", 1), 0)
-        z_index = _component_token(component_values.get("z_index", 1), z_padding)
-        timepoint = _component_token(
-            component_values.get("timepoint", 1),
-            timepoint_padding,
-        )
+        well = require_filename_component(component_values, "well")
+        site = format_filename_component(require_filename_component(component_values, "site"), site_padding)
+        channel = format_filename_component(require_filename_component(component_values, "channel"))
+        z_index = format_filename_component(require_filename_component(component_values, "z_index"), z_padding)
+        timepoint = format_filename_component(require_filename_component(component_values, "timepoint"), timepoint_padding)
         return f"{well}_s{site}_w{channel}_z{z_index}_t{timepoint}{extension}"
 
 
@@ -74,16 +77,3 @@ def _parse_component(value: str) -> int | str | None:
     if "{" in value:
         return None
     return int(value) if value.isdecimal() else value
-
-
-def _required_component(component_values: dict[str, Any], name: str) -> str:
-    value = component_values.get(name)
-    if value is None or value == "":
-        raise ValueError(f"{name!r} component cannot be empty or None.")
-    return str(value)
-
-
-def _component_token(value: Any, padding: int) -> str:
-    if isinstance(value, str):
-        return value
-    return f"{int(value):0{padding}d}" if padding else str(int(value))

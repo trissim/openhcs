@@ -12,19 +12,26 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, Tuple
 
 from openhcs.constants.constants import Backend
+from openhcs.core.components.parser_metaprogramming import (
+    format_filename_component,
+    require_filename_component,
+)
 from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
 from polystore.filemanager import FileManager
 from polystore.exceptions import MetadataNotFoundError
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-from openhcs.microscopes.detect_mixins import MetadataDetectMixin
-from openhcs.microscopes.microscope_interfaces import (FilenameParser,
-                                                            MetadataHandler)
+from openhcs.microscopes.microscope_interfaces import (
+    DiskImageFileListingMetadataHandler,
+    FilenameParseResult,
+    FilenameParser,
+    MetadataHandler,
+)
 
 logger = logging.getLogger(__name__)
 
 
 
-class OperaPhenixHandler(MetadataDetectMixin, MicroscopeHandler):
+class OperaPhenixHandler(MicroscopeHandler):
     """
     MicroscopeHandler implementation for Opera Phenix systems.
 
@@ -394,7 +401,7 @@ class OperaPhenixFilenameParser(FilenameParser):
         # Check if the filename matches the Opera Phenix pattern
         return bool(cls._pattern.match(basename))
 
-    def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
         """
         Parse an Opera Phenix filename to extract all components.
         Supports placeholders like {iii} which will return None for that field.
@@ -431,7 +438,7 @@ class OperaPhenixFilenameParser(FilenameParser):
             z_index = parse_comp(z_str)
             timepoint = parse_comp(sk_str)  # sk = stack/timepoint
 
-            result = {
+            result = FilenameParseResult({
                 'well': well,
                 'site': site,
                 'channel': channel,
@@ -439,7 +446,7 @@ class OperaPhenixFilenameParser(FilenameParser):
                 'z_index': z_index,
                 'timepoint': timepoint,  # sk = stack/timepoint
                 'extension': ext if ext else '.tif'
-            }
+            })
             return result
 
         logger.warning("Regex match failed for basename: '%s'", basename)
@@ -464,15 +471,11 @@ class OperaPhenixFilenameParser(FilenameParser):
         Returns:
             str: Constructed filename
         """
-        # Extract components from kwargs
-        well = component_values.get('well')
-        site = component_values.get('site')
-        channel = component_values.get('channel')
-        z_index = component_values.get('z_index')
-        timepoint = component_values.get('timepoint')
-
-        if not well:
-            raise ValueError("Well component is required for filename construction")
+        well = require_filename_component(component_values, 'well')
+        site = require_filename_component(component_values, 'site')
+        channel = require_filename_component(component_values, 'channel')
+        z_index = require_filename_component(component_values, 'z_index')
+        timepoint = require_filename_component(component_values, 'timepoint')
 
         # Extract row and column from well name
         # Check if well is in Opera Phenix format (e.g., 'R01C03')
@@ -484,34 +487,15 @@ class OperaPhenixFilenameParser(FilenameParser):
         else:
             raise ValueError(f"Invalid well format: {well}. Expected format: 'R01C03'")
 
-        # Default all components to 1 if not provided - ensures consistent filename structure
-        site = 1 if site is None else site
-        z_index = 1 if z_index is None else z_index
-        channel = 1 if channel is None else channel
-        timepoint = 1 if timepoint is None else timepoint
-
         # Construct filename in Opera Phenix format
-        if isinstance(site, str):
-            # If site is a string (e.g., '{iii}'), use it directly
-            site_part = f"f{site}"
-        else:
-            # Otherwise, format it as a padded integer
-            site_part = f"f{site:0{site_padding}d}"
+        site_part = f"f{format_filename_component(site, site_padding)}"
+        z_part = f"p{format_filename_component(z_index, z_padding)}"
+        sk_part = f"sk{format_filename_component(timepoint)}"
 
-        if isinstance(z_index, str):
-            # If z_index is a string (e.g., '{zzz}'), use it directly
-            z_part = f"p{z_index}"
-        else:
-            # Otherwise, format it as a padded integer
-            z_part = f"p{z_index:0{z_padding}d}"
-
-        # Always include sk (stack/timepoint) - like ImageXpress always includes _t
-        if isinstance(timepoint, str):
-            sk_part = f"sk{timepoint}"
-        else:
-            sk_part = f"sk{timepoint}"
-
-        return f"r{row:02d}c{col:02d}{site_part}{z_part}-ch{channel}{sk_part}fk1fl1{extension}"
+        return (
+            f"r{row:02d}c{col:02d}{site_part}{z_part}"
+            f"-ch{format_filename_component(channel)}{sk_part}fk1fl1{extension}"
+        )
 
     def remap_field_in_filename(self, filename: str, xml_parser: Optional[OperaPhenixXmlParser] = None) -> str:
         """
@@ -578,7 +562,7 @@ class OperaPhenixFilenameParser(FilenameParser):
             return row, col
 
 
-class OperaPhenixMetadataHandler(MetadataHandler):
+class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
     """
     Metadata handler for Opera Phenix microscopes.
 
@@ -820,8 +804,6 @@ class OperaPhenixMetadataHandler(MetadataHandler):
             None - Opera Phenix doesn't provide rich timepoint names in metadata
         """
         return None
-
-    # Uses default get_image_files() implementation from MetadataHandler ABC
 
     def create_xml_parser(self, xml_path: Union[str, Path]):
         """

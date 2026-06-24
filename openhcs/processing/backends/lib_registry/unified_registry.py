@@ -27,7 +27,7 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields, is_dataclass, replace
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache, wraps
 from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
@@ -38,26 +38,25 @@ from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import unstack_slices, stack_slices
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
-from openhcs.core.runtime_semantics import (
-    MeasurementRowAxisField,
-    ParentChildRelationshipPayload,
-)
+from openhcs.core.runtime_semantics import ParentChildRelationshipPayload
+from openhcs.core.measurement_row_materialization import MeasurementRowsAxisProjection
+from openhcs.core.measurement_row_materialization import ConcatenatedColumnarRows
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     ImageMetadataPayload,
+    ImagePayloadMetadataCompositionRequest,
     MaskedImagePayload,
     NativeRuntimeValue,
     ObjectLabelDenseDataStrategy,
-    ObjectLabelPayload,
-    ObjectLabelSet,
     ObjectLabelMeasurementPayloadStrategy,
+    ObjectLabelPayload,
     ObjectLabelPure2DSliceAggregator,
+    ObjectLabelSet,
     RuntimeArrayPayload,
-    ImagePayloadMetadataCompositionRequest,
+    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
     image_payload_slice_context,
-    image_payload_with_context,
-    object_label_value_with_execution_slice,
 )
 from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
@@ -494,6 +493,12 @@ class Pure2DAuxiliaryOutputAggregator(
         )
         if aggregator is not None:
             return aggregator.aggregate_values(values, memory_type)
+        measurement_rows = (
+            FlatSequencePure2DAuxiliaryOutputAggregator()
+            .aggregate_measurement_row_sequences(values)
+        )
+        if measurement_rows is not None:
+            return measurement_rows
         if len(values) == 1:
             return values[0]
         return list(values)
@@ -570,7 +575,7 @@ class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
             (
                 layout_type()
                 for layout_type in ImageStackLayout.__registry__.values()
-                if all(layout_type.slice_predicate(value) for value in values)
+                if all(layout_type.shape_role.matches_slice(value) for value in values)
             ),
             None,
         )
@@ -618,11 +623,11 @@ class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOut
                 gpu_id=0,
             )
         )
-        return image_payload_with_context(
+        return RuntimeImagePayloadContext(
             data,
             mask=mask,
             metadata=ImagePayloadMetadataCompositionRequest(tuple(values)).metadata(),
-        )
+        ).payload()
 
 
 class MaskedImagePayloadPure2DAuxiliaryOutputAggregator(ImagePayloadPure2DAuxiliaryOutputAggregator):
@@ -671,6 +676,40 @@ class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutput
         )
 
 
+class ColumnarRowsPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Preserve nominal columnar measurement tables across PURE_2D slices."""
+
+    value_type = ColumnarRows
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> ColumnarRows:
+        del memory_type
+        if len(values) == 1:
+            return self.slice_projected_rows(values[0], 0)
+        return ConcatenatedColumnarRows(
+            tuple(
+                self.slice_projected_rows(value, slice_index)
+                for slice_index, value in enumerate(values)
+            )
+        )
+
+    @staticmethod
+    def slice_projected_rows(rows: ColumnarRows, slice_index: int) -> ColumnarRows:
+        if not isinstance(rows, ColumnarRows):
+            raise TypeError(
+                "ColumnarRowsPure2DAuxiliaryOutputAggregator requires ColumnarRows, "
+                f"got {type(rows).__name__}."
+            )
+        projected_rows = MeasurementRowsAxisProjection.from_rows(
+            rows
+        ).aggregate_runtime_slice_index(slice_index)
+        if not isinstance(projected_rows, ColumnarRows):
+            raise TypeError(
+                "ColumnarRows axis projection must return ColumnarRows, got "
+                f"{type(projected_rows).__name__}."
+            )
+        return projected_rows
+
+
 class FlatSequencePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
     """Concatenate flat tuple/list auxiliary outputs."""
 
@@ -678,17 +717,66 @@ class FlatSequencePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
 
     def supports(self, values: list[Any]) -> bool:
         return super().supports(values) and not any(
-            isinstance(item, np.ndarray)
+            isinstance(item, (np.ndarray, ColumnarRows))
             for value in values
             for item in value
         )
 
     def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
         del memory_type
+        measurement_rows = self.aggregate_measurement_row_sequences(values)
+        if measurement_rows is not None:
+            return measurement_rows
         flattened: list[Any] = []
         for value in values:
             flattened.extend(value)
         return flattened
+
+    def aggregate_measurement_row_sequences(
+        self,
+        values: list[Any],
+    ) -> list[Any] | None:
+        row_sequences = tuple(self.row_sequence_for_value(value) for value in values)
+        if any(row_sequence is None for row_sequence in row_sequences):
+            return None
+        rows: list[Any] = []
+        for slice_index, row_sequence in enumerate(row_sequences):
+            if row_sequence is None:
+                return None
+            projection = MeasurementRowsAxisProjection.from_rows(
+                row_sequence,
+            )
+            rows.extend(projection.aggregate_runtime_slice_index(slice_index))
+        return rows
+
+    @staticmethod
+    def row_sequence_for_value(value: Any) -> tuple[Any, ...] | None:
+        if isinstance(
+            value,
+            (
+                str,
+                bytes,
+                np.ndarray,
+                ColumnarRows,
+                RuntimeSliceAlignedValues,
+                NativeRuntimeValue,
+                RuntimeArrayPayload,
+                ObjectLabelPayload,
+                ObjectLabelSet,
+                ParentChildRelationshipPayload,
+            ),
+        ):
+            return None
+        row_sequence = tuple(value) if isinstance(value, (list, tuple)) else (value,)
+        if not row_sequence:
+            return row_sequence
+        try:
+            MeasurementRowsAxisProjection.from_rows(
+                row_sequence,
+            )
+        except (TypeError, ValueError):
+            return None
+        return row_sequence
 
 
 class ListPure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggregator):
@@ -701,234 +789,6 @@ class TuplePure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggr
     """Register tuple auxiliary outputs for PURE_2D sequence aggregation."""
 
     value_type = tuple
-
-
-class Pure2DSliceIndexProjector(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMeta):
-    """Project execution slice identity into nominal PURE_2D outputs."""
-
-    __registry_key__ = PURE2D_VALUE_TYPE_REGISTRY_KEY
-    __registry__: ClassVar[dict[Any, type["Pure2DSliceIndexProjector"]]] = {}
-
-    @classmethod
-    def family_root(cls) -> type["Pure2DSliceIndexProjector"]:
-        return Pure2DSliceIndexProjector
-
-    @classmethod
-    def project(cls, value: Any, slice_index: int) -> Any:
-        projector = cls.nearest_registered_strategy(
-            Pure2DSliceIndexProjector,
-            supports=lambda strategy: strategy.supports(value),
-            distance=lambda strategy: strategy.type_distance(value),
-        )
-        return value if projector is None else projector.project_value(value, slice_index)
-
-    def supports(self, value: Any) -> bool:
-        accepted_types = self.accepted_value_types()
-        return bool(accepted_types) and isinstance(value, accepted_types)
-
-    @abstractmethod
-    def project_value(self, value: Any, slice_index: int) -> Any:
-        """Return value with authoritative execution slice identity projected."""
-
-
-class RuntimeArraySliceIndexProjector(Pure2DSliceIndexProjector):
-    """Runtime array payloads already carry pixel/object domain identity."""
-
-    value_type = RuntimeArrayPayload
-
-    def project_value(self, value: RuntimeArrayPayload, slice_index: int) -> RuntimeArrayPayload:
-        del slice_index
-        return value
-
-
-class ObjectLabelPayloadSliceIndexProjector(Pure2DSliceIndexProjector):
-    """Project derived object-label payloads onto the execution slice identity."""
-
-    value_type = ObjectLabelPayload
-
-    def project_value(
-        self,
-        value: ObjectLabelPayload,
-        slice_index: int,
-    ) -> ObjectLabelPayload:
-        return object_label_value_with_execution_slice(
-            value,
-            value.labels,
-            slice_index,
-        )
-
-
-class ObjectLabelSetSliceIndexProjector(Pure2DSliceIndexProjector):
-    """Project derived native object-label values onto the execution slice identity."""
-
-    value_type = ObjectLabelSet
-
-    def project_value(self, value: ObjectLabelSet, slice_index: int) -> ObjectLabelSet:
-        return object_label_value_with_execution_slice(
-            value,
-            value.labels,
-            slice_index,
-        )
-
-
-class ParentChildRelationshipPayloadSliceIndexProjector(Pure2DSliceIndexProjector):
-    """Project parent-child relationship pairs onto the execution slice identity."""
-
-    value_type = ParentChildRelationshipPayload
-
-    def project_value(
-        self,
-        value: ParentChildRelationshipPayload,
-        slice_index: int,
-    ) -> ParentChildRelationshipPayload:
-        return ParentChildRelationshipPayload(
-            parent_ids=value.parent_ids,
-            child_ids=value.child_ids,
-            slice_indices=tuple(slice_index for _child_id in value.child_ids),
-            slice_count=value.slice_count,
-        )
-
-
-class NumpyArraySliceIndexProjector(Pure2DSliceIndexProjector):
-    """Plain arrays have no row-level slice field to rewrite."""
-
-    value_type = np.ndarray
-
-    def project_value(self, value: np.ndarray, slice_index: int) -> np.ndarray:
-        del slice_index
-        return value
-
-
-class DataclassSliceIndexProjector(Pure2DSliceIndexProjector):
-    """Dataclass rows expose slice identity as a declared dataclass field."""
-
-    value_type = object
-
-    def supports(self, value: Any) -> bool:
-        return is_dataclass(value) and not isinstance(value, type)
-
-    def project_value(self, value: Any, slice_index: int) -> Any:
-        if self.slice_axis_field in self.field_names(value):
-            return replace(value, **{self.slice_axis_field.value: slice_index})
-        return value
-
-    @property
-    def slice_axis_field(self) -> MeasurementRowAxisField:
-        return MeasurementRowAxisField.SLICE_INDEX
-
-    def field_names(self, value: Any) -> frozenset[MeasurementRowAxisField]:
-        return self.field_names_for_type(type(value))
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def field_names_for_type(
-        cls,
-        value_type: type[Any],
-    ) -> frozenset[MeasurementRowAxisField]:
-        return frozenset(
-            axis_field
-            for axis_field in MeasurementRowAxisField
-            if any(field.name == axis_field.value for field in fields(value_type))
-        )
-
-
-class MappingSliceIndexProjector(Pure2DSliceIndexProjector):
-    """Mapping rows use typed measurement-axis fields at serialization boundaries."""
-
-    value_type = dict
-
-    @property
-    def slice_axis_field(self) -> MeasurementRowAxisField:
-        return MeasurementRowAxisField.SLICE_INDEX
-
-    def project_value(self, value: dict[Any, Any], slice_index: int) -> dict[Any, Any]:
-        slice_field = self.slice_axis_field.value
-        if slice_field in value:
-            return {**value, slice_field: slice_index}
-        if self.is_flat_measurement_row(value):
-            return {**value, slice_field: slice_index}
-        return {
-            key: Pure2DSliceIndexProjector.project(item, slice_index)
-            for key, item in value.items()
-        }
-
-    def is_flat_measurement_row(self, value: Mapping[Any, Any]) -> bool:
-        return all(
-            not self.value_may_contain_slice_axis(item)
-            for item in value.values()
-        )
-
-    @classmethod
-    def value_may_contain_slice_axis(cls, value: Any) -> bool:
-        return (
-            isinstance(value, (RuntimeArrayPayload, np.ndarray))
-            or isinstance(value, (dict, list, tuple))
-            or (is_dataclass(value) and not isinstance(value, type))
-        )
-
-
-class SequenceSliceIndexProjector(Pure2DSliceIndexProjector):
-    """Project slice identity recursively through nested output sequences."""
-
-    value_type = None
-    include_in_family = False
-
-    def project_value(self, value: Any, slice_index: int) -> Any:
-        del value, slice_index
-        raise NotImplementedError
-
-    def is_slice_axis_free_flat_sequence(self, value: list[Any] | tuple[Any, ...]) -> bool:
-        if not value:
-            return True
-        first = value[0]
-        if is_dataclass(first) and not isinstance(first, type):
-            row_type = type(first)
-            return (
-                MeasurementRowAxisField.SLICE_INDEX
-                not in DataclassSliceIndexProjector().field_names(first)
-                and all(type(item) is row_type for item in value)
-            )
-        return False
-
-
-class ListSliceIndexProjector(SequenceSliceIndexProjector):
-    """Register list outputs for recursive slice-index projection."""
-
-    value_type = list
-    include_in_family = True
-
-    def project_value(self, value: list[Any], slice_index: int) -> list[Any]:
-        if self.is_slice_axis_free_flat_sequence(value):
-            return value
-        rewritten = None
-        for index, item in enumerate(value):
-            rewritten_item = Pure2DSliceIndexProjector.project(item, slice_index)
-            if rewritten is not None:
-                rewritten.append(rewritten_item)
-            elif rewritten_item is not item:
-                rewritten = [*value[:index], rewritten_item]
-        return value if rewritten is None else rewritten
-
-
-class TupleSliceIndexProjector(SequenceSliceIndexProjector):
-    """Register tuple outputs for recursive slice-index projection."""
-
-    value_type = tuple
-    include_in_family = True
-
-    def project_value(self, value: tuple[Any, ...], slice_index: int) -> tuple[Any, ...]:
-        if self.is_slice_axis_free_flat_sequence(value):
-            return value
-        rewritten_items = tuple(
-            Pure2DSliceIndexProjector.project(item, slice_index)
-            for item in value
-        )
-        if all(
-            rewritten_item is item
-            for rewritten_item, item in zip(rewritten_items, value, strict=True)
-        ):
-            return value
-        return rewritten_items
 
 
 # Enums for OpenHCS principle compliance (replace magic strings)
@@ -986,27 +846,27 @@ class FunctionMetadata:
     doc: str = ""
     tags: List[str] = field(default_factory=list)
     original_name: str = ""  # Original function name for cache reconstruction
+    memory_type: str | None = None
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable function name for catalogs and selectors."""
+        if self.original_name:
+            return self.original_name
+        return self.name
 
     def get_memory_type(self) -> str:
         """
         Get the actual memory type (backend) of this function.
 
-        Returns the function's input_memory_type if available, otherwise falls back
-        to the registry's memory type. This ensures UI shows the actual backend
-        (cupy, numpy, etc.) instead of the registry name (openhcs).
+        Returns the memory type recorded at metadata creation time, otherwise
+        the registry-level memory type for older cache entries.
 
         Returns:
             Memory type string (e.g., "cupy", "numpy", "torch", "pyclesperanto")
         """
-        # First try to get memory type from function attributes
-        if hasattr(self.func, 'input_memory_type'):
-            return self.func.input_memory_type
-        elif hasattr(self.func, 'output_memory_type'):
-            return self.func.output_memory_type
-        elif hasattr(self.func, 'backend'):
-            return self.func.backend
-
-        # Fallback to registry memory type
+        if self.memory_type is not None:
+            return self.memory_type
         return self.registry.get_memory_type()
 
     def get_registry_name(self) -> str:
@@ -1017,22 +877,6 @@ class FunctionMetadata:
             Registry name string (e.g., "openhcs", "skimage", "cupy", "pyclesperanto")
         """
         return self.registry.library_name
-
-    def get(self, key: str, default=None):
-        """
-        Dict-like get method for compatibility with code expecting dict-like access.
-
-        Args:
-            key: Attribute name to retrieve
-            default: Default value if attribute doesn't exist
-
-        Returns:
-            Attribute value or default
-        """
-        return getattr(self, key, default)
-
-
-
 
 class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     """
@@ -1366,16 +1210,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             slice_2d: Any,
             slice_kwargs: Mapping[str, Any],
             slice_index: int,
-            _slice_count: int,
+            slice_count: int,
         ) -> Any:
-            return Pure2DSliceIndexProjector.project(
-                RuntimeCallablePolicy().invocation(
-                    slice_func,
-                    (slice_2d, *args),
-                    slice_kwargs,
-                ).call(),
-                slice_index,
-            )
+            del slice_index, slice_count
+            return RuntimeCallablePolicy().invocation(
+                slice_func,
+                (slice_2d, *args),
+                slice_kwargs,
+            ).call()
 
         slice_results = batch_executor(
             RuntimePure2DSliceBatchRequest(
@@ -1615,7 +1457,8 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 module=cached_data.get('module', ''),
                 doc=cached_data.get('doc', ''),
                 tags=cached_data.get('tags', []),
-                original_name=cached_data.get('original_name', func_name)
+                original_name=cached_data.get('original_name', func_name),
+                memory_type=cached_data.get('memory_type', self.get_memory_type()),
             )
             functions[func_name] = metadata
 
@@ -1656,6 +1499,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                     'name': metadata.name,
                     'original_name': metadata.original_name,
                     'module': metadata.module,
+                    'memory_type': metadata.get_memory_type(),
                     'contract': metadata.contract.name,
                     'doc': metadata.doc,
                     'tags': metadata.tags
@@ -2010,7 +1854,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                 if name.startswith("_"):
                     continue
 
-                func = getattr(module, name)
+                func = module.__dict__[name]
                 full_path = self._get_full_function_path(module, name, module_name)
 
                 if not self.should_include_function(func, name):
@@ -2030,8 +1874,12 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                     logger.debug("       ❌ Rejected: Invalid classification")
                     continue
 
-                doc_lines = (func.__doc__ or "").splitlines()
+                doc = inspect.getdoc(func)
+                doc_lines = doc.splitlines() if doc is not None else ()
                 first_line_doc = doc_lines[0] if doc_lines else ""
+                module_path = func.__module__
+                if module_path is None:
+                    module_path = ""
                 func_name = self._generate_function_name(name, module_name)
 
                 # Apply library adapter (preprocessing/postprocessing)
@@ -2048,10 +1896,11 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                     func=final_func,
                     contract=contract,
                     registry=self,
-                    module=func.__module__ or "",
+                    module=module_path,
                     doc=first_line_doc,
                     tags=self._generate_tags(name),
-                    original_name=name
+                    original_name=name,
+                    memory_type=self.get_memory_type(),
                 )
 
                 functions[func_name] = metadata

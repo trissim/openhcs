@@ -18,7 +18,6 @@ _DISCOVERY_EXCLUDED_MODULES = frozenset(
         "handler_registry_service",
         "microscope_base",
         "microscope_interfaces",
-        "detect_mixins",
         "tiff_metadata_mixin",
     }
 )

@@ -475,7 +475,8 @@ def register_function(func: Callable, backend: str = None, **kwargs) -> None:
                     module=func.__module__,
                     doc=doc,
                     tags=["openhcs", "custom"],
-                    original_name=func.__name__
+                    original_name=func.__name__,
+                    memory_type=input_type,
                 )
                 # Store metadata as an attribute so OpenHCSRegistry can retrieve it
                 wrapped_func.__function_metadata__ = metadata

@@ -11,9 +11,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from openhcs.constants.constants import Backend
+from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-from openhcs.microscopes.microscope_interfaces import FilenameParser, MetadataHandler
+from openhcs.microscopes.microscope_interfaces import (
+    FilenameParseResult,
+    FilenameParser,
+    MetadataHandler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +116,20 @@ class OMEROMetadataHandler(MetadataHandler):
         self._metadata_cache[plate_id] = metadata
         return metadata
 
-    def find_metadata_file(self, plate_path: Union[str, Path]) -> Optional[Path]:
+    def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
         """
         OMERO doesn't use metadata files, but detects based on /omero/ path pattern.
 
         Returns the plate_path itself if it matches the OMERO virtual path pattern,
-        otherwise returns None.
+        otherwise raises MetadataNotFoundError.
         """
         plate_path = Path(plate_path)
         # OMERO plates use virtual paths like /omero/plate_123
         if str(plate_path).startswith('/omero/plate_'):
             return plate_path
-        return None
+        raise MetadataNotFoundError(
+            f"OMERO plate path must use /omero/plate_<id>, got {plate_path}"
+        )
 
     def _extract_plate_id(self, plate_path: Union[str, Path, int]) -> int:
         """
@@ -159,19 +166,19 @@ class OMEROMetadataHandler(MetadataHandler):
         """Get channel metadata (cached)."""
         plate_id = self._extract_plate_id(plate_path)
         metadata = self._load_plate_metadata(plate_id)
-        return metadata.get('channel', {})
+        return metadata['channel']
 
     def get_z_index_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
         """Get Z-index metadata (cached)."""
         plate_id = self._extract_plate_id(plate_path)
         metadata = self._load_plate_metadata(plate_id)
-        return metadata.get('z_index', {})
+        return metadata['z_index']
 
     def get_timepoint_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
         """Get timepoint metadata (cached)."""
         plate_id = self._extract_plate_id(plate_path)
         metadata = self._load_plate_metadata(plate_id)
-        return metadata.get('timepoint', {})
+        return metadata['timepoint']
 
     # Other component methods return empty dicts (not applicable for OMERO)
     def get_site_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
@@ -181,16 +188,14 @@ class OMEROMetadataHandler(MetadataHandler):
         """
         Get well metadata (cached).
         
-        OMERO backend may need time to process uploaded plates.
-        If plate not found, return empty dict (allows retry).
+        Raises if the OMERO plate cannot be loaded.
         """
         plate_id = self._extract_plate_id(plate_path)
         conn = self._get_omero_conn()
         
         plate = conn.getObject("Plate", plate_id)
         if not plate:
-            # Return empty dict instead of raising - allows retry
-            return {}
+            raise ValueError(f"OMERO Plate not found: {plate_id}")
         
         # Extract well IDs from the plate
         well_values = {}
@@ -208,7 +213,7 @@ class OMEROMetadataHandler(MetadataHandler):
         OMERO doesn't use metadata files - it queries OMERO API directly.
         This implementation returns metadata for all components that OMERO supports.
         
-        Returns empty dict if plate not found (allows retry during initialization).
+        Raises if the OMERO plate cannot be loaded.
         """
         # Use the base class's parse_metadata method which dynamically
         # calls the appropriate get_*_values methods
@@ -225,65 +230,51 @@ class OMEROMetadataHandler(MetadataHandler):
             Tuple of (rows, cols) representing the grid dimensions
         """
         plate_id = self._extract_plate_id(plate_path)
+        conn = self._get_omero_conn()
+        plate = conn.getObject("Plate", plate_id)
 
-        try:
-            conn = self._get_omero_conn()
-            plate = conn.getObject("Plate", plate_id)
+        if not plate:
+            raise ValueError(f"OMERO Plate not found: {plate_id}")
 
-            if not plate:
-                logger.warning(f"Plate {plate_id} not found, using fallback grid_dimensions")
-                return self.FALLBACK_VALUES.get('grid_dimensions', (1, 1))
+        import omero.model  # Lazy import - only needed when OMERO is actually used
 
-            # Try to get grid dimensions from MapAnnotation
-            for ann in plate.listAnnotations():
-                import omero.model  # Lazy import - only needed when OMERO is actually used
-                if ann.OMERO_TYPE == omero.model.MapAnnotationI:
-                    if ann.getNs() == "openhcs.metadata":
-                        # Parse key-value pairs
-                        for nv in ann.getMapValue():
-                            if nv.name == "openhcs.grid_dimensions":
-                                # Parse "rows,cols" format
-                                rows, cols = map(int, nv.value.split(','))
-                                logger.info(f"Found grid_dimensions ({rows}, {cols}) in OMERO metadata")
-                                return (rows, cols)
+        for ann in plate.listAnnotations():
+            if ann.OMERO_TYPE == omero.model.MapAnnotationI:
+                if ann.getNs() == "openhcs.metadata":
+                    for nv in ann.getMapValue():
+                        if nv.name == "openhcs.grid_dimensions":
+                            rows, cols = map(int, nv.value.split(','))
+                            logger.info(f"Found grid_dimensions ({rows}, {cols}) in OMERO metadata")
+                            return (rows, cols)
 
-            # Grid dimensions not found in metadata
-            logger.warning(f"Grid dimensions not found in OMERO metadata for plate {plate_id}, using fallback")
-            return self.FALLBACK_VALUES.get('grid_dimensions', (1, 1))
-
-        except Exception as e:
-            logger.warning(f"Error extracting grid_dimensions from OMERO: {e}")
-            return self.FALLBACK_VALUES.get('grid_dimensions', (1, 1))
+        raise ValueError(
+            f"OMERO Plate {plate_id} metadata does not declare openhcs.grid_dimensions."
+        )
 
     def get_pixel_size(self, plate_path: Union[str, Path, int]) -> float:
         """
         Get pixel size from OMERO image metadata.
 
         Queries the first image in the plate for pixel size.
-        Falls back to DEFAULT_PIXEL_SIZE if not available.
         """
-        try:
-            plate_id = plate_path if isinstance(plate_path, int) else int(Path(plate_path).name)
-            conn = self._get_omero_conn()
-            plate = conn.getObject("Plate", plate_id)
+        plate_id = self._extract_plate_id(plate_path)
+        conn = self._get_omero_conn()
+        plate = conn.getObject("Plate", plate_id)
 
-            if plate:
-                # Get first well's first image
-                for well in plate.listChildren():
-                    well_sample = well.getWellSample(0)
-                    if well_sample:
-                        image = well_sample.getImage()
-                        pixels = image.getPrimaryPixels()
-                        # Get physical pixel size in micrometers
-                        pixel_size_x = pixels.getPhysicalSizeX()
-                        if pixel_size_x:
-                            return float(pixel_size_x)
-                        break
-        except Exception:
-            pass
+        if not plate:
+            raise ValueError(f"OMERO Plate not found: {plate_id}")
 
-        # Fallback to default
-        return self.FALLBACK_VALUES.get('pixel_size', 1.0)
+        for well in plate.listChildren():
+            well_sample = well.getWellSample(0)
+            if well_sample:
+                image = well_sample.getImage()
+                pixels = image.getPrimaryPixels()
+                pixel_size_x = pixels.getPhysicalSizeX()
+                if pixel_size_x:
+                    return float(pixel_size_x)
+                break
+
+        raise ValueError(f"OMERO Plate {plate_id} does not declare pixel size.")
 
     def get_image_files(self, plate_path: Union[str, Path, int], all_subdirs: bool = False) -> List[str]:
         """
@@ -331,7 +322,7 @@ class OMEROFilenameParser(FilenameParser):
         """Check if this parser can parse the given filename."""
         return cls._pattern.match(filename) is not None
 
-    def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
         """Parse OMERO virtual filename using ImageXpress pattern."""
         from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
         parser = ImageXpressFilenameParser()
@@ -447,4 +438,3 @@ class OMEROHandler(MicroscopeHandler):
 from openhcs.microscopes.microscope_base import register_metadata_handler
 OMEROHandler._metadata_handler_class = OMEROMetadataHandler
 register_metadata_handler(OMEROHandler, OMEROMetadataHandler)
-

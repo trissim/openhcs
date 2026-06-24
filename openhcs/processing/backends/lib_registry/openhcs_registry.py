@@ -303,7 +303,8 @@ class OpenHCSRegistry(LibraryRegistryBase):
                         module=func.__module__ or "",
                         doc=doc,
                         tags=self._generate_tags(module_name),
-                        original_name=name
+                        original_name=name,
+                        memory_type=input_type,
                     )
 
                     functions[unique_name] = metadata

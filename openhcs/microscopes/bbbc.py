@@ -15,10 +15,18 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union, Type
 
 from openhcs.constants.constants import Backend
+from openhcs.core.components.parser_metaprogramming import (
+    format_filename_component,
+    require_filename_component,
+)
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-from openhcs.microscopes.microscope_interfaces import FilenameParser, MetadataHandler
+from openhcs.microscopes.microscope_interfaces import (
+    DiskImageFileListingMetadataHandler,
+    FilenameParseResult,
+    FilenameParser,
+    MetadataHandler,
+)
 from openhcs.microscopes.tiff_metadata_mixin import TiffPixelSizeMixin
-from openhcs.microscopes.detect_mixins import MetadataDetectMixin
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
 
@@ -36,7 +44,7 @@ class BBBCFilenameParser(FilenameParser):
         self.pattern_format = pattern_format
 
     @classmethod
-    def can_parse(cls, filename: Union[str, Any]) -> bool:
+    def can_parse(cls, filename: str) -> bool:
         """Return whether the filename matches this BBBC parser family."""
         basename = Path(str(filename)).name
         return cls._pattern.match(basename) is not None
@@ -104,7 +112,7 @@ class BBBC021FilenameParser(BBBCFilenameParser):
         re.IGNORECASE
     )
 
-    def parse_filename(self, filename: Union[str, Any]) -> Optional[Dict[str, Any]]:
+    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
         """
         Parse BBBC021 filename into components.
 
@@ -129,14 +137,14 @@ class BBBC021FilenameParser(BBBCFilenameParser):
                 return None
             return int(value)
 
-        return {
+        return FilenameParseResult({
             'well': well,
             'site': parse_component(site_str),
             'channel': parse_component(channel_str),
             'z_index': parse_component(z_str),
             'timepoint': parse_component(t_str),
             'extension': ext,
-        }
+        })
 
     def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
         """
@@ -186,49 +194,50 @@ class BBBC021FilenameParser(BBBCFilenameParser):
         Returns:
             Filename: {Well}_s{Site}_w{Channel}_z{Z}_t{T}.tif
         """
-        well = component_values.get('well')
-        site = component_values.get('site')
-        channel = component_values.get('channel')
-        z_index = component_values.get('z_index')
-        timepoint = component_values.get('timepoint')
-
-        if not well:
-            raise ValueError("Well ID cannot be empty or None.")
-
-        # Default ALL components to 1 (required for virtual workspace)
-        site = 1 if site is None else site
-        channel = 1 if channel is None else channel
-        z_index = 1 if z_index is None else z_index
-        timepoint = 1 if timepoint is None else timepoint
+        well = require_filename_component(component_values, 'well')
+        site = require_filename_component(component_values, 'site')
+        channel = require_filename_component(component_values, 'channel')
+        z_index = require_filename_component(component_values, 'z_index')
+        timepoint = require_filename_component(component_values, 'timepoint')
 
         # Build filename parts
         parts = [well]
 
         # Site
-        if isinstance(site, str):
-            parts.append(f"_s{site}")
-        else:
-            parts.append(f"_s{site:0{site_padding}d}")
+        parts.append(f"_s{format_filename_component(site, site_padding)}")
 
         # Channel (no padding)
-        parts.append(f"_w{channel}")
+        parts.append(f"_w{format_filename_component(channel)}")
 
         # Z-index (ALWAYS include for virtual workspace)
-        if isinstance(z_index, str):
-            parts.append(f"_z{z_index}")
-        else:
-            parts.append(f"_z{z_index:0{z_padding}d}")
+        parts.append(f"_z{format_filename_component(z_index, z_padding)}")
 
         # Timepoint (ALWAYS include for virtual workspace)
-        if isinstance(timepoint, str):
-            parts.append(f"_t{timepoint}")
-        else:
-            parts.append(f"_t{timepoint:0{timepoint_padding}d}")
+        parts.append(f"_t{format_filename_component(timepoint, timepoint_padding)}")
 
         return "".join(parts) + extension
 
 
-class BBBC021MetadataHandler(TiffPixelSizeMixin, MetadataHandler):
+class BBBCSinglePlaneMetadataHandler(DiskImageFileListingMetadataHandler):
+    """Shared metadata defaults for BBBC single-plane image collections."""
+
+    def get_grid_dimensions(self, plate_path: Union[str, Path]) -> Tuple[int, int]:
+        return (1, 1)
+
+    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        return None
+
+    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        return None
+
+    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        return None
+
+    def get_timepoint_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        return None
+
+
+class BBBC021MetadataHandler(TiffPixelSizeMixin, BBBCSinglePlaneMetadataHandler):
     """
     Metadata handler for BBBC021 dataset.
 
@@ -239,7 +248,7 @@ class BBBC021MetadataHandler(TiffPixelSizeMixin, MetadataHandler):
         super().__init__()
         self.filemanager = filemanager
 
-    def find_metadata_file(self, plate_path: Union[str, Path]) -> Optional[Path]:
+    def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
         """
         BBBC021 ship we have contains no separate metadata files; rely solely on TIFFs.
         Ensure caller pointed at the expected plate directory.
@@ -249,11 +258,7 @@ class BBBC021MetadataHandler(TiffPixelSizeMixin, MetadataHandler):
             raise MetadataNotFoundError(
                 f"BBBC021 plate must be the Week1_22123 directory, got '{plate_path.name}'"
             )
-        return None
-
-    def get_grid_dimensions(self, plate_path: Union[str, Path]) -> Tuple[int, int]:
-        """No stitching grid needed."""
-        return (1, 1)
+        return plate_path
 
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
         return self._pixel_size_from_tiff(plate_path, self.filemanager)
@@ -261,22 +266,6 @@ class BBBC021MetadataHandler(TiffPixelSizeMixin, MetadataHandler):
     def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
         # Derive channel names from TIFF tag (if present). May return {'1': 'DAPI'} etc.
         return self._channel_from_tiff(plate_path, self.filemanager)
-
-    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """Get well metadata - would require parsing CSV."""
-        return None
-
-    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """Get site metadata - none available."""
-        return None
-
-    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """Get z-index metadata - BBBC021 has no Z-stacks."""
-        return None
-
-    def get_timepoint_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """Single timepoint dataset."""
-        return None
 
 
 class BBBC021Handler(BBBCHandlerBase):
@@ -407,7 +396,7 @@ class BBBC038FilenameParser(BBBCFilenameParser):
     # Pattern: hex string + .png extension
     _pattern = re.compile(r'^([a-f0-9]+)\.png$', re.IGNORECASE)
 
-    def parse_filename(self, filename: Union[str, Any]) -> Optional[Dict[str, Any]]:
+    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
         """
         Parse BBBC038 filename into components.
 
@@ -427,14 +416,14 @@ class BBBC038FilenameParser(BBBCFilenameParser):
 
         image_id = match.group(1)
 
-        return {
+        return FilenameParseResult({
             'well': image_id,  # ImageId is the well identifier
             'site': 1,          # Single image per ID
             'channel': 1,       # Single channel (nuclei stain)
             'z_index': None,    # No Z-stacks, will default to 1
             'timepoint': None,  # No timepoints, will default to 1
             'extension': '.png',
-        }
+        })
 
     def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
         """
@@ -471,15 +460,11 @@ class BBBC038FilenameParser(BBBCFilenameParser):
         Returns:
             Filename string: {ImageId}.png
         """
-        image_id = component_values.get('well')
-
-        if not image_id:
-            raise ValueError("ImageId (well) cannot be empty or None.")
-
+        image_id = require_filename_component(component_values, 'well')
         return f"{image_id}{extension}"
 
 
-class BBBC038MetadataHandler(MetadataHandler):
+class BBBC038MetadataHandler(BBBCSinglePlaneMetadataHandler):
     """
     Metadata handler for BBBC038 (Kaggle nuclei dataset).
 
@@ -513,10 +498,6 @@ class BBBC038MetadataHandler(MetadataHandler):
             "Download from https://data.broadinstitute.org/bbbc/BBBC038/"
         )
 
-    def get_grid_dimensions(self, plate_path: Union[str, Path]) -> Tuple[int, int]:
-        """BBBC038 has no grid layout - each image is independent."""
-        return (1, 1)
-
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
         """BBBC038 pixel size varies across different imaging conditions."""
         return 1.0  # No standard pixel size (diverse sources)
@@ -525,17 +506,8 @@ class BBBC038MetadataHandler(MetadataHandler):
         """BBBC038 is single-channel (nuclei stain)."""
         return {"1": "Nuclei"}
 
-    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        return None
 
-    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        return None
-
-    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        return None
-
-
-class BBBC038Handler(MetadataDetectMixin, BBBCHandlerBase):
+class BBBC038Handler(BBBCHandlerBase):
     """
     Microscope handler for BBBC038 dataset (Kaggle nuclei, PNG format).
 

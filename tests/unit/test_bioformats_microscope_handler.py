@@ -1,16 +1,21 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from openhcs.constants.constants import Backend
-from openhcs.core.steps.function_execution import SourceWorkspaceAnchorProjection
-from openhcs.core.steps.function_runtime import PatternGroupRuntime
+from openhcs.core.source_workspace_projection import (
+    VirtualWorkspaceSourceProjection,
+    VirtualWorkspaceSourceProjectionAuthority,
+    VirtualWorkspaceSourceProjectionCache,
+)
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.bioformats import BioFormatsHandler, BioFormatsMetadataHandler
 from openhcs.microscopes.bioformats_spw_projector import BioFormatsProjectionError
-from openhcs.microscopes.openhcs import workspace_mapping_source_path
+from openhcs.microscopes.openhcs import (
+    OpenHCSMetadataHandler,
+    workspace_mapping_source_path,
+)
 from tests.unit.bioformats_fixture import (
     bioformats_filemanager,
     write_bioformats_manifest_fixture,
@@ -48,40 +53,39 @@ def test_bioformats_structured_refs_project_to_source_paths(tmp_path: Path) -> N
     BioFormatsHandler(filemanager).initialize_workspace(tmp_path, filemanager)
     metadata = json.loads((tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8"))
 
-    projection = SourceWorkspaceAnchorProjection.from_openhcs_metadata(metadata)
+    projection = VirtualWorkspaceSourceProjection.from_openhcs_metadata(
+        tmp_path,
+        metadata,
+    )
     source_ref = metadata["subdirectories"]["."]["workspace_mapping"][
         "A01_s001_w1_z001_t001.tif"
     ]
 
-    assert projection.paths_by_virtual_path["A01_s001_w1_z001_t001.tif"] == "stack.npy"
+    assert (
+        projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
+        == str(tmp_path / "stack.npy")
+    )
     assert workspace_mapping_source_path(tmp_path, source_ref) == tmp_path / "stack.npy"
 
 
 def test_bioformats_structured_refs_project_inside_pattern_runtime(
     tmp_path: Path,
 ) -> None:
-    class _RuntimeContext:
-        __slots__ = ("plate_path", "__weakref__")
-
-        def __init__(self, plate_path: Path) -> None:
-            self.plate_path = plate_path
-
     write_bioformats_manifest_fixture(tmp_path)
-    BioFormatsHandler(bioformats_filemanager()).initialize_workspace(
+    filemanager = bioformats_filemanager()
+    BioFormatsHandler(filemanager).initialize_workspace(
         tmp_path,
-        bioformats_filemanager(),
+        filemanager,
     )
-    metadata = json.loads((tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8"))
-    runtime = PatternGroupRuntime(
-        SimpleNamespace(
-            context=_RuntimeContext(tmp_path),
-            execution_plan=None,
-            pattern_group_info="bioformats structured-ref projection",
-        )
+    authority = VirtualWorkspaceSourceProjectionAuthority(
+        plate_path=tmp_path,
+        metadata_handler=OpenHCSMetadataHandler(filemanager),
+        cache=VirtualWorkspaceSourceProjectionCache(),
     )
 
-    projection = runtime._virtual_workspace_source_projection_from_metadata(metadata)
+    projection = authority.projection_if_available()
 
+    assert projection is not None
     assert (
         projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
         == str(tmp_path / "stack.npy")

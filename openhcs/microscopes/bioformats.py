@@ -25,6 +25,7 @@ from openhcs.microscopes.bioformats_spw_projector import (
     BioFormatsSPWProjector,
 )
 from openhcs.microscopes.microscope_base import (
+    BroadMicroscopeDetector,
     MicroscopeHandler,
     register_metadata_handler,
 )
@@ -68,16 +69,7 @@ class BioFormatsMetadataHandler(MetadataHandler):
         return (1, 1)
 
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
-        values = {
-            entry.pixel_size
-            for entry in self.projected_entries(plate_path)
-            if entry.pixel_size is not None
-        }
-        if not values:
-            return self.FALLBACK_VALUES["pixel_size"]
-        if len(values) != 1:
-            raise ValueError(f"Multiple Bio-Formats pixel sizes found: {sorted(values)}")
-        return next(iter(values))
+        return _metadata_pixel_size(self.projected_entries(plate_path))
 
     def get_channel_values(
         self,
@@ -132,6 +124,20 @@ class BioFormatsMetadataHandler(MetadataHandler):
             for entry in self.projected_entries(plate_path)
         }
         return dict(sorted(timepoints.items(), key=lambda item: int(item[0]))) or None
+
+    def get_image_files(self, plate_path: Union[str, Path], all_subdirs: bool = False) -> list[str]:
+        """Return normalized virtual filenames for projected Bio-Formats planes."""
+        parser = BioFormatsFilenameParser()
+        return [
+            parser.construct_filename(
+                well=entry.well,
+                site=entry.site,
+                channel=entry.channel,
+                z_index=entry.z_index,
+                timepoint=entry.timepoint,
+            )
+            for entry in sorted(self.projected_entries(plate_path), key=_entry_sort_key)
+        ]
 
 
 class BioFormatsDatasetAuthority:
@@ -290,33 +296,11 @@ class BioFormatsWorkspaceMetadataWriter:
             extension=".tif",
         )
 
-    def ref_payload(
-        self,
-        plate_root: Path,
-        entry: BioFormatsImageEntry,
-    ) -> dict[str, object]:
-        try:
-            source_path = entry.source_path.relative_to(plate_root).as_posix()
-        except ValueError:
-            source_path = str(entry.source_path)
-        return {
-            "backend": Backend.BIOFORMATS.value,
-            "reader": entry.reader,
-            "source_path": source_path,
-            "series_index": entry.series_index,
-            "plane_index": entry.plane_index,
-            "c": entry.source_channel,
-            "z": entry.source_z_index,
-            "t": entry.source_timepoint,
-        }
-
-
-class BioFormatsHandler(MicroscopeHandler):
+class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
     """Brand-agnostic Bio-Formats handler for OME-SPW HCS datasets."""
 
     _microscope_type = "bioformats"
     _metadata_handler_class = BioFormatsMetadataHandler
-    detection_priority = "fallback"
 
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         self.parser = BioFormatsFilenameParser(filemanager, pattern_format)
@@ -391,9 +375,11 @@ class BioFormatsHandler(MicroscopeHandler):
 
 def _metadata_pixel_size(entries: tuple[BioFormatsImageEntry, ...]) -> float:
     values = {entry.pixel_size for entry in entries if entry.pixel_size is not None}
+    if not values:
+        raise ValueError("Bio-Formats metadata does not declare pixel size.")
     if len(values) > 1:
         raise ValueError(f"Multiple Bio-Formats pixel sizes found: {sorted(values)}")
-    return next(iter(values), MetadataHandler.FALLBACK_VALUES["pixel_size"])
+    return next(iter(values))
 
 
 def _component_values(
