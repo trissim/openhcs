@@ -1405,8 +1405,8 @@ def _colocalization_unit_interval_scale(
 ) -> int | None:
     """Return a shared proof scale when both channels are exact unit interval."""
     metadata = image_payload_metadata(image)
-    first_scale = metadata.unit_interval_intensity_scale_for_channel(channel_1)
-    second_scale = metadata.unit_interval_intensity_scale_for_channel(channel_2)
+    first_scale = metadata.unit_interval_intensity_scale_for_source_plane(channel_1)
+    second_scale = metadata.unit_interval_intensity_scale_for_source_plane(channel_2)
     if first_scale is None or second_scale is None:
         return None
     if int(first_scale) != int(second_scale):
@@ -1701,8 +1701,8 @@ class ColocalizationCostesThresholdRequest:
         metadata_scales = tuple(
             scale
             for scale in (
-                metadata.intensity_scale_for_channel(channel_1),
-                metadata.intensity_scale_for_channel(channel_2),
+                metadata.intensity_scale_for_source_plane(channel_1),
+                metadata.intensity_scale_for_source_plane(channel_2),
             )
             if scale is not None and scale > 0
         )

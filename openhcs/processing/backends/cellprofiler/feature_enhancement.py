@@ -19,10 +19,10 @@ from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enu
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
+    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    image_payload_with_context,
 )
 from openhcs.core.measurement_image_alignment import ReplicatedChannelMonochromeProjection
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -102,11 +102,11 @@ def enhance_or_suppress_features(
         )
     )
 
-    return image_payload_with_context(
+    return RuntimeImagePayloadContext(
         np.asarray(result, dtype=np.float32),
         mask=image_payload_mask(image),
         metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
-    )
+    ).payload()
 
 
 @numpy

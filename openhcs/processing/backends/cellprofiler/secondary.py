@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, ClassVar, Tuple
+from typing import Callable, ClassVar, Tuple, TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -38,12 +39,13 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectLabelValue,
+    ObjectLabelValueConstructionContext,
+    ObjectLabelVariantData,
     SourceImageObjectLabelBuildRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     object_label_dense_array,
-    object_label_payload_with_dense_labels,
     object_label_value_with_dense_labels,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -58,11 +60,12 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerOtsuMethod,
     CellProfilerThresholdAssignment,
     CellProfilerThresholdMethod,
+    CellProfilerThresholdRequest,
+    CellProfilerThresholdResult,
+    CellProfilerThresholdSettings,
     CellProfilerThresholdScope,
     CellProfilerVarianceMethod,
     ThresholdPrimitiveBackendStrategy,
-    cellprofiler_threshold,
-    cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
     threshold_primitives,
     unit_interval_scale_for_threshold_diagnostics,
@@ -92,6 +95,20 @@ from openhcs.processing.backends.cellprofiler.watershed import (
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
+METHOD_LABEL_REGISTRY_KEY = "method_label"
+ClassNamespaceValue: TypeAlias = (
+    str
+    | bool
+    | type
+    | staticmethod
+    | classmethod
+    | property
+    | Callable[..., float | str | None]
+    | Enum
+    | None
+)
+ObjectLabelSource: TypeAlias = ObjectLabelValue | np.ndarray
+
 
 class SecondaryMethod(CellProfilerEnumAttributeMixin, Enum):
     """CellProfiler IdentifySecondaryObjects segmentation method."""
@@ -113,13 +130,55 @@ class LabelPropagationResult:
     distances: np.ndarray
 
 
+@dataclass(frozen=True, slots=True)
+class SecondaryInputNormalization:
+    """Normalize secondary-object image and primary-label inputs."""
+
+    image: np.ndarray
+    primary_labels: ObjectLabelValue
+
+    def object_label_request(self) -> SourceImageObjectLabelBuildRequest:
+        image = collapse_singleton_plane_stack(np.asarray(self.image))
+        if isinstance(self.primary_labels, (ObjectLabelPayload, ObjectLabelSet)):
+            final_labels = collapse_singleton_plane_stack(
+                object_label_dense_array(self.primary_labels, dtype=np.int32)
+            )
+            unedited_labels = np.asarray(
+                ObjectLabelVariantData.from_value(
+                    self.primary_labels
+                ).labels_for_variant("unedited"),
+                dtype=np.int32,
+            )
+            return SourceImageObjectLabelBuildRequest(
+                image=image,
+                labels=final_labels,
+                unedited_labels=_secondary_seed_labels(
+                    final_labels,
+                    collapse_singleton_plane_stack(unedited_labels),
+                ),
+            )
+        if image.ndim == 3 and image.shape[0] == 2:
+            labels = image[1].astype(np.int32)
+            return SourceImageObjectLabelBuildRequest(
+                image=image[0],
+                labels=labels,
+                unedited_labels=labels,
+            )
+        labels = collapse_singleton_plane_stack(
+            np.asarray(self.primary_labels, dtype=np.int32)
+        )
+        return SourceImageObjectLabelBuildRequest(
+            image=image,
+            labels=labels,
+            unedited_labels=labels,
+        )
+
+
 @dataclass(frozen=True)
 class SecondarySegmentationRequest:
     """Inputs needed by nominal secondary-object segmentation strategies."""
 
-    image: np.ndarray
-    labels: np.ndarray
-    unedited_labels: np.ndarray
+    inputs: SourceImageObjectLabelBuildRequest
     thresholded: np.ndarray
     distance_to_dilate: int
     regularization_factor: float
@@ -129,27 +188,66 @@ class SecondarySegmentationRequest:
 
     @property
     def has_primary_objects(self) -> bool:
-        return self.unedited_labels.max() > 0
+        return self.seed_labels.max() > 0
 
     @property
     def object_mask(self) -> np.ndarray:
-        return self.thresholded | (self.unedited_labels > 0)
+        return self.thresholded | (self.seed_labels > 0)
+
+    @property
+    def seed_labels(self) -> np.ndarray:
+        if self.inputs.unedited_labels is None:
+            raise ValueError("Secondary segmentation requires unedited primary labels.")
+        return np.asarray(self.inputs.unedited_labels, dtype=np.int32)
+
+    @property
+    def label_plane(self) -> np.ndarray:
+        return np.asarray(self.inputs.labels, dtype=np.int32)
+
+    @property
+    def image_plane(self) -> np.ndarray:
+        return np.asarray(self.inputs.image)
 
 
-class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
+class MethodLabelAutoRegisterMeta(AutoRegisterMeta):
+    """AutoRegisterMeta variant for method-label keyed strategy families."""
+
+    __registry_key__ = METHOD_LABEL_REGISTRY_KEY
+    __skip_if_no_key__ = True
+
+    def __new__(
+        mcs,
+        name: str,
+        bases: tuple[type, ...],
+        attrs: dict[str, ClassNamespaceValue],
+        **kwargs: ClassNamespaceValue,
+    ) -> type:
+        attrs.setdefault("__registry_key__", mcs.__registry_key__)
+        attrs.setdefault("__skip_if_no_key__", mcs.__skip_if_no_key__)
+        return super().__new__(mcs, name, bases, attrs, **kwargs)
+
+    def for_method(cls, method: Enum) -> "MethodLabelRegistryRoot":
+        return cls.__registry__[method.value]()
+
+
+class MethodLabelRegistryRoot(ABC):
+    """Shared declaration surface for method-label keyed registries."""
+
+    stable_key_axis: ClassVar[str] = METHOD_LABEL_REGISTRY_KEY
+    method_label: ClassVar[str | None] = None
+
+
+class SecondarySegmentationStrategy(
+    MethodLabelRegistryRoot,
+    metaclass=MethodLabelAutoRegisterMeta,
+):
     """Segmentation strategy for one closed secondary-object method."""
 
-    __registry_key__ = "method_label"
-    method_label: ClassVar[str | None] = None
     method: ClassVar[SecondaryMethod | None] = None
-
-    @classmethod
-    def for_method(cls, method: SecondaryMethod) -> "SecondarySegmentationStrategy":
-        return cls.__registry__[method.value]()
 
     def segment(self, request: SecondarySegmentationRequest) -> np.ndarray:
         if not request.has_primary_objects:
-            return np.zeros_like(request.labels)
+            return np.zeros_like(request.label_plane)
         return self._segment_non_empty(request)
 
     def propagate_labels(
@@ -160,13 +258,13 @@ class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
         max_distance: float | None = None,
     ) -> np.ndarray:
         """Propagate secondary labels through the configured backend."""
-        geometry = CellProfilerPlaneGeometry.from_image_plane(request.image)
-        labels = geometry.label_plane(request.unedited_labels)
+        geometry = CellProfilerPlaneGeometry.from_image_plane(request.image_plane)
+        labels = geometry.label_plane(request.seed_labels)
         mask = geometry.binary_mask(request.thresholded)
         return SecondaryPropagationBackendStrategy.for_memory_type(
             backend_provider=request.propagation_backend_provider,
         ).propagate(
-            request.image,
+            request.image_plane,
             labels,
             mask,
             regularization,
@@ -181,7 +279,7 @@ class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
         """Build secondary labels from watershed markers and object mask."""
         return cellprofiler_legacy_watershed(
             watershed_image,
-            markers=request.unedited_labels,
+            markers=request.seed_labels,
             mask=request.object_mask,
             connectivity=np.ones((3, 3), bool),
             backend_provider=request.watershed_backend_provider,
@@ -206,7 +304,7 @@ class DistanceOnlySegmentationStrategy(SecondarySegmentationStrategy):
         return SecondaryDistanceTransformBackendStrategy.for_memory_type(
             backend_provider=request.distance_backend_provider,
         ).nearest_label_expansion(
-            request.unedited_labels,
+            request.seed_labels,
             float(request.distance_to_dilate),
         )
 
@@ -224,8 +322,9 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
             regularization=1.0,
             max_distance=float(request.distance_to_dilate),
         )
-        labels_out[request.labels > 0] = request.labels[request.labels > 0]
-        accepted_labels = np.unique(request.labels[request.labels > 0])
+        labels = request.label_plane
+        labels_out[labels > 0] = labels[labels > 0]
+        accepted_labels = np.unique(labels[labels > 0])
         if accepted_labels.size:
             labels_out[~np.isin(labels_out, accepted_labels)] = 0
         return labels_out
@@ -255,8 +354,8 @@ class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     ) -> np.ndarray:
         from scipy.ndimage import sobel
 
-        sobel_image = np.abs(sobel(request.image, axis=0)) + np.abs(
-            sobel(request.image, axis=1)
+        sobel_image = np.abs(sobel(request.image_plane, axis=0)) + np.abs(
+            sobel(request.image_plane, axis=1)
         )
         return self.watershed_secondary_labels(request, sobel_image)
 
@@ -269,7 +368,7 @@ class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        return self.watershed_secondary_labels(request, 1.0 - request.image)
+        return self.watershed_secondary_labels(request, 1.0 - request.image_plane)
 
 
 class SecondaryDistanceTransformBackendStrategy(
@@ -545,45 +644,43 @@ class SecondaryObjectStats:
     weighted_variance: float = 0.0
     sum_of_entropies: float = 0.0
 
-
-@dataclass(frozen=True)
-class SecondaryImageInputs:
-    image: np.ndarray
-    labels: np.ndarray
-    unedited_labels: np.ndarray
-
-
-@dataclass(frozen=True)
-class SecondaryThresholdResult:
-    value: float
-    original_value: float
-    mask: np.ndarray
-    weighted_variance: float = 0.0
-    sum_of_entropies: float = 0.0
-
-
-@dataclass(frozen=True)
-class SecondaryThresholdRequest:
-    image: np.ndarray
-    image_mask: np.ndarray | None
-    method: SecondaryMethod
-    threshold_scope: CellProfilerThresholdScope
-    threshold_method: CellProfilerThresholdMethod | ThresholdMethod | str
-    threshold_correction_factor: float
-    threshold_min: float
-    threshold_max: float
-    threshold_smoothing_scale: float
-    otsu_class_count: CellProfilerOtsuMethod
-    assign_middle_to_foreground: CellProfilerThresholdAssignment
-    log_transform: bool
-    adaptive_window_size: int
-    lower_outlier_fraction: float
-    upper_outlier_fraction: float
-    averaging_method: CellProfilerAveragingMethod
-    variance_method: CellProfilerVarianceMethod
-    number_of_deviations: float
-    manual_threshold: float
-    diagnostics_unit_interval_scale: int | None = None
+    @classmethod
+    def from_labels(
+        cls,
+        labels: np.ndarray,
+        *,
+        image_shape: tuple[int, int],
+        threshold: CellProfilerThresholdResult,
+    ) -> "SecondaryObjectStats":
+        areas = np.bincount(np.asarray(labels).ravel())[1:]
+        positive_areas = areas[areas > 0]
+        object_count = int(positive_areas.size)
+        if object_count == 0:
+            mean_area = 0.0
+            median_area = 0.0
+            total_area = 0
+        else:
+            mean_area = float(np.mean(positive_areas))
+            median_area = float(np.median(positive_areas))
+            total_area = int(np.sum(positive_areas))
+        height, width = image_shape
+        pixel_count = height * width
+        if pixel_count:
+            area_coverage = 100.0 * total_area / pixel_count
+        else:
+            area_coverage = 0.0
+        return cls(
+            slice_index=0,
+            object_count=object_count,
+            mean_area=mean_area,
+            median_area=median_area,
+            total_area=total_area,
+            area_coverage_percent=area_coverage,
+            threshold_value=float(threshold.final_threshold),
+            original_threshold=float(threshold.original_threshold),
+            weighted_variance=float(threshold.weighted_variance),
+            sum_of_entropies=float(threshold.sum_of_entropies),
+        )
 
 
 @dataclass(frozen=True)
@@ -620,23 +717,21 @@ class SecondaryObjectLabels:
 
     @property
     def object_count(self) -> int:
-        return int(np.max(self.segmented)) if self.segmented.size else 0
+        if not self.segmented.size:
+            return 0
+        return int(np.max(self.segmented))
 
 
-class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
+class ThresholdCalculator(
+    MethodLabelRegistryRoot,
+    metaclass=MethodLabelAutoRegisterMeta,
+):
     """Threshold strategy for one closed CellProfiler threshold method."""
 
-    __registry_key__ = "method_label"
-    __skip_if_no_key__ = True
-    method_label: ClassVar[str | None] = None
     method: ClassVar[ThresholdMethod | None] = None
     primitive: ClassVar[
         Callable[[ThresholdPrimitiveBackendStrategy, np.ndarray], float]
     ]
-
-    @classmethod
-    def for_method(cls, method: ThresholdMethod) -> "ThresholdCalculator":
-        return cls.__registry__[method.value]()
 
     def calculate(self, image: np.ndarray) -> float:
         """Calculate a threshold value for a normalized intensity image."""
@@ -649,19 +744,14 @@ class ThresholdCalculatorDeclaration(RegisteredLeafClassSpec):
 
     method: ThresholdMethod
     primitive: Callable[[ThresholdPrimitiveBackendStrategy, np.ndarray], float]
-    base_type: type[ThresholdCalculator] = field(
-        default=ThresholdCalculator,
-        init=False,
-        repr=False,
-        compare=False,
-    )
+    base_type: ClassVar[type[ThresholdCalculator]] = ThresholdCalculator
 
     @property
     def class_name(self) -> str:
         method_name = "".join(part.title() for part in self.method.name.split("_"))
         return f"{method_name}ThresholdCalculator"
 
-    def class_attributes(self) -> dict[str, object]:
+    def class_attributes(self) -> Mapping[str, ClassNamespaceValue]:
         primitive = self.primitive
 
         def concrete_primitive(
@@ -698,40 +788,6 @@ THRESHOLD_CALCULATOR_DECLARATIONS = (
 
 for threshold_calculator_declaration in THRESHOLD_CALCULATOR_DECLARATIONS:
     threshold_calculator_declaration.declare_in(globals())
-
-
-def _normalize_secondary_inputs(
-    image: np.ndarray,
-    primary_labels: ObjectLabelValue,
-) -> SecondaryImageInputs:
-    image = collapse_singleton_plane_stack(np.asarray(image))
-    if isinstance(primary_labels, (ObjectLabelPayload, ObjectLabelSet)):
-        final_labels = collapse_singleton_plane_stack(
-            object_label_dense_array(primary_labels, dtype=np.int32)
-        )
-        unedited_labels = np.asarray(
-            primary_labels.labels_for_variant("unedited"),
-            dtype=np.int32,
-        )
-        unedited_labels = collapse_singleton_plane_stack(unedited_labels)
-        return SecondaryImageInputs(
-            image=image,
-            labels=final_labels,
-            unedited_labels=_secondary_seed_labels(final_labels, unedited_labels),
-        )
-    if image.ndim == 3 and image.shape[0] == 2:
-        labels = image[1].astype(np.int32)
-        return SecondaryImageInputs(
-            image=image[0],
-            labels=labels,
-            unedited_labels=labels,
-        )
-    labels = collapse_singleton_plane_stack(np.asarray(primary_labels, dtype=np.int32))
-    return SecondaryImageInputs(
-        image=image,
-        labels=labels,
-        unedited_labels=labels,
-    )
 
 
 def _secondary_seed_labels(
@@ -815,62 +871,6 @@ def _secondary_seed_label_remap_numba(
     return output
 
 
-def _normalize_intensity_image(image: np.ndarray) -> np.ndarray:
-    return normalize_cellprofiler_image(image)
-
-
-def _threshold_secondary_objects(
-    request: SecondaryThresholdRequest,
-) -> SecondaryThresholdResult:
-    if not request.method.requires_threshold:
-        return SecondaryThresholdResult(
-            value=0.0,
-            original_value=0.0,
-            mask=(
-                np.ones_like(request.image, dtype=bool)
-                if request.image_mask is None
-                else np.asarray(request.image_mask, dtype=bool)
-            ),
-        )
-
-    thresholded, threshold_value, original_threshold = cellprofiler_threshold(
-        request.image,
-        use_advanced_settings=True,
-        threshold_scope=request.threshold_scope,
-        threshold_method=_coerce_threshold_method(request.threshold_method),
-        threshold_smoothing_scale=request.threshold_smoothing_scale,
-        threshold_correction_factor=request.threshold_correction_factor,
-        threshold_min=request.threshold_min,
-        threshold_max=request.threshold_max,
-        manual_threshold=request.manual_threshold,
-        otsu_class_count=request.otsu_class_count,
-        assign_middle_to_foreground=request.assign_middle_to_foreground,
-        log_transform=request.log_transform,
-        adaptive_window_size=request.adaptive_window_size,
-        lower_outlier_fraction=request.lower_outlier_fraction,
-        upper_outlier_fraction=request.upper_outlier_fraction,
-        averaging_method=request.averaging_method,
-        variance_method=request.variance_method,
-        number_of_deviations=request.number_of_deviations,
-        mask=request.image_mask,
-    )
-    diagnostics = cellprofiler_threshold_diagnostics(
-        request.image,
-        thresholded,
-        final_threshold=threshold_value,
-        original_threshold=original_threshold,
-        mask=request.image_mask,
-        proven_unit_interval_scale=request.diagnostics_unit_interval_scale,
-    )
-    return SecondaryThresholdResult(
-        value=threshold_value,
-        original_value=diagnostics.original_threshold,
-        mask=thresholded,
-        weighted_variance=diagnostics.weighted_variance,
-        sum_of_entropies=diagnostics.sum_of_entropies,
-    )
-
-
 def _coerce_threshold_method(
     threshold_method: CellProfilerThresholdMethod | ThresholdMethod | str,
 ) -> CellProfilerThresholdMethod:
@@ -951,49 +951,6 @@ def _discard_edge_objects(
     return relabeled.astype(np.int32, copy=False)
 
 
-def _secondary_label_area_statistics(labels: np.ndarray) -> tuple[int, float, float, int]:
-    areas = np.bincount(np.asarray(labels).ravel())[1:]
-    positive_areas = areas[areas > 0]
-    object_count = int(positive_areas.size)
-    if object_count == 0:
-        return 0, 0.0, 0.0, 0
-    return (
-        object_count,
-        float(np.mean(positive_areas)),
-        float(np.median(positive_areas)),
-        int(np.sum(positive_areas)),
-    )
-
-
-def _secondary_object_stats(
-    labels: np.ndarray,
-    *,
-    image_shape: tuple[int, int],
-    threshold_value: float,
-    original_threshold: float,
-    weighted_variance: float,
-    sum_of_entropies: float,
-) -> SecondaryObjectStats:
-    object_count, mean_area, median_area, total_area = (
-        _secondary_label_area_statistics(labels)
-    )
-
-    height, width = image_shape
-    area_coverage = 100.0 * total_area / (height * width) if height * width else 0.0
-    return SecondaryObjectStats(
-        slice_index=0,
-        object_count=object_count,
-        mean_area=mean_area,
-        median_area=median_area,
-        total_area=total_area,
-        area_coverage_percent=area_coverage,
-        threshold_value=float(threshold_value),
-        original_threshold=float(original_threshold),
-        weighted_variance=float(weighted_variance),
-        sum_of_entropies=float(sum_of_entropies),
-    )
-
-
 @numpy
 def identify_secondary_objects(
     image: np.ndarray,
@@ -1064,12 +1021,15 @@ def identify_secondary_objects(
     if input_mask is not None:
         input_mask = collapse_singleton_plane_stack(np.asarray(input_mask, dtype=bool))
     raw_image_data = image_payload_data(image)
-    diagnostics_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
+    proven_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
         np.asarray(raw_image_data),
         image_payload_metadata(image),
     )
-    inputs = _normalize_secondary_inputs(raw_image_data, primary_labels)
-    img = _normalize_intensity_image(inputs.image)
+    inputs = SecondaryInputNormalization(
+        raw_image_data,
+        primary_labels,
+    ).object_label_request()
+    img = normalize_cellprofiler_image(np.asarray(inputs.image))
     runtime_profiler.log(
         "iso_prepare_inputs",
         time.perf_counter() - phase_started_at,
@@ -1077,13 +1037,13 @@ def identify_secondary_objects(
         method=method.value,
     )
     phase_started_at = time.perf_counter()
-    threshold = _threshold_secondary_objects(
-        SecondaryThresholdRequest(
-            image=img,
-            image_mask=input_mask,
-            method=method,
+    threshold = CellProfilerThresholdRequest(
+        image=img,
+        image_mask=input_mask,
+        settings=CellProfilerThresholdSettings(
+            use_advanced_settings=True,
             threshold_scope=threshold_scope,
-            threshold_method=threshold_method,
+            threshold_method=_coerce_threshold_method(threshold_method),
             threshold_smoothing_scale=threshold_smoothing_scale,
             threshold_correction_factor=threshold_correction_factor,
             threshold_min=threshold_min,
@@ -1098,9 +1058,10 @@ def identify_secondary_objects(
             averaging_method=averaging_method,
             variance_method=variance_method,
             number_of_deviations=number_of_deviations,
-            diagnostics_unit_interval_scale=diagnostics_unit_interval_scale,
-        )
-    )
+        ),
+        proven_unit_interval_scale=proven_unit_interval_scale,
+        enabled=method.requires_threshold,
+    ).calculate()
     runtime_profiler.log(
         "iso_threshold",
         time.perf_counter() - phase_started_at,
@@ -1110,9 +1071,11 @@ def identify_secondary_objects(
     phase_started_at = time.perf_counter()
     raw_labels = SecondarySegmentationStrategy.for_method(method).segment(
         SecondarySegmentationRequest(
-            image=img,
-            labels=inputs.labels,
-            unedited_labels=inputs.unedited_labels,
+            inputs=SourceImageObjectLabelBuildRequest(
+                image=img,
+                labels=inputs.labels,
+                unedited_labels=inputs.unedited_labels,
+            ),
             thresholded=threshold.mask,
             distance_to_dilate=distance_to_dilate,
             regularization_factor=regularization_factor,
@@ -1142,13 +1105,10 @@ def identify_secondary_objects(
         method=method.value,
     )
     phase_started_at = time.perf_counter()
-    stats = _secondary_object_stats(
+    stats = SecondaryObjectStats.from_labels(
         object_labels.segmented,
         image_shape=img.shape,
-        threshold_value=threshold.value,
-        original_threshold=threshold.original_value,
-        weighted_variance=threshold.weighted_variance,
-        sum_of_entropies=threshold.sum_of_entropies,
+        threshold=threshold,
     )
     runtime_profiler.log(
         "iso_stats",
@@ -1227,15 +1187,24 @@ class TertiaryObjectStats:
     secondary_parent_count: int
 
 
+TertiaryObjectBatchResult: TypeAlias = tuple[
+    np.ndarray,
+    ParentChildRelationshipPayload,
+    ParentChildRelationshipPayload,
+    TertiaryObjectStats,
+    ObjectLabelSource,
+]
+
+
 @dataclass(frozen=True, slots=True)
 class TertiaryObjectLabelOutput:
     """Typed tertiary labels preserving the secondary object-label domain."""
 
-    source: object
+    source: ObjectLabelSource
     labels: np.ndarray
     source_plane_index: int | None = None
 
-    def value(self) -> object:
+    def value(self) -> ObjectLabelSource:
         if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
             return self.labels
         if self.source_plane_index is not None:
@@ -1254,44 +1223,26 @@ class TertiaryObjectLabelOutput:
             ),
         )
 
-    def projected_dense_value(self) -> object:
+    def projected_dense_value(self) -> ObjectLabelValue:
         """Return one derived local plane without inheriting sparse storage."""
         domain = ObjectLabelDomain.declared(
             scope=ObjectLabelDomainScope.PAYLOAD,
             declared_object_ids=self.projected_declared_ids(),
         )
+        context = ObjectLabelValueConstructionContext.from_value(
+            self.source,
+            domain=domain,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            source_provenance=self.source.source_provenance.with_source_image_names(
+                self.projected_source_image_names()
+            ),
+        )
         if isinstance(self.source, ObjectLabelPayload):
-            return ObjectLabelPayload(
-                labels=self.labels,
-                declared_object_count=domain.declared_object_count,
-                declared_object_ids=domain.declared_object_ids,
-                declared_object_id_domains=domain.declared_object_id_domains,
-                domain_scope=domain.scope,
-                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-                spatial_origin_yx=self.source.spatial_origin_yx,
-                source_spatial_shape_yx=self.source.source_spatial_shape_yx,
-                source_path=self.source.source_path,
-                source_component_metadata=self.source.source_component_metadata,
-                channel_source_paths=self.source.channel_source_paths,
-                channel_source_component_metadata=self.source.channel_source_component_metadata,
-                source_image_names=self.projected_source_image_names(),
-            )
-        return ObjectLabelSet(
+            return context.payload(labels=self.labels)
+        return context.label_set(
             name=self.source.name,
             labels=self.labels,
             representation=ObjectLabelRepresentation.DENSE_LABELS,
-            declared_object_count=domain.declared_object_count,
-            declared_object_ids=domain.declared_object_ids,
-            declared_object_id_domains=domain.declared_object_id_domains,
-            domain_scope=domain.scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            spatial_origin_yx=self.source.spatial_origin_yx,
-            source_spatial_shape_yx=self.source.source_spatial_shape_yx,
-            source_path=self.source.source_path,
-            source_component_metadata=self.source.source_component_metadata,
-            channel_source_paths=self.source.channel_source_paths,
-            channel_source_component_metadata=self.source.channel_source_component_metadata,
-            source_image_names=self.projected_source_image_names(),
             dimensions=self.source.dimensions,
             source_image_name=self.source.source_image_name,
         )
@@ -1302,7 +1253,9 @@ class TertiaryObjectLabelOutput:
             self.labels,
             domain_scope=ObjectLabelDomainScope.PAYLOAD,
         )
-        return domains[0] if domains else ()
+        if not domains:
+            return ()
+        return domains[0]
 
     def projected_source_image_names(self) -> tuple[str, ...]:
         """Return source-image provenance for the projected execution plane."""
@@ -1333,13 +1286,51 @@ class TertiaryObjectMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
+class TertiaryPrimaryMaskPlane:
+    """Primary-object label plane as the mask authority for tertiary segmentation."""
+
+    plane: np.ndarray
+
+    def retained_secondary_mask(
+        self,
+        *,
+        shrink_primary: bool,
+        outline_backend_provider: BackendProviderInput,
+    ) -> np.ndarray:
+        if not shrink_primary:
+            return self.plane == 0
+        primary_outline = ObjectOutlineBackendStrategy.for_memory_type(
+            backend_provider=outline_backend_provider,
+        ).outline(self.plane)
+        return np.logical_or(self.plane == 0, primary_outline > 0)
+
+    @property
+    def object_count(self) -> int:
+        return TertiaryObjectMeasurement(self.plane).positive_label_count
+
+
+@dataclass(frozen=True, slots=True)
+class TertiarySecondaryRegionPlane:
+    """Secondary-object label plane that supplies tertiary region identities."""
+
+    plane: np.ndarray
+
+    def initial_tertiary_labels(self) -> np.ndarray:
+        return self.plane.copy()
+
+    @property
+    def object_count(self) -> int:
+        return TertiaryObjectMeasurement(self.plane).positive_label_count
+
+
+@dataclass(frozen=True, slots=True)
 class TertiaryObjectInputs:
     """Dense aligned label inputs and source payloads for tertiary segmentation."""
 
-    primary_source: object
-    secondary_source: object
-    primary_array: np.ndarray
-    secondary_array: np.ndarray
+    primary_source: ObjectLabelSource
+    secondary_source: ObjectLabelSource
+    primary_plane: TertiaryPrimaryMaskPlane
+    region_labels: TertiarySecondaryRegionPlane
     secondary_projection: SourceSpatialDomainProjection | None = None
 
     @classmethod
@@ -1352,23 +1343,23 @@ class TertiaryObjectInputs:
             primary_labels,
             secondary_labels,
         ).alignment()
-        primary_array, secondary_array = alignment.first, alignment.second
-        primary_array = np.asarray(primary_array, dtype=np.int32)
-        secondary_array = np.asarray(secondary_array, dtype=np.int32)
-        if primary_array.ndim == 3:
-            primary_array = primary_array[0]
-        if secondary_array.ndim == 3:
-            secondary_array = secondary_array[0]
-        if primary_array.shape != secondary_array.shape:
+        primary_label_plane, secondary_label_plane = alignment.first, alignment.second
+        primary_label_plane = np.asarray(primary_label_plane, dtype=np.int32)
+        secondary_label_plane = np.asarray(secondary_label_plane, dtype=np.int32)
+        if primary_label_plane.ndim == 3:
+            primary_label_plane = primary_label_plane[0]
+        if secondary_label_plane.ndim == 3:
+            secondary_label_plane = secondary_label_plane[0]
+        if primary_label_plane.shape != secondary_label_plane.shape:
             raise ValueError(
                 f"Primary and secondary label shapes must match. "
-                f"Got {primary_array.shape} vs {secondary_array.shape}"
+                f"Got {primary_label_plane.shape} vs {secondary_label_plane.shape}"
             )
         return cls(
             primary_source=primary_labels,
             secondary_source=secondary_labels,
-            primary_array=primary_array,
-            secondary_array=secondary_array,
+            primary_plane=TertiaryPrimaryMaskPlane(primary_label_plane),
+            region_labels=TertiarySecondaryRegionPlane(secondary_label_plane),
             secondary_projection=alignment.second_projection,
         )
 
@@ -1389,15 +1380,11 @@ class TertiaryObjectSegmentation:
         shrink_primary: bool,
         outline_backend_provider: BackendProviderInput,
     ) -> np.ndarray:
-        primary_outline = ObjectOutlineBackendStrategy.for_memory_type(
-            backend_provider=outline_backend_provider,
-        ).outline(inputs.primary_array)
-
-        tertiary_labels = inputs.secondary_array.copy()
-        if shrink_primary:
-            primary_mask = np.logical_or(inputs.primary_array == 0, primary_outline > 0)
-        else:
-            primary_mask = inputs.primary_array == 0
+        tertiary_labels = inputs.region_labels.initial_tertiary_labels()
+        primary_mask = inputs.primary_plane.retained_secondary_mask(
+            shrink_primary=shrink_primary,
+            outline_backend_provider=outline_backend_provider,
+        )
         tertiary_labels[~primary_mask] = 0
         return tertiary_labels
 
@@ -1415,18 +1402,14 @@ class TertiaryObjectSegmentation:
             slice_index=slice_index,
             object_count=object_count,
             mean_area=float(mean_area),
-            primary_parent_count=TertiaryObjectMeasurement(
-                inputs.primary_array,
-            ).positive_label_count,
-            secondary_parent_count=TertiaryObjectMeasurement(
-                inputs.secondary_array,
-            ).positive_label_count,
+            primary_parent_count=inputs.primary_plane.object_count,
+            secondary_parent_count=inputs.region_labels.object_count,
         )
 
 
 def _identify_tertiary_objects_batch(
     request: RuntimePure2DSliceBatchRequest,
-) -> list[object]:
+) -> list[TertiaryObjectBatchResult]:
     kwargs = request.kwargs
     slice_count = request.slice_count
     alignment = DenseObjectLabelPairAligner(
@@ -1438,11 +1421,15 @@ def _identify_tertiary_objects_batch(
 
     primary_stack = alignment.first_stack
     secondary_stack = alignment.second_stack
+    if "shrink_primary" in kwargs:
+        shrink_primary = bool(kwargs["shrink_primary"])
+    else:
+        shrink_primary = True
     tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts = (
         _tertiary_stack_numba(
             primary_stack,
             secondary_stack,
-            bool(kwargs.get("shrink_primary", True)),
+            shrink_primary,
         )
     )
     output_tertiary_stack = alignment.restore_second_stack(tertiary_stack)
@@ -1580,7 +1567,7 @@ def identify_tertiary_objects(
         object_label_parent_child_payload(
             inputs.primary_source,
             tertiary_labels,
-            child_region_labels=inputs.secondary_array,
+            child_region_labels=inputs.region_labels.plane,
         ),
         segmentation.stats(inputs, tertiary_labels),
         TertiaryObjectLabelOutput(
@@ -1626,15 +1613,12 @@ __all__ = public_names_from_objects(
     NumpySecondaryDistanceTransformBackendStrategy,
     PropagationSegmentationStrategy,
     SecondaryDistanceTransformBackendStrategy,
-    SecondaryImageInputs,
     SecondaryMethod,
     SecondaryObjectLabels,
     SecondaryObjectStats,
     SecondaryPropagationBackendStrategy,
     SecondarySegmentationRequest,
     SecondarySegmentationStrategy,
-    SecondaryThresholdRequest,
-    SecondaryThresholdResult,
     ThresholdCalculator,
     ThresholdCalculatorDeclaration,
     ThresholdMethod,

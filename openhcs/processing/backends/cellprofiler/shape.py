@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 import logging
 import time
 from typing import Any
@@ -22,18 +24,21 @@ from openhcs.core.pipeline.function_contracts import (
     special_outputs,
 )
 from openhcs.core.runtime_semantics import (
+    ConsecutiveObjectLabelIdProjection,
     MeasurementRowAxisField,
+    ObjectLabelDomainScope,
     ObjectLabelRepresentation,
     ObjectShapeMeasurementFeature,
     ShapeObjectFeatureValueTable,
     dense_object_label_id_domain,
+    dense_object_label_measurement_row_domain,
     indexed_measurement_feature_name,
     object_shape_measurement_all_field_names,
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
+    DenseObjectLabelSliceStackRequest,
     ObjectLabelDataPlaneStackContract,
-    DenseObjectLabelSliceStack,
     ObjectLabelPayload,
     ObjectLabelPlaneStackContract,
     ObjectLabelSet,
@@ -65,6 +70,87 @@ _ZERNIKE_MAX_ORDER = 9
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 ShapeFeatureArrays = tuple[dict[str, np.ndarray], np.ndarray]
+MARCHING_CUBES_CELL_OFFSETS = np.asarray(
+    (
+        (0, 0, 0),
+        (0, 0, 1),
+        (0, 1, 0),
+        (0, 1, 1),
+        (1, 0, 0),
+        (1, 0, 1),
+        (1, 1, 0),
+        (1, 1, 1),
+    ),
+    dtype=np.int64,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceArea3DRegions:
+    """Object labels and bounded 3-D regions for surface-area measurement."""
+
+    label_ids: np.ndarray
+    bounds_zyxzyx: np.ndarray
+
+    def __post_init__(self) -> None:
+        label_ids = np.ascontiguousarray(self.label_ids, dtype=np.int64)
+        bounds = np.ascontiguousarray(self.bounds_zyxzyx, dtype=np.int64)
+        if bounds.shape != (label_ids.size, 6):
+            raise ValueError(
+                "3-D surface-area bounds must have shape "
+                f"({label_ids.size}, 6), got {bounds.shape!r}."
+            )
+        object.__setattr__(self, "label_ids", label_ids)
+        object.__setattr__(self, "bounds_zyxzyx", bounds)
+
+    @classmethod
+    def from_regionprops_table(
+        cls,
+        props: Mapping[str, np.ndarray],
+        labels_shape: tuple[int, int, int],
+    ) -> "SurfaceArea3DRegions":
+        label_ids = np.asarray(props["label"], dtype=np.int64)
+        if label_ids.size == 0:
+            return cls(label_ids, np.zeros((0, 6), dtype=np.int64))
+        bounds = np.stack(
+            (
+                props["bbox-0"],
+                props["bbox-1"],
+                props["bbox-2"],
+                props["bbox-3"],
+                props["bbox-4"],
+                props["bbox-5"],
+            ),
+            axis=1,
+        )
+        return cls(
+            label_ids,
+            _expanded_surface_area_bounds(bounds, labels_shape),
+        )
+
+    @classmethod
+    def from_label_array(
+        cls,
+        labels: np.ndarray,
+        label_ids: np.ndarray,
+    ) -> "SurfaceArea3DRegions":
+        label_id_array = np.asarray(label_ids, dtype=np.int64)
+        if label_id_array.size == 0:
+            return cls(label_id_array, np.zeros((0, 6), dtype=np.int64))
+        label_array = np.asarray(labels)
+        bounds = np.zeros((label_id_array.size, 6), dtype=np.int64)
+        for index, label_id in enumerate(label_id_array):
+            positions = np.argwhere(label_array == int(label_id))
+            if positions.size == 0:
+                continue
+            minimum = positions.min(axis=0)
+            maximum = positions.max(axis=0) + 1
+            bounds[index, :3] = minimum
+            bounds[index, 3:] = maximum
+        return cls(
+            label_id_array,
+            _expanded_surface_area_bounds(bounds, label_array.shape),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,14 +369,32 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         self,
         labels: np.ndarray,
     ) -> ShapeFeatureArrays:
+        total_started_at = time.perf_counter()
+        phase_started_at = time.perf_counter()
         shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
             backend_provider=self.shape_backend_provider,
         )
+        runtime_profiler.log(
+            "moss_backend_resolution_3d",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_size_shape",
+        )
+        phase_started_at = time.perf_counter()
         props = skimage.measure.regionprops_table(
             labels,
             properties=_desired_region_properties(3, self.calculate_advanced),
         )
-        measured_labels = np.asarray(props["label"])
+        runtime_profiler.log(
+            "moss_regionprops_table_3d",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_size_shape",
+        )
+        surface_regions = SurfaceArea3DRegions.from_regionprops_table(
+            props,
+            labels.shape,
+        )
+        measured_labels = surface_regions.label_ids
+        phase_started_at = time.perf_counter()
         inertia_tensor_eigvals = np.stack(
             (
                 props["inertia_tensor_eigvals-0"],
@@ -302,23 +406,20 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         major_axis_length, minor_axis_length = (
             shape_backend.axis_lengths_3d_from_inertia_eigvals(inertia_tensor_eigvals)
         )
-        surface_areas = np.zeros(len(measured_labels), dtype=float)
-        for index, label in enumerate(measured_labels):
-            volume = labels[
-                max(props["bbox-0"][index] - 1, 0) : min(
-                    props["bbox-3"][index] + 1,
-                    labels.shape[0],
-                ),
-                max(props["bbox-1"][index] - 1, 0) : min(
-                    props["bbox-4"][index] + 1,
-                    labels.shape[1],
-                ),
-                max(props["bbox-2"][index] - 1, 0) : min(
-                    props["bbox-5"][index] + 1,
-                    labels.shape[2],
-                ),
-            ]
-            surface_areas[index] = _surface_area(volume == label)
+        runtime_profiler.log(
+            "moss_axis_lengths_3d",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_size_shape",
+            objects=int(measured_labels.size),
+        )
+        phase_started_at = time.perf_counter()
+        surface_areas = shape_backend.surface_areas_3d(labels, surface_regions)
+        runtime_profiler.log(
+            "moss_surface_areas_3d",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_size_shape",
+            objects=int(measured_labels.size),
+        )
 
         features = {
             _shape_feature(ObjectShapeMeasurementFeature.VOLUME): props["area"],
@@ -365,6 +466,12 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
             features[_shape_feature(ObjectShapeMeasurementFeature.SOLIDITY)] = props[
                 "solidity"
             ]
+        runtime_profiler.log(
+            "moss_features_3d_total",
+            time.perf_counter() - total_started_at,
+            function="measure_object_size_shape",
+            objects=int(measured_labels.size),
+        )
         return features, measured_labels
 
 
@@ -433,13 +540,18 @@ class ObjectSizeShapeMeasurementRowsRequest(ObjectSizeShapeFeatureArrayOwner):
         return ShapeObjectFeatureValueTable.from_feature_arrays(
             feature_values,
             measured_labels,
-            object_domain=dense_object_label_id_domain(self.labels),
+            object_domain=dense_object_label_measurement_row_domain(
+                self.labels,
+                label_array,
+            ),
         ).rows()
 
 
 def _measurement_plane_count(labels: ObjectLabelValue) -> int | None:
     """Return a per-plane measurement count for plane-scoped stacked labels."""
     if not isinstance(labels, (ObjectLabelPayload, ObjectLabelSet)):
+        return None
+    if labels.domain.scope is not ObjectLabelDomainScope.PLANE:
         return None
     data_count = ObjectLabelDataPlaneStackContract.plane_count(labels.labels)
     if data_count is None or data_count <= 1:
@@ -473,11 +585,11 @@ def measure_object_size_shape(
         and label_array.ndim == 3
         and label_array.shape[-2:] == np.asarray(image).shape
     ):
-        label_stack = DenseObjectLabelSliceStack.from_payload(
+        label_stack = DenseObjectLabelSliceStackRequest(
             labels,
             slice_count=int(label_array.shape[0]),
             dtype=np.int32,
-        )
+        ).stack()
         if label_stack is not None:
             projected_index = (
                 slice_index
@@ -621,10 +733,11 @@ class SparseIJVObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
         return rows
 
     def object_ids(self, ijv: np.ndarray) -> np.ndarray:
-        if self.labels.declared_object_ids:
-            return np.asarray(self.labels.declared_object_ids, dtype=np.int32)
-        if self.labels.declared_object_count is not None:
-            return np.arange(1, self.labels.declared_object_count + 1, dtype=np.int32)
+        domain = self.labels.domain
+        if domain.declared_object_ids:
+            return np.asarray(domain.declared_object_ids, dtype=np.int32)
+        if domain.declared_object_count is not None:
+            return np.arange(1, domain.declared_object_count + 1, dtype=np.int32)
         return np.unique(ijv[:, 2]).astype(np.int32, copy=False)
 
     def object_row(self, ijv: np.ndarray, object_id: int) -> dict[str, object]:
@@ -774,6 +887,14 @@ class ShapeMeasurementBackendStrategy(
         return np.sqrt(np.maximum(major_argument, 0.0)), np.sqrt(
             np.maximum(minor_argument, 0.0)
         )
+
+    def surface_areas_3d(
+        self,
+        labels: np.ndarray,
+        regions: SurfaceArea3DRegions,
+    ) -> np.ndarray:
+        """Return Lewiner marching-cubes surface areas for 3-D dense labels."""
+        return _surface_areas_3d_from_regions(labels, regions)
 
     @abstractmethod
     def distance_to_edge(self, labels: np.ndarray) -> np.ndarray:
@@ -994,6 +1115,16 @@ class CentrosomeNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStra
 class NumbaShapeMeasurementMixin(ABC):
     """Shared Numba-backed shape leaves reused by concrete backend policies."""
 
+    def prepare_numba_shape_leaves(self) -> None:
+        labels = np.array([[0, 1, 1], [0, 1, 0], [2, 2, 0]], dtype=np.int32)
+        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        label_ids = np.array([1, 2], dtype=np.int32)
+        object_images = np.stack((labels == 1, labels == 2), axis=0)
+        self.radius_features(object_images, 2)
+        self.radius_features_from_labels(labels, label_ids)
+        self.distance_to_edge(labels)
+        self.maximum_position_of_labels(image, labels, label_ids)
+
     def radius_features(
         self,
         object_images: np.ndarray,
@@ -1054,6 +1185,9 @@ class LegacyFastNumpyShapeMeasurementBackendStrategy(
     backend_provider = CellProfilerBackendProvider.LEGACY_FAST
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        self.prepare_numba_shape_leaves()
+
 
 class NumbaNumpyShapeMeasurementBackendStrategy(
     NumbaShapeMeasurementMixin,
@@ -1070,17 +1204,16 @@ class NumbaNumpyShapeMeasurementBackendStrategy(
     is_default_backend = False
 
     def prepare_backend(self) -> None:
-        labels = np.array([[0, 1, 1], [0, 1, 0], [2, 2, 0]], dtype=np.int32)
-        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        self.prepare_numba_shape_leaves()
         label_ids = np.array([1, 2], dtype=np.int32)
-        object_images = np.stack((labels == 1, labels == 2), axis=0)
-        self.radius_features(object_images, 2)
-        self.radius_features_from_labels(labels, label_ids)
-        self.distance_to_edge(labels)
-        self.maximum_position_of_labels(image, labels, label_ids)
+        labels_3d = np.zeros((3, 3, 3), dtype=np.int32)
+        labels_3d[0:2, 0:2, 0:2] = 1
+        labels_3d[1:3, 1:3, 1:3] = 2
+        regions_3d = SurfaceArea3DRegions.from_label_array(labels_3d, label_ids)
         self.axis_lengths_3d_from_inertia_eigvals(
             np.array([[1.0, 1.0, 0.5]], dtype=np.float64)
         )
+        self.surface_areas_3d(labels_3d, regions_3d)
         self.zernike_indexes(2)
 
     def form_factor_values(
@@ -1364,6 +1497,114 @@ def _surface_area(volume: np.ndarray) -> float:
     except ValueError:
         return 0.0
     return float(skimage.measure.mesh_surface_area(verts, faces))
+
+
+def _expanded_surface_area_bounds(
+    bounds_zyxzyx: np.ndarray,
+    labels_shape: tuple[int, ...],
+) -> np.ndarray:
+    bounds = np.ascontiguousarray(bounds_zyxzyx, dtype=np.int64)
+    if bounds.shape[1:] != (6,):
+        raise ValueError(
+            "3-D surface-area bounds must have six columns "
+            f"(z0, y0, x0, z1, y1, x1), got {bounds.shape!r}."
+        )
+    if len(labels_shape) != 3:
+        raise ValueError(
+            f"3-D surface-area labels require a 3-D shape, got {labels_shape!r}."
+        )
+    expanded = bounds.copy()
+    shape = np.asarray(labels_shape, dtype=np.int64)
+    expanded[:, :3] = np.maximum(expanded[:, :3] - 1, 0)
+    expanded[:, 3:] = np.minimum(expanded[:, 3:] + 1, shape)
+    return np.ascontiguousarray(expanded, dtype=np.int64)
+
+
+def _surface_areas_3d_from_labels(
+    labels: np.ndarray,
+    label_ids: np.ndarray,
+) -> np.ndarray:
+    return _surface_areas_3d_from_regions(
+        labels,
+        SurfaceArea3DRegions.from_label_array(labels, label_ids),
+    )
+
+
+def _surface_areas_3d_from_regions(
+    labels: np.ndarray,
+    regions: SurfaceArea3DRegions,
+) -> np.ndarray:
+    if regions.label_ids.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    projection = ConsecutiveObjectLabelIdProjection(regions.label_ids)
+    consecutive_labels = np.ascontiguousarray(
+        projection.relabel_numpy_array(np.asarray(labels), dtype=np.int32),
+        dtype=np.int32,
+    )
+    return _surface_areas_3d_consecutive_label_regions_numba(
+        consecutive_labels,
+        _surface_area_case_table(),
+        regions.bounds_zyxzyx,
+    )
+
+
+@lru_cache(maxsize=1)
+def _surface_area_case_table() -> np.ndarray:
+    case_table = np.zeros(256, dtype=np.float64)
+    for mask in range(256):
+        volume = np.zeros((2, 2, 2), dtype=bool)
+        for bit, offset in enumerate(MARCHING_CUBES_CELL_OFFSETS):
+            volume[tuple(offset)] = bool(mask & (1 << bit))
+        case_table[mask] = _surface_area(volume)
+    return case_table
+
+
+@njit(cache=True)
+def _surface_areas_3d_consecutive_label_regions_numba(
+    labels: np.ndarray,
+    case_table: np.ndarray,
+    region_bounds: np.ndarray,
+) -> np.ndarray:
+    object_count = region_bounds.shape[0]
+    surface_areas = np.zeros(object_count, dtype=np.float64)
+    if labels.ndim != 3:
+        raise ValueError("3-D surface-area measurement requires a 3-D label array.")
+    if labels.shape[0] < 2 or labels.shape[1] < 2 or labels.shape[2] < 2:
+        return surface_areas
+    cell_labels = np.empty(8, dtype=np.int32)
+    for object_index in range(object_count):
+        label_id = object_index + 1
+        z0 = int(region_bounds[object_index, 0])
+        y0 = int(region_bounds[object_index, 1])
+        x0 = int(region_bounds[object_index, 2])
+        z1 = int(region_bounds[object_index, 3])
+        y1 = int(region_bounds[object_index, 4])
+        x1 = int(region_bounds[object_index, 5])
+        if z1 - z0 < 2 or y1 - y0 < 2 or x1 - x0 < 2:
+            continue
+        for z_index in range(z0, z1 - 1):
+            for y_index in range(y0, y1 - 1):
+                for x_index in range(x0, x1 - 1):
+                    for corner_index in range(MARCHING_CUBES_CELL_OFFSETS.shape[0]):
+                        offset = MARCHING_CUBES_CELL_OFFSETS[corner_index]
+                        cell_labels[corner_index] = labels[
+                            z_index + offset[0],
+                            y_index + offset[1],
+                            x_index + offset[2],
+                        ]
+                    surface_areas[object_index] += case_table[
+                        _surface_area_case_mask(cell_labels, label_id)
+                    ]
+    return surface_areas
+
+
+@njit(cache=True)
+def _surface_area_case_mask(cell_labels: np.ndarray, label_id: int) -> int:
+    mask = 0
+    for corner_index in range(cell_labels.size):
+        if cell_labels[corner_index] == label_id:
+            mask |= 1 << corner_index
+    return mask
 
 
 def _zernike_indexes_numpy(max_order: int) -> np.ndarray:

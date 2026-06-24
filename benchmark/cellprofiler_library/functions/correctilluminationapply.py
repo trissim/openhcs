@@ -6,10 +6,8 @@ Compatibility facade for the OpenHCS CellProfiler backend implementation.
 
 from openhcs.processing.backends.cellprofiler.illumination import (
     DivideIlluminationCorrectionStrategy,
-    IlluminationCorrection,
     IlluminationCorrectionInputStack,
     IlluminationCorrectionMethod,
-    IlluminationCorrectionRequest,
     IlluminationCorrectionSettingSequence,
     IlluminationCorrectionStrategy,
     SubtractIlluminationCorrectionStrategy,
@@ -18,10 +16,8 @@ from openhcs.processing.backends.cellprofiler.illumination import (
 
 __all__ = [
     "DivideIlluminationCorrectionStrategy",
-    "IlluminationCorrection",
     "IlluminationCorrectionInputStack",
     "IlluminationCorrectionMethod",
-    "IlluminationCorrectionRequest",
     "IlluminationCorrectionSettingSequence",
     "IlluminationCorrectionStrategy",
     "SubtractIlluminationCorrectionStrategy",

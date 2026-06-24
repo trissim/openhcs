@@ -11,6 +11,7 @@ from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     ObjectLabelPayload,
 )
+from openhcs.core.source_spatial_domain import SourceSpatialDomain
 
 
 def test_untangle_worms_single_component_does_not_apply_cluster_min_path_length() -> None:
@@ -39,8 +40,10 @@ def test_untangle_worms_labels_preserve_source_image_spatial_metadata() -> None:
     image = ImageMetadataPayload(
         data=np.zeros((24, 24), dtype=np.uint8),
         metadata=ImagePayloadMetadata(
-            spatial_origin_yx=(5, 7),
-            source_spatial_shape_yx=(40, 50),
+            source_spatial_domain=SourceSpatialDomain(
+                origin_yx=(5, 7),
+                source_shape_yx=(40, 50),
+            ),
         ),
     )
     image.data[8:11, 4:20] = 1

@@ -686,6 +686,30 @@ def test_shape_distance_to_edge_handles_stacked_planes_planewise() -> None:
     np.testing.assert_allclose(distances[1], backend.distance_to_edge(labels[1]))
 
 
+def test_medianfilter_preserves_unit_interval_scale_metadata() -> None:
+    from openhcs.core.runtime_values import (
+        ImagePayloadMetadata,
+        RuntimeImagePayloadContext,
+        image_payload_data,
+        image_payload_metadata,
+        normalize_image_payload_intensity,
+    )
+    from openhcs.processing.backends.cellprofiler.median_filter import medianfilter
+
+    raw = np.arange(25, dtype=np.uint16).reshape(5, 5)
+    payload = RuntimeImagePayloadContext(
+        raw,
+        None,
+        ImagePayloadMetadata.for_array(raw),
+    ).payload()
+    normalized = normalize_image_payload_intensity(payload, dtype=np.float32)
+
+    filtered = medianfilter.__wrapped__(normalized, window_size=3)
+
+    assert image_payload_metadata(filtered).unit_interval_intensity_scale == 65535
+    assert image_payload_data(filtered).dtype == np.float32
+
+
 def test_cellprofiler_backend_provider_rejects_raw_strings() -> None:
     import pytest
 
@@ -921,6 +945,41 @@ def test_numba_minimum_cross_entropy_uses_li_positive_shift_semantics() -> None:
     assert strategy.minimum_cross_entropy_threshold(values32.reshape(4, 4)) == (
         pytest.approx(float(expected32))
     )
+
+
+def test_numba_minimum_cross_entropy_uses_quantized_scale_without_semantic_drift() -> None:
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        ThresholdPrimitiveBackendStrategy,
+    )
+
+    strategy = ThresholdPrimitiveBackendStrategy.for_memory_type(MemoryType.NUMPY)
+    codes = np.array(
+        [
+            [0, 2, 4, 8, 16, 64],
+            [1, 3, 5, 9, 32, 128],
+            [0, 2, 4, 8, 16, 64],
+            [1, 3, 5, 9, 32, 255],
+        ],
+        dtype=np.float32,
+    )
+    image = codes / np.float32(255)
+    mask = np.ones(image.shape, dtype=bool)
+    mask[:, 0] = False
+
+    dense_full = strategy.minimum_cross_entropy_threshold(image)
+    quantized_full = strategy.minimum_cross_entropy_threshold(
+        image,
+        proven_unit_interval_scale=255,
+    )
+    dense_masked = strategy.minimum_cross_entropy_threshold(image, mask=mask)
+    quantized_masked = strategy.minimum_cross_entropy_threshold(
+        image,
+        mask=mask,
+        proven_unit_interval_scale=255,
+    )
+
+    assert quantized_full == pytest.approx(dense_full, abs=1e-7)
+    assert quantized_masked == pytest.approx(dense_masked, abs=1e-7)
 
 
 def test_cellprofiler_backend_selection_does_not_silently_fallback() -> None:

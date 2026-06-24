@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import lru_cache
 import logging
@@ -18,12 +18,18 @@ from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    MostDerivedContextStrategyMixin,
+)
 from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    ImagePayloadMetadataInput,
+    RuntimeArrayData,
+    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    image_payload_with_context,
     project_image_mask_to_data_domain,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -44,178 +50,132 @@ from openhcs.processing.materialization import csv_materializer
 
 NDIMAGE_CONSTANT_MODE = "constant"
 ROBUST_FACTOR = 0.02
+CORRECT_ILLUMINATION_CALCULATE_NAME = "correct_illumination_calculate"
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
-@dataclass(frozen=True, slots=True)
-class IlluminationMask:
-    """Mask aligned with CellProfiler illumination input and stack slices."""
-
-    mask: object | None
-    pixel_data: np.ndarray
-
-    @property
-    def normalized(self) -> np.ndarray | None:
-        if self.mask is None:
-            return None
-        mask_array = np.asarray(self.mask, dtype=bool)
-        return IlluminationMaskNormalizationStrategy.for_request(
-            IlluminationMaskNormalizationRequest(
-                mask_array=mask_array,
-                pixel_data=self.pixel_data,
-            )
-        ).normalize(mask_array)
-
-    def for_stack_slice(self, slice_index: int) -> np.ndarray | None:
-        mask = self.normalized
-        if mask is None:
-            return None
-        if mask.ndim >= 3 and slice_index < mask.shape[0]:
-            return np.asarray(mask[slice_index], dtype=bool)
-        return mask
-
-    def for_output(self, illumination: np.ndarray) -> np.ndarray | None:
-        mask = self.normalized
-        if mask is None:
-            return None
-        if mask.shape == illumination.shape:
-            return mask
-        if illumination.ndim == 2 and mask.ndim >= 3:
-            return np.any(mask, axis=0)
-        return mask
-
-
-@dataclass(frozen=True, slots=True)
-class IlluminationMaskNormalizationRequest:
-    """Shape facts needed to normalize an illumination mask."""
-
-    mask_array: np.ndarray
-    pixel_data: np.ndarray
-
-
-class IlluminationMaskNormalizationStrategy(ABC, metaclass=AutoRegisterMeta):
+class IlluminationMaskNormalizationStrategy(
+    MostDerivedContextStrategyMixin,
+    ABC,
+):
     """Nominal matcher for closed illumination mask shape normalization cases."""
 
     __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
 
     registry_key: ClassVar[str | None] = None
-    priority: ClassVar[int] = 100
-
-    @classmethod
-    def strategies(cls) -> tuple["IlluminationMaskNormalizationStrategy", ...]:
-        return tuple(
-            strategy_type()
-            for strategy_type in sorted(
-                cls.__registry__.values(),
-                key=lambda candidate: candidate.priority,
-            )
-        )
+    strategy_key_attr: ClassVar[str] = "registry_key"
 
     @classmethod
     def for_request(
         cls,
-        request: IlluminationMaskNormalizationRequest,
+        request: "IlluminationCalculationRequest",
     ) -> "IlluminationMaskNormalizationStrategy":
-        for strategy in cls.strategies():
-            if strategy.matches(request):
-                return strategy
-        return IlluminationMaskAsProvidedNormalizationStrategy()
+        strategy = cls.for_context(
+            request,
+            error_subject="illumination mask normalization",
+        )
+        if strategy is None:
+            raise ValueError("Illumination mask normalization requires a strategy.")
+        return strategy
 
     @abstractmethod
-    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+    def matches(self, request: "IlluminationCalculationRequest") -> bool:
         """Return whether this strategy owns the request shape."""
 
     @abstractmethod
-    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
+    def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
         """Return the normalized mask."""
 
 
-class ExactIlluminationMaskNormalizationStrategy(IlluminationMaskNormalizationStrategy):
-    """Mask already matches the illumination pixel data."""
-
-    registry_key = "exact"
-    priority = 0
-
-    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
-        return request.mask_array.shape == request.pixel_data.shape
-
-    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
-        return mask_array
-
-
-class SpatialIlluminationMaskNormalizationStrategy(IlluminationMaskNormalizationStrategy):
-    """Mask matches the trailing spatial domain of a stack-like image."""
-
-    registry_key = "spatial"
-    priority = 10
-
-    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
-        return request.mask_array.shape == request.pixel_data.shape[-request.mask_array.ndim :]
-
-    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
-        return mask_array
-
-
-class SingletonPlaneIlluminationMaskNormalizationStrategy(IlluminationMaskNormalizationStrategy):
-    """Single-plane stack mask used for a two-dimensional illumination image."""
-
-    registry_key = "singleton_plane"
-    priority = 20
-
-    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
-        return (
-            request.pixel_data.ndim == 2
-            and request.mask_array.ndim == 3
-            and request.mask_array.shape[0] == 1
-        )
-
-    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
-        return mask_array[0]
-
-
-class IlluminationMaskAsProvidedNormalizationStrategy(IlluminationMaskNormalizationStrategy):
+class IlluminationMaskAsProvidedNormalizationStrategy(
+    IlluminationMaskNormalizationStrategy
+):
     """Fallback for legacy CellProfiler-compatible mask broadcasting behavior."""
 
     registry_key = "as_provided"
-    priority = 30
 
-    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+    def matches(self, request: "IlluminationCalculationRequest") -> bool:
         return True
 
-    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
-        return mask_array
+    def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
+        if request.mask is None:
+            raise ValueError("Illumination mask normalization requires a mask.")
+        return request.mask
 
 
-@dataclass(frozen=True, slots=True)
-class IlluminationGaussianFilter:
-    """Gaussian filtering semantics for illumination smoothing and dilation."""
+class SpatialIlluminationMaskNormalizationStrategy(
+    IlluminationMaskAsProvidedNormalizationStrategy
+):
+    """Mask matches the trailing spatial domain of a stack-like image."""
 
-    pixel_data: np.ndarray
-    mask: np.ndarray | None
-    sigma: float
+    registry_key = "spatial"
 
-    def apply(self) -> np.ndarray:
-        from scipy.ndimage import gaussian_filter
+    def matches(self, request: "IlluminationCalculationRequest") -> bool:
+        if request.mask is None:
+            return False
+        return request.mask.shape == request.image_data.shape[-request.mask.ndim :]
 
-        if self.mask is None:
-            return gaussian_filter(
-                self.pixel_data,
-                self.sigma,
-                mode=NDIMAGE_CONSTANT_MODE,
-                cval=0,
-            )
-        return MaskedLinearFilterRequest(
-            pixels=self.pixel_data,
-            mask=self.mask,
-            operation=lambda image: gaussian_filter(
-                image,
-                self.sigma,
-                mode=NDIMAGE_CONSTANT_MODE,
-                cval=0,
-            ),
-        ).apply()
+
+class ExactIlluminationMaskNormalizationStrategy(
+    SpatialIlluminationMaskNormalizationStrategy
+):
+    """Mask already matches the illumination pixel data."""
+
+    registry_key = "exact"
+
+    def matches(self, request: "IlluminationCalculationRequest") -> bool:
+        return request.mask is not None and request.mask.shape == request.image_data.shape
+
+
+class SingletonPlaneIlluminationMaskNormalizationStrategy(
+    IlluminationMaskAsProvidedNormalizationStrategy
+):
+    """Single-plane stack mask used for a two-dimensional illumination image."""
+
+    registry_key = "singleton_plane"
+
+    def matches(self, request: "IlluminationCalculationRequest") -> bool:
+        if request.mask is None:
+            return False
+        return (
+            request.image_data.ndim == 2
+            and request.mask.ndim == 3
+            and request.mask.shape[0] == 1
+        )
+
+    def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
+        if request.mask is None:
+            raise ValueError("Illumination mask normalization requires a mask.")
+        return request.mask[0]
+
+
+def illumination_gaussian_filter(
+    pixel_data: np.ndarray,
+    mask: np.ndarray | None,
+    sigma: float,
+) -> np.ndarray:
+    """Apply CellProfiler-compatible Gaussian filtering with optional masking."""
+    from scipy.ndimage import gaussian_filter
+
+    if mask is None:
+        return gaussian_filter(
+            pixel_data,
+            sigma,
+            mode=NDIMAGE_CONSTANT_MODE,
+            cval=0,
+        )
+    return MaskedLinearFilterRequest(
+        pixels=pixel_data,
+        mask=mask,
+        operation=lambda image: gaussian_filter(
+            image,
+            sigma,
+            mode=NDIMAGE_CONSTANT_MODE,
+            cval=0,
+        ),
+    ).apply()
 
 
 class IntensityChoice(Enum):
@@ -281,11 +241,6 @@ class CalculationScope(Enum):
         return self is not CalculationScope.EACH
 
 
-def coerce_illumination_enum(enum_type: type[Enum], value: object) -> Enum:
-    """Coerce CellProfiler UI literals for illumination-owned enums."""
-    return coerce_cellprofiler_enum(enum_type, value)
-
-
 @dataclass
 class IlluminationStats:
     """Runtime measurements emitted by CorrectIlluminationCalculate."""
@@ -298,12 +253,10 @@ class IlluminationStats:
     smoothing_method: str
 
 
-@dataclass(frozen=True, slots=True)
-class IlluminationCorrectionRequest:
-    """One image/function pair for CorrectIlluminationApply."""
-
-    image_pixels: np.ndarray
-    illumination_function: np.ndarray
+IlluminationCalculationResult = tuple[
+    RuntimeArrayData,
+    IlluminationStats | list[IlluminationStats],
+]
 
 
 class IlluminationCorrectionStrategy(
@@ -313,45 +266,43 @@ class IlluminationCorrectionStrategy(
 ):
     """Nominal correction implementation for one CellProfiler method."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
     __enum_member_attr__ = "method"
 
     method: ClassVar[IlluminationCorrectionMethod]
-    strategy_label: ClassVar[str | None] = None
-
-    @classmethod
-    def for_method(
-        cls,
-        method: IlluminationCorrectionMethod,
-    ) -> "IlluminationCorrectionStrategy":
-        return cls.for_enum_member(method)
 
     @abstractmethod
-    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+    def apply(
+        self,
+        image_pixels: np.ndarray,
+        illumination_function: np.ndarray,
+    ) -> np.ndarray:
         """Apply the correction method."""
 
 
 class DivideIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
     method = IlluminationCorrectionMethod.DIVIDE
 
-    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+    def apply(
+        self,
+        image_pixels: np.ndarray,
+        illumination_function: np.ndarray,
+    ) -> np.ndarray:
         output_dtype = np.result_type(
-            request.image_pixels,
-            request.illumination_function,
+            image_pixels,
+            illumination_function,
             1e-10,
         )
-        output = np.empty(request.image_pixels.shape, dtype=output_dtype)
-        nonzero = request.illumination_function != 0
+        output = np.empty(image_pixels.shape, dtype=output_dtype)
+        nonzero = illumination_function != 0
         np.divide(
-            request.image_pixels,
-            request.illumination_function,
+            image_pixels,
+            illumination_function,
             out=output,
             where=nonzero,
         )
         if not np.all(nonzero):
             np.divide(
-                request.image_pixels,
+                image_pixels,
                 output_dtype.type(1e-10),
                 out=output,
                 where=~nonzero,
@@ -362,18 +313,22 @@ class DivideIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
 class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
     method = IlluminationCorrectionMethod.SUBTRACT
 
-    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+    def apply(
+        self,
+        image_pixels: np.ndarray,
+        illumination_function: np.ndarray,
+    ) -> np.ndarray:
         output = np.empty(
-            request.image_pixels.shape,
+            image_pixels.shape,
             dtype=np.result_type(
-                request.image_pixels,
-                request.illumination_function,
+                image_pixels,
+                illumination_function,
                 0.0,
             ),
         )
         np.subtract(
-            request.image_pixels,
-            request.illumination_function,
+            image_pixels,
+            illumination_function,
             out=output,
         )
         return output
@@ -458,11 +413,14 @@ class IlluminationCorrectionSettingSequence:
 class IlluminationCorrectionInputStack:
     """Stacked image/function pairs and source metadata for application."""
 
-    image: object
+    image: ImagePayloadMetadataInput
     pixel_stack: np.ndarray
 
     @classmethod
-    def from_image(cls, image: object) -> "IlluminationCorrectionInputStack":
+    def from_image(
+        cls,
+        image: ImagePayloadMetadataInput,
+    ) -> "IlluminationCorrectionInputStack":
         pixel_stack = np.asarray(image_payload_data(image))
         if pixel_stack.ndim < 3 or pixel_stack.shape[0] % 2 != 0:
             raise ValueError(
@@ -476,72 +434,75 @@ class IlluminationCorrectionInputStack:
         return int(self.pixel_stack.shape[0] // 2)
 
     def image_pixels(self, pair_index: int) -> np.ndarray:
-        return self.pixel_stack[self.input_index(pair_index)]
+        return self.pair_member_pixels(self.input_index(pair_index))
 
     def illumination_function(self, pair_index: int) -> np.ndarray:
-        return self.pixel_stack[self.input_index(pair_index) + 1]
+        return self.pair_member_pixels(self.input_index(pair_index) + 1)
+
+    def pair_member_pixels(self, input_index: int) -> np.ndarray:
+        """Return one image/function member with a stable singleton plane axis."""
+        pixels = self.pixel_stack[input_index]
+        if pixels.ndim == 2:
+            return pixels[np.newaxis, ...]
+        return pixels
 
     @staticmethod
     def input_index(pair_index: int) -> int:
         return pair_index * 2
 
-    def input_mask(self, pair_index: int) -> object | None:
+    def input_mask(self, pair_index: int) -> np.ndarray | None:
         mask = image_payload_mask(self.image)
         if mask is None:
             return None
         mask_array = np.asarray(mask, dtype=bool)
         input_index = self.input_index(pair_index)
-        if mask_array.ndim == 3 and mask_array.shape[0] > 0:
-            return mask_array[input_index : input_index + 1]
+        if mask_array.ndim >= 3 and mask_array.shape[0] > 0:
+            mask_plane = mask_array[input_index]
+            if mask_plane.ndim == 2:
+                return mask_plane[np.newaxis, ...]
+            return mask_plane
         return mask_array
-
-
-class IlluminationCorrection:
-    """Load-bearing CorrectIlluminationApply execution policy."""
 
     def apply_pair(
         self,
-        source: IlluminationCorrectionInputStack,
         pair_index: int,
         *,
         method: IlluminationCorrectionMethod,
         truncate_low: bool,
         truncate_high: bool,
-    ) -> np.ndarray:
-        image_pixels = source.image_pixels(pair_index)
-        illumination_function = source.illumination_function(pair_index)
+    ) -> RuntimeArrayData:
+        image_pixels = self.image_pixels(pair_index)
+        illumination_function = self.illumination_function(pair_index)
         if image_pixels.shape != illumination_function.shape:
             raise ValueError(
                 f"Input image shape {image_pixels.shape} and illumination function "
                 f"shape {illumination_function.shape} must be equal."
             )
 
-        output_pixels = IlluminationCorrectionStrategy.for_method(method).apply(
-            IlluminationCorrectionRequest(
-                image_pixels=image_pixels,
-                illumination_function=illumination_function,
-            )
+        output_pixels = IlluminationCorrectionStrategy.for_enum_member(method).apply(
+            image_pixels,
+            illumination_function,
         )
         if truncate_low:
             np.maximum(output_pixels, 0.0, out=output_pixels)
         if truncate_high:
             np.minimum(output_pixels, 1.0, out=output_pixels)
-        return image_payload_with_context(
-            output_pixels[np.newaxis, ...].astype(np.float32, copy=False),
-            mask=source.input_mask(pair_index),
+        return RuntimeImagePayloadContext(
+            output_pixels.astype(np.float32, copy=False),
+            mask=self.input_mask(pair_index),
             metadata=(
-                image_payload_metadata(source.image)
-                .for_channel(source.input_index(pair_index))
+                image_payload_metadata(self.image)
+                .for_source_plane(self.input_index(pair_index))
                 .without_unit_interval_intensity_scale()
             ),
-        )
+        ).payload()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class IlluminationCalculationRequest:
     """Complete semantic request for CorrectIlluminationCalculate."""
 
-    pixel_data: np.ndarray
+    image_data: np.ndarray
     mask: np.ndarray | None
     intensity_choice: IntensityChoice
     dilate_objects: bool
@@ -565,214 +526,189 @@ class IlluminationCalculationRequest:
     rank_median_backend_provider: CellProfilerBackendProvider | None
     slice_index: int = 0
 
+    def __post_init__(self) -> None:
+        if self.mask is None:
+            return
+        self.mask = np.asarray(self.mask, dtype=bool)
+        normalized_mask = IlluminationMaskNormalizationStrategy.for_request(
+            self
+        ).normalize(self)
+        self.mask = normalized_mask
+
     @property
     def is_multi_image_stack(self) -> bool:
-        return self.pixel_data.ndim >= 3
+        return self.image_data.ndim >= 3
 
     @property
     def spatial_image_shape(self) -> tuple[int, ...]:
         if self.calculation_scope.uses_all_images and self.is_multi_image_stack:
-            return tuple(self.pixel_data.shape[1:])
-        return tuple(self.pixel_data.shape)
+            return tuple(self.image_data.shape[1:])
+        return tuple(self.image_data.shape)
+
+    def mask_for_stack_slice(self, slice_index: int) -> np.ndarray | None:
+        if self.mask is None:
+            return None
+        if self.mask.ndim >= 3 and slice_index < self.mask.shape[0]:
+            return np.asarray(self.mask[slice_index], dtype=bool)
+        return self.mask
+
+    def mask_for_output(self, illumination: np.ndarray) -> np.ndarray | None:
+        if self.mask is None:
+            return None
+        if self.mask.shape == illumination.shape:
+            return self.mask
+        if illumination.ndim == 2 and self.mask.ndim >= 3:
+            return np.any(self.mask, axis=0)
+        return self.mask
+
+    def stats_for_output(self, output_image: np.ndarray) -> IlluminationStats:
+        return IlluminationStats(
+            slice_index=self.slice_index,
+            min_value=float(np.min(output_image)),
+            max_value=float(np.max(output_image)),
+            mean_value=float(np.mean(output_image)),
+            calculation_type=self.intensity_choice.value,
+            smoothing_method=self.smoothing_method.value,
+        )
 
     def for_stack_slice(
         self,
         slice_index: int,
-        mask: np.ndarray | None,
     ) -> "IlluminationCalculationRequest":
-        return IlluminationCalculationRequest(
-            pixel_data=np.asarray(self.pixel_data[slice_index]),
-            mask=mask,
-            intensity_choice=self.intensity_choice,
-            dilate_objects=self.dilate_objects,
-            object_dilation_radius=self.object_dilation_radius,
-            block_size=self.block_size,
-            rescale_option=self.rescale_option,
-            smoothing_method=self.smoothing_method,
-            filter_size_method=self.filter_size_method,
-            object_width=self.object_width,
-            manual_filter_size=self.manual_filter_size,
-            automatic_splines=self.automatic_splines,
-            spline_bg_mode=self.spline_bg_mode,
-            spline_points=self.spline_points,
-            spline_threshold=self.spline_threshold,
-            spline_rescale=self.spline_rescale,
-            spline_max_iterations=self.spline_max_iterations,
-            spline_convergence=self.spline_convergence,
+        return replace(
+            self,
+            image_data=np.asarray(self.image_data[slice_index]),
+            mask=self.mask_for_stack_slice(slice_index),
             calculation_scope=CalculationScope.EACH,
-            morphology=self.morphology,
-            convex_hull_backend_provider=self.convex_hull_backend_provider,
-            rank_median_backend_provider=self.rank_median_backend_provider,
             slice_index=slice_index,
         )
 
-
-class IlluminationCalculation:
-    """Load-bearing CorrectIlluminationCalculate execution policy."""
-
-    function_name = "correct_illumination_calculate"
-
-    def calculate(self, request: IlluminationCalculationRequest) -> tuple[np.ndarray, IlluminationStats]:
+    def calculate(self) -> tuple[np.ndarray, IlluminationStats]:
         total_started_at = time.perf_counter()
-        filter_size = self.filter_size(request)
-        avg_image = self.average_image(request)
-        dilated_image = self.apply_dilation(request, avg_image)
-        smoothed_image = self.smooth(request, dilated_image, filter_size)
-        output_image = self.apply_scaling(
-            smoothed_image,
-            request.mask,
-            request.rescale_option,
-        ).astype(np.float32)
+        filter_size = self.filter_size()
+        avg_image = self.average_image()
+        dilated_image = self.apply_dilation(avg_image)
+        smoothed_image = self.smooth(dilated_image, filter_size)
+        output_image = self.apply_scaling(smoothed_image).astype(np.float32)
         runtime_profiler.log(
             "cic_total",
             time.perf_counter() - total_started_at,
-            function=self.function_name,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
         )
-        return output_image, self.stats(request, output_image)
+        stats_started_at = time.perf_counter()
+        stats = self.stats_for_output(output_image)
+        runtime_profiler.log(
+            "cic_stats",
+            time.perf_counter() - stats_started_at,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
+        )
+        return output_image, stats
 
-    def filter_size(self, request: IlluminationCalculationRequest) -> float:
+    def filter_size(self) -> float:
         phase_started_at = time.perf_counter()
-        filter_size = SmoothingFilterSizeStrategy.for_method(
-            request.filter_size_method,
-        ).calculate(
-            SmoothingFilterSizeRequest(
-                image_shape=request.spatial_image_shape,
-                object_width=request.object_width,
-                manual_filter_size=request.manual_filter_size,
-            )
-        )
+        filter_size = SmoothingFilterSizeStrategy.for_enum_member(
+            self.filter_size_method,
+        ).calculate(self)
         runtime_profiler.log(
             "cic_filter_size",
             time.perf_counter() - phase_started_at,
-            function=self.function_name,
-            method=request.filter_size_method.value,
-            smoothing=request.smoothing_method.value,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
+            method=self.filter_size_method.value,
+            smoothing=self.smoothing_method.value,
         )
         return filter_size
 
-    def average_image(self, request: IlluminationCalculationRequest) -> np.ndarray:
+    def average_image(self) -> np.ndarray:
         phase_started_at = time.perf_counter()
-        if not (
-            request.calculation_scope.uses_all_images
-            and request.is_multi_image_stack
-        ):
-            average_image = self.preprocess_for_averaging(
-                request.pixel_data,
-                request.mask,
-                request,
-            )
+        if not (self.calculation_scope.uses_all_images and self.is_multi_image_stack):
+            average_image = self.preprocess_for_averaging()
         else:
-            if request.pixel_data.shape[0] == 0:
+            if self.image_data.shape[0] == 0:
                 raise ValueError(
                     "All-image illumination calculation requires at least one image."
                 )
-            illumination_mask = IlluminationMask(request.mask, request.pixel_data)
             averaged_inputs = [
-                self.preprocess_for_averaging(
-                    np.asarray(slice_data),
-                    illumination_mask.for_stack_slice(slice_index),
-                    request,
-                )
-                for slice_index, slice_data in enumerate(request.pixel_data)
+                self.for_stack_slice(slice_index).preprocess_for_averaging()
+                for slice_index in range(self.image_data.shape[0])
             ]
             average_image = np.mean(np.stack(averaged_inputs, axis=0), axis=0)
         runtime_profiler.log(
             "cic_average_image",
             time.perf_counter() - phase_started_at,
-            function=self.function_name,
-            method=request.intensity_choice.value,
-            scope=request.calculation_scope.value,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
+            method=self.intensity_choice.value,
+            scope=self.calculation_scope.value,
         )
         return average_image
 
-    def preprocess_for_averaging(
-        self,
-        pixel_data: np.ndarray,
-        mask: np.ndarray | None,
-        request: IlluminationCalculationRequest,
-    ) -> np.ndarray:
+    def preprocess_for_averaging(self) -> np.ndarray:
         if (
-            request.intensity_choice == IntensityChoice.REGULAR
-            or request.smoothing_method == SmoothingMethod.SPLINES
+            self.intensity_choice == IntensityChoice.REGULAR
+            or self.smoothing_method == SmoothingMethod.SPLINES
         ):
-            result = pixel_data.copy()
-            if mask is not None:
-                result[~mask] = 0
+            result = self.image_data.copy()
+            if self.mask is not None:
+                result[~self.mask] = 0
             return result
-        return request.morphology.blockwise_minimum(
-            pixel_data,
-            mask,
-            request.block_size,
+        return self.morphology.blockwise_minimum(
+            self.image_data,
+            self.mask,
+            self.block_size,
         )
 
     def apply_dilation(
         self,
-        request: IlluminationCalculationRequest,
         pixel_data: np.ndarray,
     ) -> np.ndarray:
         phase_started_at = time.perf_counter()
-        if not request.dilate_objects:
+        if not self.dilate_objects:
             result = pixel_data
         else:
-            result = IlluminationGaussianFilter(
+            result = illumination_gaussian_filter(
                 pixel_data,
-                request.mask,
-                request.object_dilation_radius,
-            ).apply()
-            if request.mask is not None:
-                result[~request.mask] = 0
+                self.mask,
+                self.object_dilation_radius,
+            )
+            if self.mask is not None:
+                result[~self.mask] = 0
         runtime_profiler.log(
             "cic_dilation",
             time.perf_counter() - phase_started_at,
-            function=self.function_name,
-            enabled=request.dilate_objects,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
+            enabled=self.dilate_objects,
         )
         return result
 
     def smooth(
         self,
-        request: IlluminationCalculationRequest,
         pixel_data: np.ndarray,
         filter_size: float,
     ) -> np.ndarray:
         phase_started_at = time.perf_counter()
-        smoothed_image = SmoothingPlaneStrategy.for_method(request.smoothing_method).smooth(
-            SmoothingPlaneRequest(
-                pixel_data=pixel_data,
-                mask=request.mask,
-                smoothing_method=request.smoothing_method,
-                filter_size=filter_size,
-                spline_bg_mode=request.spline_bg_mode,
-                spline_points=request.spline_points,
-                spline_threshold=request.spline_threshold,
-                spline_rescale=request.spline_rescale,
-                spline_max_iterations=request.spline_max_iterations,
-                spline_convergence=request.spline_convergence,
-                automatic_splines=request.automatic_splines,
-                morphology=request.morphology,
-                convex_hull_backend_provider=request.convex_hull_backend_provider,
-                rank_median_backend_provider=request.rank_median_backend_provider,
-            )
+        smoothed_image = SmoothingPlaneStrategy.for_enum_member(
+            self.smoothing_method
+        ).smooth(
+            self,
+            pixel_data,
+            filter_size,
         )
         runtime_profiler.log(
             "cic_smoothing",
             time.perf_counter() - phase_started_at,
-            function=self.function_name,
-            method=request.smoothing_method.value,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
+            method=self.smoothing_method.value,
         )
         return smoothed_image
 
     def apply_scaling(
         self,
         pixel_data: np.ndarray,
-        mask: np.ndarray | None,
-        rescale_option: RescaleOption,
     ) -> np.ndarray:
         phase_started_at = time.perf_counter()
-        if rescale_option == RescaleOption.NO:
+        if self.rescale_option == RescaleOption.NO:
             result = pixel_data
         else:
-            projected_mask = project_image_mask_to_data_domain(mask, pixel_data)
+            projected_mask = project_image_mask_to_data_domain(self.mask, pixel_data)
             if projected_mask is not None:
                 sorted_data = pixel_data[(pixel_data > 0) & projected_mask]
             else:
@@ -780,7 +716,7 @@ class IlluminationCalculation:
 
             if sorted_data.size == 0:
                 result = pixel_data
-            elif rescale_option == RescaleOption.YES:
+            elif self.rescale_option == RescaleOption.YES:
                 idx = int(len(sorted_data) * ROBUST_FACTOR)
                 robust_minimum = np.partition(sorted_data, idx)[idx]
                 result = pixel_data.copy()
@@ -796,31 +732,42 @@ class IlluminationCalculation:
         runtime_profiler.log(
             "cic_scaling",
             time.perf_counter() - phase_started_at,
-            function=self.function_name,
-            method=rescale_option.value,
+            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
+            method=self.rescale_option.value,
         )
         return result
 
-    def stats(
+    def calculate_payload(
         self,
-        request: IlluminationCalculationRequest,
-        output_image: np.ndarray,
-    ) -> IlluminationStats:
-        phase_started_at = time.perf_counter()
-        stats = IlluminationStats(
-            slice_index=request.slice_index,
-            min_value=float(np.min(output_image)),
-            max_value=float(np.max(output_image)),
-            mean_value=float(np.mean(output_image)),
-            calculation_type=request.intensity_choice.value,
-            smoothing_method=request.smoothing_method.value,
+        metadata: ImagePayloadMetadata,
+    ) -> IlluminationCalculationResult:
+        if self.is_multi_image_stack and not self.calculation_scope.uses_all_images:
+            slice_results = [
+                self.for_stack_slice(slice_index).calculate()
+                for slice_index in range(self.image_data.shape[0])
+            ]
+            illumination_stack = np.stack(
+                [result[0] for result in slice_results],
+                axis=0,
+            ).astype(np.float32)
+            return (
+                RuntimeImagePayloadContext(
+                    illumination_stack,
+                    mask=self.mask_for_output(illumination_stack),
+                    metadata=metadata,
+                ).payload(),
+                [result[1] for result in slice_results],
+            )
+
+        illumination, stats = self.calculate()
+        return (
+            RuntimeImagePayloadContext(
+                illumination,
+                mask=self.mask_for_output(illumination),
+                metadata=metadata,
+            ).payload(),
+            stats,
         )
-        runtime_profiler.log(
-            "cic_stats",
-            time.perf_counter() - phase_started_at,
-            function=self.function_name,
-        )
-        return stats
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
@@ -861,7 +808,7 @@ def correct_illumination_calculate(
     calculation_scope: CalculationScope | str = CalculationScope.EACH,
     convex_hull_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     rank_median_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[np.ndarray, IlluminationStats]:
+) -> IlluminationCalculationResult:
     """Calculate an illumination correction function."""
     intensity_choice = coerce_cellprofiler_enum(IntensityChoice, intensity_choice)
     rescale_option = coerce_cellprofiler_enum(RescaleOption, rescale_option)
@@ -875,13 +822,12 @@ def correct_illumination_calculate(
     )
 
     pixel_data = np.asarray(image_payload_data(image))
-    illumination_mask = IlluminationMask(image_payload_mask(image), pixel_data)
-    mask = illumination_mask.normalized
+    raw_mask = image_payload_mask(image)
     metadata = image_payload_metadata(image).without_unit_interval_intensity_scale()
 
     request = IlluminationCalculationRequest(
-        pixel_data=pixel_data,
-        mask=mask,
+        image_data=pixel_data,
+        mask=None if raw_mask is None else np.asarray(raw_mask, dtype=bool),
         intensity_choice=intensity_choice,
         dilate_objects=dilate_objects,
         object_dilation_radius=object_dilation_radius,
@@ -903,40 +849,7 @@ def correct_illumination_calculate(
         convex_hull_backend_provider=convex_hull_backend_provider,
         rank_median_backend_provider=rank_median_backend_provider,
     )
-    calculation = IlluminationCalculation()
-
-    if request.is_multi_image_stack and not request.calculation_scope.uses_all_images:
-        slice_results = [
-            calculation.calculate(
-                request.for_stack_slice(
-                    slice_index,
-                    illumination_mask.for_stack_slice(slice_index),
-                )
-            )
-            for slice_index in range(pixel_data.shape[0])
-        ]
-        illumination_stack = np.stack(
-            [result[0] for result in slice_results],
-            axis=0,
-        ).astype(np.float32)
-        return (
-            image_payload_with_context(
-                illumination_stack,
-                mask=illumination_mask.for_output(illumination_stack),
-                metadata=metadata,
-            ),
-            [result[1] for result in slice_results],
-        )
-
-    illumination, stats = calculation.calculate(request)
-    return (
-        image_payload_with_context(
-            illumination,
-            mask=illumination_mask.for_output(illumination),
-            metadata=metadata,
-        ),
-        stats,
-    )
+    return request.calculate_payload(metadata)
 
 
 def _prepare_correct_illumination_calculate() -> None:
@@ -982,7 +895,7 @@ correct_illumination_calculate.__openhcs_prepare__ = (
 
 @numpy
 def correct_illumination_apply(
-    image: np.ndarray,
+    image: ImagePayloadMetadataInput,
     method: (
         IlluminationCorrectionMethod
         | str
@@ -990,7 +903,7 @@ def correct_illumination_apply(
     ) = IlluminationCorrectionMethod.DIVIDE,
     truncate_low: bool | tuple[bool, ...] = True,
     truncate_high: bool | tuple[bool, ...] = True,
-) -> np.ndarray | tuple[np.ndarray, ...]:
+) -> RuntimeArrayData | tuple[RuntimeArrayData, ...]:
     """Apply illumination correction to stacked image/function pairs."""
     source = IlluminationCorrectionInputStack.from_image(image)
     settings = IlluminationCorrectionSettingSequence.from_settings(
@@ -999,10 +912,8 @@ def correct_illumination_apply(
         truncate_high,
         source.pair_count,
     )
-    correction = IlluminationCorrection()
     outputs = tuple(
-        correction.apply_pair(
-            source,
+        source.apply_pair(
             pair_index,
             method=settings.methods[pair_index],
             truncate_low=settings.truncate_low[pair_index],
@@ -1035,152 +946,121 @@ def _prepare_correct_illumination_apply() -> None:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class SmoothingFilterSizeRequest:
-    """Inputs needed to derive a smoothing filter size."""
-
-    image_shape: tuple[int, ...]
-    object_width: int
-    manual_filter_size: int
-
-
-class SmoothingFilterSizeStrategy(ABC, metaclass=AutoRegisterMeta):
+class SmoothingFilterSizeStrategy(
+    EnumKeyedStrategyMixin[FilterSizeMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal filter-size derivation for one closed CellProfiler mode."""
 
-    __registry_key__ = "method_label"
-    __skip_if_no_key__ = True
-    method_label: ClassVar[str | None] = None
+    __enum_member_attr__ = "method"
     method: ClassVar[FilterSizeMethod | None] = None
 
-    @classmethod
-    def for_method(
-        cls,
-        method: FilterSizeMethod,
-    ) -> "SmoothingFilterSizeStrategy":
-        return cls.__registry__[method.value]()
-
     @abstractmethod
-    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+    def calculate(self, request: IlluminationCalculationRequest) -> float:
         """Return the smoothing filter size."""
 
 
 class ManualSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
     method = FilterSizeMethod.MANUALLY
-    method_label = method.value
 
-    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+    def calculate(self, request: IlluminationCalculationRequest) -> float:
         return float(request.manual_filter_size)
 
 
 class ObjectWidthSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
     method = FilterSizeMethod.OBJECT_SIZE
-    method_label = method.value
 
-    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+    def calculate(self, request: IlluminationCalculationRequest) -> float:
         return request.object_width * 2.35 / 3.5
 
 
 class AutomaticSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
     method = FilterSizeMethod.AUTOMATIC
-    method_label = method.value
 
-    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
-        return min(30.0, float(np.max(request.image_shape)) / 40.0)
-
-
-@dataclass(frozen=True, slots=True)
-class SmoothingPlaneRequest:
-    """Authoritative smoothing context for illumination background estimation."""
-
-    pixel_data: np.ndarray
-    mask: np.ndarray | None
-    smoothing_method: SmoothingMethod
-    filter_size: float
-    spline_bg_mode: SplineBgMode
-    spline_points: int
-    spline_threshold: float
-    spline_rescale: float
-    spline_max_iterations: int
-    spline_convergence: float
-    automatic_splines: bool
-    morphology: object
-    convex_hull_backend_provider: CellProfilerBackendProvider | None
-    rank_median_backend_provider: CellProfilerBackendProvider | None
-
-    @property
-    def sigma(self) -> float:
-        return self.filter_size / 2.35
+    def calculate(self, request: IlluminationCalculationRequest) -> float:
+        return min(30.0, float(np.max(request.spatial_image_shape)) / 40.0)
 
 
-class SmoothingPlaneStrategy(ABC, metaclass=AutoRegisterMeta):
+class SmoothingPlaneStrategy(
+    EnumKeyedStrategyMixin[SmoothingMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal smoothing implementation for one closed CellProfiler mode."""
 
-    __registry_key__ = "method_label"
-    __skip_if_no_key__ = True
-    method_label: ClassVar[str | None] = None
+    __enum_member_attr__ = "method"
     method: ClassVar[SmoothingMethod | None] = None
 
-    @classmethod
-    def for_method(cls, method: SmoothingMethod) -> "SmoothingPlaneStrategy":
-        return cls.__registry__[method.value]()
-
     @abstractmethod
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
         """Return the smoothed illumination plane."""
-
-
-class HelperBackedSmoothingPlaneStrategy(SmoothingPlaneStrategy):
-    """Template for smoothing modes implemented by one helper authority."""
-
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        return self._smooth_with_helper(request)
-
-    @abstractmethod
-    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        """Delegate to the concrete helper without exposing child identity."""
 
 
 class NoSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.NONE
-    method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        return request.pixel_data
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        del request, filter_size
+        return pixel_data
 
 
-class FitPolynomialSmoothingPlaneStrategy(HelperBackedSmoothingPlaneStrategy):
+class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.FIT_POLYNOMIAL
-    method_label = method.value
 
-    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        del filter_size
         return fit_polynomial_surface(
-            request.pixel_data,
+            pixel_data,
             request.mask,
         )
 
 
-class GaussianFilterSmoothingPlaneStrategy(HelperBackedSmoothingPlaneStrategy):
+class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.GAUSSIAN_FILTER
-    method_label = method.value
 
-    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        return IlluminationGaussianFilter(
-            request.pixel_data,
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        return illumination_gaussian_filter(
+            pixel_data,
             request.mask,
-            request.sigma,
-        ).apply()
+            filter_size / 2.35,
+        )
 
 
 class MedianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.MEDIAN_FILTER
-    method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        filter_sigma = max(1, int(request.sigma + 0.5))
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        filter_sigma = max(1, int(filter_size / 2.35 + 0.5))
         return RankMedianSmoothingBackendStrategy.for_memory_type(
             backend_provider=request.rank_median_backend_provider,
         ).smooth_background_plane(
-            request.pixel_data,
+            pixel_data,
             mask=request.mask,
             radius=filter_sigma,
             morphology=request.morphology,
@@ -1189,43 +1069,56 @@ class MedianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
 
 class AverageSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.TO_AVERAGE
-    method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        del filter_size
         if request.mask is not None:
-            mean_val = np.mean(request.pixel_data[request.mask])
+            mean_val = np.mean(pixel_data[request.mask])
         else:
-            mean_val = np.mean(request.pixel_data)
+            mean_val = np.mean(pixel_data)
         return np.full(
-            request.pixel_data.shape,
+            pixel_data.shape,
             mean_val,
-            dtype=request.pixel_data.dtype,
+            dtype=pixel_data.dtype,
         )
 
 
-class ConvexHullSmoothingPlaneStrategy(HelperBackedSmoothingPlaneStrategy):
+class ConvexHullSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.CONVEX_HULL
-    method_label = method.value
 
-    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
         return ConvexHullSmoothingBackendStrategy.for_memory_type(
             backend_provider=request.convex_hull_backend_provider,
         ).smooth_background_plane(
-            request.pixel_data,
+            pixel_data,
             mask=request.mask,
-            filter_size=request.filter_size,
+            filter_size=filter_size,
             morphology=request.morphology,
         )
 
 
 class SplinesSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.SPLINES
-    method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        del filter_size
         from scipy.interpolate import RectBivariateSpline
 
-        pixel_data = request.pixel_data
         h, w = pixel_data.shape
         if request.automatic_splines:
             shortest_side = min(h, w)
@@ -1412,7 +1305,7 @@ class ConvexHullSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         filter_size: float,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         """Return a smoothed illumination background plane."""
 
@@ -1452,7 +1345,7 @@ class RankMedianSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         radius: int,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         """Return a rank-median smoothed illumination background plane."""
 
@@ -1523,7 +1416,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         radius: int,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         image = np.asarray(pixel_data, dtype=np.float32)
         if image.ndim != 2:
@@ -1618,7 +1511,7 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         radius: int,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         image = np.asarray(pixel_data, dtype=np.float32)
         projected_mask = project_image_mask_to_data_domain(mask, image)
@@ -1709,7 +1602,7 @@ class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         filter_size: float,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         del filter_size, morphology
         import centrosome.cpmorphology
@@ -1759,7 +1652,7 @@ class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         filter_size: float,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         del morphology
         from scipy.ndimage import grey_dilation, grey_erosion, maximum_filter
@@ -1814,7 +1707,7 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         filter_size: float,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         del filter_size
         image = np.asarray(pixel_data, dtype=np.float32)
@@ -1875,7 +1768,7 @@ class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         *,
         mask: np.ndarray | None,
         filter_size: float,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> np.ndarray:
         del filter_size
         return _native_exact_level_set_convex_hull_smoothing(
@@ -1888,7 +1781,7 @@ class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 def _native_exact_level_set_convex_hull_smoothing(
     image: np.ndarray,
     mask: np.ndarray | None,
-    morphology: object,
+    morphology: MorphologyBackendStrategy,
 ) -> np.ndarray:
     if image.ndim != 2:
         raise NotImplementedError(
@@ -1937,7 +1830,7 @@ class CellProfilerMaskedGreyMorphology:
     @classmethod
     def for_convex_hull(
         cls,
-        morphology: object,
+        morphology: MorphologyBackendStrategy,
     ) -> "CellProfilerMaskedGreyMorphology":
         """Build CP's radius-2 disk morphology for convex-hull smoothing."""
         return cls(np.asarray(morphology.disk_footprint(2), dtype=bool))
@@ -2240,7 +2133,9 @@ def _paint_convex_hull(
 
     area2 = 0
     for index in range(hull_count):
-        next_index = 0 if index == hull_count - 1 else index + 1
+        next_index = index + 1
+        if next_index == hull_count:
+            next_index = 0
         area2 += hull_x[index] * hull_y[next_index]
         area2 -= hull_x[next_index] * hull_y[index]
     positive_orientation = area2 >= 0
@@ -2259,7 +2154,9 @@ def _paint_convex_hull(
             query_col2 = x * 2
             inside = True
             for index in range(hull_count):
-                next_index = 0 if index == hull_count - 1 else index + 1
+                next_index = index + 1
+                if next_index == hull_count:
+                    next_index = 0
                 cross = _cross_points(
                     hull_x[index],
                     hull_y[index],
@@ -2630,7 +2527,10 @@ def _rank_median_uint16_2d_numba(
                 yy = y + offsets_y[offset_index]
                 xx = x + offsets_x[offset_index]
                 if 0 <= yy < height and 0 <= xx < width:
-                    values[count] = image[yy, xx] if mask[yy, xx] else 0
+                    if mask[yy, xx]:
+                        values[count] = image[yy, xx]
+                    else:
+                        values[count] = np.uint16(0)
                     count += 1
             output[y, x] = _select_uint16(values, count, count // 2)
     return output
@@ -2687,14 +2587,10 @@ __all__ = public_names_from_objects(
     FilterSizeMethod,
     FitPolynomialSmoothingPlaneStrategy,
     GaussianFilterSmoothingPlaneStrategy,
-    IlluminationCorrection,
     IlluminationCorrectionInputStack,
     IlluminationCorrectionMethod,
-    IlluminationCorrectionRequest,
     IlluminationCorrectionSettingSequence,
     IlluminationCorrectionStrategy,
-    IlluminationGaussianFilter,
-    IlluminationMask,
     IlluminationStats,
     IntensityChoice,
     LegacyFastNumpyConvexHullSmoothingBackendStrategy,
@@ -2707,15 +2603,12 @@ __all__ = public_names_from_objects(
     ObjectWidthSmoothingFilterSizeStrategy,
     RankMedianSmoothingBackendStrategy,
     RescaleOption,
-    SmoothingFilterSizeRequest,
     SmoothingFilterSizeStrategy,
     SmoothingMethod,
-    SmoothingPlaneRequest,
     SmoothingPlaneStrategy,
     SplineBgMode,
     SplinesSmoothingPlaneStrategy,
     SubtractIlluminationCorrectionStrategy,
-    coerce_illumination_enum,
     correct_illumination_apply,
     correct_illumination_calculate,
     fit_polynomial_surface,

@@ -109,7 +109,7 @@ class CellProfilerFunctionCatalog:
     @classmethod
     def get_function(cls, name: str) -> Callable[..., Any]:
         """Return one exported CellProfiler-compatible processing function."""
-        return CELLPROFILER_FUNCTIONS[name]
+        return _cellprofiler_function(name)
 
     @classmethod
     def require_function(
@@ -210,6 +210,8 @@ class _LazyCellProfilerFunctionMapping(Mapping[str, Any]):
         return _cellprofiler_function_maps()[self._index]
 
     def __getitem__(self, key: str) -> Any:
+        if self._index == 0:
+            return _cellprofiler_function(key)
         return self._mapping[key]
 
     def __iter__(self):
@@ -270,6 +272,7 @@ def _make_processing_wrapper(
     return wrapper
 
 
+@lru_cache(maxsize=1)
 def _default_module_names_by_function_name() -> dict[str, str]:
     """Map each declared function to the CellProfiler module that owns it."""
     default_modules: dict[str, str] = {}
@@ -286,6 +289,34 @@ def _default_module_names_by_function_name() -> dict[str, str]:
     return default_modules
 
 
+@lru_cache(maxsize=None)
+def _cellprofiler_function(function_name: str) -> Callable[..., Any]:
+    """Return one absorbed function wrapper without loading the full catalog."""
+    if function_name not in function_inventory():
+        raise KeyError(function_name)
+    location = function_inventory()[function_name]
+    module_name = _default_module_names_by_function_name().get(
+        function_name,
+        location.module_stem,
+    )
+    absorbed_function = _function_from_inventory(function_name)
+    contract = _declared_processing_contract(
+        module_name,
+        function_name,
+        absorbed_function,
+    )
+    if contract is None:
+        raise KeyError(function_name)
+    return _STABLE_CELLPROFILER_FUNCTIONS.setdefault(
+        function_name,
+        _make_processing_wrapper(
+            module_name=module_name,
+            func=absorbed_function,
+            contract=contract,
+        ),
+    )
+
+
 def _function_from_inventory(function_name: str) -> Callable[..., Any]:
     location = function_inventory()[function_name]
     module = importlib.import_module(location.module_name)
@@ -300,27 +331,12 @@ def _function_from_inventory(function_name: str) -> Callable[..., Any]:
 
 def _load_cellprofiler_functions() -> tuple[dict[str, Callable[..., Any]], dict[str, str]]:
     functions: dict[str, Callable[..., Any]] = {}
-    default_modules = _default_module_names_by_function_name()
-    for function_name, location in function_inventory().items():
-        module_name = default_modules.get(function_name, location.module_stem)
-        absorbed_function = _function_from_inventory(function_name)
-
-        contract = _declared_processing_contract(
-            module_name,
-            function_name,
-            absorbed_function,
-        )
-        if contract is None:
+    for function_name in function_inventory():
+        try:
+            function = _cellprofiler_function(function_name)
+        except KeyError:
             continue
-        wrapped_function = _STABLE_CELLPROFILER_FUNCTIONS.setdefault(
-            function_name,
-            _make_processing_wrapper(
-                module_name=module_name,
-                func=absorbed_function,
-                contract=contract,
-            ),
-        )
-        functions[wrapped_function.__name__] = wrapped_function
+        functions[function.__name__] = function
     return functions, {}
 
 

@@ -32,18 +32,17 @@ from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     ObjectIntensityDistributionMeasurementFeature,
     indexed_object_intensity_distribution_feature_name,
-    dense_object_label_id_domain,
-    dense_object_label_extent_id_domain,
+    dense_object_label_declared_or_extent_id_domain,
 )
 from openhcs.core.runtime_values import (
     ColumnarRows,
-    DenseObjectLabelPlaneDomainStack,
-    DenseObjectLabelSliceStack,
+    DenseObjectLabelPlaneDomainStackRequest,
+    DenseObjectLabelSliceStackRequest,
     ObjectLabelValue,
     image_payload_data,
     object_label_dense_array,
 )
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_row_materialization import (
     ConcatenatedColumnarRows,
     MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
 )
@@ -72,6 +71,8 @@ from openhcs.processing.backends.cellprofiler.secondary import (
 )
 from openhcs.processing.backends.cellprofiler.zernike import (
     IntensityZernikeMeasurementRowsRequest,
+    ObjectIntensityZernikeMeasurementColumnarRows,
+    intensity_zernike_moments_batch,
 )
 from openhcs.processing.materialization import csv_materializer
 
@@ -217,7 +218,7 @@ class IntensityDistributionPlaneInputs:
     """2D image/label plane consumed by intensity-distribution measurement."""
 
     image: np.ndarray
-    labels: object
+    labels: ObjectLabelValue | np.ndarray
 
     def arrays(self) -> tuple[np.ndarray, np.ndarray]:
         label_array = object_label_dense_array(self.labels, dtype=np.int32)
@@ -234,7 +235,7 @@ class IntensityDistributionSliceInputs:
     """Runtime-aligned image/label slices for intensity-distribution measurement."""
 
     image: np.ndarray
-    labels: object
+    labels: ObjectLabelValue | np.ndarray
 
     @property
     def image_array(self) -> np.ndarray:
@@ -247,17 +248,20 @@ class IntensityDistributionSliceInputs:
 
     def slices(self) -> tuple["IntensityDistributionSliceInput", ...]:
         image_array = self.image_array
-        plane_domain_stack = DenseObjectLabelPlaneDomainStack.from_payload(
+        plane_domain_stack = DenseObjectLabelPlaneDomainStackRequest(
             self.labels,
             dtype=np.int32,
             allow_single_plane=image_array.ndim == 2,
             collapse_repeated=image_array.ndim == 2,
-        )
+        ).stack()
         if image_array.ndim == 2 and plane_domain_stack is not None:
             return tuple(
                 IntensityDistributionSliceInput(
                     image=image_array,
-                    labels=plane_domain_stack.plane(plane_index),
+                    labels=np.asarray(
+                        plane_domain_stack.labels[plane_index],
+                        dtype=np.int32,
+                    ),
                     slice_index=plane_index,
                     object_domain=plane_domain_stack.object_id_domains[plane_index],
                 )
@@ -271,17 +275,20 @@ class IntensityDistributionSliceInputs:
             return tuple(
                 IntensityDistributionSliceInput(
                     image=image_array[plane_index],
-                    labels=plane_domain_stack.plane(plane_index),
+                    labels=np.asarray(
+                        plane_domain_stack.labels[plane_index],
+                        dtype=np.int32,
+                    ),
                     slice_index=plane_index,
                     object_domain=plane_domain_stack.object_id_domains[plane_index],
                 )
                 for plane_index in range(plane_domain_stack.plane_count)
             )
-        label_stack = DenseObjectLabelSliceStack.from_payload(
+        label_stack = DenseObjectLabelSliceStackRequest(
             self.labels,
             slice_count=self.slice_count,
             dtype=np.int32,
-        )
+        ).stack()
         if label_stack is None:
             image_2d, labels_2d = IntensityDistributionPlaneInputs(
                 image_array,
@@ -292,11 +299,12 @@ class IntensityDistributionSliceInputs:
                     image=image_2d,
                     labels=labels_2d,
                     slice_index=0,
+                    object_domain=intensity_distribution_object_domain(labels_2d),
                 ),
             )
         if image_array.ndim == 3:
             return tuple(
-                IntensityDistributionSliceInput(
+                IntensityDistributionSliceInput.from_aligned_arrays(
                     image=image_array[slice_index],
                     labels=label_stack.slice(slice_index),
                     slice_index=slice_index,
@@ -304,7 +312,7 @@ class IntensityDistributionSliceInputs:
                 for slice_index in range(self.slice_count)
             )
         return (
-            IntensityDistributionSliceInput(
+            IntensityDistributionSliceInput.from_aligned_arrays(
                 image=image_array,
                 labels=label_stack.slice(0),
                 slice_index=0,
@@ -317,10 +325,25 @@ class IntensityDistributionSliceInput:
     """One aligned 2D image/label slice."""
 
     image: np.ndarray
-    labels: object
+    labels: np.ndarray
     slice_index: int
-    object_domain: tuple[int, ...] | None = None
+    object_domain: tuple[int, ...]
     row_identity: MeasurementObjectRowIdentity | None = None
+
+    @classmethod
+    def from_aligned_arrays(
+        cls,
+        *,
+        image: np.ndarray,
+        labels: ObjectLabelValue | np.ndarray,
+        slice_index: int,
+    ) -> "IntensityDistributionSliceInput":
+        return cls(
+            image=image,
+            labels=np.asarray(object_label_dense_array(labels, dtype=np.int32)),
+            slice_index=slice_index,
+            object_domain=intensity_distribution_object_domain(labels),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,14 +361,55 @@ class RadialDistributionMeasureRequest:
     wants_scaled: bool
     maximum_radius: int
 
-    @property
-    def object_count(self) -> int:
-        labels_array = np.asarray(self.labels)
-        return int(labels_array.max()) if labels_array.size else 0
+    def arrays(
+        self,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+    ]:
+        """Return validated dense arrays for radial backend execution."""
+        image_array = np.ascontiguousarray(self.image, dtype=np.float64)
+        labels_array = np.ascontiguousarray(self.labels, dtype=np.int32)
+        d_to_edge_array = np.ascontiguousarray(self.d_to_edge, dtype=np.float64)
+        d_from_center_array = np.ascontiguousarray(
+            self.d_from_center,
+            dtype=np.float64,
+        )
+        center_labels_array = np.ascontiguousarray(
+            self.center_labels,
+            dtype=np.int32,
+        )
+        centers_i_array = np.ascontiguousarray(self.centers_i, dtype=np.float64)
+        centers_j_array = np.ascontiguousarray(self.centers_j, dtype=np.float64)
 
-    @property
-    def n_bins(self) -> int:
-        return int(self.bin_count) if self.wants_scaled else int(self.bin_count) + 1
+        if image_array.ndim != 2 or labels_array.ndim != 2:
+            raise NotImplementedError(
+                "CellProfiler radial intensity distribution currently supports "
+                f"2-D NumPy planes, got image {image_array.shape!r} and labels "
+                f"{labels_array.shape!r}."
+            )
+        if labels_array.shape != image_array.shape:
+            raise ValueError(
+                "Radial distribution labels must match the image shape; got "
+                f"labels {labels_array.shape!r} for image {image_array.shape!r}."
+            )
+        if self.bin_count <= 0:
+            raise ValueError(f"bin_count must be positive, got {self.bin_count!r}.")
+
+        return (
+            image_array,
+            labels_array,
+            d_to_edge_array,
+            d_from_center_array,
+            center_labels_array,
+            centers_i_array,
+            centers_j_array,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,11 +428,7 @@ class IntensityDistributionMeasurementRequest:
 
     def rows(self) -> ColumnarRows:
         labels_2d = self.slice_input.labels
-        object_ids = (
-            self.slice_input.object_domain
-            if self.slice_input.object_domain is not None
-            else intensity_distribution_object_domain(labels_2d)
-        )
+        object_ids = self.slice_input.object_domain
         if not object_ids:
             return ObjectIntensityDistributionMeasurementColumnarRows.empty()
 
@@ -429,7 +489,7 @@ class IntensityDistributionMeasurementRequest:
         return measurements
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumnarRows):
     """Columnar radial intensity-distribution rows."""
 
@@ -458,7 +518,7 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
     def __post_init__(self) -> None:
         object_ids = np.asarray(tuple(int(object_id) for object_id in self.object_ids))
         if object_ids.size == 0:
-            object.__setattr__(self, "_columns", MappingProxyType({}))
+            self._columns = MappingProxyType({})
             return
 
         row_count = int(object_ids.size) * int(self.radial_arrays.n_bins) * 3
@@ -538,7 +598,7 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
                 self.row_identity.value,
                 dtype=object,
             )
-        object.__setattr__(self, "_columns", MappingProxyType(columns))
+        self._columns = MappingProxyType(columns)
 
     @property
     def columns(self) -> Mapping[str, Sequence[Any]]:
@@ -590,38 +650,8 @@ class RadialDistributionBackendStrategy(
             backend_provider=self.center_propagation_backend_provider,
         )
 
-    def measure(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        d_to_edge: np.ndarray,
-        d_from_center: np.ndarray,
-        center_labels: np.ndarray,
-        centers_i: np.ndarray,
-        centers_j: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
-    ) -> RadialDistributionArrays:
-        """Return radial-distribution arrays for one image plane."""
-        return self._measure_request(
-            RadialDistributionMeasureRequest(
-                image=image,
-                labels=labels,
-                d_to_edge=d_to_edge,
-                d_from_center=d_from_center,
-                center_labels=center_labels,
-                centers_i=centers_i,
-                centers_j=centers_j,
-                bin_count=bin_count,
-                wants_scaled=wants_scaled,
-                maximum_radius=maximum_radius,
-            )
-        )
-
     @abstractmethod
-    def _measure_request(
+    def measure(
         self,
         request: RadialDistributionMeasureRequest,
     ) -> RadialDistributionArrays:
@@ -656,16 +686,18 @@ class RadialDistributionBackendStrategy(
         )
 
         return self.measure(
-            image,
-            labels_array,
-            d_to_edge_array,
-            center_fields.d_from_center,
-            center_fields.center_labels,
-            center_fields.centers_i,
-            center_fields.centers_j,
-            bin_count=bin_count,
-            wants_scaled=wants_scaled,
-            maximum_radius=maximum_radius,
+            RadialDistributionMeasureRequest(
+                image=image,
+                labels=labels_array,
+                d_to_edge=d_to_edge_array,
+                d_from_center=center_fields.d_from_center,
+                center_labels=center_fields.center_labels,
+                centers_i=center_fields.centers_i,
+                centers_j=center_fields.centers_j,
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
+                maximum_radius=maximum_radius,
+            )
         )
 
     def measure_self_centered(
@@ -687,16 +719,18 @@ class RadialDistributionBackendStrategy(
             )
         geometry = self.label_geometry(labels_array)
         return self.measure(
-            image,
-            labels_array,
-            geometry.d_to_edge,
-            geometry.center_fields.d_from_center,
-            geometry.center_fields.center_labels,
-            geometry.center_fields.centers_i,
-            geometry.center_fields.centers_j,
-            bin_count=bin_count,
-            wants_scaled=wants_scaled,
-            maximum_radius=maximum_radius,
+            RadialDistributionMeasureRequest(
+                image=image,
+                labels=labels_array,
+                d_to_edge=geometry.d_to_edge,
+                d_from_center=geometry.center_fields.d_from_center,
+                center_labels=geometry.center_fields.center_labels,
+                centers_i=geometry.center_fields.centers_i,
+                centers_j=geometry.center_fields.centers_j,
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
+                maximum_radius=maximum_radius,
+            )
         )
 
     def center_distance_fields(
@@ -827,34 +861,25 @@ class NativeNumpyRadialDistributionBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = False
 
-    def _measure_request(
+    def measure(
         self,
         request: RadialDistributionMeasureRequest,
     ) -> RadialDistributionArrays:
-        image_array = np.asarray(request.image, dtype=np.float64)
-        labels_array = np.asarray(request.labels, dtype=np.int32)
-        d_to_edge_array = np.asarray(request.d_to_edge, dtype=np.float64)
-        d_from_center_array = np.asarray(request.d_from_center, dtype=np.float64)
-        center_labels_array = np.asarray(request.center_labels, dtype=np.int32)
-        centers_i_array = np.asarray(request.centers_i, dtype=np.float64)
-        centers_j_array = np.asarray(request.centers_j, dtype=np.float64)
-
-        if image_array.ndim != 2 or labels_array.ndim != 2:
-            raise NotImplementedError(
-                "CellProfiler radial intensity distribution currently supports "
-                f"2-D NumPy planes, got image {image_array.shape!r} and labels "
-                f"{labels_array.shape!r}."
-            )
-        if labels_array.shape != image_array.shape:
-            raise ValueError(
-                "Radial distribution labels must match the image shape; got "
-                f"labels {labels_array.shape!r} for image {image_array.shape!r}."
-            )
-        if request.bin_count <= 0:
-            raise ValueError(f"bin_count must be positive, got {request.bin_count!r}.")
-
-        object_count = request.object_count
-        n_bins = request.n_bins
+        (
+            image_array,
+            labels_array,
+            d_to_edge_array,
+            d_from_center_array,
+            center_labels_array,
+            centers_i_array,
+            centers_j_array,
+        ) = request.arrays()
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        n_bins = (
+            int(request.bin_count)
+            if request.wants_scaled
+            else int(request.bin_count) + 1
+        )
         if object_count <= 0:
             return RadialDistributionArrays.empty(
                 bin_count=request.bin_count,
@@ -976,40 +1001,25 @@ class NumbaNumpyRadialDistributionBackendStrategy(
             maximum_radius=100,
         )
 
-    def _measure_request(
+    def measure(
         self,
         request: RadialDistributionMeasureRequest,
     ) -> RadialDistributionArrays:
-        image_array = np.ascontiguousarray(request.image, dtype=np.float64)
-        labels_array = np.ascontiguousarray(request.labels, dtype=np.int32)
-        d_to_edge_array = np.ascontiguousarray(request.d_to_edge, dtype=np.float64)
-        d_from_center_array = np.ascontiguousarray(
-            request.d_from_center,
-            dtype=np.float64,
+        (
+            image_array,
+            labels_array,
+            d_to_edge_array,
+            d_from_center_array,
+            center_labels_array,
+            centers_i_array,
+            centers_j_array,
+        ) = request.arrays()
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        n_bins = (
+            int(request.bin_count)
+            if request.wants_scaled
+            else int(request.bin_count) + 1
         )
-        center_labels_array = np.ascontiguousarray(
-            request.center_labels,
-            dtype=np.int32,
-        )
-        centers_i_array = np.ascontiguousarray(request.centers_i, dtype=np.float64)
-        centers_j_array = np.ascontiguousarray(request.centers_j, dtype=np.float64)
-
-        if image_array.ndim != 2 or labels_array.ndim != 2:
-            raise NotImplementedError(
-                "CellProfiler radial intensity distribution currently supports "
-                f"2-D NumPy planes, got image {image_array.shape!r} and labels "
-                f"{labels_array.shape!r}."
-            )
-        if labels_array.shape != image_array.shape:
-            raise ValueError(
-                "Radial distribution labels must match the image shape; got "
-                f"labels {labels_array.shape!r} for image {image_array.shape!r}."
-            )
-        if request.bin_count <= 0:
-            raise ValueError(f"bin_count must be positive, got {request.bin_count!r}.")
-
-        object_count = request.object_count
-        n_bins = request.n_bins
         if object_count <= 0:
             return RadialDistributionArrays.empty(
                 bin_count=request.bin_count,
@@ -1259,108 +1269,9 @@ def measure_object_intensity_distribution(
     return image, measurements
 
 
-def measure_object_intensity_distribution_batch(
-    func: Callable[..., Any],
-    requests: tuple[RuntimeBatchInvocationRequest, ...],
-    execute_request: Callable[[Callable[..., Any], RuntimeBatchInvocationRequest], Any],
-) -> list[Any]:
-    """Batch measurement-image invocations sharing one label geometry contract."""
-    if len(requests) <= 1:
-        return [execute_request(func, request) for request in requests]
-
-    slice_input_by_request: list[IntensityDistributionSliceInput] = []
-    for request in requests:
-        labels = request.kwargs.get("labels")
-        if labels is None:
-            return [execute_request(func, item) for item in requests]
-        slice_inputs = IntensityDistributionSliceInputs(
-            np.asarray(image_payload_data(request.image)),
-            labels,
-        ).slices()
-        if len(slice_inputs) != 1:
-            return [execute_request(func, item) for item in requests]
-        slice_input_by_request.append(slice_inputs[0])
-
-    first_labels = slice_input_by_request[0].labels
-    if any(
-        slice_input.labels.shape != first_labels.shape
-        or not np.array_equal(slice_input.labels, first_labels)
-        for slice_input in slice_input_by_request[1:]
-    ):
-        return [execute_request(func, item) for item in requests]
-
-    first_kwargs = requests[0].kwargs
-    wants_zernikes = coerce_cellprofiler_enum(
-        ZernikeMode,
-        first_kwargs.get("wants_zernikes", ZernikeMode.NONE),
-    )
-    radial_backend = radial_distribution_backend(
-        backend_provider=first_kwargs.get("radial_distribution_backend_provider"),
-    )
-    geometry = radial_backend.label_geometry(first_labels)
-    outputs: list[Any] = []
-    for request, slice_input in zip(requests, slice_input_by_request, strict=True):
-        kwargs = request.kwargs
-        object_ids = (
-            slice_input.object_domain
-            if slice_input.object_domain is not None
-            else intensity_distribution_object_domain(slice_input.labels)
-        )
-        if not object_ids:
-            outputs.append((request.image, []))
-            continue
-        radial_arrays = radial_backend.measure(
-            slice_input.image,
-            first_labels,
-            geometry.d_to_edge,
-            geometry.center_fields.d_from_center,
-            geometry.center_fields.center_labels,
-            geometry.center_fields.centers_i,
-            geometry.center_fields.centers_j,
-            bin_count=int(kwargs.get("bin_count", 4)),
-            wants_scaled=bool(kwargs.get("wants_scaled", True)),
-            maximum_radius=int(kwargs.get("maximum_radius", 100)),
-        )
-        rows = ObjectIntensityDistributionMeasurementColumnarRows(
-            radial_arrays=radial_arrays,
-            object_ids=object_ids,
-            bin_count=int(kwargs.get("bin_count", 4)),
-            slice_index=slice_input.slice_index,
-            row_identity=slice_input.row_identity,
-        )
-        if wants_zernikes != ZernikeMode.NONE:
-            zernike_rows = IntensityZernikeMeasurementRowsRequest(
-                image=slice_input.image,
-                labels=first_labels,
-                max_order=int(kwargs.get("zernike_degree", 9)),
-                object_ids=object_ids,
-                include_phase=wants_zernikes
-                == ZernikeMode.MAGNITUDES_AND_PHASE,
-                slice_index=slice_input.slice_index,
-                row_identity=slice_input.row_identity,
-                backend_provider=kwargs.get("zernike_backend_provider"),
-            ).rows()
-            rows = ConcatenatedColumnarRows(
-                (
-                    rows,
-                    zernike_rows,
-                )
-            )
-        outputs.append((request.image, rows))
-    return outputs
-
-
 def intensity_distribution_object_domain(labels: object) -> tuple[int, ...]:
     """Return the object domain for CP intensity-distribution rows."""
-    if isinstance(labels, ObjectLabelValue) and (
-        labels.declared_object_count is not None
-        or bool(labels.declared_object_ids)
-        or bool(labels.declared_object_id_domains)
-    ):
-        declared_domain = dense_object_label_id_domain(labels)
-        if declared_domain:
-            return declared_domain
-    return dense_object_label_extent_id_domain(labels)
+    return dense_object_label_declared_or_extent_id_domain(labels)
 
 
 def _prepare_measure_object_intensity_distribution() -> None:
@@ -1383,6 +1294,199 @@ def _prepare_measure_object_intensity_distribution() -> None:
 measure_object_intensity_distribution.__openhcs_prepare__ = (
     _prepare_measure_object_intensity_distribution
 )
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionBatchInvocation:
+    """One batch invocation projected into the intensity-distribution slice domain."""
+
+    request: RuntimeBatchInvocationRequest
+    slice_input: IntensityDistributionSliceInput
+
+    @classmethod
+    def from_request(
+        cls,
+        request: RuntimeBatchInvocationRequest,
+    ) -> "IntensityDistributionBatchInvocation | None":
+        labels = request.kwargs.get("labels")
+        if labels is None:
+            return None
+        slice_inputs = IntensityDistributionSliceInputs(
+            np.asarray(image_payload_data(request.image)),
+            labels,
+        ).slices()
+        if len(slice_inputs) != 1:
+            return None
+        return cls(request=request, slice_input=slice_inputs[0])
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionBatchSettings:
+    """Shared scalar settings for a serial measurement-image batch."""
+
+    wants_zernikes: ZernikeMode
+    zernike_degree: int
+    zernike_backend_provider: BackendProviderInput
+    radial_distribution_backend_provider: BackendProviderInput
+
+    @classmethod
+    def from_requests(
+        cls,
+        requests: tuple[RuntimeBatchInvocationRequest, ...],
+    ) -> "IntensityDistributionBatchSettings | None":
+        first = cls.from_kwargs(requests[0].kwargs)
+        for request in requests[1:]:
+            if cls.from_kwargs(request.kwargs) != first:
+                return None
+        return first
+
+    @classmethod
+    def from_kwargs(
+        cls,
+        kwargs: Mapping[str, object],
+    ) -> "IntensityDistributionBatchSettings":
+        return cls(
+            wants_zernikes=coerce_cellprofiler_enum(
+                ZernikeMode,
+                kwargs.get("wants_zernikes", ZernikeMode.NONE),
+            ),
+            zernike_degree=int(kwargs.get("zernike_degree", 9)),
+            zernike_backend_provider=kwargs.get(
+                "zernike_backend_provider",
+                DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+            ),
+            radial_distribution_backend_provider=kwargs.get(
+                "radial_distribution_backend_provider",
+                DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionRadialSettings:
+    """Per-invocation radial settings for intensity distribution rows."""
+
+    bin_count: int
+    wants_scaled: bool
+    maximum_radius: int
+
+    @classmethod
+    def from_kwargs(
+        cls,
+        kwargs: Mapping[str, object],
+    ) -> "IntensityDistributionRadialSettings":
+        return cls(
+            bin_count=int(kwargs.get("bin_count", 4)),
+            wants_scaled=bool(kwargs.get("wants_scaled", True)),
+            maximum_radius=int(kwargs.get("maximum_radius", 100)),
+        )
+
+
+def measure_object_intensity_distribution_batch(
+    func: Callable[..., object],
+    requests: tuple[RuntimeBatchInvocationRequest, ...],
+    execute_request: Callable[
+        [Callable[..., object], RuntimeBatchInvocationRequest],
+        object,
+    ],
+) -> list[object]:
+    """Serially share label-derived Zernike work across measurement images."""
+    if len(requests) <= 1:
+        return [execute_request(func, request) for request in requests]
+
+    batch_invocations = tuple(
+        IntensityDistributionBatchInvocation.from_request(request)
+        for request in requests
+    )
+    if any(batch_invocation is None for batch_invocation in batch_invocations):
+        return [execute_request(func, request) for request in requests]
+    concrete_invocations = tuple(
+        batch_invocation
+        for batch_invocation in batch_invocations
+        if batch_invocation is not None
+    )
+    slice_inputs = tuple(
+        batch_invocation.slice_input for batch_invocation in concrete_invocations
+    )
+    first_slice = slice_inputs[0]
+    first_labels = first_slice.labels
+    first_object_domain = first_slice.object_domain
+    if any(
+        slice_input.labels.shape != first_labels.shape
+        or not np.array_equal(slice_input.labels, first_labels)
+        or slice_input.object_domain != first_object_domain
+        for slice_input in slice_inputs[1:]
+    ):
+        return [execute_request(func, request) for request in requests]
+
+    batch_settings = IntensityDistributionBatchSettings.from_requests(requests)
+    if batch_settings is None:
+        return [execute_request(func, request) for request in requests]
+
+    zernike_rows_by_request: tuple[ColumnarRows | None, ...]
+    if batch_settings.wants_zernikes == ZernikeMode.NONE or not first_object_domain:
+        zernike_rows_by_request = tuple(None for _request in requests)
+    else:
+        zernike_indexes, zernike_results = intensity_zernike_moments_batch(
+            tuple(slice_input.image for slice_input in slice_inputs),
+            first_labels,
+            np.asarray(first_object_domain, dtype=np.int32),
+            max_order=batch_settings.zernike_degree,
+            backend_provider=batch_settings.zernike_backend_provider,
+        )
+        zernike_rows_by_request = tuple(
+            ObjectIntensityZernikeMeasurementColumnarRows(
+                object_ids=first_object_domain,
+                zernike_indexes=zernike_indexes,
+                magnitudes=magnitudes,
+                phases=phases,
+                include_phase=(
+                    batch_settings.wants_zernikes
+                    == ZernikeMode.MAGNITUDES_AND_PHASE
+                ),
+                slice_index=slice_input.slice_index,
+                row_identity=slice_input.row_identity,
+            )
+            for slice_input, (magnitudes, phases) in zip(
+                slice_inputs,
+                zernike_results,
+                strict=True,
+            )
+        )
+
+    radial_backend = radial_distribution_backend(
+        backend_provider=batch_settings.radial_distribution_backend_provider,
+    )
+    outputs: list[object] = []
+    for request, slice_input, zernike_rows in zip(
+        requests,
+        slice_inputs,
+        zernike_rows_by_request,
+        strict=True,
+    ):
+        radial_settings = IntensityDistributionRadialSettings.from_kwargs(
+            request.kwargs
+        )
+        radial_arrays = radial_backend.measure_self_centered(
+            slice_input.image,
+            first_labels,
+            bin_count=radial_settings.bin_count,
+            wants_scaled=radial_settings.wants_scaled,
+            maximum_radius=radial_settings.maximum_radius,
+        )
+        measurements: ColumnarRows = ObjectIntensityDistributionMeasurementColumnarRows(
+            radial_arrays=radial_arrays,
+            object_ids=first_object_domain,
+            bin_count=radial_settings.bin_count,
+            slice_index=slice_input.slice_index,
+            row_identity=slice_input.row_identity,
+        )
+        if zernike_rows is not None:
+            measurements = ConcatenatedColumnarRows((measurements, zernike_rows))
+        outputs.append((request.image, measurements))
+    return outputs
+
+
 measurement_image_batch_executor(measure_object_intensity_distribution_batch)(
     measure_object_intensity_distribution
 )

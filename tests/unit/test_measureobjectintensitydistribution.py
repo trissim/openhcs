@@ -6,8 +6,9 @@ from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
     object_label_measurement_execution_from_callable,
 )
-from openhcs.core.runtime_artifact_queries import columnar_row_values
+from openhcs.core.measurement_row_materialization import columnar_row_values
 from openhcs.core.runtime_semantics import (
+    ObjectLabelDomain,
     ObjectLabelDomainScope,
     ObjectIntensityDistributionMeasurementFeature,
     ObjectZernikeDescriptorFeature,
@@ -21,6 +22,7 @@ from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     NumbaNumpyRadialDistributionBackendStrategy,
     ObjectIntensityDistributionMeasurementColumnarRows,
     RadialDistributionArrays,
+    RadialDistributionMeasureRequest,
     intensity_distribution_object_domain,
     measure_object_intensity_distribution,
     radial_distribution_backend,
@@ -196,7 +198,7 @@ def test_intensity_distribution_object_domain_uses_declared_payload_domain():
 
     assert intensity_distribution_object_domain(labels) == (1, 2, 3)
     assert intensity_distribution_object_domain(
-        ObjectLabelPayload(labels=labels, declared_object_count=4)
+        ObjectLabelPayload(labels=labels, domain=ObjectLabelDomain(declared_object_count=4))
     ) == (1, 2, 3, 4)
 
 
@@ -205,16 +207,18 @@ def test_radial_cv_ignores_empty_angular_wedges():
     labels = np.ones((3, 3), dtype=np.int32)
 
     radial_arrays = NativeNumpyRadialDistributionBackendStrategy().measure(
-        image,
-        labels,
-        np.zeros(labels.shape, dtype=np.float64),
-        np.zeros(labels.shape, dtype=np.float64),
-        np.ones(labels.shape, dtype=np.int32),
-        np.array([1.0], dtype=np.float64),
-        np.array([1.0], dtype=np.float64),
-        bin_count=4,
-        wants_scaled=True,
-        maximum_radius=100,
+        RadialDistributionMeasureRequest(
+            image=image,
+            labels=labels,
+            d_to_edge=np.zeros(labels.shape, dtype=np.float64),
+            d_from_center=np.zeros(labels.shape, dtype=np.float64),
+            center_labels=np.ones(labels.shape, dtype=np.int32),
+            centers_i=np.array([1.0], dtype=np.float64),
+            centers_j=np.array([1.0], dtype=np.float64),
+            bin_count=4,
+            wants_scaled=True,
+            maximum_radius=100,
+        )
     )
 
     assert radial_arrays.radial_cv_by_bin[0, 0] == 0.0
@@ -264,9 +268,9 @@ def test_measure_object_intensity_distribution_collapses_repeated_2d_plane_domai
     labels[:, 1:3, 1:3] = 1
     payload = ObjectLabelPayload(
         labels=labels,
-        declared_object_id_domains=((1, 2), (1, 2)),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (1, 2)),
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     _result, measurements = measure_object_intensity_distribution(
         image,

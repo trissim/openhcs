@@ -17,11 +17,11 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_feature_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
     MEASUREMENT_MEASUREMENT_VALUE_FIELD,
-    MEASUREMENT_OBJECT_LABEL_FIELD,
 )
+from openhcs.core.measurement_row_materialization import MEASUREMENT_OBJECT_LABEL_FIELD
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (

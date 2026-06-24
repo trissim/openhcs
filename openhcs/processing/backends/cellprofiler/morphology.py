@@ -52,7 +52,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_metadata,
     object_label_dense_array,
-    object_label_payload_with_dense_labels,
+    object_label_value_with_dense_labels,
     with_image_payload_data,
 )
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
@@ -222,7 +222,7 @@ class FillObjectHolesStrategy(FillObjectsModeStrategy):
             obj_mask = request.label_array == label_int
             filled_mask = remove_small_holes(
                 obj_mask,
-                area_threshold=int(max_hole_area),
+                max_size=int(max_hole_area),
                 connectivity=1,
             )
             filled_labels[filled_mask] = label_int
@@ -1010,7 +1010,7 @@ class HoleRemovalDiameterPolicy:
 
         result = skimage.morphology.remove_small_holes(
             self.binary_image(image),
-            area_threshold=self.threshold,
+            max_size=self.threshold,
         )
         return result.astype(np.float32)
 
@@ -4573,7 +4573,7 @@ def expand_or_shrink_objects(
     mode: ExpandShrinkMode | str = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
     iterations: int = 1,
     fill_holes: bool = True,
-) -> tuple[object, ObjectLabelPayload]:
+) -> tuple[object, ObjectLabelValue]:
     """Expand or shrink labeled objects using CellProfiler-compatible semantics."""
     labels_int = object_label_dense_array(labels, dtype=np.int32)
     operation = ExpandShrinkOperationStrategy.for_mode(mode)
@@ -4582,7 +4582,7 @@ def expand_or_shrink_objects(
         iterations=iterations,
         fill_holes=fill_holes,
     )
-    return image, object_label_payload_with_dense_labels(
+    return image, object_label_value_with_dense_labels(
         labels,
         result_labels.astype(np.int32, copy=False),
         domain_declaration=ExplicitObjectLabelDomainDeclaration(
@@ -4907,7 +4907,7 @@ class MaskObjectsOutputLabels:
             self.labels,
             domain_scope=ObjectLabelDomainScope.PLANE,
         )
-        return object_label_payload_with_dense_labels(
+        return object_label_value_with_dense_labels(
             self.source,
             self.labels,
             domain_declaration=ExplicitObjectLabelDomainDeclaration(
@@ -4995,7 +4995,7 @@ def mask_objects(
                 masked_stack,
                 domain_scope=ObjectLabelDomainScope.PLANE,
             )
-            masked_payload = object_label_payload_with_dense_labels(
+            masked_payload = object_label_value_with_dense_labels(
                 labels,
                 masked_stack,
                 domain_declaration=ExplicitObjectLabelDomainDeclaration(
@@ -5823,7 +5823,7 @@ def filter_border_objects_planewise(
         output_planes[plane_index] = filter_border_objects(
             label_planes[plane_index],
             image_mask=None if mask_planes is None else mask_planes[plane_index],
-            image_metadata=image_metadata.for_channel(plane_index),
+            image_metadata=image_metadata.for_source_plane(plane_index),
         )
     return output
 

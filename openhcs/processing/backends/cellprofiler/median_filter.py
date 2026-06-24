@@ -16,6 +16,7 @@ from openhcs.core.pipeline.function_contracts import (
     pure_2d_batch_executor,
 )
 from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -66,6 +67,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
     """NumPy/SciPy median filtering with exact accelerated rank paths."""
 
     max_vectorized_window_bytes = 1024**3
+    max_vectorized_chunk_bytes = 128 * 1024**2
     backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NATIVE,
@@ -85,12 +87,20 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         normalized_window = self.normalized_window_size(window_size)
         if normalized_window <= 1:
             return data
-        accelerated = self.rank_order_filter(data, normalized_window, mode)
-        if accelerated is not None:
-            return accelerated
-        accelerated = self.vectorized_window_filter(data, normalized_window, mode)
-        if accelerated is not None:
-            return accelerated
+        if np.issubdtype(data.dtype, np.floating):
+            accelerated = self.vectorized_window_filter(data, normalized_window, mode)
+            if accelerated is not None:
+                return accelerated
+            accelerated = self.rank_order_filter(data, normalized_window, mode)
+            if accelerated is not None:
+                return accelerated
+        else:
+            accelerated = self.rank_order_filter(data, normalized_window, mode)
+            if accelerated is not None:
+                return accelerated
+            accelerated = self.vectorized_window_filter(data, normalized_window, mode)
+            if accelerated is not None:
+                return accelerated
         if data.ndim == 2:
             accelerated_2d = self.opencv_filter_2d(data, normalized_window, mode)
             if accelerated_2d is not None:
@@ -134,10 +144,35 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
 
         pad_width = int(window_size) // 2
         padded = np.pad(image, pad_width, mode=CONSTANT_PADDING_MODE, constant_values=0)
-        windows = sliding_window_view(padded, window_shape)
-        flattened_windows = windows.reshape(image.shape + (window_volume,))
         median_rank = window_volume // 2
-        filtered = np.partition(flattened_windows, median_rank, axis=-1)[..., median_rank]
+        max_chunk_planes = max(
+            1,
+            int(
+                self.max_vectorized_chunk_bytes
+                // (image.shape[1] * image.shape[2] * window_volume * image.dtype.itemsize)
+            ),
+        )
+        if image.shape[0] <= max_chunk_planes:
+            windows = sliding_window_view(padded, window_shape)
+            flattened_windows = windows.reshape(image.shape + (window_volume,))
+            filtered = np.partition(flattened_windows, median_rank, axis=-1)[
+                ..., median_rank
+            ]
+            return filtered.astype(image.dtype, copy=False)
+
+        filtered = np.empty_like(image)
+        for z_start in range(0, image.shape[0], max_chunk_planes):
+            z_stop = min(z_start + max_chunk_planes, image.shape[0])
+            chunk = padded[z_start : z_stop + window_size - 1]
+            windows = sliding_window_view(chunk, window_shape)
+            flattened_windows = windows.reshape(
+                (z_stop - z_start, image.shape[1], image.shape[2], window_volume)
+            )
+            filtered[z_start:z_stop] = np.partition(
+                flattened_windows,
+                median_rank,
+                axis=-1,
+            )[..., median_rank]
         return filtered.astype(image.dtype, copy=False)
 
     def scipy_filter(
@@ -251,11 +286,13 @@ def medianfilter(
     mode: str = CONSTANT_PADDING_MODE,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible median filtering."""
-    return median_filter_backend().filter(
-        np.asarray(image),
+    pixel_data = image_payload_data(image)
+    filtered = median_filter_backend().filter(
+        np.asarray(pixel_data),
         window_size=int(window_size),
         mode=str(mode),
     )
+    return with_image_payload_data(image, filtered)
 
 
 pure_2d_batch_executor(median_filter_backend().filter_batch)(medianfilter)

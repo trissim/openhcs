@@ -23,7 +23,10 @@ from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.image_shapes import trailing_spatial_factors
 from openhcs.core.runtime_semantics import DenseObjectLabelConsecutiveRelabelingStrategy
-from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    object_label_dense_array,
+)
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -181,23 +184,6 @@ class WatershedInputKeyword(str, Enum):
     MASK = "mask"
 
 
-@dataclass(frozen=True, slots=True)
-class WatershedBasicDefaults:
-    """CellProfiler Watershed defaults used when advanced settings are disabled."""
-
-    seed_method: WatershedSeedMethod = WatershedSeedMethod.LOCAL
-    max_seeds: int = -1
-    min_distance: int = 1
-    min_intensity: float = 0.0
-    connectivity: int = 1
-    compactness: float = 0.0
-    watershed_line: bool = False
-    gaussian_sigma: float = 0.0
-
-
-CELLPROFILER_WATERSHED_BASIC_DEFAULTS = WatershedBasicDefaults()
-
-
 @dataclass
 class WatershedStats:
     """Watershed object-count measurement row."""
@@ -205,6 +191,17 @@ class WatershedStats:
     slice_index: int
     object_count: int
     mean_area: float
+
+
+def watershed_image_array(value: object, *, parameter_name: str) -> np.ndarray:
+    """Return concrete NumPy image data for Watershed computation."""
+    array = np.asarray(image_payload_data(value))
+    if array.ndim == 0:
+        raise TypeError(
+            f"Watershed {parameter_name} requires array-like image data, "
+            f"got {type(value).__name__}."
+        )
+    return array
 
 
 def coerce_watershed_method(value: WatershedMethod | str | None) -> WatershedMethod:
@@ -255,6 +252,17 @@ class WatershedComputationImages:
 
 @dataclass(frozen=True, slots=True)
 class WatershedParameters:
+    """Normalized Watershed settings consumed by runtime strategies."""
+
+    BASIC_SEED_METHOD: ClassVar[WatershedSeedMethod] = WatershedSeedMethod.LOCAL
+    BASIC_MAX_SEEDS: ClassVar[int] = -1
+    BASIC_MIN_DISTANCE: ClassVar[int] = 1
+    BASIC_MIN_INTENSITY: ClassVar[float] = 0.0
+    BASIC_CONNECTIVITY: ClassVar[int] = 1
+    BASIC_COMPACTNESS: ClassVar[float] = 0.0
+    BASIC_WATERSHED_LINE: ClassVar[bool] = False
+    BASIC_GAUSSIAN_SIGMA: ClassVar[float] = 0.0
+
     method: WatershedMethod
     declump_method: WatershedDeclumpMethod
     seed_method: WatershedSeedMethod
@@ -270,6 +278,92 @@ class WatershedParameters:
     watershed_line: bool
     gaussian_sigma: float
     structuring_element: np.ndarray
+
+    @classmethod
+    def basic_default_values(cls) -> dict[str, object]:
+        """Return source-verified CellProfiler basic-mode defaults."""
+        return {
+            "seed_method": cls.BASIC_SEED_METHOD,
+            "max_seeds": cls.BASIC_MAX_SEEDS,
+            "min_distance": cls.BASIC_MIN_DISTANCE,
+            "min_intensity": cls.BASIC_MIN_INTENSITY,
+            "connectivity": cls.BASIC_CONNECTIVITY,
+            "compactness": cls.BASIC_COMPACTNESS,
+            "watershed_line": cls.BASIC_WATERSHED_LINE,
+            "gaussian_sigma": cls.BASIC_GAUSSIAN_SIGMA,
+        }
+
+    @classmethod
+    def from_settings(
+        cls,
+        *,
+        image_ndim: int,
+        watershed_method: WatershedMethod | str | None,
+        declump_method: WatershedDeclumpMethod | str,
+        seed_method: WatershedSeedMethod | str,
+        use_advanced_settings: bool,
+        max_seeds: int,
+        downsample: int,
+        min_distance: int,
+        min_intensity: float,
+        footprint: int,
+        connectivity: int,
+        compactness: float,
+        exclude_border: bool,
+        watershed_line: bool,
+        gaussian_sigma: float,
+        structuring_element: StructuringElement | str,
+        structuring_element_size: int,
+    ) -> "WatershedParameters":
+        """Return the single normalized parameter contract for watershed execution."""
+        structuring_element_array = adapt_structuring_element_rank(
+            build_structuring_element(
+                coerce_cellprofiler_enum(StructuringElement, structuring_element),
+                structuring_element_size,
+            ),
+            image_ndim,
+        )
+        if structuring_element_array.ndim != image_ndim:
+            raise ValueError(
+                "Watershed structuring element dimensionality must match the image; "
+                f"got structuring element ndim={structuring_element_array.ndim} for "
+                f"image ndim={image_ndim}."
+            )
+        if not use_advanced_settings:
+            return cls(
+                method=coerce_watershed_method(watershed_method),
+                declump_method=coerce_watershed_declump_method(declump_method),
+                seed_method=cls.BASIC_SEED_METHOD,
+                use_advanced_settings=False,
+                max_seeds=cls.BASIC_MAX_SEEDS,
+                downsample=downsample,
+                min_distance=cls.BASIC_MIN_DISTANCE,
+                min_intensity=cls.BASIC_MIN_INTENSITY,
+                footprint=footprint,
+                connectivity=cls.BASIC_CONNECTIVITY,
+                compactness=cls.BASIC_COMPACTNESS,
+                exclude_border=exclude_border,
+                watershed_line=cls.BASIC_WATERSHED_LINE,
+                gaussian_sigma=cls.BASIC_GAUSSIAN_SIGMA,
+                structuring_element=structuring_element_array,
+            )
+        return cls(
+            method=coerce_watershed_method(watershed_method),
+            declump_method=coerce_watershed_declump_method(declump_method),
+            seed_method=coerce_watershed_seed_method(seed_method),
+            use_advanced_settings=True,
+            max_seeds=max_seeds,
+            downsample=downsample,
+            min_distance=min_distance,
+            min_intensity=min_intensity,
+            footprint=footprint,
+            connectivity=connectivity,
+            compactness=compactness,
+            exclude_border=exclude_border,
+            watershed_line=watershed_line,
+            gaussian_sigma=gaussian_sigma,
+            structuring_element=structuring_element_array,
+        )
 
 
 class WatershedSeedStrategy(
@@ -901,9 +995,8 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
     ) -> np.ndarray:
         from skimage.segmentation import watershed as skimage_watershed
         from skimage.segmentation import clear_border
-        from skimage.filters import gaussian
         from skimage.transform import downscale_local_mean, resize
-        from scipy.ndimage import distance_transform_edt, label as ndi_label
+        from scipy.ndimage import label as ndi_label
 
         binary = image.astype(bool, copy=False)
         mask_array = binary.astype(bool) if mask is None else np.asarray(mask) > 0
@@ -915,7 +1008,7 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
 
         input_shape = binary.shape
         working_image = binary
-        working_mask: np.ndarray | None = mask_array
+        working_mask = mask_array
         working_markers = (
             None
             if markers is None
@@ -934,50 +1027,21 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
                     factors,
                 )
 
-        working_mask_array = working_image != 0 if working_mask is None else working_mask
         working_inputs = WatershedInputs(
             working_image,
             working_image,
-            working_mask_array,
+            working_mask,
             working_markers,
         )
         if parameters.declump_method is WatershedDeclumpMethod.NONE:
             labels, _count = ndi_label(working_image)
-            if working_mask is not None:
-                labels = np.where(working_mask_array, labels, 0)
+            labels = np.where(working_mask, labels, 0)
         else:
-            needs_distance = (
-                parameters.declump_method is WatershedDeclumpMethod.SHAPE
-                or parameters.method is WatershedMethod.DISTANCE
-            )
-            distance = (
-                distance_transform_edt(
-                    gaussian(working_image, sigma=parameters.gaussian_sigma)
-                )
-                if needs_distance
-                else None
-            )
-            computation = WatershedComputationImages(
-                input_image=working_image,
-                mask=working_mask_array,
-                markers=working_markers,
-                distance=distance,
-            )
-            watershed_input_image = WatershedDeclumpStrategy.for_enum_member(
-                parameters.declump_method
-            ).priority_image(working_inputs, computation)
-            markers_array = WatershedMethodStrategy.for_enum_member(
-                parameters.method
-            ).markers(
-                working_inputs,
-                computation,
-                WatershedSeedStrategy.for_enum_member(parameters.seed_method),
-                parameters,
-            )
+            surface = self.segmentation_surface(working_inputs, parameters)
             labels = skimage_watershed(
-                watershed_input_image,
-                markers=markers_array,
-                mask=working_mask_array,
+                surface.watershed_input_image,
+                markers=surface.markers,
+                mask=working_mask,
                 connectivity=parameters.connectivity,
                 compactness=parameters.compactness,
                 watershed_line=parameters.watershed_line,
@@ -1211,58 +1275,44 @@ def watershed(
     runtime_family: WatershedRuntimeFamily | str = WatershedRuntimeFamily.LIBRARY,
 ) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
     """Apply watershed segmentation using the registered CP runtime family."""
-    method = coerce_watershed_method(watershed_method)
-    resolved_declump_method = coerce_watershed_declump_method(declump_method)
-    if not use_advanced_settings:
-        defaults = CELLPROFILER_WATERSHED_BASIC_DEFAULTS
-        seed_method = defaults.seed_method
-        max_seeds = defaults.max_seeds
-        min_distance = defaults.min_distance
-        min_intensity = defaults.min_intensity
-        connectivity = defaults.connectivity
-        compactness = defaults.compactness
-        watershed_line = defaults.watershed_line
-        gaussian_sigma = defaults.gaussian_sigma
-
-    if not np.array_equal(image, image.astype(bool)):
-        raise ValueError("Watershed expects a thresholded image as input.")
-    structuring_element_array = adapt_structuring_element_rank(
-        build_structuring_element(
-            coerce_cellprofiler_enum(StructuringElement, structuring_element),
-            structuring_element_size,
-        ),
-        image.ndim,
+    image_array = watershed_image_array(image, parameter_name="image")
+    mask_array = (
+        None if mask is None else watershed_image_array(mask, parameter_name="mask")
     )
-    if structuring_element_array.ndim != image.ndim:
-        raise ValueError(
-            "Watershed structuring element dimensionality must match the image; "
-            f"got structuring element ndim={structuring_element_array.ndim} for "
-            f"image ndim={image.ndim}."
-        )
+    markers_array = (
+        None
+        if markers is None
+        else object_label_dense_array(markers, dtype=np.int32)
+    )
+    if not np.array_equal(image_array, image_array.astype(bool)):
+        raise ValueError("Watershed expects a thresholded image as input.")
+    parameters = WatershedParameters.from_settings(
+        image_ndim=image_array.ndim,
+        watershed_method=watershed_method,
+        declump_method=declump_method,
+        seed_method=seed_method,
+        use_advanced_settings=use_advanced_settings,
+        max_seeds=max_seeds,
+        downsample=downsample,
+        min_distance=min_distance,
+        min_intensity=min_intensity,
+        footprint=footprint,
+        connectivity=connectivity,
+        compactness=compactness,
+        exclude_border=exclude_border,
+        watershed_line=watershed_line,
+        gaussian_sigma=gaussian_sigma,
+        structuring_element=structuring_element,
+        structuring_element_size=structuring_element_size,
+    )
 
     labels = WatershedRuntimeStrategy.for_enum_member(
         coerce_watershed_runtime_family(runtime_family)
     ).labels(
-        image,
-        markers,
-        mask,
-        WatershedParameters(
-            method=method,
-            declump_method=resolved_declump_method,
-            seed_method=coerce_watershed_seed_method(seed_method),
-            use_advanced_settings=use_advanced_settings,
-            max_seeds=max_seeds,
-            downsample=downsample,
-            min_distance=min_distance,
-            min_intensity=min_intensity,
-            footprint=footprint,
-            connectivity=connectivity,
-            compactness=compactness,
-            exclude_border=exclude_border,
-            watershed_line=watershed_line,
-            gaussian_sigma=gaussian_sigma,
-            structuring_element=structuring_element_array,
-        ),
+        image_array,
+        markers_array,
+        mask_array,
+        parameters,
     )
 
     object_count, mean_area = watershed_regionprops_stats(labels)
@@ -1397,14 +1447,14 @@ class LegacyWatershedRaveledState:
         heap = LegacyWatershedPythonHeap()
         for marker_location in self.marker_locations:
             location = int(marker_location)
-            heap.push(float(self.image_flat[location]), 0, location, location)
+            heap.push(float(self.image_flat[location]), 0, location)
 
         age = 1
         while heap:
-            _value, _entry_age, index, source = heap.pop()
+            _value, _entry_age, index = heap.pop()
             label = int(self.output_flat[index])
             if label == 0:
-                label = int(self.output_flat[source])
+                raise RuntimeError("Legacy watershed heap entry lost its label.")
             for offset_value in self.neighbor_offsets:
                 neighbor_index = int(index + offset_value)
                 if (
@@ -1418,7 +1468,6 @@ class LegacyWatershedRaveledState:
                     float(self.image_flat[neighbor_index]),
                     age,
                     neighbor_index,
-                    source,
                 )
 
     def execute_numba(self) -> None:
@@ -1523,13 +1572,11 @@ class LegacyWatershedPythonHeap:
     values: list[float]
     ages: list[int]
     indexes: list[int]
-    sources: list[int]
 
     def __init__(self) -> None:
         self.values = []
         self.ages = []
         self.indexes = []
-        self.sources = []
 
     def __bool__(self) -> bool:
         return bool(self.values)
@@ -1552,16 +1599,11 @@ class LegacyWatershedPythonHeap:
             self.indexes[right],
             self.indexes[left],
         )
-        self.sources[left], self.sources[right] = (
-            self.sources[right],
-            self.sources[left],
-        )
 
-    def push(self, value: float, age: int, index: int, source: int) -> None:
+    def push(self, value: float, age: int, index: int) -> None:
         self.values.append(value)
         self.ages.append(age)
         self.indexes.append(index)
-        self.sources.append(source)
         position = len(self.values) - 1
         while position > 0:
             parent = (position - 1) // 2
@@ -1575,23 +1617,20 @@ class LegacyWatershedPythonHeap:
             self.swap(position, parent)
             position = parent
 
-    def pop(self) -> tuple[float, int, int, int]:
+    def pop(self) -> tuple[float, int, int]:
         value = self.values[0]
         age = self.ages[0]
         index = self.indexes[0]
-        source = self.sources[0]
         last = len(self.values) - 1
         if last == 0:
             self.values.pop()
             self.ages.pop()
             self.indexes.pop()
-            self.sources.pop()
-            return value, age, index, source
+            return value, age, index
 
         self.values[0] = self.values.pop()
         self.ages[0] = self.ages.pop()
         self.indexes[0] = self.indexes.pop()
-        self.sources[0] = self.sources.pop()
         size = len(self.values)
         position = 0
         while True:
@@ -1616,19 +1655,15 @@ class LegacyWatershedPythonHeap:
                 break
             self.swap(position, smallest)
             position = smallest
-        return value, age, index, source
+        return value, age, index
 
 
 @njit(cache=True)
 def _heap_item_less(
     left_value: float,
     left_age: int,
-    left_index: int,
-    left_source: int,
     right_value: float,
     right_age: int,
-    right_index: int,
-    right_source: int,
 ) -> bool:
     if left_value != right_value:
         return left_value < right_value
@@ -1637,39 +1672,34 @@ def _heap_item_less(
 
 @njit(cache=True)
 def _heap_swap(
-    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray],
     left: int,
     right: int,
 ) -> None:
-    values, ages, indexes, sources = heap_arrays
+    values, ages, indexes = heap_arrays
     value = values[left]
     age = ages[left]
     index = indexes[left]
-    source = sources[left]
     values[left] = values[right]
     ages[left] = ages[right]
     indexes[left] = indexes[right]
-    sources[left] = sources[right]
     values[right] = value
     ages[right] = age
     indexes[right] = index
-    sources[right] = source
 
 
 @njit(cache=True)
 def _heap_push(
-    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray],
     size: int,
     value: float,
     age: int,
     index: int,
-    source: int,
 ) -> int:
-    values, ages, indexes, sources = heap_arrays
+    values, ages, indexes = heap_arrays
     values[size] = value
     ages[size] = age
     indexes[size] = index
-    sources[size] = source
     size += 1
     position = size - 1
     while position > 0:
@@ -1677,12 +1707,8 @@ def _heap_push(
         if not _heap_item_less(
             values[position],
             ages[position],
-            indexes[position],
-            sources[position],
             values[parent],
             ages[parent],
-            indexes[parent],
-            sources[parent],
         ):
             break
         _heap_swap(heap_arrays, position, parent)
@@ -1692,20 +1718,18 @@ def _heap_push(
 
 @njit(cache=True)
 def _heap_pop(
-    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    heap_arrays: tuple[np.ndarray, np.ndarray, np.ndarray],
     size: int,
-) -> tuple[int, float, int, int, int]:
-    values, ages, indexes, sources = heap_arrays
+) -> tuple[int, float, int, int]:
+    values, ages, indexes = heap_arrays
     value = values[0]
     age = ages[0]
     index = indexes[0]
-    source = sources[0]
     size -= 1
     if size > 0:
         values[0] = values[size]
         ages[0] = ages[size]
         indexes[0] = indexes[size]
-        sources[0] = sources[size]
         position = 0
         while True:
             left = position * 2 + 1
@@ -1716,28 +1740,20 @@ def _heap_pop(
             if right < size and _heap_item_less(
                 values[right],
                 ages[right],
-                indexes[right],
-                sources[right],
                 values[left],
                 ages[left],
-                indexes[left],
-                sources[left],
             ):
                 smallest = right
             if not _heap_item_less(
                 values[smallest],
                 ages[smallest],
-                indexes[smallest],
-                sources[smallest],
                 values[position],
                 ages[position],
-                indexes[position],
-                sources[position],
             ):
                 break
             _heap_swap(heap_arrays, position, smallest)
             position = smallest
-    return size, value, age, index, source
+    return size, value, age, index
 
 
 @njit(cache=True)
@@ -1752,8 +1768,7 @@ def _legacy_watershed_raveled_numba(
     heap_values = np.empty(capacity, dtype=np.float64)
     heap_ages = np.empty(capacity, dtype=np.int64)
     heap_indexes = np.empty(capacity, dtype=np.int64)
-    heap_sources = np.empty(capacity, dtype=np.int64)
-    heap_arrays = (heap_values, heap_ages, heap_indexes, heap_sources)
+    heap_arrays = (heap_values, heap_ages, heap_indexes)
     heap_size = 0
 
     for marker_location in marker_locations:
@@ -1764,18 +1779,17 @@ def _legacy_watershed_raveled_numba(
             float(image_flat[location]),
             0,
             location,
-            location,
         )
 
     age = 1
     while heap_size > 0:
-        heap_size, _value, _entry_age, index, source = _heap_pop(
+        heap_size, _value, _entry_age, index = _heap_pop(
             heap_arrays,
             heap_size,
         )
         label = int(output_flat[index])
         if label == 0:
-            label = int(output_flat[source])
+            raise RuntimeError("Legacy watershed heap entry lost its label.")
         for offset_value in neighbor_offsets:
             neighbor_index = int(index + offset_value)
             if (not mask_flat[neighbor_index]) or output_flat[neighbor_index] != 0:
@@ -1788,7 +1802,6 @@ def _legacy_watershed_raveled_numba(
                 float(image_flat[neighbor_index]),
                 age,
                 neighbor_index,
-                source,
             )
 
 

@@ -15,9 +15,9 @@ from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
+    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_metadata,
-    image_payload_with_context,
     object_label_dense_array,
 )
 from openhcs.interop.cellprofiler.crop_settings import (
@@ -293,11 +293,11 @@ class CropRequest:
         if not removal_method.removes_empty_rows_or_columns:
             output_metadata = replace(output_metadata, mask_defines_border=False)
         return (
-            image_payload_with_context(
+            RuntimeImagePayloadContext(
                 cropped_pixel_data,
                 mask=cropped_mask,
                 metadata=output_metadata,
-            ),
+            ).payload(),
             cropping,
             measurements,
         )

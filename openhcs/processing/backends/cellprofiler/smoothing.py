@@ -23,10 +23,10 @@ from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
 )
 from openhcs.core.runtime_values import (
+    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    image_payload_with_context,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -679,11 +679,11 @@ def smooth_image(
     )
     output = SmoothingStrategy.for_request(request).smooth(request)
 
-    return image_payload_with_context(
+    return RuntimeImagePayloadContext(
         np.asarray(output, dtype=np.float32),
         mask=mask,
         metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
-    )
+    ).payload()
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
@@ -797,13 +797,13 @@ def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
     )
 
     return [
-        image_payload_with_context(
+        RuntimeImagePayloadContext(
             output_stack[slice_index],
             mask=masks[slice_index],
             metadata=image_payload_metadata(
                 slice_2d
             ).without_unit_interval_intensity_scale(),
-        )
+        ).payload()
         for slice_index, slice_2d in enumerate(slices_2d)
     ]
 

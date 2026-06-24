@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from enum import Enum
 from functools import lru_cache
+import logging
 import math
 import time
 from typing import Callable, ClassVar
@@ -16,17 +17,20 @@ from numba import njit
 import scipy.interpolate
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
-    image_payload_data,
-    image_mask_for_data_domain,
-    image_payload_metadata,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
     image_intensity_scale_for_dtype,
+    image_mask_for_data_domain,
+    image_payload_data,
+    image_payload_metadata,
     normalize_image_payload_intensity,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -49,8 +53,6 @@ from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagn
     _quantized_log_tables,
     _threshold_diagnostics_numba,
     _threshold_diagnostics_unmasked_finite_numba,
-    _threshold_sum_of_entropies_numba,
-    _threshold_weighted_variance_numba,
     rectangular_mask_domain,
     smooth_with_deterministic_noise,
 )
@@ -92,6 +94,17 @@ CELLPROFILER_THRESHOLD_SMOOTHING_HALF_MASS_FACTOR = 0.6744
 CELLPROFILER_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET = 0.0
+logger = logging.getLogger(__name__)
+
+
+def log_threshold_profile(label: str, seconds: float, **fields: object) -> None:
+    """Emit threshold backend profile events through the shared runtime sink."""
+    RuntimeProfileLogger.log(logger, label, seconds, **fields)
+
+
+def threshold_profile_sink() -> Callable[..., None] | None:
+    """Return the threshold profile sink only when runtime profiling is enabled."""
+    return log_threshold_profile if RuntimeProfileLogger.enabled() else None
 
 
 class CellProfilerThresholdAssignment(Enum):
@@ -350,7 +363,7 @@ def unit_interval_scale_for_threshold_diagnostics(
     metadata: ImagePayloadMetadata,
 ) -> int | None:
     """Return a proof scale for exact unit-interval threshold diagnostics."""
-    metadata_scale = metadata.unit_interval_intensity_scale_for_channel(0)
+    metadata_scale = metadata.unit_interval_intensity_scale_for_source_plane(0)
     if metadata_scale is not None and metadata_scale > 1:
         return int(metadata_scale)
     image_array = np.asarray(image_data)
@@ -360,6 +373,26 @@ def unit_interval_scale_for_threshold_diagnostics(
     if scale is None or scale <= 1:
         return None
     return int(scale)
+
+
+def threshold_mask_for_image_domain(
+    mask: np.ndarray | None,
+    image_shape: tuple[int, ...],
+    *,
+    context: str,
+) -> np.ndarray | None:
+    """Return the semantic threshold mask, dropping explicit all-true masks."""
+    if mask is None:
+        return None
+    mask_array = np.asarray(mask, dtype=np.bool_)
+    if mask_array.shape != image_shape:
+        raise ValueError(
+            f"{context} mask must match the image shape; got "
+            f"mask {mask_array.shape!r} for image {image_shape!r}."
+        )
+    if bool(np.all(mask_array)):
+        return None
+    return mask_array
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,26 +433,33 @@ class ThresholdApplicationSmoothing:
             truncate=4.0,
         )
 
-    def smooth(self, image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, float]:
+    def smooth(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray | None,
+    ) -> tuple[np.ndarray, float]:
         """Return the image CellProfiler thresholds against after estimation."""
         if not self.enabled:
             return np.asarray(image), 0.0
 
         image_array = np.asarray(image, dtype=np.float64)
-        mask_array = np.asarray(mask, dtype=bool)
-        if mask_array.shape != image_array.shape:
-            raise ValueError(
-                "Threshold application mask must match the image shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
-            )
-
-        full_mask = bool(np.all(mask_array))
-        capture_array_fixture(
-            "threshold_application",
-            image=image_array,
-            mask=mask_array,
-            smoothing=np.asarray(self.smoothing, dtype=np.float64),
+        mask_array = threshold_mask_for_image_domain(
+            mask,
+            image_array.shape,
+            context="Threshold application",
         )
+        full_mask = mask_array is None
+        if capture_enabled():
+            capture_array_fixture(
+                "threshold_application",
+                image=image_array,
+                mask=(
+                    np.ones(image_array.shape, dtype=bool)
+                    if mask_array is None
+                    else mask_array
+                ),
+                smoothing=np.asarray(self.smoothing, dtype=np.float64),
+            )
         masked_image = image_array if full_mask else np.where(mask_array, image_array, 0.0)
         smoothed_image = self.gaussian_filter(masked_image)
         mask_weight = (
@@ -447,25 +487,29 @@ class ThresholdApplicationRequest:
     smoothing: float = 0.0
 
     @property
-    def resolved_mask(self) -> np.ndarray:
-        return (
-            np.full(np.asarray(self.image).shape, True)
-            if self.mask is None
-            else np.asarray(self.mask, dtype=bool)
+    def normalized_mask(self) -> np.ndarray | None:
+        return threshold_mask_for_image_domain(
+            self.mask,
+            np.asarray(self.image).shape,
+            context="Threshold application",
         )
 
     def apply(self) -> tuple[np.ndarray, float]:
+        mask = self.normalized_mask
         if self.smoothing == 0:
             thresholded = np.asarray(self.image) >= self.threshold
-            if self.mask is None:
+            if mask is None:
                 return thresholded, 0.0
-            return thresholded & self.resolved_mask, 0.0
+            return thresholded & mask, 0.0
 
         blurred_image, sigma = ThresholdApplicationSmoothing(self.smoothing).smooth(
             self.image,
-            self.resolved_mask,
+            mask,
         )
-        return (blurred_image >= self.threshold) & self.resolved_mask, sigma
+        thresholded = blurred_image >= self.threshold
+        if mask is None:
+            return thresholded, sigma
+        return thresholded & mask, sigma
 
 
 class ThresholdSmoothingBackendStrategy(
@@ -694,19 +738,18 @@ class ThresholdDiagnosticRequest:
         binary_image: np.ndarray,
         proven_unit_interval_scale: int | None,
     ) -> "ThresholdDiagnosticRequest":
-        image_array = np.asarray(image, dtype=np.float64)
+        image_array = np.asarray(image)
         binary_array = np.asarray(binary_image, dtype=np.bool_)
         if binary_array.shape != image_array.shape:
             raise ValueError(
                 "Threshold diagnostics binary image must match the image shape; got "
                 f"binary {binary_array.shape!r} for image {image_array.shape!r}."
             )
-        mask_array = None if mask is None else np.asarray(mask, dtype=np.bool_)
-        if mask_array is not None and mask_array.shape != image_array.shape:
-            raise ValueError(
-                "Threshold diagnostics mask must match the image shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
-            )
+        mask_array = threshold_mask_for_image_domain(
+            mask,
+            image_array.shape,
+            context="Threshold diagnostics",
+        )
         return cls(
             backend=backend,
             domain=(
@@ -979,11 +1022,13 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         binary_array = np.asarray(binary_image, dtype=np.bool_)
         self._validate_inputs(image_array, mask_array, binary_array)
         return float(
-            _threshold_weighted_variance_numba(
+            _threshold_diagnostics_numba(
                 np.ascontiguousarray(image_array),
                 np.ascontiguousarray(mask_array),
                 np.ascontiguousarray(binary_array),
+                np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
             )
+            [0]
         )
 
     def sum_of_entropies(
@@ -997,12 +1042,13 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         binary_array = np.asarray(binary_image, dtype=np.bool_)
         self._validate_inputs(image_array, mask_array, binary_array)
         return float(
-            _threshold_sum_of_entropies_numba(
+            _threshold_diagnostics_numba(
                 np.ascontiguousarray(image_array),
                 np.ascontiguousarray(mask_array),
                 np.ascontiguousarray(binary_array),
                 np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
             )
+            [1]
         )
 
     def _validate_inputs(
@@ -1108,6 +1154,8 @@ class ThresholdPrimitiveBackendStrategy(
         self,
         image: np.ndarray,
         mask: np.ndarray | None = None,
+        *,
+        proven_unit_interval_scale: int | None = None,
     ) -> float:
         """Return CP-compatible minimum cross-entropy threshold."""
 
@@ -1135,6 +1183,11 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
     def prepare_backend(self) -> None:
         values = np.linspace(0.01, 1.0, 32, dtype=np.float64)
         image = values[:25].reshape((5, 5))
+        quantized_image = (
+            np.rint(image.astype(np.float32) * np.float32(255)) / np.float32(255)
+        )
+        quantized_mask = np.ones(quantized_image.shape, dtype=np.bool_)
+        quantized_mask[:, :1] = False
         transformed, conversion = self.log_transform(values.astype(np.float32))
         self.inverse_log_transform(transformed, conversion)
         self.binned_mode(values)
@@ -1149,6 +1202,15 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
         self.multiotsu_thresholds(values, nbins=16)
         self.sauvola_threshold_image(image, window_size=3)
         self.minimum_cross_entropy_threshold(image)
+        self.minimum_cross_entropy_threshold(
+            quantized_image,
+            proven_unit_interval_scale=255,
+        )
+        self.minimum_cross_entropy_threshold(
+            quantized_image,
+            mask=quantized_mask,
+            proven_unit_interval_scale=255,
+        )
 
     def log_transform(self, values: np.ndarray) -> tuple[np.ndarray, object]:
         values_array = np.asarray(values, dtype=np.float32)
@@ -1269,8 +1331,16 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
         self,
         image: np.ndarray,
         mask: np.ndarray | None = None,
+        *,
+        proven_unit_interval_scale: int | None = None,
     ) -> float:
         image_array = np.asarray(image)
+        if proven_unit_interval_scale is not None:
+            return _li_threshold_quantized_numpy(
+                image_array,
+                mask,
+                int(proven_unit_interval_scale),
+            )
         if mask is None:
             if image_array.dtype == np.float32:
                 values32 = _finite_flat_float32(image_array)
@@ -1400,7 +1470,10 @@ class CentrosomeNumpyThresholdPrimitiveBackendStrategy(
         self,
         image: np.ndarray,
         mask: np.ndarray | None = None,
+        *,
+        proven_unit_interval_scale: int | None = None,
     ) -> float:
+        del proven_unit_interval_scale
         raise NotImplementedError(
             "Centrosome threshold primitive backend does not provide CP-style "
             "minimum cross-entropy thresholding. Select the Numba backend "
@@ -1429,7 +1502,112 @@ class GlobalThresholdRequest:
     values: np.ndarray
     assignment: CellProfilerThresholdAssignment
     log_transform: bool
+    proven_unit_interval_scale: int | None
     kwargs: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerThresholdResult:
+    """Threshold mask and diagnostics from one CP-compatible threshold request."""
+
+    final_threshold: float
+    original_threshold: float
+    mask: np.ndarray
+    weighted_variance: float = 0.0
+    sum_of_entropies: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerThresholdSettings:
+    """CellProfiler threshold settings independent of image provenance."""
+
+    use_advanced_settings: bool
+    threshold_scope: CellProfilerThresholdScope
+    threshold_method: CellProfilerThresholdMethod | str
+    threshold_correction_factor: float
+    threshold_min: float
+    threshold_max: float
+    threshold_smoothing_scale: float
+    otsu_class_count: CellProfilerOtsuMethod
+    assign_middle_to_foreground: CellProfilerThresholdAssignment
+    log_transform: bool
+    adaptive_window_size: int
+    lower_outlier_fraction: float
+    upper_outlier_fraction: float
+    averaging_method: CellProfilerAveragingMethod
+    variance_method: CellProfilerVarianceMethod
+    number_of_deviations: float
+    manual_threshold: float
+    smooth_threshold_application: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerThresholdRequest:
+    """Closed CP-compatible threshold execution contract."""
+
+    image: np.ndarray
+    image_mask: np.ndarray | None
+    settings: CellProfilerThresholdSettings
+    proven_unit_interval_scale: int | None = None
+    enabled: bool = True
+    log_profile_function: Callable[..., None] | None = None
+
+    def calculate(self) -> CellProfilerThresholdResult:
+        """Apply thresholding and compute CP threshold diagnostics."""
+        if not self.enabled:
+            return CellProfilerThresholdResult(
+                final_threshold=0.0,
+                original_threshold=0.0,
+                mask=self.threshold_free_mask,
+            )
+
+        thresholded, threshold_value, original_threshold = cellprofiler_threshold(
+            self.image,
+            use_advanced_settings=self.settings.use_advanced_settings,
+            threshold_scope=self.settings.threshold_scope,
+            threshold_method=self.settings.threshold_method,
+            threshold_smoothing_scale=self.settings.threshold_smoothing_scale,
+            threshold_correction_factor=self.settings.threshold_correction_factor,
+            threshold_min=self.settings.threshold_min,
+            threshold_max=self.settings.threshold_max,
+            manual_threshold=self.settings.manual_threshold,
+            otsu_class_count=self.settings.otsu_class_count,
+            assign_middle_to_foreground=self.settings.assign_middle_to_foreground,
+            log_transform=self.settings.log_transform,
+            adaptive_window_size=self.settings.adaptive_window_size,
+            lower_outlier_fraction=self.settings.lower_outlier_fraction,
+            upper_outlier_fraction=self.settings.upper_outlier_fraction,
+            averaging_method=self.settings.averaging_method,
+            variance_method=self.settings.variance_method,
+            number_of_deviations=self.settings.number_of_deviations,
+            mask=self.image_mask,
+            smooth_threshold_application=self.settings.smooth_threshold_application,
+            proven_unit_interval_scale=self.proven_unit_interval_scale,
+            log_profile_function=self.log_profile_function,
+        )
+        diagnostics = cellprofiler_threshold_diagnostics(
+            self.image,
+            thresholded,
+            final_threshold=threshold_value,
+            original_threshold=original_threshold,
+            mask=self.image_mask,
+            proven_unit_interval_scale=self.proven_unit_interval_scale,
+            log_profile_function=self.log_profile_function,
+        )
+        return CellProfilerThresholdResult(
+            final_threshold=float(threshold_value),
+            original_threshold=float(diagnostics.original_threshold),
+            mask=thresholded,
+            weighted_variance=float(diagnostics.weighted_variance),
+            sum_of_entropies=float(diagnostics.sum_of_entropies),
+        )
+
+    @property
+    def threshold_free_mask(self) -> np.ndarray:
+        """Return the all-foreground mask for methods without thresholding."""
+        if self.image_mask is None:
+            return np.ones_like(self.image, dtype=bool)
+        return np.asarray(self.image_mask, dtype=bool)
 
 
 class GlobalThresholdMethodStrategy(
@@ -1483,6 +1661,7 @@ class MinimumCrossEntropyGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
         return request.primitives.minimum_cross_entropy_threshold(
             request.threshold_image,
             request.threshold_mask,
+            proven_unit_interval_scale=request.proven_unit_interval_scale,
         )
 
 
@@ -1593,6 +1772,7 @@ def cellprofiler_get_global_threshold(
         CellProfilerThresholdAssignment | str
     ) = CellProfilerThresholdAssignment.FOREGROUND,
     log_transform: bool = False,
+    proven_unit_interval_scale: int | None = None,
     **kwargs: object,
 ) -> float:
     """Compute one global threshold using independent CP-compatible semantics."""
@@ -1607,8 +1787,16 @@ def cellprofiler_get_global_threshold(
         threshold_image, conversion = primitives.log_transform(threshold_image)
     else:
         conversion = None
-    threshold_mask = None if mask is None else np.asarray(mask, dtype=bool)
-    values = threshold_image[threshold_mask] if mask is not None else threshold_image.ravel()
+    threshold_mask = threshold_mask_for_image_domain(
+        mask,
+        threshold_image.shape,
+        context="Global threshold",
+    )
+    values = (
+        threshold_image[threshold_mask]
+        if threshold_mask is not None
+        else threshold_image.ravel()
+    )
     values = values[np.isfinite(values)]
 
     if values.size == 0:
@@ -1624,6 +1812,9 @@ def cellprofiler_get_global_threshold(
                 values=values,
                 assignment=assignment,
                 log_transform=log_transform,
+                proven_unit_interval_scale=(
+                    proven_unit_interval_scale if not log_transform else None
+                ),
                 kwargs=dict(kwargs),
             )
         )
@@ -1922,6 +2113,7 @@ def cellprofiler_threshold(
     manual_threshold: float,
     mask: np.ndarray | None = None,
     smooth_threshold_application: bool = True,
+    proven_unit_interval_scale: int | None = None,
     global_threshold_function: object | None = None,
     adaptive_threshold_function: object | None = None,
     apply_threshold_function: object | None = None,
@@ -1946,7 +2138,12 @@ def cellprofiler_threshold(
 
     total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
-    threshold_mask = None if mask is None else np.asarray(mask, dtype=bool)
+    threshold_image = np.asarray(image)
+    threshold_mask = threshold_mask_for_image_domain(
+        mask,
+        threshold_image.shape,
+        context="CellProfiler threshold",
+    )
     threshold_scope = coerce_cellprofiler_enum(CellProfilerThresholdScope, threshold_scope)
     threshold_method = coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
     otsu_class_count = coerce_cellprofiler_enum(CellProfilerOtsuMethod, otsu_class_count)
@@ -1970,7 +2167,6 @@ def cellprofiler_threshold(
         )
 
     effective_method = threshold_method_for_class_count(threshold_method, otsu_class_count)
-    threshold_image = np.asarray(image)
     if threshold_method is CellProfilerThresholdMethod.MANUAL:
         final_threshold: float | np.ndarray = float(manual_threshold)
         original_threshold = float(manual_threshold)
@@ -2054,6 +2250,7 @@ def cellprofiler_threshold(
                 threshold_correction_factor=1,
                 assign_middle_to_foreground=assign_middle_to_foreground,
                 log_transform=log_transform,
+                proven_unit_interval_scale=proven_unit_interval_scale,
                 **method_kwargs,
                 **selection_kwargs,
             )
@@ -2197,6 +2394,7 @@ class ThresholdResult:
     sum_of_entropies: float = 0.0
 
 
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_outputs(
     (
@@ -2268,54 +2466,193 @@ def threshold(
     if predefined_threshold is not None:
         threshold_method = ThresholdMethod.MANUAL
 
-    binary_image, final_threshold, original_threshold = cellprofiler_threshold(
+    proven_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
         image,
-        use_advanced_settings=use_advanced_settings,
-        threshold_scope=threshold_scope,
-        threshold_method=threshold_method,
-        otsu_class_count=otsu_class_count,
-        assign_middle_to_foreground=assign_middle_to_foreground,
-        log_transform=log_transform,
-        threshold_correction_factor=threshold_correction_factor,
-        threshold_min=threshold_min,
-        threshold_max=threshold_max,
-        threshold_smoothing_scale=smoothing,
-        adaptive_window_size=window_size,
-        lower_outlier_fraction=lower_outlier_fraction,
-        upper_outlier_fraction=upper_outlier_fraction,
-        averaging_method=averaging_method,
-        variance_method=variance_method,
-        number_of_deviations=number_of_deviations,
-        manual_threshold=(
-            float(predefined_threshold)
-            if predefined_threshold is not None
-            else 0.0
+        image_payload_metadata(source_payload),
+    )
+    threshold_result = CellProfilerThresholdRequest(
+        image=image,
+        image_mask=mask,
+        settings=CellProfilerThresholdSettings(
+            use_advanced_settings=use_advanced_settings,
+            threshold_scope=threshold_scope,
+            threshold_method=threshold_method,
+            otsu_class_count=otsu_class_count,
+            assign_middle_to_foreground=assign_middle_to_foreground,
+            log_transform=log_transform,
+            threshold_correction_factor=threshold_correction_factor,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_smoothing_scale=smoothing,
+            adaptive_window_size=window_size,
+            lower_outlier_fraction=lower_outlier_fraction,
+            upper_outlier_fraction=upper_outlier_fraction,
+            averaging_method=averaging_method,
+            variance_method=variance_method,
+            number_of_deviations=number_of_deviations,
+            manual_threshold=(
+                float(predefined_threshold)
+                if predefined_threshold is not None
+                else 0.0
+            ),
+            smooth_threshold_application=True,
         ),
-        mask=mask,
-    )
-    diagnostics = cellprofiler_threshold_diagnostics(
-        image,
-        binary_image,
-        final_threshold=final_threshold,
-        original_threshold=original_threshold,
-        mask=mask,
-    )
-    output_image = image_payload_with_context(
-        binary_image.astype(np.float32),
+        proven_unit_interval_scale=proven_unit_interval_scale,
+        log_profile_function=threshold_profile_sink(),
+    ).calculate()
+    output_image = RuntimeImagePayloadContext(
+        threshold_result.mask.astype(np.float32),
         mask=mask,
         metadata=image_payload_metadata(
             source_payload
         ).without_unit_interval_intensity_scale(),
-    )
+    ).payload()
     return output_image, ThresholdResult(
         slice_index=0,
-        final_threshold=float(final_threshold),
-        original_threshold=float(original_threshold),
+        final_threshold=float(threshold_result.final_threshold),
+        original_threshold=float(threshold_result.original_threshold),
         guide_threshold=guide_threshold,
         sigma=float(smoothing),
-        weighted_variance=diagnostics.weighted_variance,
-        sum_of_entropies=diagnostics.sum_of_entropies,
+        weighted_variance=threshold_result.weighted_variance,
+        sum_of_entropies=threshold_result.sum_of_entropies,
     )
+
+
+@njit(cache=True)
+def _quantized_counts_unmasked_numba(
+    image: np.ndarray,
+    scale: int,
+) -> np.ndarray:
+    counts = np.zeros(scale + 1, dtype=np.int64)
+    flat_image = image.ravel()
+    scale_float = float(scale)
+    for index in range(flat_image.size):
+        value = float(flat_image[index])
+        if not np.isfinite(value):
+            continue
+        code = int(np.rint(value * scale_float))
+        if code < 0:
+            code = 0
+        elif code > scale:
+            code = scale
+        counts[code] += 1
+    return counts
+
+
+@njit(cache=True)
+def _quantized_counts_masked_numba(
+    image: np.ndarray,
+    mask: np.ndarray,
+    scale: int,
+) -> np.ndarray:
+    counts = np.zeros(scale + 1, dtype=np.int64)
+    flat_image = image.ravel()
+    flat_mask = mask.ravel()
+    scale_float = float(scale)
+    for index in range(flat_image.size):
+        if not flat_mask[index]:
+            continue
+        value = float(flat_image[index])
+        if not np.isfinite(value):
+            continue
+        code = int(np.rint(value * scale_float))
+        if code < 0:
+            code = 0
+        elif code > scale:
+            code = scale
+        counts[code] += 1
+    return counts
+
+
+def _li_threshold_quantized_numpy(
+    image: np.ndarray,
+    mask: np.ndarray | None,
+    scale: int,
+) -> float:
+    """Return dense Li semantics from a proven unit-interval quantized domain."""
+    if scale <= 1:
+        raise ValueError(f"Unit-interval scale must be greater than one, got {scale!r}.")
+    image_array = np.asarray(image, dtype=np.float32)
+    mask_array = threshold_mask_for_image_domain(
+        mask,
+        image_array.shape,
+        context="Minimum cross-entropy threshold",
+    )
+    counts = (
+        _quantized_counts_unmasked_numba(np.ascontiguousarray(image_array), scale)
+        if mask_array is None
+        else _quantized_counts_masked_numba(
+            np.ascontiguousarray(image_array),
+            np.ascontiguousarray(mask_array),
+            scale,
+        )
+    )
+    return _li_threshold_from_quantized_counts_numpy(counts, scale)
+
+
+def _li_threshold_from_quantized_counts_numpy(
+    counts: np.ndarray,
+    scale: int,
+) -> float:
+    active_codes = np.flatnonzero(counts)
+    if active_codes.size == 0:
+        return 0.0
+    values = (active_codes.astype(np.float32) / np.float32(scale)).astype(np.float32)
+    if active_codes.size == 1:
+        return float(values[0])
+
+    image_min = values[0]
+    shifted_values = (values - image_min).astype(np.float32)
+    positive_diffs = np.diff(values.astype(np.float64))
+    positive_diffs = positive_diffs[positive_diffs > 0]
+    tolerance = max(float(np.min(positive_diffs) / 2.0), CELLPROFILER_LI_TOLERANCE)
+    active_counts = counts[active_codes]
+    total_count = int(np.sum(active_counts))
+    threshold_next = np.float32(
+        np.sum(
+            shifted_values * active_counts.astype(np.float32),
+            dtype=np.float32,
+        )
+        / np.float32(total_count)
+    )
+    threshold_current = np.float32(-2.0 * tolerance)
+
+    iterations = 0
+    while (
+        abs(float(threshold_next) - float(threshold_current)) > tolerance
+        and iterations < 1000
+    ):
+        threshold_current = threshold_next
+        foreground = shifted_values > threshold_current
+        foreground_count = int(np.sum(active_counts[foreground]))
+        background_count = total_count - foreground_count
+        if foreground_count == 0 or background_count == 0:
+            break
+        foreground_mean = np.float32(
+            np.sum(
+                shifted_values[foreground]
+                * active_counts[foreground].astype(np.float32),
+                dtype=np.float32,
+            )
+            / np.float32(foreground_count)
+        )
+        background_mean = np.float32(
+            np.sum(
+                shifted_values[~foreground]
+                * active_counts[~foreground].astype(np.float32),
+                dtype=np.float32,
+            )
+            / np.float32(background_count)
+        )
+        if background_mean == 0.0:
+            break
+        threshold_next = np.float32(
+            (background_mean - foreground_mean)
+            / (np.log(background_mean) - np.log(foreground_mean))
+        )
+        iterations += 1
+
+    return float(np.float32(threshold_next + image_min))
 
 
 def _li_threshold_float32_numpy(values: np.ndarray) -> float:
@@ -2453,6 +2790,9 @@ __all__ = public_names_from_objects(
     CellProfilerThresholdAssignment,
     CellProfilerThresholdDiagnostics,
     CellProfilerThresholdMethod,
+    CellProfilerThresholdRequest,
+    CellProfilerThresholdResult,
+    CellProfilerThresholdSettings,
     CellProfilerThresholdScope,
     CellProfilerVarianceMethod,
     ThresholdDiagnosticsBackendStrategy,

@@ -16,9 +16,17 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.interop.cellprofiler.module_artifact_inputs import (
+    ModuleArtifactInput,
+    ModuleArtifactInputProvider,
+)
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.setting_names import required_setting_value
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -36,6 +44,7 @@ from openhcs.processing.materialization import csv_materializer
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
+MEASURE_IMAGE_QUALITY_IMAGE_SELECTION_SETTING = "Calculate metrics for which images?"
 
 
 class ThresholdMethod(Enum):
@@ -46,6 +55,52 @@ class ThresholdMethod(Enum):
     MINIMUM = "minimum"
     MEAN = "mean"
     YEN = "yen"
+
+
+class MeasureImageQualityImageSelectionMode(Enum):
+    """Image-selection modes exposed by MeasureImageQuality settings."""
+
+    ALL_LOADED_IMAGES = "All loaded images"
+    SELECTED_IMAGES = "Select..."
+
+    @classmethod
+    def from_module(cls, module: ModuleBlock) -> "MeasureImageQualityImageSelectionMode":
+        value = required_setting_value(
+            module,
+            MEASURE_IMAGE_QUALITY_IMAGE_SELECTION_SETTING,
+        )
+        for mode in cls:
+            if value == mode.value:
+                return mode
+        raise ValueError(
+            f"Unsupported MeasureImageQuality image-selection mode {value!r} "
+            f"in module {module.name}({module.module_num})."
+        )
+
+
+class MeasureImageQualityArtifactInputProvider(ModuleArtifactInputProvider):
+    """Declare source-image inputs owned by MeasureImageQuality semantics."""
+
+    module_name = "MeasureImageQuality"
+
+    def inputs(
+        self,
+        module: ModuleBlock,
+        source_schema: PipelineImageSchema,
+    ) -> tuple[ModuleArtifactInput, ...]:
+        mode = MeasureImageQualityImageSelectionMode.from_module(module)
+        if mode is MeasureImageQualityImageSelectionMode.SELECTED_IMAGES:
+            return ()
+        loaded_image_aliases = source_schema.loaded_image_aliases
+        if not loaded_image_aliases:
+            raise ValueError(
+                "MeasureImageQuality requested all loaded images, but the "
+                "pipeline source schema has no loaded image aliases."
+            )
+        return tuple(
+            ModuleArtifactInput(alias, ArtifactKind.IMAGE)
+            for alias in loaded_image_aliases
+        )
 
 
 @dataclass(frozen=True)

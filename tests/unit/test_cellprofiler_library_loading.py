@@ -42,6 +42,7 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     manual_declumping_size,
 )
 import openhcs.processing.backends.cellprofiler.primary_objects as primary_objects_backend
+import openhcs.processing.backends.cellprofiler.thresholding as thresholding_backend
 from benchmark.cellprofiler_library.functions.measurecolocalization import (
     ObjectColocalizationMeasurements,
     measure_colocalization,
@@ -100,9 +101,9 @@ from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     MaskedImagePayload,
     ObjectLabelPayload,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
 )
-from openhcs.core.runtime_semantics import ObjectLabelDomainScope
+from openhcs.core.runtime_semantics import ObjectLabelDomain, ObjectLabelDomainScope
 from openhcs.core.runtime_values import image_payload_data, image_payload_mask
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -137,6 +138,7 @@ def test_absorbed_semantic_defaults_match_vendored_cellprofiler_source() -> None
 
     assert {contract.module_name for contract in contracts} >= {
         "MedianFilter",
+        "Threshold",
         "Watershed",
     }
     for contract in contracts:
@@ -259,6 +261,27 @@ def test_resize_volumetric_preserves_resized_image_mask() -> None:
     assert isinstance(resized, MaskedImagePayload)
     assert resized.data.shape == (2, 2, 2)
     np.testing.assert_array_equal(resized.mask, mask[:, ::2, ::2])
+
+
+def test_resize_volumetric_projects_declared_volume_factors_onto_2d_slice() -> None:
+    image = np.arange(4 * 4, dtype=np.float32).reshape(4, 4)
+    mask = np.zeros_like(image, dtype=bool)
+    mask[:2, :2] = True
+
+    raw_resize = resize_volumetric
+    while hasattr(raw_resize, "__wrapped__"):
+        raw_resize = raw_resize.__wrapped__
+
+    resized = raw_resize(
+        MaskedImagePayload(data=image, mask=mask),
+        resizing_factor_x=0.5,
+        resizing_factor_y=0.5,
+        resizing_factor_z=1.0,
+    )
+
+    assert isinstance(resized, MaskedImagePayload)
+    assert resized.data.shape == (2, 2)
+    np.testing.assert_array_equal(resized.mask, mask[::2, ::2])
 
 
 def test_resize_volumetric_preserves_leading_channel_axis() -> None:
@@ -568,7 +591,11 @@ def test_smooth_matches_cellprofiler_masked_gaussian():
     image[1, 1] = 1.0
     mask = np.ones(image.shape, dtype=bool)
     mask[:3, :3] = False
-    payload = image_payload_with_context(image, mask=mask)
+    payload = RuntimeImagePayloadContext(
+        image,
+        mask=mask,
+        metadata=ImagePayloadMetadata(),
+    ).payload()
     object_size = 3.0
 
     result = smooth(
@@ -637,7 +664,11 @@ def test_enhance_edges_uses_and_preserves_runtime_mask():
     image[:, 5:] = 1.0
     mask = np.ones(image.shape, dtype=bool)
     mask[:, :4] = False
-    payload = image_payload_with_context(image, mask=mask)
+    payload = RuntimeImagePayloadContext(
+        image,
+        mask=mask,
+        metadata=ImagePayloadMetadata(),
+    ).payload()
 
     result = enhance_edges(
         payload,
@@ -661,7 +692,11 @@ def test_closing_preserves_runtime_mask_context():
     image[3:6, 3:6] = 1.0
     mask = np.ones(image.shape, dtype=bool)
     mask[:2, :] = False
-    payload = image_payload_with_context(image, mask=mask)
+    payload = RuntimeImagePayloadContext(
+        image,
+        mask=mask,
+        metadata=ImagePayloadMetadata(),
+    ).payload()
 
     result = closing(
         payload,
@@ -1292,7 +1327,7 @@ def test_identify_primary_objects_applies_threshold_smoothing_to_binary_mask(
         return np.zeros_like(pixel_data, dtype=bool), 0.1, 0.1
 
     monkeypatch.setattr(
-        primary_objects_backend,
+        thresholding_backend,
         "cellprofiler_threshold",
         fake_threshold,
     )
@@ -1354,12 +1389,12 @@ def test_identify_primary_objects_threshold_diagnostics_use_pre_fill_binary(
         )
 
     monkeypatch.setattr(
-        primary_objects_backend,
+        thresholding_backend,
         "cellprofiler_threshold",
         fake_threshold,
     )
     monkeypatch.setattr(
-        primary_objects_backend,
+        thresholding_backend,
         "cellprofiler_threshold_diagnostics",
         fake_diagnostics,
     )
@@ -2003,6 +2038,7 @@ def test_cellprofiler_fast_legacy_watershed_uses_required_numba_backend():
 
 def test_measure_texture_uses_cellprofiler_haralick_backend(monkeypatch):
     from benchmark.cellprofiler_library.functions.measuretexture import measure_texture
+    from openhcs.core.runtime_semantics import measurement_row_mapping
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
@@ -2037,6 +2073,12 @@ def test_measure_texture_uses_cellprofiler_haralick_backend(monkeypatch):
     assert calls[0][0].max() <= 7
     assert measurements[0].contrast == 1.0
     assert measurements[1].correlation == 0.0
+    row = measurement_row_mapping(measurements[1])
+    assert row["scale"] == 2
+    assert row["direction"] == 1
+    assert row["gray_levels"] == 8
+    assert row["contrast"] == 14.0
+    assert row["correlation"] == 0.0
 
 
 def test_measure_texture_emits_all_requested_scales(monkeypatch):
@@ -2128,9 +2170,9 @@ def test_measure_texture_objects_measures_plane_domain_label_stack_against_one_i
             ),
             dtype=np.int32,
         ),
-        declared_object_id_domains=((1,), (2,)),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,)),
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     _, measurements = measure_texture_objects(
         image,
@@ -2154,8 +2196,8 @@ def test_measure_texture_objects_zero_fills_declared_texture_domain():
             [[1, 1, 0, 0, 0], [1, 1, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
             dtype=np.int32,
         ),
-        declared_object_count=2,
-    )
+        domain=ObjectLabelDomain(declared_object_count=2,
+    ))
 
     _, measurements = measure_texture_objects(
         image,
@@ -2188,9 +2230,9 @@ def test_measure_texture_objects_batch_preserves_projected_label_domain():
             ),
             dtype=np.int32,
         ),
-        declared_object_id_domains=((1, 2), (3, 4)),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (3, 4)),
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     results = measure_texture_objects_batch(
         RuntimePure2DSliceBatchRequest(
@@ -2209,8 +2251,8 @@ def test_measure_texture_objects_batch_preserves_projected_label_domain():
         )
     )
 
-    assert [row.object_label for row in results[0][1][::4]] == [1, 2]
-    assert [row.object_label for row in results[1][1][::4]] == [3, 4]
+    assert [row["object_label"] for row in results[0][1][::4]] == [1, 2]
+    assert [row["object_label"] for row in results[1][1][::4]] == [3, 4]
 
 
 def test_numba_haralick_backend_matches_mahotas_reference():
@@ -2373,8 +2415,8 @@ def test_measure_object_intensity_honors_positive_label_extent_domain():
     image = np.ones((2, 3), dtype=np.float32)
     labels = ObjectLabelPayload(
         labels=np.asarray([[1, 0, 3], [0, 0, 0]], dtype=np.int32),
-        declared_object_count=4,
-    )
+        domain=ObjectLabelDomain(declared_object_count=4,
+    ))
 
     _, measurements = measure_object_intensity(
         image,
@@ -2397,8 +2439,8 @@ def test_measure_object_intensity_zero_fills_compact_missing_declared_ids():
     image = np.ones((2, 3), dtype=np.float32)
     labels = ObjectLabelPayload(
         labels=np.asarray([[1, 0, 3], [0, 0, 5]], dtype=np.int32),
-        declared_object_ids=(1, 3, 5),
-    )
+        domain=ObjectLabelDomain(declared_object_ids=(1, 3, 5),
+    ))
 
     _, measurements = measure_object_intensity(
         image,
@@ -2426,9 +2468,9 @@ def test_measure_object_intensity_measures_plane_domain_label_stack_against_one_
             ),
             dtype=np.int32,
         ),
-        declared_object_id_domains=((1,), (2,)),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,)),
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     _, measurements = measure_object_intensity(
         image,
@@ -2926,8 +2968,8 @@ def test_correct_illumination_apply_preserves_source_image_metadata() -> None:
     payload = ImageMetadataPayload(
         data=image,
         metadata=ImagePayloadMetadata(
-            channel_intensity_scales=(65535.0, None),
-            channel_source_dtypes=("uint16", None),
+            source_plane_intensity_scales=(65535.0, None),
+            source_plane_dtypes=("uint16", None),
         ),
     )
 
@@ -3059,7 +3101,7 @@ def test_measure_colocalization_uses_payload_metadata_for_costes_scale() -> None
         data=image,
         mask=np.ones((2, 2), dtype=bool),
         metadata=ImagePayloadMetadata(
-            channel_intensity_scales=(65535.0, 65535.0),
+            source_plane_intensity_scales=(65535.0, 65535.0),
         ),
     )
 
@@ -3219,13 +3261,44 @@ def test_correct_illumination_background_uses_blockwise_minima():
 def test_correct_illumination_automatic_filter_size_matches_cellprofiler_source():
     from openhcs.processing.backends.cellprofiler.illumination import (
         AutomaticSmoothingFilterSizeStrategy,
-        SmoothingFilterSizeRequest,
+        CalculationScope,
+        FilterSizeMethod,
+        IlluminationCalculationRequest,
+        IntensityChoice,
+        RescaleOption,
+        SmoothingMethod,
+        SplineBgMode,
+        correct_illumination_calculate,
+    )
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphologyBackendStrategy,
     )
 
-    request = SmoothingFilterSizeRequest(
-        image_shape=(1116, 1112),
+    request = IlluminationCalculationRequest(
+        image_data=np.zeros((1116, 1112), dtype=np.float32),
+        mask=None,
+        intensity_choice=IntensityChoice.REGULAR,
+        dilate_objects=False,
+        object_dilation_radius=1,
+        block_size=60,
+        rescale_option=RescaleOption.YES,
+        smoothing_method=SmoothingMethod.FIT_POLYNOMIAL,
+        filter_size_method=FilterSizeMethod.AUTOMATIC,
         object_width=10,
         manual_filter_size=10,
+        automatic_splines=True,
+        spline_bg_mode=SplineBgMode.AUTO,
+        spline_points=5,
+        spline_threshold=2.0,
+        spline_rescale=2.0,
+        spline_max_iterations=40,
+        spline_convergence=0.001,
+        calculation_scope=CalculationScope.EACH,
+        morphology=MorphologyBackendStrategy.for_callable(
+            correct_illumination_calculate,
+        ),
+        convex_hull_backend_provider=None,
+        rank_median_backend_provider=None,
     )
 
     assert AutomaticSmoothingFilterSizeStrategy().calculate(request) == 27.9
@@ -3532,9 +3605,9 @@ def test_correct_illumination_strategy_registries_use_json_stable_keys():
     assert all(isinstance(key, str) for key in SmoothingFilterSizeStrategy.__registry__)
     assert all(isinstance(key, str) for key in SmoothingPlaneStrategy.__registry__)
     assert type(
-        SmoothingFilterSizeStrategy.for_method(FilterSizeMethod.AUTOMATIC)
+        SmoothingFilterSizeStrategy.for_enum_member(FilterSizeMethod.AUTOMATIC)
     ) is SmoothingFilterSizeStrategy.__registry__[FilterSizeMethod.AUTOMATIC.value]
-    assert type(SmoothingPlaneStrategy.for_method(SmoothingMethod.NONE)) is (
+    assert type(SmoothingPlaneStrategy.for_enum_member(SmoothingMethod.NONE)) is (
         SmoothingPlaneStrategy.__registry__[SmoothingMethod.NONE.value]
     )
 
@@ -3828,10 +3901,11 @@ def test_mask_image_accepts_object_label_payload_mask():
 
 
 def test_mask_image_accepts_source_backed_singleton_image_plane():
-    image = image_payload_with_context(
+    image = RuntimeImagePayloadContext(
         np.ones((1, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_path="source.tif"),
-    )
+        mask=None,
+    ).payload()
     labels = np.zeros((5, 6), dtype=np.int32)
     labels[1:4, 2:5] = 1
 
@@ -3868,14 +3942,16 @@ def test_mask_image_uses_aligned_mask_stack_planes():
 
 
 def test_mask_image_uses_geometric_planes_for_disjoint_source_domains():
-    image = image_payload_with_context(
+    image = RuntimeImagePayloadContext(
         np.ones((2, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_image_names=("origMemb",)),
-    )
-    mask = image_payload_with_context(
+        mask=None,
+    ).payload()
+    mask = RuntimeImagePayloadContext(
         np.zeros((2, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_image_names=("origDNA",)),
-    )
+        mask=None,
+    ).payload()
     image_payload_data(mask)[0, 1:3, 1:3] = 1.0
     image_payload_data(mask)[1, 2:5, 3:6] = 1.0
 
@@ -4026,9 +4102,9 @@ def test_relate_objects_preserves_child_object_label_domain_metadata():
     )
     child_payload = ObjectLabelPayload(
         labels=child_plane,
-        declared_object_count=4,
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(declared_object_count=4,
+        scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     output, _relationships, _measurements = relate_objects.__wrapped__(
         np.zeros_like(child_plane, dtype=np.float32),
@@ -4038,8 +4114,8 @@ def test_relate_objects_preserves_child_object_label_domain_metadata():
     )
 
     assert isinstance(output, ObjectLabelPayload)
-    assert output.declared_object_count == 4
-    assert output.domain_scope is ObjectLabelDomainScope.PLANE
+    assert output.domain.declared_object_count == 4
+    assert output.domain.scope is ObjectLabelDomainScope.PLANE
     np.testing.assert_array_equal(output.labels, child_plane)
 
 
@@ -4052,8 +4128,8 @@ def test_relate_objects_preserves_plane_scoped_relationship_payload_identity():
             ),
             dtype=np.int32,
         ),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+    ))
     child_stack = ObjectLabelPayload(
         labels=np.asarray(
             (
@@ -4062,8 +4138,8 @@ def test_relate_objects_preserves_plane_scoped_relationship_payload_identity():
             ),
             dtype=np.int32,
         ),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+    ))
 
     _output, relationships, _measurements = relate_objects.__wrapped__(
         np.zeros((2, 2, 3), dtype=np.float32),

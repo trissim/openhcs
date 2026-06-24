@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Hashable
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -36,6 +37,7 @@ class CellProfilerBackendProvider(str, Enum):
 
 DEFAULT_CELLPROFILER_BACKEND_PROVIDER = CellProfilerBackendProvider.NATIVE
 _BACKEND_KEY_SEPARATOR = ":"
+BackendProviderSelectionIdentity: TypeAlias = tuple[tuple[str, Hashable], ...]
 
 BackendStrategyT = TypeVar(
     "BackendStrategyT",
@@ -93,6 +95,22 @@ class CellProfilerBackendProviderSelection(ABC, metaclass=AutoRegisterMeta):
         default_provider: CellProfilerBackendProvider,
     ) -> CellProfilerBackendProvider:
         """Return the explicit provider or a caller-owned contextual default."""
+
+    def semantic_identity(self) -> BackendProviderSelectionIdentity:
+        """Return a stable identity for equivalent backend-selection semantics."""
+        if self.registry_key is None:
+            raise TypeError(
+                f"{type(self).__name__} must declare registry_key before it can "
+                "participate in backend-selection identity."
+            )
+        return (
+            ("selection", self.registry_key),
+            *self.identity_fields(),
+        )
+
+    def identity_fields(self) -> BackendProviderSelectionIdentity:
+        """Return subclass-owned identity fields beyond the registered policy."""
+        return ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +183,9 @@ class ExplicitCellProfilerBackendProviderSelection(CellProfilerBackendProviderSe
         del default_provider
         return self.provider
 
+    def identity_fields(self) -> BackendProviderSelectionIdentity:
+        return (("provider", self.provider.value),)
+
 
 DEFAULT_CELLPROFILER_BACKEND_SELECTION = (
     DefaultCellProfilerBackendProviderSelection()
@@ -214,6 +235,14 @@ class CellProfilerBackendAuthority:
         return ExplicitCellProfilerBackendProviderSelection(
             cls.provider(backend_provider)
         )
+
+    @classmethod
+    def selection_identity(
+        cls,
+        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    ) -> BackendProviderSelectionIdentity:
+        """Return the semantic identity for a backend-provider selection input."""
+        return cls.provider_selection(backend_provider).semantic_identity()
 
     @classmethod
     def backend_key(
@@ -363,6 +392,7 @@ __all__ = [
     "DEFAULT_CELLPROFILER_BACKEND_PROVIDER",
     "DEFAULT_CELLPROFILER_BACKEND_SELECTION",
     "BackendProviderInput",
+    "BackendProviderSelectionIdentity",
     "CellProfilerBackendAuthority",
     "CellProfilerBackendProvider",
     "CellProfilerBackendProviderSelection",

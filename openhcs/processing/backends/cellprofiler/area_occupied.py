@@ -145,6 +145,7 @@ def measure_image_area_occupied(
     input_names: Sequence[str] = ("image",),
     retained_image_names: Sequence[str | None] = (None,),
     object_labels: Sequence[np.ndarray] = (),
+    slice_by_slice: bool = True,
 ) -> tuple:
     """Measure area occupied for ordered binary-image and object rows."""
     rows = _area_occupied_runtime_rows(
@@ -276,10 +277,10 @@ def _binary_images_from_payload(
     if binary_image_count == 0:
         return ()
     if binary_image_count == 1:
-        if hasattr(image, "ndim") and image.ndim == 3 and image.shape[0] == 1:
+        if isinstance(image, np.ndarray) and image.ndim == 3 and image.shape[0] == 1:
             return (image[0],)
         return (image,)
-    if not hasattr(image, "ndim") or image.ndim != 3:
+    if not isinstance(image, np.ndarray) or image.ndim != 3:
         raise ValueError(
             "MeasureImageAreaOccupied requires a stacked image payload for "
             "multiple binary-image rows."

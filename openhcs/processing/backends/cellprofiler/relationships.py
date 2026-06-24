@@ -40,7 +40,7 @@ from openhcs.core.runtime_semantics import (
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.core.runtime_values import object_label_payload_with_dense_labels
+from openhcs.core.runtime_values import object_label_value_with_dense_labels
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_dataclass_materializer
 
@@ -482,7 +482,7 @@ def relate_objects(
             slice_indices=tuple(slice_index for _child_id in related_child_ids),
             slice_count=slice_index + 1,
         )
-    output_labels = object_label_payload_with_dense_labels(
+    output_labels = object_label_value_with_dense_labels(
         raw_child_labels,
         output_labels.astype(np.float32),
     )

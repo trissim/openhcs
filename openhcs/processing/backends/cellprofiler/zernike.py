@@ -26,7 +26,7 @@ from openhcs.core.runtime_semantics import (
     ObjectZernikeDescriptorFeature,
     indexed_object_intensity_zernike_feature_name,
 )
-from openhcs.core.runtime_artifact_queries import MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD
+from openhcs.core.measurement_row_materialization import MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD
 from openhcs.core.runtime_values import ColumnarRows
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -215,7 +215,7 @@ class CellProfilerZernikePhaseExportValues:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ObjectIntensityZernikeMeasurementColumnarRows(ObjectMeasurementColumnarRows):
     """Columnar intensity-Zernike measurement rows."""
 
@@ -246,7 +246,7 @@ class ObjectIntensityZernikeMeasurementColumnarRows(ObjectMeasurementColumnarRow
         object_ids = np.asarray(self.object_ids, dtype=np.int32)
         zernike_indexes = tuple((int(n), int(m)) for n, m in self.zernike_indexes)
         if object_ids.size == 0 or len(zernike_indexes) == 0:
-            object.__setattr__(self, "_columns", MappingProxyType({}))
+            self._columns = MappingProxyType({})
             return
 
         magnitude_values = np.asarray(self.magnitudes, dtype=np.float64)
@@ -298,7 +298,7 @@ class ObjectIntensityZernikeMeasurementColumnarRows(ObjectMeasurementColumnarRow
                 self.row_identity.value,
                 dtype=object,
             )
-        object.__setattr__(self, "_columns", MappingProxyType(columns))
+        self._columns = MappingProxyType(columns)
 
     @property
     def columns(self) -> Mapping[str, Sequence[object]]:
@@ -343,6 +343,31 @@ class ShapeZernikeBackendStrategy(
         max_order: int,
     ) -> IntensityZernikeMoments:
         """Return intensity-weighted Zernike magnitudes and phases."""
+
+    def intensity_zernike_moments_batch(
+        self,
+        images: Sequence[np.ndarray],
+        labels: np.ndarray,
+        measured_labels: np.ndarray,
+        *,
+        max_order: int,
+    ) -> tuple[ZernikeMomentIndexes, tuple[tuple[np.ndarray, np.ndarray], ...]]:
+        """Return intensity Zernikes for images sharing one label geometry."""
+        rows: list[tuple[np.ndarray, np.ndarray]] = []
+        zernike_numbers: ZernikeMomentIndexes | None = None
+        for image in images:
+            image_zernike_numbers, magnitudes, phases = self.intensity_zernike_moments(
+                image,
+                labels,
+                measured_labels,
+                max_order=max_order,
+            )
+            if zernike_numbers is None:
+                zernike_numbers = image_zernike_numbers
+            elif zernike_numbers != image_zernike_numbers:
+                raise ValueError("Batched intensity Zernike indexes changed across images.")
+            rows.append((magnitudes, phases))
+        return zernike_numbers or (), tuple(rows)
 
 
 class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
@@ -803,6 +828,102 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         ).write_if_enabled()
         return zernike_numbers, magnitudes, phases
 
+    def intensity_zernike_moments_batch(
+        self,
+        images: Sequence[np.ndarray],
+        labels: np.ndarray,
+        measured_labels: np.ndarray,
+        *,
+        max_order: int,
+    ) -> tuple[ZernikeMomentIndexes, tuple[tuple[np.ndarray, np.ndarray], ...]]:
+        image_arrays = tuple(np.asarray(image, dtype=np.float64) for image in images)
+        if not image_arrays:
+            zernike_numbers_array = _zernike_indexes_array(int(max_order))
+            return tuple((int(n), int(m)) for n, m in zernike_numbers_array), ()
+
+        labels_array = np.asarray(labels, dtype=np.int32)
+        measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
+        zernike_numbers_array = _zernike_indexes_array(int(max_order))
+        zernike_numbers = tuple((int(n), int(m)) for n, m in zernike_numbers_array)
+        if measured_label_ids.size == 0 or zernike_numbers_array.size == 0:
+            empty_rows = tuple(
+                (
+                    np.zeros((measured_label_ids.size, len(zernike_numbers)), dtype=float),
+                    np.zeros((measured_label_ids.size, len(zernike_numbers)), dtype=float),
+                )
+                for _image in image_arrays
+            )
+            return zernike_numbers, empty_rows
+
+        geometry = self.zernike_label_geometry(labels_array, measured_label_ids)
+        if geometry.y_coords.size == 0:
+            empty_rows = tuple(
+                (
+                    np.full((measured_label_ids.size, len(zernike_numbers)), np.nan),
+                    np.full((measured_label_ids.size, len(zernike_numbers)), np.nan),
+                )
+                for _image in image_arrays
+            )
+            return zernike_numbers, empty_rows
+
+        centers = geometry.centers
+        radii = geometry.radii
+        y_coords = geometry.y_coords.astype(np.int64, copy=False)
+        x_coords = geometry.x_coords.astype(np.int64, copy=False)
+        label_values = geometry.label_values
+        valid = (
+            (label_values > 0)
+            & (label_values <= measured_label_ids.size)
+            & np.isfinite(radii[label_values - 1])
+            & (radii[label_values - 1] > 0)
+        )
+        y_coords = np.ascontiguousarray(y_coords[valid], dtype=np.int64)
+        x_coords = np.ascontiguousarray(x_coords[valid], dtype=np.int64)
+        label_values = np.ascontiguousarray(label_values[valid], dtype=np.int32)
+        if y_coords.size == 0:
+            empty_rows = tuple(
+                (
+                    np.full((measured_label_ids.size, len(zernike_numbers)), np.nan),
+                    np.full((measured_label_ids.size, len(zernike_numbers)), np.nan),
+                )
+                for _image in image_arrays
+            )
+            return zernike_numbers, empty_rows
+
+        coefficients, exponents, term_counts = self.zernike_radial_terms(
+            zernike_numbers_array
+        )
+        score_context = (
+            np.ascontiguousarray(centers, dtype=np.float64),
+            np.ascontiguousarray(radii, dtype=np.float64),
+            np.ascontiguousarray(zernike_numbers_array, dtype=np.int64),
+            coefficients,
+            exponents,
+            term_counts,
+            int(measured_label_ids.size),
+        )
+        image_stack = np.ascontiguousarray(np.stack(image_arrays), dtype=np.float64)
+        score_started_at = time.perf_counter()
+        magnitudes, phases = _score_intensity_zernike_moments_batch_numba(
+            image_stack,
+            label_values,
+            y_coords,
+            x_coords,
+            score_context,
+        )
+        runtime_profiler.log(
+            "zernike_intensity_batch_score",
+            time.perf_counter() - score_started_at,
+            images=len(image_arrays),
+            objects=int(measured_label_ids.size),
+            pixels=int(y_coords.size),
+            orders=zernike_numbers_array.shape[0],
+        )
+        return zernike_numbers, tuple(
+            (magnitudes[image_index], phases[image_index])
+            for image_index in range(len(image_arrays))
+        )
+
 
 def shape_zernike_moments(
     labels: np.ndarray,
@@ -842,6 +963,26 @@ def intensity_zernike_moments(
     )
 
 
+def intensity_zernike_moments_batch(
+    images: Sequence[np.ndarray],
+    labels: np.ndarray,
+    measured_labels: np.ndarray,
+    *,
+    max_order: int,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[ZernikeMomentIndexes, tuple[tuple[np.ndarray, np.ndarray], ...]]:
+    """Return intensity Zernikes for images sharing one label geometry."""
+    return ShapeZernikeBackendStrategy.for_memory_type(
+        MemoryType.NUMPY,
+        backend_provider=backend_provider,
+    ).intensity_zernike_moments_batch(
+        images,
+        labels,
+        measured_labels,
+        max_order=max_order,
+    )
+
+
 def _array_content_key(array: np.ndarray) -> tuple[str, tuple[int, ...], bytes]:
     contiguous = np.ascontiguousarray(array)
     digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
@@ -864,6 +1005,7 @@ __all__ = public_names_from_objects(
     ZernikeIntensityDebugArrayTrace,
     ZernikeIntensityDebugTrace,
     intensity_zernike_moments,
+    intensity_zernike_moments_batch,
     shape_zernike_moments,
 )
 
@@ -1098,4 +1240,92 @@ def _score_intensity_zernike_moments_direct_numba(
                 imag_value,
             )
 
+    return magnitudes, phases
+
+
+@njit(cache=True)
+def _score_intensity_zernike_moments_batch_numba(
+    images: np.ndarray,
+    label_values: np.ndarray,
+    y_coords: np.ndarray,
+    x_coords: np.ndarray,
+    score_context: tuple,
+) -> tuple[np.ndarray, np.ndarray]:
+    (
+        centers,
+        radii,
+        zernike_numbers,
+        coefficients,
+        exponents,
+        term_counts,
+        object_count,
+    ) = score_context
+    image_count = images.shape[0]
+    zernike_count = zernike_numbers.shape[0]
+    real_sums = np.zeros((image_count, object_count, zernike_count), dtype=np.float64)
+    imag_sums = np.zeros((image_count, object_count, zernike_count), dtype=np.float64)
+    areas = np.zeros(object_count, dtype=np.float64)
+    max_order = _zernike_max_order_numba(zernike_numbers)
+    rho_powers = np.empty(max_order + 1, dtype=np.float64)
+    cos_by_m = np.empty(max_order + 1, dtype=np.float64)
+    sin_by_m = np.empty(max_order + 1, dtype=np.float64)
+    for pixel_index in range(label_values.size):
+        object_index = label_values[pixel_index] - 1
+        if object_index < 0 or object_index >= object_count:
+            continue
+        radius = radii[object_index]
+        if not np.isfinite(radius) or radius <= 0.0:
+            continue
+        y = y_coords[pixel_index]
+        x = x_coords[pixel_index]
+        areas[object_index] += 1.0
+        normalized_y = (y - centers[object_index, 0]) / radius
+        normalized_x = (x - centers[object_index, 1]) / radius
+        if not _prepare_zernike_pixel_basis_numba(
+            normalized_y,
+            normalized_x,
+            max_order,
+            rho_powers,
+            cos_by_m,
+            sin_by_m,
+        ):
+            continue
+        for zernike_index in range(zernike_count):
+            radial = 0.0
+            for term_index in range(term_counts[zernike_index]):
+                radial += (
+                    coefficients[zernike_index, term_index]
+                    * rho_powers[exponents[zernike_index, term_index]]
+                )
+            m = abs(zernike_numbers[zernike_index, 1])
+            real_basis = radial * cos_by_m[m]
+            imag_basis = radial * sin_by_m[m]
+            for image_index in range(image_count):
+                weight = images[image_index, y, x]
+                real_sums[image_index, object_index, zernike_index] += (
+                    weight * real_basis
+                )
+                imag_sums[image_index, object_index, zernike_index] += (
+                    weight * imag_basis
+                )
+
+    magnitudes = np.empty((image_count, object_count, zernike_count), dtype=np.float64)
+    phases = np.empty((image_count, object_count, zernike_count), dtype=np.float64)
+    for image_index in range(image_count):
+        for object_index in range(object_count):
+            area = areas[object_index]
+            for zernike_index in range(zernike_count):
+                real_value = real_sums[image_index, object_index, zernike_index]
+                imag_value = imag_sums[image_index, object_index, zernike_index]
+                if area <= 0.0:
+                    magnitudes[image_index, object_index, zernike_index] = np.nan
+                else:
+                    magnitudes[image_index, object_index, zernike_index] = (
+                        np.sqrt(real_value * real_value + imag_value * imag_value)
+                        / area
+                    )
+                phases[image_index, object_index, zernike_index] = np.arctan2(
+                    real_value,
+                    imag_value,
+                )
     return magnitudes, phases

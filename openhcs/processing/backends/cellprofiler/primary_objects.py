@@ -22,11 +22,13 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerOtsuMethod,
     CellProfilerThresholdAssignment,
     CellProfilerThresholdMethod,
+    CellProfilerThresholdRequest,
+    CellProfilerThresholdSettings,
     CellProfilerThresholdScope,
     CellProfilerVarianceMethod,
-    cellprofiler_threshold,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
+    threshold_profile_sink,
     unit_interval_scale_for_threshold_diagnostics,
 )
 from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array_fixture
@@ -232,7 +234,7 @@ def identify_primary_objects(
         else ImagePayloadMetadata()
     )
     raw_image_data = np.asarray(image_payload_data(image))
-    diagnostics_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
+    proven_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
         raw_image_data,
         image_payload_metadata(image),
     )
@@ -245,35 +247,39 @@ def identify_primary_objects(
     )
     
     phase_started_at = time.perf_counter()
-    binary, thresh, original_threshold = cellprofiler_threshold(
-        img,
-        use_advanced_settings=use_advanced_settings,
-        threshold_scope=threshold_scope,
-        threshold_method=threshold_method,
-        threshold_smoothing_scale=effective_threshold_smoothing,
-        otsu_class_count=otsu_class_count,
-        assign_middle_to_foreground=assign_middle_to_foreground,
-        log_transform=log_transform,
-        threshold_correction_factor=threshold_correction_factor,
-        threshold_min=threshold_min,
-        threshold_max=threshold_max,
-        adaptive_window_size=adaptive_window_size,
-        lower_outlier_fraction=lower_outlier_fraction,
-        upper_outlier_fraction=upper_outlier_fraction,
-        averaging_method=averaging_method,
-        variance_method=variance_method,
-        number_of_deviations=number_of_deviations,
-        manual_threshold=manual_threshold,
-        mask=input_mask,
-        smooth_threshold_application=True,
-    )
-    threshold_binary = np.asarray(binary, dtype=bool).copy()
+    threshold = CellProfilerThresholdRequest(
+        image=img,
+        image_mask=input_mask,
+        settings=CellProfilerThresholdSettings(
+            use_advanced_settings=use_advanced_settings,
+            threshold_scope=threshold_scope,
+            threshold_method=threshold_method,
+            threshold_smoothing_scale=effective_threshold_smoothing,
+            otsu_class_count=otsu_class_count,
+            assign_middle_to_foreground=assign_middle_to_foreground,
+            log_transform=log_transform,
+            threshold_correction_factor=threshold_correction_factor,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            adaptive_window_size=adaptive_window_size,
+            lower_outlier_fraction=lower_outlier_fraction,
+            upper_outlier_fraction=upper_outlier_fraction,
+            averaging_method=averaging_method,
+            variance_method=variance_method,
+            number_of_deviations=number_of_deviations,
+            manual_threshold=manual_threshold,
+            smooth_threshold_application=True,
+        ),
+        proven_unit_interval_scale=proven_unit_interval_scale,
+        log_profile_function=threshold_profile_sink(),
+    ).calculate()
+    binary = threshold.mask
     runtime_profiler.log(
         "ipo_threshold",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
-        threshold=float(thresh),
-        original_threshold=float(original_threshold),
+        threshold=float(threshold.final_threshold),
+        original_threshold=float(threshold.original_threshold),
         mask_pixels=(
             int(np.asarray(input_mask, dtype=bool).sum())
             if input_mask is not None
@@ -512,14 +518,6 @@ def identify_primary_objects(
     # Calculate statistics
     phase_started_at = time.perf_counter()
     mean_area, median_area, total_area = dense_label_area_statistics(labeled_image)
-    threshold_diagnostics = cellprofiler_threshold_diagnostics(
-        img,
-        threshold_binary,
-        final_threshold=thresh,
-        original_threshold=original_threshold,
-        mask=input_mask,
-        proven_unit_interval_scale=diagnostics_unit_interval_scale,
-    )
     runtime_profiler.log(
         "ipo_statistics_diagnostics",
         time.perf_counter() - phase_started_at,
@@ -532,27 +530,34 @@ def identify_primary_objects(
         mean_area=mean_area,
         median_area=median_area,
         total_area=total_area,
-        threshold_used=float(thresh),
-        original_threshold=threshold_diagnostics.original_threshold,
-        weighted_variance=threshold_diagnostics.weighted_variance,
-        sum_of_entropies=threshold_diagnostics.sum_of_entropies,
+        threshold_used=float(threshold.final_threshold),
+        original_threshold=threshold.original_threshold,
+        weighted_variance=threshold.weighted_variance,
+        sum_of_entropies=threshold.sum_of_entropies,
+    )
+    phase_started_at = time.perf_counter()
+    label_payload = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=labeled_image.astype(np.int32, copy=False),
+        unedited_labels=unedited_labels.astype(np.int32, copy=False),
+        small_removed_labels=small_removed_labels.astype(np.int32, copy=False),
+        declared_object_count=object_count,
+    ).payload()
+    runtime_profiler.log(
+        "ipo_build_label_payload",
+        time.perf_counter() - phase_started_at,
+        function="identify_primary_objects",
     )
     runtime_profiler.log(
         "ipo_total",
         time.perf_counter() - profile_total_started_at,
         function="identify_primary_objects",
     )
-    
+
     return (
         image,
         stats,
-        SourceImageObjectLabelBuildRequest(
-            image=image,
-            labels=labeled_image.astype(np.int32, copy=False),
-            unedited_labels=unedited_labels.astype(np.int32, copy=False),
-            small_removed_labels=small_removed_labels.astype(np.int32, copy=False),
-            declared_object_count=object_count,
-        ).payload(),
+        label_payload,
     )
 
 

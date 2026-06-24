@@ -14,6 +14,7 @@ import numpy as np
 from numba import njit
 from scipy import ndimage as ndi
 
+from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_values import object_label_dense_array
@@ -59,10 +60,7 @@ class CellProfilerRuntimeProfiler:
         return profile_enabled()
 
     def log(self, label: str, seconds: float, **fields: object) -> None:
-        if not self.enabled():
-            return
-        field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-        self.logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+        RuntimeProfileLogger.log(self.logger, label, seconds, **fields)
 
 
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
@@ -187,6 +185,83 @@ class GranularityImageSeriesCacheEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class GranularityLabelPixels:
+    """Compact foreground pixel coordinates for one label/object domain."""
+
+    pixel_rows: np.ndarray
+    pixel_cols: np.ndarray
+    pixel_object_indices: np.ndarray
+    object_counts: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class GranularityLabelPixelsCacheEntry:
+    """Cache entry for compact granularity label pixels."""
+
+    pixels: GranularityLabelPixels
+
+
+@dataclass(frozen=True, slots=True)
+class GranularityLabelPixelsRequest:
+    """Request for reusable compact label pixels."""
+
+    labels: np.ndarray
+    object_range: np.ndarray
+    profile_function: str
+
+    def log_profile(self, label: str, seconds: float, **fields: object) -> None:
+        log_profile(label, seconds, function=self.profile_function, **fields)
+
+    def pixels(self) -> GranularityLabelPixels:
+        labels_array = np.ascontiguousarray(self.labels, dtype=np.int32)
+        object_range_array = np.ascontiguousarray(self.object_range, dtype=np.int32)
+        phase_started_at = time.perf_counter()
+        key = (
+            *granularity_array_content_key(labels_array),
+            *granularity_array_content_key(object_range_array),
+        )
+        self.log_profile(
+            "granularity_label_pixels_key",
+            time.perf_counter() - phase_started_at,
+            objects=int(object_range_array.size),
+        )
+        entry = GRANULARITY_LABEL_PIXELS_CACHE.get(key)
+        if entry is not None:
+            GRANULARITY_LABEL_PIXELS_CACHE.move_to_end(key)
+            self.log_profile(
+                "granularity_label_pixels_cache_hit",
+                0.0,
+                objects=int(object_range_array.size),
+            )
+            return entry.pixels
+
+        phase_started_at = time.perf_counter()
+        label_to_index = label_to_index_lookup_numba(object_range_array)
+        pixel_rows, pixel_cols, pixel_object_indices, object_counts = (
+            compact_label_pixels_from_lookup_numba(labels_array, label_to_index)
+        )
+        pixels = GranularityLabelPixels(
+            pixel_rows=pixel_rows,
+            pixel_cols=pixel_cols,
+            pixel_object_indices=pixel_object_indices,
+            object_counts=object_counts,
+        )
+        self.log_profile(
+            "granularity_label_pixels_compact",
+            time.perf_counter() - phase_started_at,
+            objects=int(object_range_array.size),
+            pixels=int(pixel_rows.size),
+        )
+        GRANULARITY_LABEL_PIXELS_CACHE[key] = GranularityLabelPixelsCacheEntry(
+            pixels=pixels,
+        )
+        GRANULARITY_LABEL_PIXELS_CACHE.move_to_end(key)
+        while len(GRANULARITY_LABEL_PIXELS_CACHE) > GRANULARITY_LABEL_PIXELS_CACHE_MAX_ENTRIES:
+            GRANULARITY_LABEL_PIXELS_CACHE.popitem(last=False)
+        return pixels
+
+
+@dataclass(frozen=True, slots=True)
 class GranularityImageSeriesRequest:
     """Request for reusable background-corrected granularity reconstructions."""
 
@@ -267,15 +342,34 @@ GRANULARITY_IMAGE_SERIES_CACHE: dict[
     GranularityImageSeriesCacheEntry,
 ] = OrderedDict()
 GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES = 16
+GRANULARITY_LABEL_PIXELS_CACHE: dict[
+    tuple[
+        str,
+        tuple[int, ...],
+        bytes,
+        str,
+        tuple[int, ...],
+        bytes,
+    ],
+    GranularityLabelPixelsCacheEntry,
+] = OrderedDict()
+GRANULARITY_LABEL_PIXELS_CACHE_MAX_ENTRIES = 16
+
+
+def granularity_array_content_key(
+    array: np.ndarray,
+) -> tuple[str, tuple[int, ...], bytes]:
+    """Return an exact content key for a granularity array."""
+    contiguous = np.ascontiguousarray(array)
+    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
+    return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
 
 
 def granularity_image_content_key(
     image: np.ndarray,
 ) -> tuple[str, tuple[int, ...], bytes]:
     """Return an exact value key for deterministic granularity series reuse."""
-    contiguous = np.ascontiguousarray(image)
-    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
-    return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
+    return granularity_array_content_key(image)
 
 
 def granularity_reconstruction_series(
@@ -390,21 +484,24 @@ def object_granularity_values(
     *,
     subsample_size: float,
     spectrum_length: int,
+    label_pixels: GranularityLabelPixels | None = None,
 ) -> np.ndarray:
     """Return CP granularity spectrum values for each object id."""
     orig_shape = image.shape
     pixels = series.pixels
     new_shape = series.new_shape
-    label_to_index = label_to_index_lookup_numba(object_range)
-    pixel_rows, pixel_cols, pixel_object_indices, object_counts = (
-        compact_label_pixels_from_lookup_numba(labels, label_to_index)
-    )
+    if label_pixels is None:
+        label_pixels = GranularityLabelPixelsRequest(
+            labels=labels,
+            object_range=object_range,
+            profile_function="measure_granularity_objects",
+        ).pixels()
     current_means = mean_by_compact_label_pixels_numba(
         np.asarray(image),
-        pixel_rows,
-        pixel_cols,
-        pixel_object_indices,
-        object_counts,
+        label_pixels.pixel_rows,
+        label_pixels.pixel_cols,
+        label_pixels.pixel_object_indices,
+        label_pixels.object_counts,
     )
     start_means = np.maximum(current_means, np.finfo(float).eps)
     gs_per_object = np.zeros((int(object_range.size), 16))
@@ -423,20 +520,20 @@ def object_granularity_values(
             )
             new_means = mean_by_compact_label_pixels_from_resampled_numba(
                 np.asarray(rec),
-                pixel_rows,
-                pixel_cols,
-                pixel_object_indices,
-                object_counts,
+                label_pixels.pixel_rows,
+                label_pixels.pixel_cols,
+                label_pixels.pixel_object_indices,
+                label_pixels.object_counts,
                 row_scale,
                 col_scale,
             )
         else:
             new_means = mean_by_compact_label_pixels_numba(
                 np.asarray(rec),
-                pixel_rows,
-                pixel_cols,
-                pixel_object_indices,
-                object_counts,
+                label_pixels.pixel_rows,
+                label_pixels.pixel_cols,
+                label_pixels.pixel_object_indices,
+                label_pixels.object_counts,
             )
         gs_values = (prev_means - new_means) * 100 / start_means
         if gs_idx > 0:
@@ -1064,10 +1161,15 @@ measure_granularity_objects.__openhcs_prepare__ = _prepare_granularity_backend
 __all__ = [
     "GRANULARITY_IMAGE_SERIES_CACHE",
     "GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES",
+    "GRANULARITY_LABEL_PIXELS_CACHE",
+    "GRANULARITY_LABEL_PIXELS_CACHE_MAX_ENTRIES",
     "GRANULARITY_FIELDS",
     "GranularityImageSeries",
     "GranularityImageSeriesCacheEntry",
     "GranularityImageSeriesRequest",
+    "GranularityLabelPixels",
+    "GranularityLabelPixelsCacheEntry",
+    "GranularityLabelPixelsRequest",
     "GranularityMeasurement",
     "ObjectGranularityMeasurement",
     "background_corrected_pixels",

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import ClassVar, TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
@@ -21,9 +22,10 @@ from openhcs.core.pipeline.function_contracts import (
 from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
 from openhcs.core.runtime_semantics import dense_object_label_id_domain
 from openhcs.core.runtime_values import (
-    DenseObjectLabelPlaneDomainStack,
-    ObjectLabelValue,
+    DenseObjectLabelPlaneDomainStackRequest,
     ObjectLabelMeasurementPayloadStrategy,
+    ObjectLabelSourcePlaneProjectionRequest,
+    ObjectLabelValue,
     object_label_dense_array,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -55,54 +57,72 @@ F_HARALICK = [
 
 N_DIRECTIONS_2D = 4
 ObjectIntensityCrops = tuple[np.ndarray, tuple[np.ndarray, ...]]
+TextureLabelSource: TypeAlias = ObjectLabelValue | np.ndarray | None
+ObjectTextureResult: TypeAlias = tuple[np.ndarray, list["ObjectTextureMeasurement"]]
+
+
+@dataclass(frozen=True, slots=True)
+class HaralickFeatureColumn:
+    """Descriptor exposing one Haralick vector coordinate as a row column."""
+
+    feature_index: int
+
+    def __get__(
+        self,
+        instance: "HaralickFeatureColumns | None",
+        owner: type["HaralickFeatureColumns"] | None = None,
+    ) -> float | "HaralickFeatureColumn":
+        del owner
+        if instance is None:
+            return self
+        return float(instance.features.values[self.feature_index])
+
+
+class TextureAxisColumns:
+    """Output-column aliases owned by the texture axis carrier."""
+
+    slice_index: ClassVar[AliasProperty[int]] = AliasProperty("axis.slice_index")
+    scale: ClassVar[AliasProperty[int]] = AliasProperty("axis.scale")
+    direction: ClassVar[AliasProperty[int]] = AliasProperty("axis.direction")
+    gray_levels: ClassVar[AliasProperty[int]] = AliasProperty("axis.gray_levels")
+
+
+class HaralickFeatureColumns:
+    """Output-column aliases owned by the Haralick feature vector."""
+
+    angular_second_moment: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(0)
+    contrast: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(1)
+    correlation: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(2)
+    variance: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(3)
+    inverse_difference_moment: ClassVar[HaralickFeatureColumn] = (
+        HaralickFeatureColumn(4)
+    )
+    sum_average: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(5)
+    sum_variance: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(6)
+    sum_entropy: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(7)
+    entropy: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(8)
+    difference_variance: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(9)
+    difference_entropy: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(10)
+    info_meas1: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(11)
+    info_meas2: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(12)
 
 
 @dataclass
-class TextureMeasurement:
+class TextureMeasurement(TextureAxisColumns, HaralickFeatureColumns):
     """Texture measurement results for a single slice/image."""
 
-    slice_index: int
-    scale: int
-    direction: int
-    gray_levels: int
-    angular_second_moment: float
-    contrast: float
-    correlation: float
-    variance: float
-    inverse_difference_moment: float
-    sum_average: float
-    sum_variance: float
-    sum_entropy: float
-    entropy: float
-    difference_variance: float
-    difference_entropy: float
-    info_meas1: float
-    info_meas2: float
+    axis: "TextureMeasurementAxis"
+    features: "HaralickFeatureVector"
     source_image_name: str | None = None
 
 
 @dataclass
-class ObjectTextureMeasurement:
+class ObjectTextureMeasurement(TextureAxisColumns, HaralickFeatureColumns):
     """Texture measurement results per object."""
 
-    slice_index: int
     object_label: int
-    scale: int
-    direction: int
-    gray_levels: int
-    angular_second_moment: float
-    contrast: float
-    correlation: float
-    variance: float
-    inverse_difference_moment: float
-    sum_average: float
-    sum_variance: float
-    sum_entropy: float
-    entropy: float
-    difference_variance: float
-    difference_entropy: float
-    info_meas1: float
-    info_meas2: float
+    axis: "TextureMeasurementAxis"
+    features: "HaralickFeatureVector"
     source_image_name: str | None = None
 
 
@@ -362,69 +382,62 @@ def _has_nonzero_haralick_pairs(nonzero: np.ndarray, scale: int) -> bool:
     )
 
 
-def _feature_row(feature_matrix: np.ndarray, direction: int) -> np.ndarray:
-    if direction >= feature_matrix.shape[0]:
-        return np.zeros((len(F_HARALICK),), dtype=float)
-    return _clean_feature_vector(feature_matrix[direction, :])
+@dataclass(frozen=True, slots=True)
+class TextureMeasurementAxis:
+    """Scale, direction, and gray-level coordinates for one Haralick row."""
+
+    slice_index: int
+    scale: int
+    direction: int
+    gray_levels: int
+
+    def object_key(self, object_label: int) -> tuple[int, int, int, int, int]:
+        return (
+            object_label,
+            self.slice_index,
+            self.scale,
+            self.direction,
+            self.gray_levels,
+        )
 
 
-def _texture_measurement(
-    *,
-    scale: int,
-    direction: int,
-    gray_levels: int,
-    features: np.ndarray,
-) -> TextureMeasurement:
-    return TextureMeasurement(
-        slice_index=0,
-        scale=scale,
-        direction=direction,
-        gray_levels=gray_levels,
-        angular_second_moment=float(features[0]),
-        contrast=float(features[1]),
-        correlation=float(features[2]),
-        variance=float(features[3]),
-        inverse_difference_moment=float(features[4]),
-        sum_average=float(features[5]),
-        sum_variance=float(features[6]),
-        sum_entropy=float(features[7]),
-        entropy=float(features[8]),
-        difference_variance=float(features[9]),
-        difference_entropy=float(features[10]),
-        info_meas1=float(features[11]),
-        info_meas2=float(features[12]),
-    )
+@dataclass(frozen=True, slots=True)
+class HaralickFeatureVector:
+    """Cleaned Haralick feature row with constructors for output records."""
 
+    values: np.ndarray
 
-def _object_texture_measurement(
-    *,
-    slice_index: int,
-    object_label: int,
-    scale: int,
-    direction: int,
-    gray_levels: int,
-    features: np.ndarray,
-) -> ObjectTextureMeasurement:
-    return ObjectTextureMeasurement(
-        slice_index=slice_index,
-        object_label=object_label,
-        scale=scale,
-        direction=direction,
-        gray_levels=gray_levels,
-        angular_second_moment=float(features[0]),
-        contrast=float(features[1]),
-        correlation=float(features[2]),
-        variance=float(features[3]),
-        inverse_difference_moment=float(features[4]),
-        sum_average=float(features[5]),
-        sum_variance=float(features[6]),
-        sum_entropy=float(features[7]),
-        entropy=float(features[8]),
-        difference_variance=float(features[9]),
-        difference_entropy=float(features[10]),
-        info_meas1=float(features[11]),
-        info_meas2=float(features[12]),
-    )
+    @classmethod
+    def from_matrix(
+        cls,
+        feature_matrix: np.ndarray,
+        direction: int,
+    ) -> "HaralickFeatureVector":
+        if direction >= feature_matrix.shape[0]:
+            return cls.zeros()
+        return cls(_clean_feature_vector(feature_matrix[direction, :]))
+
+    @classmethod
+    def zeros(cls) -> "HaralickFeatureVector":
+        return cls(np.zeros((len(F_HARALICK),), dtype=float))
+
+    def image_measurement(self, axis: TextureMeasurementAxis) -> TextureMeasurement:
+        return TextureMeasurement(
+            axis=axis,
+            features=self,
+        )
+
+    def object_measurement(
+        self,
+        axis: TextureMeasurementAxis,
+        *,
+        object_label: int,
+    ) -> ObjectTextureMeasurement:
+        return ObjectTextureMeasurement(
+            object_label=object_label,
+            axis=axis,
+            features=self,
+        )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -479,80 +492,79 @@ def measure_texture(
         ).feature_matrix()
 
         for direction in range(N_DIRECTIONS_2D):
+            axis = TextureMeasurementAxis(
+                slice_index=0,
+                scale=texture_scale,
+                direction=direction,
+                gray_levels=gray_levels,
+            )
             measurements.append(
-                _texture_measurement(
-                    scale=texture_scale,
-                    direction=direction,
-                    gray_levels=gray_levels,
-                    features=_feature_row(feature_matrix, direction),
+                HaralickFeatureVector.from_matrix(
+                    feature_matrix,
+                    direction,
+                ).image_measurement(
+                    axis,
                 )
             )
 
     return image, measurements
 
 
-def _complete_object_texture_measurements(
-    measurements: list[ObjectTextureMeasurement],
-    *,
-    labels: Any,
-    scale: int | tuple[int, ...] | list[int],
-    gray_levels: int,
-) -> list[ObjectTextureMeasurement]:
-    object_domain = dense_object_label_id_domain(labels)
-    if not object_domain:
-        return measurements
+@dataclass(frozen=True, slots=True)
+class ObjectTextureMeasurementCompletionRequest:
+    """Fill missing per-object texture rows for the declared label domain."""
 
-    axes = tuple(
-        dict.fromkeys(
-            (
-                measurement.slice_index,
-                measurement.scale,
-                measurement.direction,
-                measurement.gray_levels,
-            )
-            for measurement in measurements
-        )
-    )
-    if not axes:
+    measurements: tuple[ObjectTextureMeasurement, ...]
+    labels: TextureLabelSource
+    scale: int | tuple[int, ...] | list[int]
+    gray_levels: int
+
+    def complete(self) -> list[ObjectTextureMeasurement]:
+        object_domain = dense_object_label_id_domain(self.labels)
+        if not object_domain:
+            return list(self.measurements)
+
+        by_key = {
+            measurement.axis.object_key(measurement.object_label): measurement
+            for measurement in self.measurements
+        }
+        complete: list[ObjectTextureMeasurement] = []
+        zero_features = HaralickFeatureVector.zeros()
+        axes = self.axes
+        for object_label in object_domain:
+            for axis in axes:
+                key = axis.object_key(object_label)
+                if key in by_key:
+                    complete.append(by_key[key])
+                    continue
+                complete.append(
+                    zero_features.object_measurement(
+                        axis,
+                        object_label=object_label,
+                    )
+                )
+        return complete
+
+    @property
+    def axes(self) -> tuple[TextureMeasurementAxis, ...]:
         axes = tuple(
-            (0, texture_scale, direction, gray_levels)
-            for texture_scale in _texture_scales(scale)
+            dict.fromkeys(
+                measurement.axis
+                for measurement in self.measurements
+            )
+        )
+        if axes:
+            return axes
+        return tuple(
+            TextureMeasurementAxis(
+                slice_index=0,
+                scale=texture_scale,
+                direction=direction,
+                gray_levels=self.gray_levels,
+            )
+            for texture_scale in _texture_scales(self.scale)
             for direction in range(N_DIRECTIONS_2D)
         )
-
-    by_key = {
-        (
-            measurement.object_label,
-            measurement.slice_index,
-            measurement.scale,
-            measurement.direction,
-            measurement.gray_levels,
-        ): measurement
-        for measurement in measurements
-    }
-    complete: list[ObjectTextureMeasurement] = []
-    zero_features = np.zeros((len(F_HARALICK),), dtype=float)
-    for object_label in object_domain:
-        for axis_slice_index, texture_scale, direction, axis_gray_levels in axes:
-            key = (
-                object_label,
-                axis_slice_index,
-                texture_scale,
-                direction,
-                axis_gray_levels,
-            )
-            complete.append(
-                by_key.get(key)
-                or _object_texture_measurement(
-                    object_label=object_label,
-                    slice_index=axis_slice_index,
-                    scale=texture_scale,
-                    direction=direction,
-                    gray_levels=axis_gray_levels,
-                    features=zero_features,
-                )
-            )
-    return complete
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -599,10 +611,10 @@ def measure_texture_objects(
     image_array = np.asarray(image)
     original_labels = labels
     if image_array.ndim == 2 and slice_index == 0:
-        plane_domain_stack = DenseObjectLabelPlaneDomainStack.from_payload(
+        plane_domain_stack = DenseObjectLabelPlaneDomainStackRequest(
             labels,
             dtype=np.int32,
-        )
+        ).stack()
         if plane_domain_stack is not None:
             measurements: list[ObjectTextureMeasurement] = []
             for plane_index in range(plane_domain_stack.plane_count):
@@ -629,11 +641,12 @@ def measure_texture_objects(
     )
 
     measurements = []
-    labels_2d = _texture_labels_for_slice(
-        _texture_dense_labels(labels),
+    label_projection = TextureLabelSliceProjection.from_source(
+        labels,
         np.asarray(image),
         slice_index,
     )
+    labels_2d = label_projection.labels_2d()
     if labels_2d is not None:
         labels = labels_2d
     object_labels, intensity_crops = crop_backend.object_intensity_crops(
@@ -641,12 +654,12 @@ def measure_texture_objects(
         labels,
     )
     if object_labels.size == 0:
-        return image, _complete_object_texture_measurements(
-            measurements,
+        return image, ObjectTextureMeasurementCompletionRequest(
+            measurements=tuple(measurements),
             labels=original_labels,
             scale=scale,
             gray_levels=gray_levels,
-        )
+        ).complete()
 
     for object_label, label_data in zip(object_labels, intensity_crops, strict=True):
         for texture_scale in _texture_scales(scale):
@@ -658,69 +671,62 @@ def measure_texture_objects(
             ).feature_matrix()
 
             for direction in range(N_DIRECTIONS_2D):
+                axis = TextureMeasurementAxis(
+                    slice_index=slice_index,
+                    scale=texture_scale,
+                    direction=direction,
+                    gray_levels=gray_levels,
+                )
                 measurements.append(
-                    _object_texture_measurement(
+                    HaralickFeatureVector.from_matrix(
+                        feature_matrix,
+                        direction,
+                    ).object_measurement(
+                        axis,
                         object_label=int(object_label),
-                        slice_index=slice_index,
-                        scale=texture_scale,
-                        direction=direction,
-                        gray_levels=gray_levels,
-                        features=_feature_row(feature_matrix, direction),
                     )
                 )
 
-    return image, _complete_object_texture_measurements(
-        measurements,
+    return image, ObjectTextureMeasurementCompletionRequest(
+        measurements=tuple(measurements),
         labels=original_labels,
         scale=scale,
         gray_levels=gray_levels,
-    )
+    ).complete()
 
 
 def measure_texture_objects_batch(
     request: RuntimePure2DSliceBatchRequest,
-) -> list[Any]:
+) -> list[ObjectTextureResult]:
     """Measure per-slice object texture with labels projected to each image plane."""
     kwargs = request.kwargs
-    labels = kwargs.get("labels")
-    label_array = _texture_dense_labels(labels)
-    results: list[Any] = []
+    if "labels" in kwargs:
+        labels = kwargs["labels"]
+    else:
+        labels = None
+    label_array = TextureDenseLabelArray.from_value(labels)
+    results: list[ObjectTextureResult] = []
     for slice_index, slice_2d in enumerate(request.slices_2d):
         slice_kwargs = kwargs
-        slice_array = np.asarray(slice_2d)
-        labels_2d = _texture_labels_for_slice(
-            label_array,
-            slice_array,
-            slice_index,
+        label_projection = TextureLabelSliceProjection(
+            source=labels,
+            dense_labels=label_array,
+            slice_array=np.asarray(slice_2d),
+            slice_index=slice_index,
         )
+        labels_2d = label_projection.labels_2d()
         if labels_2d is not None:
             slice_kwargs = dict(kwargs)
-            slice_kwargs["labels"] = _texture_label_payload_for_slice(
-                labels,
-                labels_2d,
-                slice_index,
-            )
-        results.append(
-            request.execute_slice(
-                request.func,
-                slice_2d,
-                slice_kwargs,
-                slice_index,
-                request.slice_count,
-            )
-        )
+            slice_kwargs["labels"] = label_projection.projected_payload(labels_2d)
+        results.append(request.execute_one_with_kwargs(slice_index, slice_kwargs))
     return results
-
-
-def _texture_dense_labels(labels: Any) -> np.ndarray | None:
-    return TextureDenseLabelArray.from_value(labels)
 
 
 class TextureDenseLabelArray:
     """Dense label coercion for MeasureTexture object inputs."""
 
     @classmethod
-    def from_value(cls, labels: Any) -> np.ndarray | None:
+    def from_value(cls, labels: TextureLabelSource) -> np.ndarray | None:
         if labels is None:
             return None
         if isinstance(labels, ObjectLabelValue):
@@ -728,37 +734,50 @@ class TextureDenseLabelArray:
         return np.asarray(labels)
 
 
-def _texture_label_payload_for_slice(
-    source: Any,
-    labels_2d: np.ndarray,
-    slice_index: int,
-) -> Any:
-    return ObjectLabelMeasurementPayloadStrategy.for_source(
-        source
-    ).with_projected_plane(
-        source,
-        labels_2d,
-        slice_index,
-    )
+@dataclass(frozen=True, slots=True)
+class TextureLabelSliceProjection:
+    """Project object labels onto the image plane being texture-measured."""
 
+    source: TextureLabelSource
+    dense_labels: np.ndarray | None
+    slice_array: np.ndarray
+    slice_index: int
 
-def _texture_labels_for_slice(
-    label_array: np.ndarray | None,
-    slice_array: np.ndarray,
-    slice_index: int,
-) -> np.ndarray | None:
-    if label_array is None or slice_array.ndim != 2:
+    @classmethod
+    def from_source(
+        cls,
+        source: TextureLabelSource,
+        slice_array: np.ndarray,
+        slice_index: int,
+    ) -> "TextureLabelSliceProjection":
+        return cls(
+            source=source,
+            dense_labels=TextureDenseLabelArray.from_value(source),
+            slice_array=slice_array,
+            slice_index=slice_index,
+        )
+
+    def labels_2d(self) -> np.ndarray | None:
+        if self.dense_labels is None or self.slice_array.ndim != 2:
+            return None
+        selected = self.dense_labels
+        while (
+            selected.ndim > 2
+            and selected.shape[-2:] == self.slice_array.shape
+            and selected.shape[0] > 0
+        ):
+            selected = selected[min(self.slice_index, selected.shape[0] - 1)]
+        if selected.ndim == 2 and selected.shape == self.slice_array.shape:
+            return np.asarray(selected, dtype=np.int32)
         return None
-    selected = label_array
-    while (
-        selected.ndim > 2
-        and selected.shape[-2:] == slice_array.shape
-        and selected.shape[0] > 0
-    ):
-        selected = selected[min(slice_index, selected.shape[0] - 1)]
-    if selected.ndim == 2 and selected.shape == slice_array.shape:
-        return np.asarray(selected, dtype=np.int32)
-    return None
+
+    def projected_payload(self, labels_2d: np.ndarray) -> TextureLabelSource:
+        return ObjectLabelMeasurementPayloadStrategy.for_source(
+            self.source
+        ).materialize(
+            self.source,
+            ObjectLabelSourcePlaneProjectionRequest(labels_2d, self.slice_index),
+        )
 
 
 pure_2d_batch_executor(measure_texture_objects_batch)(measure_texture_objects)

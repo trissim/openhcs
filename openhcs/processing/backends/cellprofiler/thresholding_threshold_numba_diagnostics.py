@@ -73,6 +73,33 @@ def _quantized_log_tables(
     )
 
 
+@njit(cache=True, inline="always")
+def _threshold_weighted_variance_from_sums(
+    fg_count: int,
+    bg_count: int,
+    fg_sum: float,
+    bg_sum: float,
+    fg_sumsq: float,
+    bg_sumsq: float,
+) -> float:
+    if fg_count == 0 and bg_count == 0:
+        return 0.0
+    if fg_count == 0:
+        bg_mean = bg_sum / bg_count
+        return bg_sumsq / bg_count - bg_mean * bg_mean
+    if bg_count == 0:
+        fg_mean = fg_sum / fg_count
+        return fg_sumsq / fg_count - fg_mean * fg_mean
+
+    fg_mean = fg_sum / fg_count
+    bg_mean = bg_sum / bg_count
+    fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+    bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+    return (
+        fg_variance * fg_count + bg_variance * bg_count
+    ) / (fg_count + bg_count)
+
+
 @njit(cache=True)
 def _threshold_diagnostics_unmasked_finite_numba(
     image: np.ndarray,
@@ -90,61 +117,40 @@ def _threshold_diagnostics_unmasked_finite_numba(
             if value > max_value:
                 max_value = value
 
-    weighted_variance = 0.0
     minval = max_value / 256.0
-    if minval != 0.0:
-        fg_count = 0
-        bg_count = 0
-        fg_sum = 0.0
-        bg_sum = 0.0
-        fg_sumsq = 0.0
-        bg_sumsq = 0.0
-        for y in range(height):
-            for x in range(width):
-                value = image[y, x]
-                if value < minval:
-                    value = minval
-                log_value = math.log2(value)
-                if binary_image[y, x]:
-                    fg_count += 1
-                    fg_sum += log_value
-                    fg_sumsq += log_value * log_value
-                else:
-                    bg_count += 1
-                    bg_sum += log_value
-                    bg_sumsq += log_value * log_value
-
-        if fg_count == 0 and bg_count == 0:
-            weighted_variance = 0.0
-        elif fg_count == 0:
-            bg_mean = bg_sum / bg_count
-            weighted_variance = bg_sumsq / bg_count - bg_mean * bg_mean
-        elif bg_count == 0:
-            fg_mean = fg_sum / fg_count
-            weighted_variance = fg_sumsq / fg_count - fg_mean * fg_mean
-        else:
-            fg_mean = fg_sum / fg_count
-            bg_mean = bg_sum / bg_count
-            fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
-            bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
-            weighted_variance = (
-                fg_variance * fg_count + bg_variance * bg_count
-            ) / (fg_count + bg_count)
-
     if minval == 0.0:
-        return weighted_variance, 0.0
+        return 0.0, 0.0
 
-    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
+    fg_count = 0
+    bg_count = 0
+    fg_sum = 0.0
+    bg_sum = 0.0
+    fg_sumsq = 0.0
+    bg_sumsq = 0.0
     lower = np.inf
     upper = -np.inf
     foreground_count = 0
     background_count = 0
-    log_smoothed = np.empty((height, width), dtype=np.float64)
+    smoothed_logs = np.empty(height * width, dtype=np.float64)
+    smoothed_index = 0
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     for y in range(height):
         for x in range(width):
             value = image[y, x]
             if value < minval:
                 value = minval
+            log_value = math.log2(value)
+            if binary_image[y, x]:
+                fg_count += 1
+                foreground_count += 1
+                fg_sum += log_value
+                fg_sumsq += log_value * log_value
+            else:
+                bg_count += 1
+                background_count += 1
+                bg_sum += log_value
+                bg_sumsq += log_value * log_value
+
             if value < delta:
                 clipped = delta
             elif value > 1.0:
@@ -159,15 +165,21 @@ def _threshold_diagnostics_unmasked_finite_numba(
             )
             if log_smoothed_value > 0.0:
                 log_smoothed_value = 0.0
-            log_smoothed[y, x] = log_smoothed_value
+            smoothed_logs[smoothed_index] = log_smoothed_value
+            smoothed_index += 1
             if log_smoothed_value < lower:
                 lower = log_smoothed_value
             if log_smoothed_value > upper:
                 upper = log_smoothed_value
-            if binary_image[y, x]:
-                foreground_count += 1
-            else:
-                background_count += 1
+
+    weighted_variance = _threshold_weighted_variance_from_sums(
+        fg_count,
+        bg_count,
+        fg_sum,
+        bg_sum,
+        fg_sumsq,
+        bg_sumsq,
+    )
 
     if upper == lower:
         return weighted_variance, math.log2(float(foreground_count + background_count))
@@ -177,9 +189,12 @@ def _threshold_diagnostics_unmasked_finite_numba(
     foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
     background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
     scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
+    smoothed_index = 0
     for y in range(height):
         for x in range(width):
-            bin_index = int((log_smoothed[y, x] - lower) * scale)
+            log_smoothed_value = smoothed_logs[smoothed_index]
+            smoothed_index += 1
+            bin_index = int((log_smoothed_value - lower) * scale)
             if bin_index < 0:
                 continue
             if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
@@ -208,113 +223,77 @@ def _threshold_diagnostics_numba(
     binary_image: np.ndarray,
     noise: np.ndarray,
 ) -> tuple[float, float]:
-    return (
-        _threshold_weighted_variance_numba(image, mask, binary_image),
-        _threshold_sum_of_entropies_numba(image, mask, binary_image, noise),
-    )
-
-
-@njit(cache=True)
-def _threshold_weighted_variance_numba(
-    image: np.ndarray,
-    mask: np.ndarray,
-    binary_image: np.ndarray,
-) -> float:
     height, width = image.shape
-    any_masked = False
-    max_value = -np.inf
+    weighted_any_masked = False
+    entropy_any_masked = False
+    weighted_max_value = -np.inf
+    entropy_max_value = -np.inf
     for y in range(height):
         for x in range(width):
             if not mask[y, x]:
                 continue
-            any_masked = True
+            weighted_any_masked = True
             value = image[y, x]
-            if value > max_value:
-                max_value = value
+            if value > weighted_max_value:
+                weighted_max_value = value
+            if not np.isnan(value):
+                entropy_any_masked = True
+                if value > entropy_max_value:
+                    entropy_max_value = value
 
-    if not any_masked:
-        return 0.0
-    minval = max_value / 256.0
-    if minval == 0.0:
-        return 0.0
+    weighted_variance = 0.0
+    weighted_minval = weighted_max_value / 256.0
+    if weighted_any_masked and weighted_minval != 0.0:
+        fg_count = 0
+        bg_count = 0
+        fg_sum = 0.0
+        bg_sum = 0.0
+        fg_sumsq = 0.0
+        bg_sumsq = 0.0
+        for y in range(height):
+            for x in range(width):
+                if not mask[y, x]:
+                    continue
+                value = image[y, x]
+                if value < weighted_minval:
+                    value = weighted_minval
+                log_value = math.log2(value)
+                if binary_image[y, x]:
+                    fg_count += 1
+                    fg_sum += log_value
+                    fg_sumsq += log_value * log_value
+                else:
+                    bg_count += 1
+                    bg_sum += log_value
+                    bg_sumsq += log_value * log_value
 
-    fg_count = 0
-    bg_count = 0
-    fg_sum = 0.0
-    bg_sum = 0.0
-    fg_sumsq = 0.0
-    bg_sumsq = 0.0
-    for y in range(height):
-        for x in range(width):
-            if not mask[y, x]:
-                continue
-            value = image[y, x]
-            if value < minval:
-                value = minval
-            log_value = math.log2(value)
-            if binary_image[y, x]:
-                fg_count += 1
-                fg_sum += log_value
-                fg_sumsq += log_value * log_value
-            else:
-                bg_count += 1
-                bg_sum += log_value
-                bg_sumsq += log_value * log_value
+        weighted_variance = _threshold_weighted_variance_from_sums(
+            fg_count,
+            bg_count,
+            fg_sum,
+            bg_sum,
+            fg_sumsq,
+            bg_sumsq,
+        )
 
-    if fg_count == 0 and bg_count == 0:
-        return 0.0
-    if fg_count == 0:
-        bg_mean = bg_sum / bg_count
-        return bg_sumsq / bg_count - bg_mean * bg_mean
-    if bg_count == 0:
-        fg_mean = fg_sum / fg_count
-        return fg_sumsq / fg_count - fg_mean * fg_mean
+    if not entropy_any_masked:
+        return weighted_variance, 0.0
+    entropy_minval = entropy_max_value / 256.0
+    if entropy_minval == 0.0:
+        return weighted_variance, 0.0
 
-    fg_mean = fg_sum / fg_count
-    bg_mean = bg_sum / bg_count
-    fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
-    bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
-    return (
-        fg_variance * fg_count + bg_variance * bg_count
-    ) / (fg_count + bg_count)
-
-
-@njit(cache=True)
-def _threshold_sum_of_entropies_numba(
-    image: np.ndarray,
-    mask: np.ndarray,
-    binary_image: np.ndarray,
-    noise: np.ndarray,
-) -> float:
-    height, width = image.shape
-    any_masked = False
-    max_value = -np.inf
-    for y in range(height):
-        for x in range(width):
-            if (not mask[y, x]) or np.isnan(image[y, x]):
-                continue
-            any_masked = True
-            value = image[y, x]
-            if value > max_value:
-                max_value = value
-
-    if not any_masked:
-        return 0.0
-    minval = max_value / 256.0
-    if minval == 0.0:
-        return 0.0
-
-    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
-    im_min = np.inf
-    im_max = -np.inf
+    lower = np.inf
+    upper = -np.inf
     foreground_count = 0
     background_count = 0
-    smoothed = np.empty((height, width), dtype=np.float64)
+    smoothed_logs = np.empty(height * width, dtype=np.float64)
+    smoothed_index = 0
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     for y in range(height):
         for x in range(width):
             value = image[y, x]
-            if value < minval:
-                value = minval
+            if value < entropy_minval:
+                value = entropy_minval
             if value < delta:
                 clipped = delta
             elif value > 1.0:
@@ -323,19 +302,18 @@ def _threshold_sum_of_entropies_numba(
                 clipped = value
 
             noise_value = noise[y, x]
-            smoothed_value = 2.0 ** (
+            log_smoothed_value = (
                 math.log2(clipped + delta) * noise_value
                 + (1.0 - noise_value) * math.log2(clipped)
             )
-            if smoothed_value > 1.0:
-                smoothed_value = 1.0
-            elif smoothed_value < 0.0:
-                smoothed_value = 0.0
-            smoothed[y, x] = smoothed_value
-            if smoothed_value < im_min:
-                im_min = smoothed_value
-            if smoothed_value > im_max:
-                im_max = smoothed_value
+            if log_smoothed_value > 0.0:
+                log_smoothed_value = 0.0
+            smoothed_logs[smoothed_index] = log_smoothed_value
+            smoothed_index += 1
+            if log_smoothed_value < lower:
+                lower = log_smoothed_value
+            if log_smoothed_value > upper:
+                upper = log_smoothed_value
 
             if mask[y, x] and not np.isnan(image[y, x]):
                 if binary_image[y, x]:
@@ -343,21 +321,21 @@ def _threshold_sum_of_entropies_numba(
                 else:
                     background_count += 1
 
-    upper = math.log2(im_max)
-    lower = math.log2(im_min)
     if upper == lower:
-        return math.log2(float(foreground_count + background_count))
+        return weighted_variance, math.log2(float(foreground_count + background_count))
     if foreground_count == 0 or background_count == 0:
-        return 0.0
+        return weighted_variance, 0.0
 
     foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
     background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
     scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
+    smoothed_index = 0
     for y in range(height):
         for x in range(width):
+            log_value = smoothed_logs[smoothed_index]
+            smoothed_index += 1
             if (not mask[y, x]) or np.isnan(image[y, x]):
                 continue
-            log_value = math.log2(smoothed[y, x])
             bin_index = int((log_value - lower) * scale)
             if bin_index < 0:
                 continue
@@ -371,7 +349,7 @@ def _threshold_sum_of_entropies_numba(
             else:
                 background_hist[bin_index] += 1
 
-    return _histogram_entropy_numba(
+    return weighted_variance, _histogram_entropy_numba(
         foreground_hist,
         foreground_count,
     ) + _histogram_entropy_numba(

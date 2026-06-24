@@ -13,7 +13,11 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.core.runtime_values import (
+    image_payload_metadata,
+    object_label_dense_array,
+    with_image_payload_data,
+)
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
@@ -191,7 +195,7 @@ def convert_image_to_objects(
     )
 
 
-@numpy_decorator
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
 @special_inputs("labels")
 def convert_objects_to_image(
     image: np.ndarray,
@@ -201,11 +205,16 @@ def convert_objects_to_image(
 ) -> np.ndarray:
     """Render object labels into the requested CellProfiler image mode."""
     del image
-    labels = object_label_dense_array(labels, dtype=np.int32)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     resolved_image_mode = coerce_cellprofiler_enum(ImageMode, image_mode)
-    return ImageModeRenderer.for_image_mode(resolved_image_mode).render(
-        labels,
+    rendered = ImageModeRenderer.for_image_mode(resolved_image_mode).render(
+        label_array,
         colormap_value=colormap_value,
+    )
+    return with_image_payload_data(
+        labels,
+        rendered,
+        metadata=image_payload_metadata(labels).without_unit_interval_intensity_scale(),
     )
 
 

@@ -5,11 +5,11 @@ from inspect import unwrap
 
 from benchmark.cellprofiler_library.functions.trackobjects import track_objects
 from openhcs.constants.constants import MemoryType
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_feature_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
     MEASUREMENT_MEASUREMENT_VALUE_FIELD,
-    MEASUREMENT_OBJECT_LABEL_FIELD,
 )
+from openhcs.core.measurement_row_materialization import MEASUREMENT_OBJECT_LABEL_FIELD
 from openhcs.processing.backends.cellprofiler.tracking import (
     NumbaNumpyObjectTrackingBackendStrategy,
     ObjectTrackingBackendStrategy,

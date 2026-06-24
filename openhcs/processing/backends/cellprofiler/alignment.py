@@ -18,10 +18,10 @@ from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MaskedImagePayload,
+    RuntimeImagePayloadContext,
     image_payload_data,
-    image_payload_metadata,
     image_payload_mask,
-    image_payload_with_context,
+    image_payload_metadata,
 )
 from openhcs.interop.cellprofiler.align_settings import (
     AlignAdditionalMode,
@@ -194,11 +194,11 @@ class AlignOutputRequest:
             *self.offset,
         )
         output_mask_view[...] = source_mask_view
-        return image_payload_with_context(
+        return RuntimeImagePayloadContext(
             output,
             mask=None if np.all(output_mask) else output_mask,
             metadata=self.metadata,
-        )
+        ).payload()
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +251,7 @@ class AlignInputPayloads:
 
     def metadata(self, count: int) -> tuple[ImagePayloadMetadata, ...]:
         metadata = image_payload_metadata(self.payload)
-        return tuple(metadata.for_channel(index) for index in range(count))
+        return tuple(metadata.for_source_plane(index) for index in range(count))
 
 
 @dataclass(frozen=True, slots=True)

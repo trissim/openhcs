@@ -16,7 +16,7 @@ from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_feature_queries import (
     MeasurementFeatureQuery,
     measurement_values_for_feature,
     normalize_measurement_token,
@@ -53,7 +53,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelValue,
     ObjectRelationship,
     object_label_dense_array,
-    object_label_payload_with_dense_labels,
+    object_label_value_with_dense_labels,
 )
 
 
@@ -1096,7 +1096,7 @@ def filtered_object_payload(
     output_labels: np.ndarray,
 ) -> ObjectLabelValue:
     """Wrap filtered labels with the input object's dense extent domain."""
-    return object_label_payload_with_dense_labels(
+    return object_label_value_with_dense_labels(
         input_value,
         output_labels,
         domain_declaration=DenseObjectLabelExtentDomainDeclaration(),
@@ -1228,6 +1228,7 @@ def filter_objects(
     use_maximum: bool = True,
     additional_object_count: int = 0,
     outline_object_indices: tuple[int, ...] = (),
+    slice_by_slice: bool = True,
 ) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray | ParentChildRelationshipPayload, ...]:
     """Filter dense object labels using CellProfiler-compatible selection policy."""
     if object_labels is None:

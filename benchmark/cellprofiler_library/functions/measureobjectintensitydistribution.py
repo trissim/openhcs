@@ -6,12 +6,10 @@ from openhcs.interop.cellprofiler.intensity_distribution_settings import (
 )
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     measure_object_intensity_distribution,
-    measure_object_intensity_distribution_batch,
 )
 
 __all__ = [
     "CenterChoice",
     "ZernikeMode",
     "measure_object_intensity_distribution",
-    "measure_object_intensity_distribution_batch",
 ]

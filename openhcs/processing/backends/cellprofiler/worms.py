@@ -34,8 +34,8 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectLabelValue,
-    SparseIJVLabelRows,
     SourceImageObjectLabelBuildRequest,
+    SparseIJVLabelRows,
     object_label_dense_array,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract

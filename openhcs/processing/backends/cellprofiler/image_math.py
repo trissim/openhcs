@@ -5,21 +5,28 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
-    RegisteredLeafClassSpec,
 )
-from openhcs.core.runtime_values import image_payload_mask
+from openhcs.core.aligned_image_payload import ImagePayloadSourceSpatialDomainAdapter
+from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_values import (
+    DerivedImagePayloadContext,
+    ImagePayloadMetadataCompositionRequest,
+    ImagePayloadMetadataInput,
+    RuntimeArrayData,
+    image_payload_mask,
+)
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.runtime_values import (
+    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_metadata,
-    image_payload_with_context,
 )
 from openhcs.interop.cellprofiler.image_math_settings import (
     ImageMathOperation as MathOperation,
@@ -27,6 +34,17 @@ from openhcs.interop.cellprofiler.image_math_settings import (
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
+ImageMathMask = RuntimeArrayData | None
+
+
+def meaningful_image_math_mask(mask: ImageMathMask) -> ImageMathMask:
+    """Return ``None`` when an ImageMath mask excludes no output pixels."""
+    if mask is None:
+        return None
+    mask_array = np.asarray(mask, dtype=bool)
+    if bool(np.all(mask_array)):
+        return None
+    return mask
 
 
 class ImageMathOperationStrategy(
@@ -80,7 +98,7 @@ class ImageMathOperationStrategy(
 class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
     """Template for ImageMath operations that reduce operands with one NumPy op."""
 
-    numpy_operator: ClassVar[ImageMathBinaryOperator | None] = None
+    pairwise_operator: ClassVar[ImageMathBinaryOperator]
 
     def apply(
         self,
@@ -89,11 +107,29 @@ class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
         factors: tuple[float, ...],
     ) -> np.ndarray:
         del factors
-        if self.numpy_operator is None:
-            raise TypeError(f"{type(self).__name__} must declare a NumPy operator.")
         for pd in pixel_data[1:]:
-            output_pixel_data = self.numpy_operator(output_pixel_data, pd)
+            output_pixel_data = type(self).pairwise_operator(output_pixel_data, pd)
         return output_pixel_data
+
+
+class AddImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.ADD
+    pairwise_operator = np.add
+
+
+class DivideImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.DIVIDE
+    pairwise_operator = np.divide
+
+
+class MinimumImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.MINIMUM
+    pairwise_operator = np.minimum
+
+
+class MaximumImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.MAXIMUM
+    pairwise_operator = np.maximum
 
 
 class SubtractImageMathOperationStrategy(ImageMathOperationStrategy):
@@ -200,6 +236,14 @@ class InvertingImageMathOperationStrategy(ImageMathOperationStrategy):
         return skimage.util.invert(output_pixel_data)
 
 
+class InvertImageMathOperationStrategy(InvertingImageMathOperationStrategy):
+    operation = MathOperation.INVERT
+
+
+class ComplementImageMathOperationStrategy(InvertingImageMathOperationStrategy):
+    operation = MathOperation.COMPLEMENT
+
+
 class LogTransformImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.LOG_TRANSFORM
     single_image = True
@@ -246,7 +290,7 @@ class LogicalReductionImageMathOperationStrategy(ImageMathOperationStrategy):
     """Template for binary ImageMath operations that reduce logical operands."""
 
     binary_output = True
-    logical_operator: ClassVar[ImageMathBinaryOperator | None] = None
+    logical_operator: ClassVar[ImageMathBinaryOperator]
 
     def apply(
         self,
@@ -255,11 +299,19 @@ class LogicalReductionImageMathOperationStrategy(ImageMathOperationStrategy):
         factors: tuple[float, ...],
     ) -> np.ndarray:
         del factors
-        if self.logical_operator is None:
-            raise TypeError(f"{type(self).__name__} must declare a logical operator.")
         for pd in pixel_data[1:]:
-            output_pixel_data = self.logical_operator(output_pixel_data, pd)
+            output_pixel_data = type(self).logical_operator(output_pixel_data, pd)
         return output_pixel_data.astype(np.float64)
+
+
+class OrImageMathOperationStrategy(LogicalReductionImageMathOperationStrategy):
+    operation = MathOperation.OR
+    logical_operator = np.logical_or
+
+
+class AndImageMathOperationStrategy(LogicalReductionImageMathOperationStrategy):
+    operation = MathOperation.AND
+    logical_operator = np.logical_and
 
 
 class NotImageMathOperationStrategy(ImageMathOperationStrategy):
@@ -296,76 +348,6 @@ class EqualsImageMathOperationStrategy(ImageMathOperationStrategy):
 
 
 @dataclass(frozen=True)
-class ImageMathOperationStrategyDeclaration(RegisteredLeafClassSpec):
-    """Typed declaration for metadata-only ImageMath strategy leaves."""
-
-    base_type: type[ImageMathOperationStrategy]
-    operation: MathOperation
-    numpy_operator: ImageMathBinaryOperator | None = None
-    logical_operator: ImageMathBinaryOperator | None = None
-
-    @property
-    def class_name(self) -> str:
-        operation_name = "".join(part.title() for part in self.operation.name.split("_"))
-        return f"{operation_name}ImageMathOperationStrategy"
-
-    def class_attributes(self) -> dict[str, object]:
-        attributes: dict[str, object] = {
-            "operation": self.operation,
-        }
-        if self.numpy_operator is not None:
-            attributes["numpy_operator"] = self.numpy_operator
-        if self.logical_operator is not None:
-            attributes["logical_operator"] = self.logical_operator
-        return attributes
-
-
-IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS = (
-    ImageMathOperationStrategyDeclaration(
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.ADD,
-        numpy_operator=np.add,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.DIVIDE,
-        numpy_operator=np.divide,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.MINIMUM,
-        numpy_operator=np.minimum,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.MAXIMUM,
-        numpy_operator=np.maximum,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        InvertingImageMathOperationStrategy,
-        MathOperation.INVERT,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        InvertingImageMathOperationStrategy,
-        MathOperation.COMPLEMENT,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        LogicalReductionImageMathOperationStrategy,
-        MathOperation.OR,
-        logical_operator=np.logical_or,
-    ),
-    ImageMathOperationStrategyDeclaration(
-        LogicalReductionImageMathOperationStrategy,
-        MathOperation.AND,
-        logical_operator=np.logical_and,
-    ),
-)
-
-for image_math_operation_strategy_declaration in IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS:
-    image_math_operation_strategy_declaration.declare_in(globals())
-
-
-@dataclass(frozen=True)
 class ImageMathMaskPolicy:
     """CellProfiler ImageMath mask projection and output-composition policy."""
 
@@ -373,9 +355,15 @@ class ImageMathMaskPolicy:
 
     def operand_masks(
         self,
-        source_payload: Any,
+        operands: tuple[ImagePayloadMetadataInput, ...],
+    ) -> tuple[ImageMathMask, ...]:
+        return tuple(image_payload_mask(operand) for operand in operands)
+
+    def stacked_operand_masks(
+        self,
+        source_payload: ImagePayloadMetadataInput,
         operand_count: int,
-    ) -> tuple[Any | None, ...]:
+    ) -> tuple[ImageMathMask, ...]:
         source_mask = image_payload_mask(source_payload)
         if source_mask is None:
             return (None,) * operand_count
@@ -384,19 +372,21 @@ class ImageMathMaskPolicy:
             return tuple(mask_array[index] for index in range(operand_count))
         return (mask_array,) + (None,) * max(operand_count - 1, 0)
 
-    def output_mask(self, operand_masks: tuple[Any | None, ...]) -> Any | None:
+    def output_mask(self, operand_masks: tuple[ImageMathMask, ...]) -> ImageMathMask:
         if self.ignore_masks:
             return None
-        output_mask = operand_masks[0] if operand_masks else None
+        if not operand_masks:
+            return None
+        output_mask = operand_masks[0]
         for mask in operand_masks[1:]:
             output_mask = self.combine_output_masks(output_mask, mask)
-        return output_mask
+        return meaningful_image_math_mask(output_mask)
 
     @staticmethod
     def combine_output_masks(
-        current_mask: Any | None,
-        next_mask: Any | None,
-    ) -> Any | None:
+        current_mask: ImageMathMask,
+        next_mask: ImageMathMask,
+    ) -> ImageMathMask:
         if current_mask is None:
             return next_mask
         if next_mask is None:
@@ -406,48 +396,241 @@ class ImageMathMaskPolicy:
     def apply_output_mask(
         self,
         pixel_data: np.ndarray,
-        output_mask: Any | None,
+        output_mask: ImageMathMask,
     ) -> np.ndarray:
         if output_mask is None:
             return pixel_data
-        return pixel_data * self.project_mask_to_pixels(pixel_data, output_mask)
+        return pixel_data * ImageMathMaskProjectionStrategy.project_mask(
+            pixel_data,
+            output_mask,
+        )
 
-    @staticmethod
-    def project_mask_to_pixels(pixel_data: np.ndarray, output_mask: Any) -> np.ndarray:
+
+class ImageMathMaskProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Closed projection family for mapping ImageMath masks to output pixels."""
+
+    __registry_key__ = "pixel_ndim"
+    __skip_if_no_key__ = True
+
+    pixel_ndim: ClassVar[int | None] = None
+
+    @classmethod
+    def for_pixel_data(cls, pixel_data: np.ndarray) -> "ImageMathMaskProjectionStrategy":
+        strategy_type = cls.__registry__.get(pixel_data.ndim)
+        if strategy_type is None:
+            return IdentityMaskProjectionStrategy()
+        return strategy_type()
+
+    @classmethod
+    def project_mask(
+        cls,
+        pixel_data: np.ndarray,
+        output_mask: RuntimeArrayData,
+    ) -> np.ndarray:
         mask_array = np.asarray(output_mask, dtype=bool)
         if mask_array.shape == pixel_data.shape:
             return mask_array
+        return cls.for_pixel_data(pixel_data).project(pixel_data, mask_array)
 
-        if pixel_data.ndim == 2:
-            if mask_array.ndim == 3 and mask_array.shape[0] == 1:
-                mask_array = mask_array[0]
-            if mask_array.shape == pixel_data.shape:
-                return mask_array
+    @abstractmethod
+    def project(
+        self,
+        pixel_data: np.ndarray,
+        mask_array: np.ndarray,
+    ) -> np.ndarray:
+        """Return the mask array projected into ``pixel_data`` shape."""
 
-        if pixel_data.ndim == 3:
-            if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[:2]:
-                return mask_array[:, :, np.newaxis]
-            if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:]:
-                return mask_array[np.newaxis, :, :]
-            if (
-                mask_array.ndim == 3
-                and mask_array.shape[:2] == pixel_data.shape[:2]
-                and pixel_data.shape[2] in (3, 4)
-            ):
-                return mask_array[:, :, :1]
 
-        if pixel_data.ndim == 4:
-            if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:3]:
-                return mask_array[np.newaxis, :, :, np.newaxis]
-            if mask_array.ndim == 3 and mask_array.shape == pixel_data.shape[:3]:
-                return mask_array[:, :, :, np.newaxis]
+class IdentityMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
+    """Leave masks in their native shape when no closed projection case applies."""
 
+    def project(
+        self,
+        pixel_data: np.ndarray,
+        mask_array: np.ndarray,
+    ) -> np.ndarray:
+        del pixel_data
         return mask_array
 
 
+class PlanarMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
+    """Project singleton stack masks into 2D ImageMath outputs."""
+
+    pixel_ndim = 2
+
+    def project(
+        self,
+        pixel_data: np.ndarray,
+        mask_array: np.ndarray,
+    ) -> np.ndarray:
+        pixel_shape = tuple(pixel_data.shape)
+        mask_shape = tuple(mask_array.shape)
+        if mask_shape == (1, *pixel_shape):
+            return mask_array[0]
+        return mask_array
+
+
+class VolumeMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
+    """Project planar masks into 3D ImageMath outputs."""
+
+    pixel_ndim = 3
+    color_channel_counts: ClassVar[frozenset[int]] = frozenset((3, 4))
+
+    def project(
+        self,
+        pixel_data: np.ndarray,
+        mask_array: np.ndarray,
+    ) -> np.ndarray:
+        pixel_shape = tuple(pixel_data.shape)
+        mask_shape = tuple(mask_array.shape)
+        if mask_shape == pixel_shape[:2]:
+            return mask_array[:, :, np.newaxis]
+        if mask_shape == pixel_shape[1:]:
+            return mask_array[np.newaxis, :, :]
+        if (
+            mask_shape[:2] == pixel_shape[:2]
+            and pixel_shape[2] in type(self).color_channel_counts
+        ):
+            return mask_array[:, :, :1]
+        return mask_array
+
+
+class FourDimensionalMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
+    """Project planar or volumetric masks into 4D ImageMath outputs."""
+
+    pixel_ndim = 4
+
+    def project(
+        self,
+        pixel_data: np.ndarray,
+        mask_array: np.ndarray,
+    ) -> np.ndarray:
+        pixel_shape = tuple(pixel_data.shape)
+        mask_shape = tuple(mask_array.shape)
+        if mask_shape == pixel_shape[1:3]:
+            return mask_array[np.newaxis, :, :, np.newaxis]
+        if mask_shape == pixel_shape[:3]:
+            return mask_array[:, :, :, np.newaxis]
+        return mask_array
+
+
+@dataclass(frozen=True, slots=True)
+class ImageMathPreparedOperands:
+    """Aligned ImageMath operands with masks and normalized factors."""
+
+    source_image: ImagePayloadMetadataInput
+    source_payloads: tuple[ImagePayloadMetadataInput, ...]
+    operand_pixels: np.ndarray
+    operand_masks: tuple[ImageMathMask, ...]
+    factors: tuple[float, ...]
+
+    @classmethod
+    def from_inputs(
+        cls,
+        *,
+        image: RuntimeArrayData,
+        image_operands: tuple[ImagePayloadMetadataInput, ...],
+        operation_strategy: ImageMathOperationStrategy,
+        factors: tuple[float, ...],
+        mask_policy: ImageMathMaskPolicy,
+    ) -> "ImageMathPreparedOperands":
+        source_payloads = cls._source_payloads(image, image_operands)
+        operand_pixels = cls._operand_pixels(image, source_payloads, image_operands)
+        if operation_strategy.single_image:
+            operand_count = 1
+        else:
+            operand_count = operand_pixels.shape[0]
+        return cls(
+            source_image=image,
+            source_payloads=source_payloads,
+            operand_pixels=operand_pixels,
+            operand_masks=cls._operand_masks(
+                image,
+                image_operands,
+                source_payloads,
+                operand_count,
+                mask_policy,
+            ),
+            factors=cls._factors_for_operands(factors, operand_pixels.shape[0]),
+        )
+
+    @staticmethod
+    def _source_payloads(
+        image: RuntimeArrayData,
+        image_operands: tuple[ImagePayloadMetadataInput, ...],
+    ) -> tuple[ImagePayloadMetadataInput, ...]:
+        if not image_operands:
+            return (image,)
+        return ImagePayloadSourceSpatialDomainAdapter.payloads_aligned_to_common_source_domain(
+            (image, *image_operands)
+        )
+
+    @staticmethod
+    def _operand_pixels(
+        image: RuntimeArrayData,
+        source_payloads: tuple[ImagePayloadMetadataInput, ...],
+        image_operands: tuple[ImagePayloadMetadataInput, ...],
+    ) -> np.ndarray:
+        if image_operands:
+            operand_pixels = np.stack(
+                tuple(image_payload_data(payload) for payload in source_payloads)
+            )
+        else:
+            operand_pixels = image_payload_data(image)
+        if operand_pixels.ndim == 2:
+            return operand_pixels[np.newaxis, :, :]
+        return operand_pixels
+
+    @staticmethod
+    def _operand_masks(
+        image: RuntimeArrayData,
+        image_operands: tuple[ImagePayloadMetadataInput, ...],
+        source_payloads: tuple[ImagePayloadMetadataInput, ...],
+        operand_count: int,
+        mask_policy: ImageMathMaskPolicy,
+    ) -> tuple[ImageMathMask, ...]:
+        if image_operands:
+            return mask_policy.operand_masks(source_payloads[:operand_count])
+        return mask_policy.stacked_operand_masks(image, operand_count)
+
+    @staticmethod
+    def _factors_for_operands(
+        factors: tuple[float, ...],
+        image_count: int,
+    ) -> tuple[float, ...]:
+        if len(factors) >= image_count:
+            return factors
+        return tuple(factors) + (1.0,) * (image_count - len(factors))
+
+    @property
+    def image_count(self) -> int:
+        """Return the number of operand planes presented to ImageMath."""
+        return self.operand_pixels.shape[0]
+
+    def output_value(
+        self,
+        output: np.ndarray,
+        output_mask: ImageMathMask,
+    ) -> RuntimeArrayData:
+        """Return a runtime image payload preserving the source stack identity."""
+        value_payload = RuntimeImagePayloadContext(
+            output,
+            mask=output_mask,
+            metadata=ImagePayloadMetadataCompositionRequest(
+                self.source_payloads[: self.image_count]
+            ).metadata().without_unit_interval_intensity_scale(),
+        ).payload()
+        return DerivedImagePayloadContext(
+            source_payload=self.source_image,
+            data=value_payload,
+        ).payload()
+
+
+@special_inputs("image_operands")
 @numpy_decorator
 def image_math(
-    image: np.ndarray,
+    image: RuntimeArrayData,
+    image_operands: tuple[ImagePayloadMetadataInput, ...] = (),
     operation: MathOperation = MathOperation.ADD,
     factors: tuple[float, ...] = (1.0, 1.0),
     exponent: float = 1.0,
@@ -461,29 +644,33 @@ def image_math(
     """Perform CellProfiler ImageMath through registered operation strategies."""
     operation_strategy = ImageMathOperationStrategy.coerce(operation)
     mask_policy = ImageMathMaskPolicy(ignore_masks=ignore_masks)
-    source_payload = image
-    image_data = image_payload_data(image)
-
-    if image_data.ndim == 2:
-        image_data = image_data[np.newaxis, :, :]
-
-    image_count = image_data.shape[0]
-    if len(factors) < image_count:
-        factors = tuple(factors) + (1.0,) * (image_count - len(factors))
-
+    prepared_operands = ImageMathPreparedOperands.from_inputs(
+        image=image,
+        image_operands=image_operands,
+        operation_strategy=operation_strategy,
+        factors=factors,
+        mask_policy=mask_policy,
+    )
     pixel_data = []
-    operand_count = 1 if operation_strategy.single_image else image_count
-    operand_masks = mask_policy.operand_masks(source_payload, operand_count)
+    if operation_strategy.single_image:
+        operand_count = 1
+    else:
+        operand_count = prepared_operands.image_count
     for index in range(operand_count):
-        pixel = image_data[index].astype(np.float64)
-        if not operation_strategy.binary_output and factors[index] != 1.0:
-            pixel = pixel * factors[index]
+        pixel = prepared_operands.operand_pixels[index].astype(np.float64)
+        factor = prepared_operands.factors[index]
+        if not operation_strategy.binary_output and factor != 1.0:
+            pixel = pixel * factor
         pixel_data.append(pixel)
 
     output_pixel_data = operation_strategy.apply(
-        operation_strategy.prepare_initial_output(image_data, pixel_data, factors),
+        operation_strategy.prepare_initial_output(
+            prepared_operands.operand_pixels,
+            pixel_data,
+            prepared_operands.factors,
+        ),
         pixel_data,
-        factors,
+        prepared_operands.factors,
     )
 
     if not operation_strategy.binary_output:
@@ -503,15 +690,9 @@ def image_math(
     if output_pixel_data.ndim == 2:
         output_pixel_data = output_pixel_data[np.newaxis, :, :]
 
-    output_mask = mask_policy.output_mask(operand_masks)
+    output_mask = mask_policy.output_mask(prepared_operands.operand_masks)
     output_pixel_data = mask_policy.apply_output_mask(output_pixel_data, output_mask)
     output = output_pixel_data.astype(np.float32)
     if ignore_masks:
         return output
-    return image_payload_with_context(
-        output,
-        mask=output_mask,
-        metadata=image_payload_metadata(
-            source_payload
-        ).without_unit_interval_intensity_scale(),
-    )
+    return prepared_operands.output_value(output, output_mask)

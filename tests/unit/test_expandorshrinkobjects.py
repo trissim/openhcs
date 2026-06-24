@@ -5,6 +5,7 @@ from benchmark.cellprofiler_library.functions.expandorshrinkobjects import (
     expand_or_shrink_objects,
 )
 from openhcs.core.config import DtypeConfig
+from openhcs.core.runtime_semantics import ObjectLabelDomain
 from openhcs.core.runtime_values import ObjectLabelPayload
 
 
@@ -72,7 +73,7 @@ def test_expand_or_shrink_objects_declares_output_label_extent():
     image = np.zeros((9, 9), dtype=float)
     labels = np.zeros((9, 9), dtype=np.int32)
     labels[4, 4] = 4
-    payload = ObjectLabelPayload(labels=labels, declared_object_count=9)
+    payload = ObjectLabelPayload(labels=labels, domain=ObjectLabelDomain(declared_object_count=9))
 
     _, result = expand_or_shrink_objects(
         image,
@@ -82,8 +83,8 @@ def test_expand_or_shrink_objects_declares_output_label_extent():
         dtype_config=DtypeConfig(),
     )
 
-    assert result.declared_object_count == 4
-    assert result.declared_object_ids == ()
+    assert result.domain.declared_object_count == 4
+    assert result.domain.declared_object_ids == ()
 
 
 def test_expand_or_shrink_objects_shrinks_labels_like_per_object_erosion():

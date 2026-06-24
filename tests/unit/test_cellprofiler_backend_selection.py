@@ -28,6 +28,18 @@ def test_explicit_backend_provider_uses_explicit_selection_policy() -> None:
     assert selection.provider is CellProfilerBackendProvider.NUMBA
 
 
+def test_backend_provider_selection_identity_is_stable_and_nominal() -> None:
+    assert CellProfilerBackendAuthority.selection_identity(None) == (
+        ("selection", "default"),
+    )
+    assert CellProfilerBackendAuthority.selection_identity(
+        CellProfilerBackendProvider.NUMBA
+    ) == (
+        ("selection", "explicit"),
+        ("provider", "numba"),
+    )
+
+
 def test_backend_provider_normalizer_rejects_absent_provider() -> None:
     with pytest.raises(TypeError, match="CellProfiler backend provider"):
         CellProfilerBackendAuthority.provider(None)  # type: ignore[arg-type]
