@@ -9,6 +9,7 @@ import shutil
 import statistics
 import sys
 import time
+import traceback
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -554,13 +555,13 @@ class NativeCellProfilerReferenceScope:
                 dataset_path=self.case.dataset_path,
                 pipeline_name=self.case.name,
                 pipeline_params=effective_pipeline_params,
-                output_dir=Path(self.native_reference_root)
+                output_dir=Path(self.native_reference_root).resolve()
                 / _benchmark_path_slug(
                     "_".join([self.case.resolved_dataset_id, self.case.name])
                 ),
             )
         )
-        return Path(self.native_reference_root) / _benchmark_path_slug(
+        return Path(self.native_reference_root).resolve() / _benchmark_path_slug(
             "_".join(reference_scope_parts)
         )
 
@@ -1205,6 +1206,7 @@ def _failed_comparison_observation(
     repetition: int,
     error: Exception,
 ) -> CellProfilerComparisonObservation:
+    error_traceback = _exception_traceback_message(error)
     return CellProfilerComparisonObservation(
         suite_id=suite_id,
         case_name=case.name,
@@ -1225,7 +1227,7 @@ def _failed_comparison_observation(
             None,
             None,
             False,
-            f"{type(error).__name__}: {error}",
+            error_traceback,
             {},
         ),
         openhcs=ToolExecutionSummary(
@@ -1240,6 +1242,14 @@ def _failed_comparison_observation(
             {},
         ),
     )
+
+
+def _exception_traceback_message(error: BaseException) -> str:
+    """Return the full traceback for a benchmark case failure."""
+
+    return "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    ).rstrip()
 
 
 def comparison_observation_from_result(

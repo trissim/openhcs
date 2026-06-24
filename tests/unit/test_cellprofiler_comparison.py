@@ -14,6 +14,7 @@ from benchmark.cellprofiler_comparison import (
     run_comparison_suite,
     _discard_openhcs_benchmark_tree,
     _discard_successful_openhcs_benchmark_tree,
+    _failed_comparison_observation,
     write_module_coverage_artifacts,
     write_observations_csv,
     write_phase_timing_csv,
@@ -139,6 +140,30 @@ def test_required_native_reference_does_not_rerun_cellprofiler(
     )
 
 
+def test_failed_comparison_observation_records_traceback(tmp_path: Path) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleFailure",
+        dataset_path=tmp_path / "images",
+        cppipe_path=tmp_path / "pipeline.cppipe",
+    )
+
+    try:
+        raise TypeError("broken metadata")
+    except TypeError as exc:
+        observation = _failed_comparison_observation(
+            case,
+            suite_id="suite-1",
+            repetition=1,
+            error=exc,
+        )
+
+    assert observation.native_cellprofiler.error_message is not None
+    assert "Traceback (most recent call last)" in (
+        observation.native_cellprofiler.error_message
+    )
+    assert "TypeError: broken metadata" in observation.native_cellprofiler.error_message
+
+
 def test_native_reference_scope_discovers_completed_reference_with_dataset_alias(
     tmp_path: Path,
 ) -> None:
@@ -193,6 +218,41 @@ def test_native_reference_scope_discovers_completed_reference_with_dataset_alias
 
     assert location.output_dir == scope.output_dir
     assert location.reference_output_dir == reference
+
+
+def test_native_reference_scope_resolves_relative_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    dataset_path = tmp_path / "tutorial" / "images"
+    dataset_path.mkdir(parents=True)
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    case = CellProfilerComparisonCase(
+        name="ExampleRelativeRoot",
+        dataset_path=dataset_path,
+        cppipe_path=cppipe_path,
+        dataset_id="ExampleDataset",
+    )
+
+    scope = NativeCellProfilerReferenceScope(
+        case=case,
+        native_reference_root=Path("native_refs"),
+        pipeline_params={},
+    )
+
+    assert scope.output_dir.is_absolute()
+    assert scope.output_dir.parent == (tmp_path / "native_refs").resolve()
 
 
 def test_comparison_writers_emit_raw_phase_and_summary_tables(

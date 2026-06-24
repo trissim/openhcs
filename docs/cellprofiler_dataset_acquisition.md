@@ -17,15 +17,14 @@ python scripts/prepare_cellprofiler_benchmark_datasets.py list --with-cases
 source ../openhcs/.venv/bin/activate
 python scripts/prepare_cellprofiler_benchmark_datasets.py manifest \
   --dataset-id CellProfiler_tutorials \
-  --cache-root /tmp/openhcs_benchmark_datasets \
-  --output /tmp/openhcs_benchmark_datasets/cellprofiler_tutorials_manifest.json
+  --output ~/.cache/openhcs/cellprofiler_tutorials_manifest.json
 ```
 
 The generated JSON is directly consumable by:
 
 ```bash
 python scripts/benchmark_cellprofiler_vs_openhcs.py run \
-  --manifest /tmp/openhcs_benchmark_datasets/cellprofiler_tutorials_manifest.json \
+  --manifest ~/.cache/openhcs/cellprofiler_tutorials_manifest.json \
   --output-root /tmp/openhcs_cellprofiler_tutorials_results
 ```
 

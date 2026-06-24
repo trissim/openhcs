@@ -46,17 +46,19 @@ from openhcs.constants.constants import Microscope
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
 from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
+from openhcs.core.equivalence.outputs import (
+    RuntimeOutputSnapshot,
+    image_paths,
+    table_paths,
+)
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.runtime_equivalence import (
     RuntimeEquivalenceReport,
     RuntimeMeasurementSnapshot,
-    RuntimeOutputSnapshot,
-    image_paths,
     runtime_artifact_measurement_source_names,
     runtime_measurement_projection_cache_identity,
     runtime_measurement_equivalence,
     runtime_reference_artifact_equivalence,
-    table_paths,
 )
 from openhcs.core.runtime_execution_validation import runtime_output_roots
 from openhcs.core.runtime_exports import RuntimeExportObservation
@@ -484,6 +486,7 @@ class OpenHCSAdapter(ToolAdapter):
         output_suffix = f"_{request.pipeline_name}_converted_cppipe"
         output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
         generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
+        generated_pipeline_module_name = generated_module_path.stem
         source_workspace_path = (
             request.output_dir
             / f"{request.dataset_path.name}_{cppipe_path.stem}_source_workspace"
@@ -539,6 +542,7 @@ class OpenHCSAdapter(ToolAdapter):
                 raise ToolExecutionError(str(exc)) from exc
 
             prepared = ingestion.prepared_pipeline
+            generated_pipeline_module_name = prepared.module_name
             execution_plate_path = ingestion.execution_plate_path
             source_workspace_path = ingestion.source_workspace_path
             execution_microscope = (
@@ -724,7 +728,7 @@ class OpenHCSAdapter(ToolAdapter):
             "microscope_type": request.microscope_type,
             "pipeline_source": "converted_cppipe",
             "cppipe_path": str(cppipe_path),
-            "generated_pipeline_module": prepared.module_name,
+            "generated_pipeline_module": generated_pipeline_module_name,
             "axis_count": axis_count,
             "csv_output_count": csv_output_count,
             "image_output_count": image_output_count,
@@ -806,7 +810,7 @@ class OpenHCSAdapter(ToolAdapter):
                     known_source_names=known_source_names,
                 ),
             )
-        required_measurement_keys = frozenset(reference_measurements.values_by_feature)
+        required_measurement_keys = frozenset(reference_measurements.measurement_fact_counts)
         with ExitStack() as stack:
             for metric in request.metrics:
                 stack.enter_context(metric)
@@ -1000,7 +1004,7 @@ class OpenHCSAdapter(ToolAdapter):
             ),
         )
         required_measurement_keys = frozenset(
-            reference_measurements.values_by_feature
+            reference_measurements.measurement_fact_counts
         )
         candidate_observation_fingerprint = (
             _runtime_measurement_observation_fingerprint(validation)
@@ -1049,8 +1053,8 @@ class OpenHCSAdapter(ToolAdapter):
             "Semantic table equivalence completed in %.3fs "
             "(reference_features=%d, candidate_features=%d, differences=%d).",
             time.perf_counter() - started_at,
-            len(reference_measurements.values_by_feature),
-            len(candidate_measurements.values_by_feature),
+            len(reference_measurements.measurement_fact_counts),
+            len(candidate_measurements.measurement_fact_counts),
             len(report.differences),
         )
         return report
@@ -1428,7 +1432,7 @@ class MeasurementSnapshotCacheStore:
                 "(features=%d).",
                 path,
                 time.perf_counter() - started_at,
-                len(snapshot.values_by_feature),
+                len(snapshot.measurement_fact_counts),
             )
         return snapshot
 

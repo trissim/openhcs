@@ -22,6 +22,7 @@ from benchmark.contracts.dataset import (
     DatasetSourceSpec,
     DatasetValidationRule,
 )
+from benchmark.datasets.cache import default_benchmark_dataset_cache_root
 
 IMAGE_EXTENSIONS = {".bmp", ".dib", ".flex", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
@@ -435,7 +436,7 @@ def acquire_dataset(
     """
     Acquire dataset (download, extract, validate, cache).
 
-    Download to: {cache_base or ~/.cache/openhcs/benchmark_datasets}/{spec.id}/
+    Download to: {cache_base or default benchmark dataset cache}/{spec.id}/
 
     Returns:
         AcquiredDataset with path, image_count, metadata
@@ -443,7 +444,7 @@ def acquire_dataset(
     Raises:
         DatasetAcquisitionError: If download/extraction/validation fails
     """
-    base_dir = cache_base or Path.home() / ".cache" / "openhcs" / "benchmark_datasets"
+    base_dir = cache_base or default_benchmark_dataset_cache_root()
     cache_root = base_dir / spec.id
     archive_dir = cache_root / "archives"
     extract_dir = cache_root / "data"

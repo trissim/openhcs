@@ -18,6 +18,12 @@ from benchmark.datasets.acquire import (
     acquire_dataset,
     _materialize_nested_archives,
 )
+from benchmark.datasets.cache import (
+    BenchmarkPathRootKind,
+    default_benchmark_dataset_cache_root,
+    default_cellprofiler_examples_root,
+    resolve_benchmark_path_root,
+)
 from benchmark.datasets.manifest import comparison_manifest_payload
 from benchmark.datasets.cppipe_case_catalog import official_cp3_case_category
 from benchmark.datasets.registry import (
@@ -32,6 +38,30 @@ def test_validation_rules_are_registered_by_enum() -> None:
     assert DatasetValidationStrategy.for_rule(
         DatasetValidationRule.NON_EMPTY
     ).validation_rule == DatasetValidationRule.NON_EMPTY.value
+
+
+def test_benchmark_dataset_paths_default_to_persistent_user_cache(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert default_benchmark_dataset_cache_root() == (
+        tmp_path / ".cache" / "openhcs" / "benchmark_datasets"
+    )
+    assert default_cellprofiler_examples_root() == (
+        tmp_path / ".cache" / "openhcs" / "cellprofiler_examples"
+    )
+
+
+def test_benchmark_path_root_env_override_is_explicit(monkeypatch, tmp_path: Path) -> None:
+    override = tmp_path / "custom-cache"
+    monkeypatch.setenv("OPENHCS_BENCHMARK_DATASET_CACHE_ROOT", str(override))
+
+    assert resolve_benchmark_path_root(
+        BenchmarkPathRootKind.DATASET_CACHE,
+        env_name="OPENHCS_BENCHMARK_DATASET_CACHE_ROOT",
+    ) == override
 
 
 def test_source_handlers_are_registered_by_enum() -> None:

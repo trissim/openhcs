@@ -21,7 +21,7 @@ from benchmark.contracts.tool_adapter import BenchmarkResult, ToolAdapter
 from benchmark.datasets.acquire import acquire_dataset
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.pipelines.registry import get_pipeline_spec
-from openhcs.core.source_matching import source_path_identity_key
+from openhcs.core.source_path_identity import source_path_identity_key
 
 
 _BENCHMARK_CACHE_SCHEMA_VERSION = 1

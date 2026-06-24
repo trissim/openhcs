@@ -17,6 +17,10 @@ from typing import Any, ClassVar, Mapping
 from urllib.parse import quote
 
 from metaclass_registry import AutoRegisterMeta
+from benchmark.adapters.cellprofiler_installation import (
+    CELLPROFILER_EXECUTABLE_ENV,
+    CellProfilerExecutableResolver,
+)
 from benchmark.adapters.cppipe_source import (
     CPPipeSourceRequest,
     CPPipeSourceResolution,
@@ -33,16 +37,19 @@ from benchmark.contracts.tool_adapter import (
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 from openhcs.core.pipeline_image_schema import ImportedMetadataTable
 from openhcs.core.source_schema_workspace import (
+    ImportedMetadataPathResolver,
     SourceSchemaWorkspaceMaterialization,
     materialize_source_schema_workspace,
 )
 from openhcs.core.runtime_equivalence import RuntimeOutputSnapshot
 from openhcs.interop.cellprofiler.parser import CPPipeParser
-from openhcs.interop.cellprofiler.source_schema import compile_image_schema
+from openhcs.interop.cellprofiler.source_schema import (
+    compile_image_schema,
+    is_imported_metadata_method,
+)
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"native_reference"})
-CELLPROFILER_EXECUTABLE_ENV = "CELLPROFILER_EXECUTABLE"
 PYTHONHASHSEED_ENV = "PYTHONHASHSEED"
 DETERMINISTIC_PYTHONHASHSEED = "0"
 NATIVE_CELLPROFILER_SUCCESS_MARKER = ".cellprofiler_benchmark_reference.json"
@@ -71,6 +78,27 @@ class NativeCellProfilerSelectedSourceMode(StrEnum):
     FILE_LIST = "file_list"
 
 
+class HeadlessCellProfilerPipelinePatch(StrEnum):
+    """Headless native CellProfiler pipeline patches with explicit semantics."""
+
+    ALLOW_SAVE_OVERWRITE = "allow_save_overwrite"
+    TRUST_SELECTED_SOURCE_UNIVERSE = "trust_selected_source_universe"
+
+    def apply(self, source_text: str) -> str:
+        """Apply this headless-execution patch to pipeline source text."""
+        if self is HeadlessCellProfilerPipelinePatch.ALLOW_SAVE_OVERWRITE:
+            return source_text.replace(
+                "Overwrite existing files without warning?:No",
+                "Overwrite existing files without warning?:Yes",
+            )
+        if self is HeadlessCellProfilerPipelinePatch.TRUST_SELECTED_SOURCE_UNIVERSE:
+            return source_text.replace(
+                "Filter images?:Images only",
+                "Filter images?:No filtering",
+            )
+        raise AssertionError(f"Unhandled headless CellProfiler patch: {self!r}")
+
+
 class NativeCellProfilerProvenanceField(StrEnum):
     """Native CellProfiler provenance fields with cross-run semantics."""
 
@@ -89,18 +117,115 @@ class HeadlessCellProfilerPipelinePolicy:
     """Prepare a CellProfiler pipeline for non-interactive native execution."""
 
     @staticmethod
-    def execution_path(cppipe_path: Path, output_dir: Path) -> Path:
+    def execution_path(
+        cppipe_path: Path,
+        output_dir: Path,
+        patches: tuple[HeadlessCellProfilerPipelinePatch, ...] = (
+            HeadlessCellProfilerPipelinePatch.ALLOW_SAVE_OVERWRITE,
+        ),
+    ) -> Path:
         source_text = Path(cppipe_path).read_text(encoding="utf-8")
-        patched_text = source_text.replace(
-            "Overwrite existing files without warning?:No",
-            "Overwrite existing files without warning?:Yes",
-        )
+        patched_text = source_text
+        for patch in patches:
+            patched_text = patch.apply(patched_text)
         if patched_text == source_text:
             return cppipe_path
         patched_path = output_dir / "native_cellprofiler_headless" / cppipe_path.name
         patched_path.parent.mkdir(parents=True, exist_ok=True)
         patched_path.write_text(patched_text, encoding="utf-8")
         return patched_path
+
+
+@dataclass(frozen=True, slots=True)
+class NativeCellProfilerImportedMetadataPipelinePatch:
+    """Point native CellProfiler metadata-import blocks at staged input files."""
+
+    imported_metadata_paths: tuple[Path, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "imported_metadata_paths",
+            tuple(Path(path) for path in self.imported_metadata_paths),
+        )
+
+    def execution_path(self, cppipe_path: Path, output_dir: Path) -> Path:
+        """Return a patched pipeline path when imported metadata paths are staged."""
+        if not self.imported_metadata_paths:
+            return cppipe_path
+        source_text = Path(cppipe_path).read_text(encoding="utf-8")
+        patched_text = self.patch_text(source_text)
+        if patched_text == source_text:
+            return cppipe_path
+        patched_path = output_dir / "native_cellprofiler_headless" / cppipe_path.name
+        patched_path.parent.mkdir(parents=True, exist_ok=True)
+        patched_path.write_text(patched_text, encoding="utf-8")
+        return patched_path
+
+    def patch_text(self, source_text: str) -> str:
+        """Rewrite imported-metadata settings in CellProfiler pipeline text."""
+        lines = source_text.splitlines(keepends=True)
+        patched_lines: list[str] = []
+        in_metadata_module = False
+        in_imported_metadata_block = False
+        import_index = 0
+        for line in lines:
+            module_match = CPPipeParser.MODULE_HEADER_PATTERN.match(line.rstrip("\n"))
+            if module_match is not None:
+                in_metadata_module = module_match.group(1) == "Metadata"
+                in_imported_metadata_block = False
+                patched_lines.append(line)
+                continue
+            if not in_metadata_module:
+                patched_lines.append(line)
+                continue
+            setting = _cppipe_setting_line(line)
+            if setting is None:
+                patched_lines.append(line)
+                continue
+            setting_name, setting_value, newline = setting
+            if setting_name == "Metadata extraction method":
+                in_imported_metadata_block = is_imported_metadata_method(setting_value)
+                patched_lines.append(line)
+                continue
+            if not in_imported_metadata_block:
+                patched_lines.append(line)
+                continue
+            if setting_name == "Metadata file location":
+                patched_lines.append(
+                    "    Metadata file location:Default Input Folder|" + newline
+                )
+                continue
+            if setting_name == "Metadata file name":
+                if import_index >= len(self.imported_metadata_paths):
+                    raise ToolExecutionError(
+                        "Native CellProfiler pipeline declares more imported metadata "
+                        "blocks than the source schema resolved."
+                    )
+                patched_lines.append(
+                    "    Metadata file name:"
+                    f"{self.imported_metadata_paths[import_index].name}"
+                    f"{newline}"
+                )
+                import_index += 1
+                continue
+            patched_lines.append(line)
+        if import_index != len(self.imported_metadata_paths):
+            raise ToolExecutionError(
+                "Native CellProfiler source schema resolved imported metadata tables "
+                "that were not found in the pipeline Metadata module."
+            )
+        return "".join(patched_lines)
+
+
+def _cppipe_setting_line(line: str) -> tuple[str, str, str] | None:
+    """Return CellProfiler setting name, value, and newline suffix for one line."""
+    newline = "\n" if line.endswith("\n") else ""
+    content = line.removesuffix("\n")
+    setting_match = CPPipeParser.SETTING_PATTERN.match(content)
+    if setting_match is None:
+        return None
+    return setting_match.group(1).strip(), setting_match.group(2).strip(), newline
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,22 +516,14 @@ class NativeCellProfilerImportedMetadataPlacementPlan:
         return relative_paths
 
     def imported_metadata_path(self, table: ImportedMetadataTable) -> Path:
-        if table.location is None:
-            raise ToolExecutionError("Imported metadata table requires a location.")
-        location = Path(table.location)
-        candidates = (
-            location,
-            self.source_root / location,
-            self.source_root / location.name,
-            self.source_root.parent / location,
-            self.source_root.parent / location.name,
-        )
-        for candidate in dict.fromkeys(candidates):
+        resolver = ImportedMetadataPathResolver(self.source_root)
+        for candidate in resolver.path_candidates(table):
             if candidate.is_file():
                 return candidate
         raise ToolExecutionError(
             "Imported metadata table does not exist for native CellProfiler: "
-            f"{table.location!r}."
+            f"{table.location!r}. Searched: "
+            f"{tuple(str(candidate) for candidate in resolver.path_candidates(table))!r}."
         )
 
 
@@ -521,10 +638,23 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
             raise ToolExecutionError(
                 f"Native CellProfiler selected no source files for wells {selected_wells!r}."
             )
+        selected_cppipe_path = HeadlessCellProfilerPipelinePolicy.execution_path(
+            execution_cppipe_path,
+            request.output_dir,
+            patches=(
+                HeadlessCellProfilerPipelinePatch.TRUST_SELECTED_SOURCE_UNIVERSE,
+            ),
+        )
+        selected_cppipe_path = NativeCellProfilerImportedMetadataPipelinePatch(
+            selected_source_universe.imported_metadata_paths
+        ).execution_path(
+            selected_cppipe_path,
+            request.output_dir,
+        )
         if schema.image_plane_sources:
             embedded_strategy = EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy()
             patched_cppipe_path = embedded_strategy.rewrite_embedded_image_plane_sources(
-                execution_cppipe_path,
+                selected_cppipe_path,
                 request.output_dir / "native_cellprofiler_headless",
                 tuple(embedded_strategy.file_uri(path) for path in selected_paths),
             )
@@ -565,7 +695,7 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
                 selected_paths,
             )
         return NativeCellProfilerInputDomain(
-            cppipe_path=execution_cppipe_path,
+            cppipe_path=selected_cppipe_path,
             input_dir=(
                 selected_input_dir
                 if requires_flat_input_dir
@@ -786,9 +916,8 @@ class CellProfilerAdapter(ToolAdapter):
     name = "CellProfiler"
 
     def __init__(self, executable: str | Path | None = None) -> None:
-        configured_executable = executable or environ.get(CELLPROFILER_EXECUTABLE_ENV)
-        self._configured_executable = (
-            Path(configured_executable) if configured_executable else None
+        self._executable_resolver = CellProfilerExecutableResolver(
+            Path(executable) if executable is not None else None
         )
         self.version = "unknown"
 
@@ -824,11 +953,11 @@ class CellProfilerAdapter(ToolAdapter):
     ) -> BenchmarkResult:
         """Execute a native CellProfiler pipeline headlessly."""
         request = CellProfilerRunRequest(
-            dataset_path=Path(dataset_path),
+            dataset_path=Path(dataset_path).resolve(),
             pipeline_name=pipeline_name,
             pipeline_params=dict(pipeline_params),
             metrics=self._validated_metric_collectors(metrics),
-            output_dir=Path(output_dir),
+            output_dir=Path(output_dir).resolve(),
         )
         request.output_dir.mkdir(parents=True, exist_ok=True)
         phase_timing = PhaseTimingTrace(
@@ -950,15 +1079,7 @@ class CellProfilerAdapter(ToolAdapter):
         )
 
     def _cellprofiler_executable(self) -> Path:
-        if self._configured_executable is not None:
-            return self._configured_executable
-        executable = shutil.which("cellprofiler")
-        if executable is None:
-            raise ToolNotInstalledError(
-                "CellProfiler executable not configured and not found in PATH. "
-                f"Set {CELLPROFILER_EXECUTABLE_ENV} or pass an executable path."
-            )
-        return Path(executable)
+        return self._executable_resolver.resolve()
 
     def _validated_metric_collectors(
         self,

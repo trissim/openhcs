@@ -15,6 +15,11 @@ from openhcs.core.source_matching import is_image_path
 from metaclass_registry import AutoRegisterMeta
 
 from benchmark.datasets.cppipe_case_catalog import official_cp3_case_category
+from benchmark.datasets.cache import (
+    BenchmarkPathRootKind,
+    CELLPROFILER_EXAMPLES_ROOT_ENV,
+    resolve_benchmark_path_root,
+)
 from benchmark.runtime_env import configure_headless_cpu_benchmark_runtime
 
 
@@ -212,8 +217,9 @@ class OfficialCp3ManifestCommand(BenchmarkCliCommand):
         parser.add_argument(
             "--examples-root",
             type=Path,
-            default=Path(
-                os.environ.get("CELLPROFILER_EXAMPLES_ROOT", "/tmp/cellprofiler_examples")
+            default=resolve_benchmark_path_root(
+                BenchmarkPathRootKind.CELLPROFILER_EXAMPLES,
+                env_name=CELLPROFILER_EXAMPLES_ROOT_ENV,
             ),
         )
         parser.add_argument("--output", type=Path, required=True)
@@ -225,7 +231,7 @@ class OfficialCp3ManifestCommand(BenchmarkCliCommand):
             type=Path,
             help=(
                 "Benchmark dataset cache root used to materialize registry-backed "
-                "cppipe cases. Defaults to ~/.cache/openhcs/benchmark_datasets."
+                "cppipe cases. Defaults to the benchmark dataset cache root."
             ),
         )
         parser.add_argument(
@@ -410,7 +416,7 @@ class BioFormatsHcsValidationCommand(BenchmarkCliCommand):
             type=Path,
             help=(
                 "Benchmark dataset cache root. Defaults to "
-                "~/.cache/openhcs/benchmark_datasets."
+                "the benchmark dataset cache root."
             ),
         )
         parser.add_argument(

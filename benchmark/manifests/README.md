@@ -5,10 +5,10 @@ benchmark manifest. It avoids case-level absolute paths by declaring named,
 self-materializing roots:
 
 - `CELLPROFILER_EXAMPLES_ROOT`: sparse checkout of official CellProfiler example
-  pipelines and datasets. Defaults to `/tmp/cellprofiler_examples`.
+  pipelines and datasets. Defaults to `~/.cache/openhcs/cellprofiler_examples`.
 - `OPENHCS_BENCHMARK_DATASET_CACHE_ROOT`: auto-acquired dataset cache containing
   registry-backed tutorial/supplement sources. Defaults to
-  `/tmp/openhcs_benchmark_dataset_cache_last8`.
+  `~/.cache/openhcs/benchmark_datasets`.
 - `OPENHCS_AXISONE_SUBSETS_ROOT`: compatibility root for older axis-one
   manifests. The official 30-case manifest uses full dataset-cache roots and
   applies `openhcs_max_axis_count` as a well/sample selector so all sites and
@@ -29,7 +29,6 @@ python scripts/prepare_cellprofiler_benchmark_datasets.py manifest \
 Run the portable manifest with:
 
 ```bash
-CELLPROFILER_EXECUTABLE=/path/to/cellprofiler \
 python scripts/benchmark_cellprofiler_vs_openhcs.py run \
   --manifest benchmark/manifests/official30_portable_axis1.json \
   --output-dir /tmp/openhcs_cp30_run \
@@ -37,6 +36,13 @@ python scripts/benchmark_cellprofiler_vs_openhcs.py run \
   --no-memory-metric \
   --speedup-target 4
 ```
+
+The native adapter resolves CellProfiler from an explicit executable path,
+`CELLPROFILER_EXECUTABLE`, `PATH`, the active Python environment, or tool
+environment roots declared through `OPENHCS_BENCHMARK_TOOL_ROOTS`. Local
+workspace siblings are scanned through the same tool-root contract, so a
+development checkout with `.venv-cellprofiler39`, `.venv-cellprofiler`, or
+`.venv` does not need per-run shell setup.
 
 The run emits parity/timing CSVs, phase timing, suite metadata, v7-style figures,
 and module coverage artifacts including concrete setting coverage and semantic

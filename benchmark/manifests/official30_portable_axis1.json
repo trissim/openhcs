@@ -393,7 +393,7 @@
           "ExampleYeastPatches"
         ]
       },
-      "default": "/tmp/cellprofiler_examples",
+      "default_kind": "cellprofiler_examples",
       "env": "CELLPROFILER_EXAMPLES_ROOT"
     },
     "dataset_cache": {
@@ -404,7 +404,7 @@
         ],
         "kind": "dataset_registry"
       },
-      "default": "/tmp/openhcs_benchmark_dataset_cache_last8",
+      "default_kind": "benchmark_dataset_cache",
       "env": "OPENHCS_BENCHMARK_DATASET_CACHE_ROOT"
     }
   }

@@ -9,10 +9,13 @@ import os
 from pathlib import Path
 
 from benchmark.contracts.comparison_manifest import ComparisonManifest
+from benchmark.datasets.cache import (
+    CELLPROFILER_EXAMPLES_ROOT_ENV,
+    default_cellprofiler_examples_root,
+)
 
 
-CELLPROFILER_EXAMPLES_ROOT_ENV = "CELLPROFILER_EXAMPLES_ROOT"
-DEFAULT_CELLPROFILER_EXAMPLES_ROOT = Path("/tmp/cellprofiler_examples")
+DEFAULT_CELLPROFILER_EXAMPLES_ROOT = default_cellprofiler_examples_root()
 
 
 class CPPipeCorpusStatus(str, Enum):

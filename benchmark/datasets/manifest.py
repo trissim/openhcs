@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from benchmark.contracts.dataset import AcquiredDataset, DatasetSpec
+from benchmark.datasets.cache import default_benchmark_dataset_cache_root
 
 
 def cached_acquired_dataset(
@@ -15,7 +16,7 @@ def cached_acquired_dataset(
     cache_base: Path | None = None,
 ) -> AcquiredDataset:
     """Resolve an already-acquired dataset without refreshing its source."""
-    base_dir = cache_base or Path.home() / ".cache" / "openhcs" / "benchmark_datasets"
+    base_dir = cache_base or default_benchmark_dataset_cache_root()
     data_dir = base_dir / spec.id / "data"
     if not data_dir.exists():
         raise FileNotFoundError(

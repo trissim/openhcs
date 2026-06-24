@@ -4,16 +4,79 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias
 
 from benchmark.contracts.manifest_acquisition import (
     ManifestRootAcquisitionSpec,
     manifest_auto_acquire_enabled,
     materialize_manifest_roots,
 )
+from benchmark.datasets.cache import BenchmarkPathRootKind, resolve_benchmark_path_root
+
+
+JSONScalar: TypeAlias = str | int | float | bool | None
+JSONValue: TypeAlias = JSONScalar | Mapping[str, "JSONValue"] | Sequence["JSONValue"]
+ManifestPayload: TypeAlias = Mapping[str, JSONValue]
+ManifestCasePayload: TypeAlias = Mapping[str, JSONValue]
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestPathRootDeclaration:
+    """Serialized path-root declaration from a benchmark manifest."""
+
+    env: str | None = None
+    path: str | None = None
+    default: str | None = None
+    default_kind: BenchmarkPathRootKind | None = None
+    acquisition: ManifestRootAcquisitionSpec | None = None
+
+    @classmethod
+    def from_raw(
+        cls,
+        name: str,
+        raw_value: JSONValue,
+    ) -> "ManifestPathRootDeclaration":
+        """Parse one root declaration from manifest JSON."""
+        if isinstance(raw_value, str):
+            return cls(path=raw_value)
+        if not isinstance(raw_value, Mapping):
+            raise ValueError(f"Manifest path root {name!r} must be a string or object.")
+        raw_acquisition = raw_value.get("acquisition")
+        raw_default_kind = raw_value.get("default_kind")
+        return cls(
+            env=_optional_string(raw_value.get("env"), "env"),
+            path=_optional_string(raw_value.get("path"), "path"),
+            default=_optional_string(raw_value.get("default"), "default"),
+            default_kind=(
+                BenchmarkPathRootKind(str(raw_default_kind))
+                if raw_default_kind is not None
+                else None
+            ),
+            acquisition=(
+                ManifestRootAcquisitionSpec.from_manifest(raw_acquisition)
+                if raw_acquisition is not None
+                else None
+            ),
+        )
+
+    def resolve_path(self, root_name: str) -> Path:
+        """Resolve this declaration to a filesystem path."""
+        resolved_path = os.environ.get(self.env) if self.env is not None else None
+        if resolved_path is not None:
+            return Path(os.path.expandvars(resolved_path)).expanduser()
+        if self.path is not None:
+            return Path(os.path.expandvars(self.path)).expanduser()
+        if self.default_kind is not None:
+            return resolve_benchmark_path_root(self.default_kind)
+        if self.default is not None:
+            return Path(os.path.expandvars(self.default)).expanduser()
+        raise ValueError(
+            f"Manifest path root {root_name!r} must declare path, default, "
+            "default_kind, or env."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,35 +88,13 @@ class ManifestPathRoot:
     acquisition: ManifestRootAcquisitionSpec | None = None
 
     @classmethod
-    def from_manifest(cls, name: str, raw_value: object) -> "ManifestPathRoot":
-        if isinstance(raw_value, str):
-            return cls(name=name, path=Path(os.path.expandvars(raw_value)).expanduser())
-        if not isinstance(raw_value, Mapping):
-            raise ValueError(f"Manifest path root {name!r} must be a string or object.")
-        acquisition = (
-            ManifestRootAcquisitionSpec.from_manifest(raw_value["acquisition"])
-            if raw_value.get("acquisition") is not None
-            else None
+    def from_manifest(cls, name: str, raw_value: JSONValue) -> "ManifestPathRoot":
+        declaration = ManifestPathRootDeclaration.from_raw(name, raw_value)
+        return cls(
+            name=name,
+            path=declaration.resolve_path(name),
+            acquisition=declaration.acquisition,
         )
-        path = _manifest_root_path(name, raw_value)
-        return cls(name=name, path=path, acquisition=acquisition)
-
-
-def _manifest_root_path(name: str, raw_value: Mapping[object, object]) -> Path:
-    """Resolve the filesystem location declared by one manifest path root."""
-    env_name = raw_value.get("env")
-    default_value = raw_value.get("default")
-    path_value = raw_value.get("path")
-    resolved_path: str | None = None
-    if env_name is not None:
-        resolved_path = os.environ.get(str(env_name))
-    if resolved_path is None and path_value is not None:
-        resolved_path = str(path_value)
-    if resolved_path is None and default_value is not None:
-        resolved_path = str(default_value)
-    if resolved_path is not None:
-        return Path(os.path.expandvars(resolved_path)).expanduser()
-    raise ValueError(f"Manifest path root {name!r} must declare path, default, or env.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,9 +106,11 @@ class ComparisonManifestPathResolver:
     @classmethod
     def from_payload(
         cls,
-        payload: Mapping[str, object],
+        payload: ManifestPayload,
     ) -> "ComparisonManifestPathResolver":
-        raw_roots = payload.get("path_roots", {})
+        raw_roots = payload.get("path_roots")
+        if raw_roots is None:
+            raw_roots = {}
         if not isinstance(raw_roots, Mapping):
             raise ValueError("Benchmark manifest path_roots must be an object.")
         return cls(
@@ -77,7 +120,7 @@ class ComparisonManifestPathResolver:
             },
         )
 
-    def resolve(self, raw_case: Mapping[str, object], path_key: str) -> Path:
+    def resolve(self, raw_case: ManifestCasePayload, path_key: str) -> Path:
         root_key = raw_case.get(f"{path_key}_root")
         raw_path = raw_case.get(path_key)
         if raw_path is None:
@@ -99,7 +142,7 @@ class ComparisonManifest:
     """Parsed benchmark comparison manifest with shared path semantics."""
 
     path: Path
-    payload: Mapping[str, Any]
+    payload: ManifestPayload
     path_resolver: ComparisonManifestPathResolver
 
     @classmethod
@@ -126,3 +169,12 @@ class ComparisonManifest:
             payload=payload,
             path_resolver=path_resolver,
         )
+
+
+def _optional_string(value: JSONValue | None, field_name: str) -> str | None:
+    """Parse an optional manifest string field."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    raise ValueError(f"Manifest path root field {field_name!r} must be a string.")

@@ -7,6 +7,36 @@ from typing import Any
 from benchmark.cellprofiler_comparison import load_comparison_cases
 from benchmark.contracts.comparison_manifest import ComparisonManifest
 from benchmark.contracts.manifest_acquisition import GitSparseRootAcquisitionStrategy
+from benchmark.datasets.cache import default_benchmark_dataset_cache_root
+
+
+def test_manifest_default_kind_resolves_shared_benchmark_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENHCS_BENCHMARK_DATASET_CACHE_ROOT", raising=False)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "path_roots": {
+                    "dataset_cache": {
+                        "default_kind": "benchmark_dataset_cache",
+                        "env": "OPENHCS_BENCHMARK_DATASET_CACHE_ROOT",
+                    }
+                },
+                "cases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = ComparisonManifest.load(manifest_path)
+
+    assert manifest.path_resolver.roots["dataset_cache"].path == (
+        default_benchmark_dataset_cache_root()
+    )
 
 
 def test_manifest_git_sparse_root_materializes_missing_paths(

@@ -455,6 +455,7 @@ def test_measurement_snapshot_keys_include_semantic_projection_fingerprint(
     )
     policy = RuntimeEquivalencePolicy()
     projection_identity = runtime_measurement_projection_cache_identity()
+    projection_modules = {module_name for module_name, _digest in projection_identity}
     required_key = RuntimeMeasurementFeatureKey(
         RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells"),
         "object_number",
@@ -475,6 +476,13 @@ def test_measurement_snapshot_keys_include_semantic_projection_fingerprint(
 
     assert reference_key["semantic_measurement_projection"] == projection_identity
     assert candidate_key["semantic_measurement_projection"] == projection_identity
+    assert {
+        "openhcs.core.measurement_feature_queries",
+        "openhcs.core.measurement_row_materialization",
+        "openhcs.core.equivalence.measurement_facts",
+        "openhcs.core.equivalence.measurement_rows",
+        "openhcs.core.equivalence.tables",
+    }.issubset(projection_modules)
 
 
 def test_candidate_observation_fingerprint_depends_on_non_image_record_values() -> None:
