@@ -3,25 +3,39 @@ from types import SimpleNamespace
 
 from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.debug import NoOpDebugExecutionPolicy
+from openhcs.core.progress import ProgressExecutionContext
 from openhcs.core.orchestrator import orchestrator as orchestrator_module
+from openhcs.core.orchestrator import worker_execution as worker_execution_module
+from openhcs.core.orchestrator.analysis_consolidation import AnalysisConsolidationPlan
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
     RuntimeObservationMode,
 )
-from openhcs.core.orchestrator.orchestrator import (
-    AnalysisConsolidationPlan,
-    CompiledContextLanePlanner,
-    ExecutionStateProjector,
-    ExecutionVisualizerCleanup,
-    ExecutorShutdownPlan,
-    ForkInheritedWorkerExecutionState,
+from openhcs.core.orchestrator.compiled_plate_execution import (
+    project_execution_state,
+    stop_execution_visualizers,
+)
+from openhcs.core.orchestrator.worker_execution import (
     ForkInheritedWorkerLaneRunner,
+    ForkInheritedWorkerExecutorResources,
+    InlineWorkerExecutorResources,
+    PooledWorkerExecutorResources,
     PooledWorkerLaneRunner,
-    WorkerLaneExecutionIdentity,
-    WorkerLaneExecutionPlan,
     WorkerExecutorFactory,
 )
+from openhcs.core.orchestrator.worker_lanes import (
+    CompiledContextLanePlanner,
+    ForkInheritedWorkerExecutionState,
+    WorkerAssignmentPlan,
+    WorkerLaneExecutionPlan,
+)
 from openhcs.core.compiled_execution import CompiledExecutionBundle
+
+
+PROGRESS_CONTEXT = ProgressExecutionContext(
+    execution_id="exec",
+    plate_id="plate",
+)
 
 
 def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
@@ -109,7 +123,7 @@ def test_lane_planner_rejects_missing_axis_ownership():
 def test_executor_factory_uses_inline_lane_for_single_threaded_worker(monkeypatch):
     context = object()
     monkeypatch.setattr(
-        orchestrator_module.multiprocessing,
+        worker_execution_module.multiprocessing,
         "get_context",
         lambda method: context,
     )
@@ -117,7 +131,7 @@ def test_executor_factory_uses_inline_lane_for_single_threaded_worker(monkeypatc
     resources = WorkerExecutorFactory(
         log_file_base=None,
         progress_queue="queue",
-        progress_context={"execution_id": "exec", "plate_id": "plate"},
+        progress_context=PROGRESS_CONTEXT,
     ).create(
         effective_config=SimpleNamespace(
             use_threading=True,
@@ -128,15 +142,15 @@ def test_executor_factory_uses_inline_lane_for_single_threaded_worker(monkeypatc
 
     assert resources.executor is None
     assert resources.multiprocessing_context is context
-    assert resources.inline_worker_lane_execution is True
-    assert resources.fork_inherited_execution is False
+    assert isinstance(resources, InlineWorkerExecutorResources)
+    assert resources.uses_fork_inherited_contexts is False
     assert resources.use_multiprocessing is False
 
 
 def test_executor_factory_uses_inline_lane_for_single_fork_worker(monkeypatch):
     context = object()
     monkeypatch.setattr(
-        orchestrator_module.multiprocessing,
+        worker_execution_module.multiprocessing,
         "get_context",
         lambda method: context,
     )
@@ -144,7 +158,7 @@ def test_executor_factory_uses_inline_lane_for_single_fork_worker(monkeypatch):
     resources = WorkerExecutorFactory(
         log_file_base="/tmp/worker",
         progress_queue="queue",
-        progress_context={"execution_id": "exec", "plate_id": "plate"},
+        progress_context=PROGRESS_CONTEXT,
     ).create(
         effective_config=SimpleNamespace(
             use_threading=False,
@@ -155,8 +169,8 @@ def test_executor_factory_uses_inline_lane_for_single_fork_worker(monkeypatch):
 
     assert resources.executor is None
     assert resources.multiprocessing_context is context
-    assert resources.inline_worker_lane_execution is True
-    assert resources.fork_inherited_execution is False
+    assert isinstance(resources, InlineWorkerExecutorResources)
+    assert resources.uses_fork_inherited_contexts is False
     assert resources.use_multiprocessing is True
 
 
@@ -169,12 +183,12 @@ def test_executor_factory_creates_thread_pool_for_multi_worker_threading(monkeyp
             created["max_workers"] = max_workers
 
     monkeypatch.setattr(
-        orchestrator_module.multiprocessing,
+        worker_execution_module.multiprocessing,
         "get_context",
         lambda method: context,
     )
     monkeypatch.setattr(
-        orchestrator_module.concurrent.futures,
+        worker_execution_module.concurrent.futures,
         "ThreadPoolExecutor",
         FakeThreadPoolExecutor,
     )
@@ -182,7 +196,7 @@ def test_executor_factory_creates_thread_pool_for_multi_worker_threading(monkeyp
     resources = WorkerExecutorFactory(
         log_file_base=None,
         progress_queue="queue",
-        progress_context={"execution_id": "exec", "plate_id": "plate"},
+        progress_context=PROGRESS_CONTEXT,
     ).create(
         effective_config=SimpleNamespace(
             use_threading=True,
@@ -193,15 +207,15 @@ def test_executor_factory_creates_thread_pool_for_multi_worker_threading(monkeyp
 
     assert isinstance(resources.executor, FakeThreadPoolExecutor)
     assert created == {"max_workers": 3}
-    assert resources.inline_worker_lane_execution is False
-    assert resources.fork_inherited_execution is False
+    assert isinstance(resources, PooledWorkerExecutorResources)
+    assert resources.uses_fork_inherited_contexts is False
     assert resources.use_multiprocessing is False
 
 
 def test_executor_factory_uses_fork_inherited_lane_without_pool(monkeypatch):
     context = object()
     monkeypatch.setattr(
-        orchestrator_module.multiprocessing,
+        worker_execution_module.multiprocessing,
         "get_context",
         lambda method: context,
     )
@@ -209,7 +223,7 @@ def test_executor_factory_uses_fork_inherited_lane_without_pool(monkeypatch):
     resources = WorkerExecutorFactory(
         log_file_base="/tmp/worker",
         progress_queue="queue",
-        progress_context={"execution_id": "exec", "plate_id": "plate"},
+        progress_context=PROGRESS_CONTEXT,
     ).create(
         effective_config=SimpleNamespace(
             use_threading=False,
@@ -220,8 +234,8 @@ def test_executor_factory_uses_fork_inherited_lane_without_pool(monkeypatch):
 
     assert resources.executor is None
     assert resources.multiprocessing_context is context
-    assert resources.inline_worker_lane_execution is False
-    assert resources.fork_inherited_execution is True
+    assert isinstance(resources, ForkInheritedWorkerExecutorResources)
+    assert resources.uses_fork_inherited_contexts is True
     assert resources.use_multiprocessing is True
 
 
@@ -234,17 +248,17 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
             created.update(kwargs)
 
     monkeypatch.setattr(
-        orchestrator_module.multiprocessing,
+        worker_execution_module.multiprocessing,
         "get_context",
         lambda method: context,
     )
     monkeypatch.setattr(
-        orchestrator_module.concurrent.futures,
+        worker_execution_module.concurrent.futures,
         "ProcessPoolExecutor",
         FakeProcessPoolExecutor,
     )
     monkeypatch.setattr(
-        orchestrator_module,
+        worker_execution_module,
         "get_current_global_config",
         lambda config_type: SimpleNamespace(alpha=1),
     )
@@ -252,7 +266,7 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     resources = WorkerExecutorFactory(
         log_file_base="/tmp/worker-log",
         progress_queue="queue",
-        progress_context={"execution_id": "exec", "plate_id": "plate"},
+        progress_context=PROGRESS_CONTEXT,
     ).create(
         effective_config=SimpleNamespace(
             use_threading=False,
@@ -264,15 +278,15 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     assert isinstance(resources.executor, FakeProcessPoolExecutor)
     assert created["max_workers"] == 4
     assert created["mp_context"] is context
-    assert created["initializer"] is orchestrator_module._configure_worker_with_gpu
+    assert created["initializer"] is worker_execution_module._configure_worker_with_gpu
     assert created["initargs"] == (
         "/tmp/worker-log",
         {"alpha": 1},
         "queue",
-        {"execution_id": "exec", "plate_id": "plate"},
+        PROGRESS_CONTEXT,
     )
-    assert resources.inline_worker_lane_execution is False
-    assert resources.fork_inherited_execution is False
+    assert isinstance(resources, PooledWorkerExecutorResources)
+    assert resources.uses_fork_inherited_contexts is False
     assert resources.use_multiprocessing is True
 
 
@@ -285,35 +299,37 @@ def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch
             return self._result
 
     class FakeExecutor:
-        def submit(self, fn):
-            return FakeFuture(fn())
+        def submit(self, fn, *args):
+            return FakeFuture(fn(*args))
 
-    class FakeWorkerLaneExecutor:
-        def __init__(self, *, lane_context, **kwargs):
-            self._axis_id = lane_context.owned_wells[0]
-
-        def execute(self):
-            return {self._axis_id: ExecutionResult.success(self._axis_id)}
+    def fake_execute_worker_lane(
+        pipeline_definition,
+        lane_axis_contexts,
+        lane_context,
+        runtime_observation_mode,
+    ):
+        axis_id = lane_context.owned_wells[0]
+        return {axis_id: ExecutionResult.success(axis_id)}
 
     monkeypatch.setattr(
-        orchestrator_module.concurrent.futures,
+        worker_execution_module.concurrent.futures,
         "as_completed",
         lambda futures: list(futures),
     )
     monkeypatch.setattr(
-        orchestrator_module,
-        "WorkerLaneExecutor",
-        FakeWorkerLaneExecutor,
+        worker_execution_module,
+        "execute_worker_lane",
+        fake_execute_worker_lane,
     )
 
     execution_plan = WorkerLaneExecutionPlan(
-        identity=WorkerLaneExecutionIdentity(
-            execution_id="exec",
-            plate_id="plate",
-            debug_execution_policy=NoOpDebugExecutionPolicy(),
+        execution_id=PROGRESS_CONTEXT.execution_id,
+        plate_id=PROGRESS_CONTEXT.plate_id,
+        debug_execution_policy=NoOpDebugExecutionPolicy(),
+        assignments=WorkerAssignmentPlan(
+            worker_assignments={"worker_0": ["A01"]},
+            lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
         ),
-        lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
-        worker_assignments={"worker_0": ["A01"]},
         runtime_observation_mode=RuntimeObservationMode.OMIT,
     )
 
@@ -335,39 +351,44 @@ def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch)
         delattr(stripped_step, field_name)
 
     class FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
         def result(self):
-            return {"A01": ExecutionResult.success("A01")}
+            return self._result
 
     class FakeExecutor:
-        def submit(self, fn):
-            return FakeFuture()
+        def submit(self, fn, *args):
+            return FakeFuture(fn(*args))
 
-    class FakeWorkerLaneExecutor:
-        def __init__(self, *, pipeline_definition, **kwargs):
-            submitted_pipeline.extend(pipeline_definition)
-
-        def execute(self):
-            return {}
+    def fake_execute_worker_lane(
+        pipeline_definition,
+        lane_axis_contexts,
+        lane_context,
+        runtime_observation_mode,
+    ):
+        submitted_pipeline.extend(pipeline_definition)
+        return {"A01": ExecutionResult.success("A01")}
 
     monkeypatch.setattr(
-        orchestrator_module.concurrent.futures,
+        worker_execution_module.concurrent.futures,
         "as_completed",
         lambda futures: list(futures),
     )
     monkeypatch.setattr(
-        orchestrator_module,
-        "WorkerLaneExecutor",
-        FakeWorkerLaneExecutor,
+        worker_execution_module,
+        "execute_worker_lane",
+        fake_execute_worker_lane,
     )
 
     execution_plan = WorkerLaneExecutionPlan(
-        identity=WorkerLaneExecutionIdentity(
-            execution_id="exec",
-            plate_id="plate",
-            debug_execution_policy=NoOpDebugExecutionPolicy(),
+        execution_id=PROGRESS_CONTEXT.execution_id,
+        plate_id=PROGRESS_CONTEXT.plate_id,
+        debug_execution_policy=NoOpDebugExecutionPolicy(),
+        assignments=WorkerAssignmentPlan(
+            worker_assignments={"worker_0": ["A01"]},
+            lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
         ),
-        lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
-        worker_assignments={"worker_0": ["A01"]},
         runtime_observation_mode=RuntimeObservationMode.OMIT,
     )
 
@@ -390,17 +411,19 @@ def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
         def Process(self, **kwargs):
             raise AssertionError("single active lane must not launch a process")
 
-    class FakeWorkerLaneExecutor:
-        def __init__(self, *, pipeline_definition, lane_axis_contexts, **kwargs):
-            executed.append((pipeline_definition, lane_axis_contexts))
-
-        def execute(self):
-            return {"A01": ExecutionResult.success("A01")}
+    def fake_execute_worker_lane(
+        pipeline_definition,
+        lane_axis_contexts,
+        lane_context,
+        runtime_observation_mode,
+    ):
+        executed.append((pipeline_definition, lane_axis_contexts))
+        return {"A01": ExecutionResult.success("A01")}
 
     monkeypatch.setattr(
-        orchestrator_module,
-        "WorkerLaneExecutor",
-        FakeWorkerLaneExecutor,
+        worker_execution_module,
+        "execute_worker_lane",
+        fake_execute_worker_lane,
     )
     ForkInheritedWorkerExecutionState.install(
         CompiledExecutionBundle(
@@ -412,13 +435,13 @@ def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
     )
     try:
         execution_plan = WorkerLaneExecutionPlan(
-            identity=WorkerLaneExecutionIdentity(
-                execution_id="exec",
-                plate_id="plate",
-                debug_execution_policy=NoOpDebugExecutionPolicy(),
+            execution_id=PROGRESS_CONTEXT.execution_id,
+            plate_id=PROGRESS_CONTEXT.plate_id,
+            debug_execution_policy=NoOpDebugExecutionPolicy(),
+            assignments=WorkerAssignmentPlan(
+                worker_assignments={"worker_0": ["A01"]},
+                lane_axis_contexts={"worker_0": [("A01", ["A01"])]},
             ),
-            lane_axis_contexts={"worker_0": [("A01", ["A01"])]},
-            worker_assignments={"worker_0": ["A01"]},
             runtime_observation_mode=RuntimeObservationMode.OMIT,
         )
 
@@ -440,40 +463,28 @@ def test_pooled_worker_lane_runner_emits_error_before_reraising(monkeypatch):
             raise RuntimeError("lane exploded")
 
     class FakeExecutor:
-        def submit(self, fn):
+        def submit(self, fn, *args):
             return FakeFuture()
 
-    class FakeWorkerLaneExecutor:
-        def __init__(self, **kwargs):
-            pass
-
-        def execute(self):
-            return {}
-
     monkeypatch.setattr(
-        orchestrator_module.concurrent.futures,
+        worker_execution_module.concurrent.futures,
         "as_completed",
         lambda futures: list(futures),
     )
     monkeypatch.setattr(
-        orchestrator_module,
-        "WorkerLaneExecutor",
-        FakeWorkerLaneExecutor,
-    )
-    monkeypatch.setattr(
-        orchestrator_module,
+        worker_execution_module,
         "emit",
         lambda **kwargs: emitted.append(kwargs),
     )
 
     execution_plan = WorkerLaneExecutionPlan(
-        identity=WorkerLaneExecutionIdentity(
-            execution_id="exec",
-            plate_id="plate",
-            debug_execution_policy=NoOpDebugExecutionPolicy(),
+        execution_id=PROGRESS_CONTEXT.execution_id,
+        plate_id=PROGRESS_CONTEXT.plate_id,
+        debug_execution_policy=NoOpDebugExecutionPolicy(),
+        assignments=WorkerAssignmentPlan(
+            worker_assignments={"worker_0": ["A01"]},
+            lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
         ),
-        lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
-        worker_assignments={"worker_0": ["A01"]},
         runtime_observation_mode=RuntimeObservationMode.OMIT,
     )
 
@@ -494,11 +505,15 @@ def test_pooled_worker_lane_runner_emits_error_before_reraising(monkeypatch):
 def test_executor_shutdown_plan_swallows_broken_pool_errors(caplog):
     class BrokenExecutor:
         def shutdown(self, **kwargs):
-            raise orchestrator_module.concurrent.futures.process.BrokenProcessPool(
+            raise worker_execution_module.concurrent.futures.process.BrokenProcessPool(
                 "dead"
             )
 
-    ExecutorShutdownPlan(BrokenExecutor()).run()
+    PooledWorkerExecutorResources(
+        multiprocessing_context=object(),
+        use_multiprocessing=True,
+        _executor=BrokenExecutor(),
+    ).shutdown_executor()
 
     assert "broken process pool" in caplog.text
 
@@ -516,12 +531,11 @@ def test_analysis_consolidation_plan_skips_disabled_config():
 
 def test_execution_state_projector_maps_success_and_failure():
     orchestrator = SimpleNamespace(_state=None)
-    projector = ExecutionStateProjector(orchestrator)
 
-    projector.project({"A01": ExecutionResult.success("A01")})
+    project_execution_state(orchestrator, {"A01": ExecutionResult.success("A01")})
     assert orchestrator._state is orchestrator_module.OrchestratorState.COMPLETED
 
-    projector.project({"A01": ExecutionResult.error("A01")})
+    project_execution_state(orchestrator, {"A01": ExecutionResult.error("A01")})
     assert orchestrator._state is orchestrator_module.OrchestratorState.EXEC_FAILED
 
 
@@ -533,6 +547,6 @@ def test_execution_visualizer_cleanup_stops_only_non_persistent_visualizers():
         stop_viewer=lambda: stopped.append("t"),
     )
 
-    ExecutionVisualizerCleanup().run([persistent, transient])
+    stop_execution_visualizers([persistent, transient])
 
     assert stopped == ["t"]

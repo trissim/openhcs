@@ -29,8 +29,8 @@ The compiler uses ObjectState pattern for all configuration access:
     # Using .parameters.get() doesn't get inheritance
     enabled = step_state.parameters.get('streaming_defaults.enabled')  # WRONG - no inheritance
 
-    if hasattr(step, 'config_name'):  # REMOVED - use isinstance checks only
-        config = getattr(step, 'config_name')  # REMOVED - use ObjectState.get_saved_resolved_value()
+    Legacy direct attribute probing was removed; compiler state must come from
+    ObjectState saved-resolution APIs.
 
 WHY:
 - get_saved_resolved_value() provides saved baseline with inheritance (for compilation)
@@ -44,11 +44,8 @@ from __future__ import annotations
 
 import logging
 import dataclasses
-import importlib
-import inspect
 import time
 from pathlib import Path
-from types import FunctionType, MappingProxyType
 from typing import (
     Annotated,
     Any,
@@ -59,7 +56,6 @@ from typing import (
     Optional,
     Sequence,
     TYPE_CHECKING,
-    Tuple,
     Union,
     get_args,
     get_origin,
@@ -73,25 +69,26 @@ from openhcs.constants.constants import (
     WRITE_BACKEND,
     Backend,
 )
-from openhcs.core.callable_contract import (
-    CallableContract,
-    DECLARED_PROCESSING_CONTRACT_ATTR,
-    PROCESSING_CONTRACT_ATTR,
-    PROCESSING_PREPARE_ATTR,
-    RAW_PROCESSING_FUNCTION_ATTR,
-    RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
-)
-from openhcs.core.module_artifact_contract import MODULE_ARTIFACT_CONTRACT_ATTR
-from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
+
 from openhcs.core.compiled_execution import CompiledExecutionBundle
-from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.context.processing_context import ProcessingContext, RequiredVisualizer
 from openhcs.core.config import (
+    AnalysisConsolidationConfig,
     MaterializationBackend,
+    PlateMetadataConfig,
     StreamingConfig,
     VFSConfig,
 )
+from openhcs.core.axis_filter import (
+    StepAxisFilterMap,
+    StepAxisFilterResolution,
+)
 from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
-from openhcs.core.pipeline.compilation_session import CompilationSession
+from openhcs.core.pipeline.compilation_session import (
+    CompilationPlateScope,
+    CompilationSession,
+    ResolvedPipelineDefinition,
+)
 from openhcs.core.pipeline.materialization_flag_planner import (
     MaterializationFlagPlanner,
 )
@@ -104,6 +101,7 @@ from openhcs.core.pipeline.step_snapshot import (
 from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.utils import WellFilterProcessor
 from objectstate import ObjectState, ObjectStateRegistry
@@ -119,38 +117,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _register_object_state(
-    object_instance,
-    scope_id: str,
-    parent_state: Optional["ObjectState"],
-) -> "ObjectState":
-    """Create and register an ObjectState with the compiler's snapshot policy."""
-    state = ObjectState(
-        object_instance=object_instance,
-        scope_id=scope_id,
-        parent_state=parent_state,
-    )
-    ObjectStateRegistry.register(state, _skip_snapshot=True)
-    return state
-
-
-def _get_or_register_object_state(
-    scope_id: str,
-    object_instance,
-    parent_state: Optional["ObjectState"],
-    *,
-    force_fresh: bool = False,
-) -> "ObjectState":
-    """Return an existing ObjectState unless a fresh compiler state is required."""
-    state = None if force_fresh else ObjectStateRegistry.get_by_scope(scope_id)
-    if state is not None:
-        return state
-    return _register_object_state(object_instance, scope_id, parent_state)
-
-
 def _step_scope_token(step: "AbstractStep", step_index: int) -> str:
     """Return the existing step scope token when available."""
-    token = getattr(step, "_scope_token", None)
+    token = step._scope_token
     if isinstance(token, str) and token:
         return token
     return f"step_{step_index}"
@@ -163,25 +132,6 @@ def _compiler_step_scope_id(
 ) -> str:
     """Build a compiler ObjectState scope id that preserves stable step tokens."""
     return f"{compilation_scope}::{_step_scope_token(step, step_index)}"
-
-
-_FUNCTION_REFERENCE_ATTRIBUTE_FIELDS = MappingProxyType({
-    "__name__": "function_name",
-    "__module__": "original_module",
-})
-
-_FUNCTION_REFERENCE_PRESERVED_ATTRS = (
-    "__artifact_inputs__",
-    "__artifact_outputs__",
-    "__runtime_adapter__",
-    MODULE_ARTIFACT_CONTRACT_ATTR,
-    PROCESSING_CONTRACT_ATTR,
-    DECLARED_PROCESSING_CONTRACT_ATTR,
-    RAW_PROCESSING_FUNCTION_ATTR,
-    RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
-    "input_memory_type",
-    "output_memory_type",
-)
 
 
 MATERIALIZATION_PLAN_REQUIREMENTS = (
@@ -197,67 +147,15 @@ FUNCTION_MEMORY_PLAN_REQUIREMENTS = (
 
 
 @dataclass(frozen=True, slots=True)
-class StepPlanInputSource:
-    """Authoritative source record for resolving per-context step-plan inputs."""
-
-    context: ProcessingContext
-    steps_definition: List[AbstractStep]
-    orchestrator: Any
-    step_state_map: Dict[int, "ObjectState"] | None
-    step_snapshots: tuple[StepSnapshot, ...] | None
-    steps_already_resolved: bool
-    is_zmq_execution: bool
-
-
-@dataclass(slots=True)
-class ResolvedStepPlanInputs:
-    """Resolved step inputs required by path planning and downstream validation."""
-
-    steps: List[AbstractStep]
-    step_state_map: Dict[int, "ObjectState"]
-    snapshots: tuple[StepSnapshot, ...]
-
-    @classmethod
-    def from_source(cls, source: StepPlanInputSource) -> "ResolvedStepPlanInputs":
-        if not source.steps_already_resolved or source.step_state_map is None:
-            return PipelineCompiler._resolve_steps_for_context(source)
-
-        logger.debug("Using pre-resolved steps for context %s", source.context.axis_id)
-        snapshots = source.step_snapshots or build_step_snapshots(
-            source.steps_definition,
-            source.step_state_map,
-        )
-        return cls(
-            steps=source.steps_definition,
-            step_state_map=source.step_state_map,
-            snapshots=snapshots,
-        )
-
-    @classmethod
-    def from_resolved(
-        cls,
-        steps: List[AbstractStep],
-        step_state_map: Dict[int, "ObjectState"],
-    ) -> "ResolvedStepPlanInputs":
-        return cls(
-            steps=steps,
-            step_state_map=step_state_map,
-            snapshots=build_step_snapshots(steps, step_state_map),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class AxisCompilationRequest:
     """Authoritative context record for axis-level compilation fanout."""
 
-    orchestrator: Any
-    pipeline_definition: List[AbstractStep]
-    step_state_map: Mapping[int, "ObjectState"]
-    step_snapshots: tuple[StepSnapshot, ...]
-    analysis_consolidation_config: Any
-    plate_metadata_config: Any
-    auto_add_output_plate: Any
-    global_step_axis_filters: dict[int, dict[str, Any]]
+    orchestrator: "PipelineOrchestrator"
+    pipeline: ResolvedPipelineDefinition
+    analysis_consolidation_config: AnalysisConsolidationConfig
+    plate_metadata_config: PlateMetadataConfig
+    auto_add_output_plate: bool
+    global_step_axis_filters: StepAxisFilterMap
     enable_visualizer_override: bool
     is_zmq_execution: bool
 
@@ -273,433 +171,11 @@ class AxisCompilationRequest:
         )
         return context
 
-
-@dataclass(frozen=True)
-class FunctionReference:
-    """
-    A picklable reference to a function in the registry.
-
-    This replaces raw function objects in compiled step definitions to ensure
-    picklability while allowing workers to resolve functions from their registry.
-
-    Preserves all dunder attributes from the original function so they can be
-    accessed during compilation (e.g., __artifact_inputs__, __artifact_outputs__).
-    """
-
-    function_name: str
-    registry_name: str
-    memory_type: str  # The memory type for get_function_by_name() (e.g., "numpy", "pyclesperanto")
-    composite_key: str  # The full registry key (e.g., "pyclesperanto:gaussian_blur")
-    original_module: str  # The original module path (e.g., "skimage.filters.edges")
-    preserved_attrs: dict  # All dunder attributes from the original function (except __name__ and __module__)
-
-    def __getattr__(self, name: str):
-        """Allow access to preserved dunder attributes as if they were on the function."""
-        # Use object.__getattribute__ to avoid infinite recursion
-        preserved = object.__getattribute__(self, "preserved_attrs")
-
-        if name in _FUNCTION_REFERENCE_ATTRIBUTE_FIELDS:
-            return object.__getattribute__(
-                self,
-                _FUNCTION_REFERENCE_ATTRIBUTE_FIELDS[name],
-            )
-
-        if name in preserved:
-            return preserved[name]
-        raise AttributeError(f"FunctionReference has no attribute '{name}'")
-
-    def resolve(self) -> Callable:
-        """Resolve this reference to the actual decorated function from the registry.
-
-        Always resolves through RegistryService to get the fully decorated function
-        with all wrapper layers (memory type, slice-by-slice, dtype conversion, etc.).
-        This should only be called in worker processes during execution, never during
-        compilation (use preserved_attrs via __getattr__ instead).
-        """
-        from openhcs.processing.backends.lib_registry.registry_service import (
-            RegistryService,
-        )
-
-        all_functions = RegistryService.get_all_functions_with_metadata()
-        if self.composite_key in all_functions:
-            return all_functions[self.composite_key].func
-        resolved = FunctionReferenceTransportAuthority.importable_function(
-            self.original_module,
-            self.function_name,
-        )
-        if callable(resolved):
-            return resolved
-        raise RuntimeError(
-            f"Function {self.composite_key} not found in registry. "
-            f"Ensure the function registry is initialized in this process."
-        )
-
-
-def _missing_plan_fields(
-    plan: CompiledStepPlan,
-    requirements: Sequence[tuple[str, Callable[[CompiledStepPlan], object | None]]],
-) -> list[str]:
-    return [
-        name
-        for name, read_field in requirements
-        if read_field(plan) is None
-    ]
-
-
-class FunctionReferenceTransportAuthority:
-    """Converts pipeline callables into picklable registry references."""
-
-    @classmethod
-    def reference_pipeline(
-        cls,
-        pipeline_definition: Sequence[AbstractStep],
-    ) -> list[AbstractStep]:
-        """Return a declaration copy whose function specs are FunctionReferences."""
-        return [cls.reference_step(step) for step in pipeline_definition]
-
-    @classmethod
-    def reference_pipeline_in_place(
-        cls,
-        pipeline_definition: List[AbstractStep],
-    ) -> None:
-        """Mutate FunctionStep callables into FunctionReferences for compilation."""
-        logger.debug(
-            "🔄 FUNCTION REFRESH: Processing %s steps",
-            len(pipeline_definition),
-        )
-        for step_idx, step in enumerate(pipeline_definition):
-            if not isinstance(step, FunctionStep):
-                continue
-
-            func_spec = step.function_spec()
-            if func_spec is None:
-                logger.debug(
-                    "🔄 FUNCTION REFRESH: Step %s (%s): No function pattern",
-                    step_idx,
-                    step.name,
-                )
-                continue
-
-            old_type = type(func_spec).__name__
-            step.func = cls.reference_function_spec(func_spec)
-            new_type = type(step.func).__name__
-
-            if isinstance(step.func, list) and step.func:
-                first_item = step.func[0]
-                first_item_type = type(first_item).__name__
-                if isinstance(first_item, tuple) and len(first_item) == 2:
-                    inner_func_type = type(first_item[0]).__name__
-                    logger.debug(
-                        "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s "
-                        "(first item: %s, inner func: %s)",
-                        step_idx,
-                        step.name,
-                        old_type,
-                        new_type,
-                        first_item_type,
-                        inner_func_type,
-                    )
-                else:
-                    logger.debug(
-                        "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s "
-                        "(first item: %s)",
-                        step_idx,
-                        step.name,
-                        old_type,
-                        new_type,
-                        first_item_type,
-                    )
-            elif isinstance(step.func, tuple) and len(step.func) == 2:
-                func_type = type(step.func[0]).__name__
-                logger.debug(
-                    "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s (func: %s)",
-                    step_idx,
-                    step.name,
-                    old_type,
-                    new_type,
-                    func_type,
-                )
-            else:
-                logger.debug(
-                    "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s",
-                    step_idx,
-                    step.name,
-                    old_type,
-                    new_type,
-                )
-
-    @classmethod
-    def reference_step(cls, step: AbstractStep) -> AbstractStep:
-        """Return a FunctionStep copy with referenced function specs."""
-        if not isinstance(step, FunctionStep):
-            return step
-        func_spec = step.function_spec()
-        if func_spec is None:
-            return step
-        referenced = cls.reference_function_spec(func_spec)
-        if referenced is func_spec:
-            return step
-        return step.with_function_spec(referenced)
-
-    @classmethod
-    def reference_function_spec(cls, func_value):
-        """Convert function objects to picklable FunctionReference objects.
-
-        Also filters out functions with enabled=False at compile time.
-        """
-        if callable(func_value):
-            return cls.function_reference(func_value)
-
-        if isinstance(func_value, tuple) and len(func_value) in {2, 3}:
-            func, params, *invocation_options = func_value
-
-            if isinstance(params, dict) and params.get("enabled", True) is False:
-                return None
-
-            if isinstance(params, dict) and "enabled" in params:
-                params = {k: v for k, v in params.items() if k != "enabled"}
-
-            if isinstance(params, dict) and "dtype_config" in params:
-                params = {k: v for k, v in params.items() if k != "dtype_config"}
-
-            if callable(func):
-                func_ref = cls.reference_function_spec(func)
-                return (func_ref, params, *invocation_options)
-            return (func, params, *invocation_options)
-
-        if isinstance(func_value, list):
-            refreshed = [cls.reference_function_spec(item) for item in func_value]
-            return [item for item in refreshed if item is not None]
-
-        if isinstance(func_value, dict):
-            refreshed = {
-                key: cls.reference_function_spec(value)
-                for key, value in func_value.items()
-            }
-            return {key: value for key, value in refreshed.items() if value is not None}
-
-        return func_value
-
-    @staticmethod
-    def function_reference(func) -> FunctionReference:
-        """Convert a function to a picklable FunctionReference.
-
-        Preserves custom attributes (like __artifact_inputs__, __artifact_outputs__)
-        so they can be accessed during compilation without resolving the function.
-
-        Compares unwrapped original functions to handle wrapper functions that may
-        be different Python objects but wrap the same underlying callable.
-        """
-        from openhcs.processing.backends.lib_registry.registry_service import (
-            RegistryService,
-        )
-
-        cellprofiler_reference = (
-            FunctionReferenceTransportAuthority.cellprofiler_catalog_reference(func)
-        )
-        if cellprofiler_reference is not None:
-            return cellprofiler_reference
-
-        def _get_original_func(f):
-            return inspect.unwrap(f)
-
-        original_func = _get_original_func(func)
-        original_name = original_func.__name__
-        original_module = original_func.__module__
-
-        all_functions = RegistryService.get_all_functions_with_metadata()
-
-        for composite_key, metadata in all_functions.items():
-            registry_original = _get_original_func(metadata.func)
-            registry_module = registry_original.__module__
-            if (
-                registry_original.__name__ == original_name
-                and registry_module == original_module
-            ):
-                function_attrs = func.__dict__
-                preserved_attrs = {
-                    attr: function_attrs[attr]
-                    for attr in _FUNCTION_REFERENCE_PRESERVED_ATTRS
-                    if attr in function_attrs
-                }
-
-                return FunctionReference(
-                    function_name=original_name,
-                    registry_name=metadata.registry.library_name,
-                    memory_type=metadata.registry.MEMORY_TYPE,
-                    composite_key=composite_key,
-                    original_module=original_module,
-                    preserved_attrs=preserved_attrs,
-                )
-
-        imported = FunctionReferenceTransportAuthority.importable_function(
-            original_module,
-            original_name,
-        )
-        if callable(imported):
-            contract = CallableContract.from_callable(func)
-            function_attrs = func.__dict__
-            preserved_attrs = {
-                attr: function_attrs[attr]
-                for attr in _FUNCTION_REFERENCE_PRESERVED_ATTRS
-                if attr in function_attrs
-            }
-            return FunctionReference(
-                function_name=original_name,
-                registry_name="python",
-                memory_type=contract.input_memory_type or "python",
-                composite_key=f"python:{original_module}:{original_name}",
-                original_module=original_module,
-                preserved_attrs=preserved_attrs,
-            )
-
-        raise RuntimeError(
-            f"Function {original_name} (module: {original_module}) not found in "
-            "registry or importable module attribute - cannot create reference"
-        )
-
-    @staticmethod
-    def cellprofiler_catalog_reference(func: Callable) -> FunctionReference | None:
-        """Return a package-catalog reference for CellProfiler backend functions."""
-        if not isinstance(func, FunctionType):
-            return None
-        cellprofiler_module = "openhcs.processing.backends.cellprofiler"
-        module_name = func.__module__
-        function_name = func.__name__
-        if (
-            module_name != cellprofiler_module
-            and not module_name.startswith(f"{cellprofiler_module}.")
-        ):
-            return None
-
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
-
-        try:
-            CellProfilerFunctionCatalog.get_function(function_name)
-        except KeyError:
-            return None
-
-        contract = CallableContract.from_callable(func)
-        preserved_attrs = (
-            FunctionReferenceTransportAuthority.normalized_preserved_attrs(func)
-        )
-        return FunctionReference(
-            function_name=function_name,
-            registry_name="cellprofiler",
-            memory_type=contract.input_memory_type or "python",
-            composite_key=f"cellprofiler:{function_name}",
-            original_module=cellprofiler_module,
-            preserved_attrs=preserved_attrs,
-        )
-
-    @staticmethod
-    def normalized_preserved_attrs(func: Callable) -> dict[str, Any]:
-        """Return picklable preserved function attrs with catalog-stable raw callables."""
-        function_attrs = func.__dict__
-        preserved_attrs = {
-            attr: function_attrs[attr]
-            for attr in _FUNCTION_REFERENCE_PRESERVED_ATTRS
-            if attr in function_attrs
-        }
-        raw_processing_function = preserved_attrs.get(RAW_PROCESSING_FUNCTION_ATTR)
-        if callable(raw_processing_function):
-            stable_raw = (
-                FunctionReferenceTransportAuthority.cellprofiler_catalog_function(
-                    raw_processing_function
-                )
-            )
-            if stable_raw is not None:
-                preserved_attrs[RAW_PROCESSING_FUNCTION_ATTR] = stable_raw
-        return preserved_attrs
-
-    @staticmethod
-    def cellprofiler_catalog_function(func: Callable) -> Callable | None:
-        """Resolve a CellProfiler callable to the package-owned catalog function."""
-        if not isinstance(func, FunctionType):
-            return None
-        cellprofiler_module = "openhcs.processing.backends.cellprofiler"
-        module_name = func.__module__
-        function_name = func.__name__
-        if (
-            module_name != cellprofiler_module
-            and not module_name.startswith(f"{cellprofiler_module}.")
-        ):
-            return None
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
-
-        try:
-            return CellProfilerFunctionCatalog.get_function(function_name)
-        except KeyError:
-            return None
-
-    @staticmethod
-    def importable_function(module_name: str, function_name: str) -> Callable | None:
-        """Return a top-level importable function by explicit module namespace."""
-        module_namespace = vars(importlib.import_module(module_name))
-        resolved = module_namespace.get(function_name)
-        if callable(resolved):
-            return resolved
-        catalog_resolved = (
-            FunctionReferenceTransportAuthority.catalog_exported_function(
-                module_namespace,
-                function_name,
-            )
-        )
-        if catalog_resolved is not None:
-            return catalog_resolved
-        submodule = FunctionReferenceTransportAuthority.importable_submodule(
-            module_name,
-            function_name,
-        )
-        if submodule is None:
-            return None
-        resolved = vars(submodule).get(function_name)
-        if callable(resolved):
-            return resolved
-        return None
-
-    @staticmethod
-    def importable_submodule(module_name: str, function_name: str) -> Any | None:
-        """Return a same-named function submodule when the package exposes one."""
-        try:
-            return importlib.import_module(f"{module_name}.{function_name}")
-        except ModuleNotFoundError as exc:
-            if exc.name == f"{module_name}.{function_name}":
-                return None
-            raise
-
-    @staticmethod
-    def catalog_exported_function(
-        module_namespace: Mapping[str, Any],
-        function_name: str,
-    ) -> Callable | None:
-        """Return a function from a package-owned export catalog when present."""
-        function_names = module_namespace.get("CELLPROFILER_FUNCTION_NAMES")
-        catalog = module_namespace.get("CellProfilerFunctionCatalog")
-        if (
-            function_names is None
-            or catalog is None
-            or function_name not in function_names
-        ):
-            return None
-        return catalog.get_function(function_name)
-
-
 def _refresh_function_objects_in_steps(pipeline_definition: List[AbstractStep]) -> None:
     """Refresh all function objects in pipeline steps for picklable transport."""
     FunctionReferenceTransportAuthority.reference_pipeline_in_place(
         pipeline_definition
     )
-
-
-def _refresh_function_object(func_value):
-    """Convert function objects to picklable FunctionReference objects."""
-    return FunctionReferenceTransportAuthority.reference_function_spec(func_value)
-
-
-def _get_function_reference(func):
-    """Convert a function to a picklable FunctionReference."""
-    return FunctionReferenceTransportAuthority.function_reference(func)
 
 
 def _dataclass_field_candidate(field_type: Any) -> Any:
@@ -766,8 +242,9 @@ class PipelineCompiler:
         step_snapshots: tuple[StepSnapshot, ...] | None = None,
         steps_already_resolved: bool = True,
         is_zmq_execution: bool = False,
+        source_identity_stack_axes: frozenset[str] = frozenset(),
         # base_input_dir and axis_id parameters removed, will use from context
-    ) -> Tuple[List[AbstractStep], Dict[int, "ObjectState"]]:
+    ) -> CompilationSession:
         """
         Initializes step_plans by calling PipelinePathPlanner.prepare_pipeline_paths,
         which handles primary paths, artifact I/O path planning and linking, and chainbreaker status.
@@ -783,50 +260,46 @@ class PipelineCompiler:
             steps_already_resolved: If True, steps are pre-resolved (default for performance)
 
         Returns:
-            Tuple of (resolved steps, step_state_map)
+            The axis-scoped compilation session used by all downstream stages.
         """
         PipelineCompiler._assert_context_mutable_for_planning(context)
         context.visualizer_config = None
 
-        resolved_inputs = ResolvedStepPlanInputs.from_source(
-            StepPlanInputSource(
-                context,
-                steps_definition,
-                orchestrator,
-                step_state_map,
-                step_snapshots,
-                steps_already_resolved,
-                is_zmq_execution,
+        if steps_already_resolved and step_state_map is not None:
+            logger.debug("Using pre-resolved steps for context %s", context.axis_id)
+            session = CompilationSession.from_context(
+                context=context,
+                steps=steps_definition,
+                orchestrator=orchestrator,
+                step_state_map=step_state_map,
+                snapshots=step_snapshots,
+                metadata_writer=metadata_writer,
+                plate_path=plate_path,
+                is_zmq_execution=is_zmq_execution,
+                source_identity_stack_axes=source_identity_stack_axes,
             )
-        )
-        PipelineCompiler._ensure_initial_step_plans(context, resolved_inputs)
+        else:
+            session = PipelineCompiler._resolve_steps_for_context(
+                context=context,
+                steps_definition=steps_definition,
+                orchestrator=orchestrator,
+                metadata_writer=metadata_writer,
+                plate_path=plate_path,
+                is_zmq_execution=is_zmq_execution,
+                source_identity_stack_axes=source_identity_stack_axes,
+            )
+
+        PipelineCompiler._ensure_initial_step_plans(session)
         PipelineCompiler._configure_input_conversion_if_needed(
             context,
-            resolved_inputs.steps,
+            session.steps,
             orchestrator,
             plate_path,
         )
-        PipelineCompiler._plan_context_paths(
-            context,
-            resolved_inputs,
-            orchestrator,
-        )
-
-        session = CompilationSession.from_context(
-            context=context,
-            steps=resolved_inputs.steps,
-            orchestrator=orchestrator,
-            step_state_map=resolved_inputs.step_state_map,
-            snapshots=resolved_inputs.snapshots,
-            metadata_writer=metadata_writer,
-            plate_path=plate_path,
-        )
+        PipelineCompiler._plan_context_paths(session)
         PipelineCompiler._supplement_step_plans(session)
-        PipelineCompiler._collect_streaming_configs(
-            session,
-            is_zmq_execution=is_zmq_execution,
-        )
-        return resolved_inputs.steps, resolved_inputs.step_state_map
+        PipelineCompiler._collect_streaming_configs(session)
+        return session
 
     @staticmethod
     def _assert_context_mutable_for_planning(context: ProcessingContext) -> None:
@@ -838,9 +311,62 @@ class PipelineCompiler:
             context.step_plans = {}
 
     @staticmethod
+    def _register_object_state(
+        object_instance,
+        scope_id: str,
+        parent_state: Optional["ObjectState"],
+    ) -> "ObjectState":
+        """Create and register an ObjectState with the compiler's snapshot policy."""
+        state = ObjectState(
+            object_instance=object_instance,
+            scope_id=scope_id,
+            parent_state=parent_state,
+        )
+        ObjectStateRegistry.register(state, _skip_snapshot=True)
+        return state
+
+    @staticmethod
+    def _get_or_register_object_state(
+        scope_id: str,
+        object_instance,
+        parent_state: Optional["ObjectState"],
+        *,
+        force_fresh: bool = False,
+    ) -> "ObjectState":
+        """Return an existing ObjectState unless a fresh compiler state is required."""
+        state = None
+        if not force_fresh:
+            state = ObjectStateRegistry.get_by_scope(scope_id)
+        if state is not None:
+            return state
+        return PipelineCompiler._register_object_state(
+            object_instance,
+            scope_id,
+            parent_state,
+        )
+
+    @staticmethod
+    def _missing_plan_fields(
+        plan: CompiledStepPlan,
+        requirements: Sequence[tuple[str, Callable[[CompiledStepPlan], object | None]]],
+    ) -> list[str]:
+        return [
+            name
+            for name, read_field in requirements
+            if read_field(plan) is None
+        ]
+
+    @staticmethod
     def _resolve_steps_for_context(
-        source: StepPlanInputSource,
-    ) -> ResolvedStepPlanInputs:
+        *,
+        context: ProcessingContext,
+        steps_definition: Sequence[AbstractStep],
+        orchestrator,
+        metadata_writer: bool,
+        plate_path: Path | None,
+        is_zmq_execution: bool,
+        source_identity_stack_axes: frozenset[str] = frozenset(),
+    ) -> CompilationSession:
         compilation_id = f"compile_{int(time.time() * 1000)}"
 
         from objectstate import get_current_global_config
@@ -850,7 +376,7 @@ class PipelineCompiler:
         if global_config_state is None:
             global_config = get_current_global_config(GlobalPipelineConfig)
             if global_config:
-                global_config_state = _register_object_state(
+                global_config_state = PipelineCompiler._register_object_state(
                     global_config,
                     "",
                     None,
@@ -860,25 +386,25 @@ class PipelineCompiler:
                 )
 
         orch_scope_id = f"{compilation_id}::orchestrator"
-        orch_state = _register_object_state(
-            source.orchestrator,
+        orch_state = PipelineCompiler._register_object_state(
+            orchestrator,
             orch_scope_id,
             global_config_state,
         )
         logger.info("Registered orchestrator at scope: %s", orch_scope_id)
 
         step_state_map = PipelineCompiler._register_context_step_states(
-            source.context,
-            source.steps_definition,
+            context,
+            steps_definition,
             compilation_id,
             orch_state,
         )
         resolved_steps = PipelineCompiler._resolve_registered_steps(
-            source.steps_definition,
+            steps_definition,
             step_state_map,
         )
 
-        if source.is_zmq_execution:
+        if is_zmq_execution:
             ObjectStateRegistry.unregister(orch_state, _skip_snapshot=True)
             for step_state in step_state_map.values():
                 ObjectStateRegistry.unregister(step_state, _skip_snapshot=True)
@@ -889,7 +415,16 @@ class PipelineCompiler:
             len(resolved_steps),
             compilation_id,
         )
-        return ResolvedStepPlanInputs.from_resolved(resolved_steps, step_state_map)
+        return CompilationSession.from_context(
+            context=context,
+            steps=resolved_steps,
+            orchestrator=orchestrator,
+            step_state_map=step_state_map,
+            metadata_writer=metadata_writer,
+            plate_path=plate_path,
+            is_zmq_execution=is_zmq_execution,
+            source_identity_stack_axes=source_identity_stack_axes,
+        )
 
     @staticmethod
     def _register_context_step_states(
@@ -898,15 +433,15 @@ class PipelineCompiler:
         compilation_id: str,
         orch_state: "ObjectState",
     ) -> Dict[int, "ObjectState"]:
-        plate_scope = context.plate_path or "plate"
+        plate_scope = CompilationPlateScope.from_context(context)
         step_state_map: Dict[int, "ObjectState"] = {}
         for step_index, step in enumerate(steps_definition):
             step_scope_id = _compiler_step_scope_id(
-                f"{compilation_id}::{plate_scope}",
+                f"{compilation_id}::{plate_scope.object_state_scope_id}",
                 step,
                 step_index,
             )
-            step_state_map[step_index] = _register_object_state(
+            step_state_map[step_index] = PipelineCompiler._register_object_state(
                 step,
                 step_scope_id,
                 orch_state,
@@ -930,16 +465,15 @@ class PipelineCompiler:
 
     @staticmethod
     def _ensure_initial_step_plans(
-        context: ProcessingContext,
-        resolved_inputs: ResolvedStepPlanInputs,
+        session: CompilationSession,
     ) -> None:
-        for step_index, snapshot in enumerate(resolved_inputs.snapshots):
-            if step_index not in context.step_plans:
-                context.step_plans[step_index] = CompiledStepPlan(
+        for step_index, snapshot in enumerate(session.snapshots):
+            if step_index not in session.plans:
+                session.plans[step_index] = CompiledStepPlan(
                     step_index=step_index,
                     step_name=snapshot.name,
                     step_type=snapshot.step_type,
-                    axis_id=context.axis_id,
+                    axis_id=session.axis_id,
                 )
 
     @staticmethod
@@ -990,18 +524,9 @@ class PipelineCompiler:
 
     @staticmethod
     def _plan_context_paths(
-        context: ProcessingContext,
-        resolved_inputs: ResolvedStepPlanInputs,
-        orchestrator,
+        session: CompilationSession,
     ) -> None:
-        PipelinePathPlanner.prepare_pipeline_paths(
-            context,
-            resolved_inputs.steps,
-            context.global_config,
-            orchestrator=orchestrator,
-            step_state_map=resolved_inputs.step_state_map,
-            step_snapshots=resolved_inputs.snapshots,
-        )
+        PipelinePathPlanner.prepare_pipeline_paths(session)
 
     @staticmethod
     def _supplement_step_plans(session: CompilationSession) -> None:
@@ -1034,6 +559,10 @@ class PipelineCompiler:
                 snapshot.variable_components,
                 snapshot.name,
             )
+            current_plan.source_identity_stack_axes = (
+                session.source_identity_stack_axes
+                | snapshot.source_identity_stack_axis_values
+            )
             current_plan.input_source = snapshot.input_source
             current_plan.sequential_processing = snapshot.processing_config
             current_plan.source_binding_plan = CompiledSourceBindingPlan.from_config(
@@ -1043,8 +572,6 @@ class PipelineCompiler:
     @staticmethod
     def _collect_streaming_configs(
         session: CompilationSession,
-        *,
-        is_zmq_execution: bool,
     ) -> None:
         registry_keys = list(StreamingConfig.__registry__.keys())
         for step_index, step_state in session.step_state_map.items():
@@ -1056,7 +583,6 @@ class PipelineCompiler:
                     step_state,
                     step_plan,
                     field_name,
-                    is_zmq_execution=is_zmq_execution,
                 )
 
     @staticmethod
@@ -1066,8 +592,6 @@ class PipelineCompiler:
         step_state: "ObjectState",
         step_plan: CompiledStepPlan,
         field_name: str,
-        *,
-        is_zmq_execution: bool,
     ) -> None:
         defaults_enabled = step_state.get_saved_resolved_value(
             "streaming_defaults.enabled"
@@ -1076,7 +600,7 @@ class PipelineCompiler:
             f"{field_name}.enabled"
         )
         enabled = True if defaults_enabled is True else per_stream_enabled
-        if is_zmq_execution:
+        if session.is_zmq_execution:
             logger.info(
                 "Streaming resolution: step=%s field=%s defaults_enabled=%r per_stream_enabled=%r effective_enabled=%r",
                 step_index,
@@ -1095,9 +619,12 @@ class PipelineCompiler:
             field_name,
         )
         backend_name = step_state.get_saved_resolved_value(f"{field_name}.backend")
-        visualizer_info = {"backend": backend_name, "config": config_obj}
-        if visualizer_info not in session.context.required_visualizers:
-            session.context.required_visualizers.append(visualizer_info)
+        required_visualizer = RequiredVisualizer(
+            backend_name=backend_name,
+            config=config_obj,
+        )
+        if required_visualizer not in session.context.required_visualizers:
+            session.context.required_visualizers.append(required_visualizer)
             logger.info(
                 "Streaming enabled for step %s, field %s (backend=%s)",
                 step_index,
@@ -1187,7 +714,7 @@ class PipelineCompiler:
 
             plan = context.step_plans[step_index]
             # Check for keys that FunctionStep actually uses during execution
-            missing_keys = _missing_plan_fields(
+            missing_keys = PipelineCompiler._missing_plan_fields(
                 plan,
                 MATERIALIZATION_PLAN_REQUIREMENTS,
             )
@@ -1358,7 +885,7 @@ class PipelineCompiler:
                     f"Memory validation requires a compiled plan for FunctionStep {session.snapshot(step_index).name} (index: {step_index})."
                 )
             step_plan = context.step_plans[step_index]
-            missing_fields = _missing_plan_fields(
+            missing_fields = PipelineCompiler._missing_plan_fields(
                 step_plan,
                 FUNCTION_MEMORY_PLAN_REQUIREMENTS,
             )
@@ -1514,7 +1041,7 @@ class PipelineCompiler:
             raise RuntimeError(
                 "PipelineOrchestrator must be explicitly initialized before calling compile_pipelines()."
             )
-        if not pipeline_definition:
+        if pipeline_definition is None:
             raise ValueError(
                 "A valid pipeline definition (List[AbstractStep]) must be provided."
             )
@@ -1565,7 +1092,10 @@ class PipelineCompiler:
         pipeline_definition: List[AbstractStep],
         *,
         is_zmq_execution: bool,
-    ) -> tuple["ObjectState", ResolvedStepPlanInputs]:
+    ) -> tuple["ObjectState", ResolvedPipelineDefinition]:
+        pipeline_metadata = ResolvedPipelineDefinition.metadata_from_steps(
+            pipeline_definition
+        )
         # Compile from the submitted pipeline definition, not from any stale UI
         # ObjectState that may point at post-compile stripped step shells.
         force_fresh = True
@@ -1580,7 +1110,7 @@ class PipelineCompiler:
             force_fresh=force_fresh,
         )
         orchestrator_scope_id = f"{plate_path_str}::orchestrator"
-        orch_state = _get_or_register_object_state(
+        orch_state = PipelineCompiler._get_or_register_object_state(
             orchestrator_scope_id,
             orchestrator,
             plate_orch_state,
@@ -1615,10 +1145,11 @@ class PipelineCompiler:
             )
         return (
             pipeline_config_state,
-            ResolvedStepPlanInputs(
+            ResolvedPipelineDefinition(
                 steps=pipeline_definition,
                 step_state_map=step_state_map,
                 snapshots=snapshots,
+                metadata=pipeline_metadata,
             ),
         )
 
@@ -1634,7 +1165,7 @@ class PipelineCompiler:
                 use_live=False,
             )
             if global_config:
-                global_config_state = _register_object_state(
+                global_config_state = PipelineCompiler._register_object_state(
                     global_config,
                     "",
                     None,
@@ -1652,7 +1183,7 @@ class PipelineCompiler:
     ) -> "ObjectState" | None:
         plate_orch_state = ObjectStateRegistry.get_by_scope(plate_path_str)
         if orchestrator.pipeline_config:
-            plate_orch_state = _get_or_register_object_state(
+            plate_orch_state = PipelineCompiler._get_or_register_object_state(
                 plate_path_str,
                 orchestrator.pipeline_config,
                 global_config_state,
@@ -1676,7 +1207,7 @@ class PipelineCompiler:
                 step,
                 step_index,
             )
-            step_state_map[step_index] = _get_or_register_object_state(
+            step_state_map[step_index] = PipelineCompiler._get_or_register_object_state(
                 step_scope_id,
                 step,
                 orch_state,
@@ -1725,7 +1256,7 @@ class PipelineCompiler:
     @staticmethod
     def _capture_pipeline_config(
         pipeline_config_state: "ObjectState",
-    ) -> tuple[Any, Any, Any, int]:
+    ) -> tuple[AnalysisConsolidationConfig, PlateMetadataConfig, bool, int]:
         from objectstate.lazy_factory import LazyDataclass
 
         lazy_analysis_config = pipeline_config_state.get_saved_resolved_value(
@@ -1751,7 +1282,7 @@ class PipelineCompiler:
     def _resolve_global_step_axis_filters(
         orchestrator,
         step_snapshots: tuple[StepSnapshot, ...],
-    ) -> dict[int, dict[str, Any]]:
+    ) -> StepAxisFilterMap:
         temp_context = orchestrator.create_context("temp")
         _resolve_step_axis_filters(step_snapshots, temp_context, orchestrator)
         return temp_context.step_axis_filters
@@ -1822,27 +1353,17 @@ class PipelineCompiler:
         context: ProcessingContext,
         metadata_writer: bool,
     ) -> CompilationSession:
-        resolved_steps, resolved_state_map = (
-            PipelineCompiler.initialize_step_plans_for_context(
-                context,
-                request.pipeline_definition,
-                request.orchestrator,
-                metadata_writer=metadata_writer,
-                plate_path=request.orchestrator.plate_path,
-                step_state_map=dict(request.step_state_map),
-                step_snapshots=request.step_snapshots,
-                steps_already_resolved=True,
-                is_zmq_execution=request.is_zmq_execution,
-            )
-        )
-        return CompilationSession.from_context(
-            context=context,
-            steps=resolved_steps,
-            orchestrator=request.orchestrator,
-            step_state_map=resolved_state_map,
-            snapshots=request.step_snapshots,
+        return PipelineCompiler.initialize_step_plans_for_context(
+            context,
+            list(request.pipeline.steps),
+            request.orchestrator,
             metadata_writer=metadata_writer,
             plate_path=request.orchestrator.plate_path,
+            step_state_map=dict(request.pipeline.step_state_map),
+            step_snapshots=request.pipeline.snapshots,
+            steps_already_resolved=True,
+            is_zmq_execution=request.is_zmq_execution,
+            source_identity_stack_axes=request.pipeline.source_identity_stack_axes,
         )
 
     @staticmethod
@@ -2098,9 +1619,7 @@ class PipelineCompiler:
             )
             axis_request = AxisCompilationRequest(
                 orchestrator=orchestrator,
-                pipeline_definition=pipeline_definition,
-                step_state_map=pipeline_inputs.step_state_map,
-                step_snapshots=pipeline_inputs.snapshots,
+                pipeline=pipeline_inputs,
                 analysis_consolidation_config=analysis_config,
                 plate_metadata_config=plate_metadata_config,
                 auto_add_output_plate=auto_add_output_plate,
@@ -2117,7 +1636,6 @@ class PipelineCompiler:
             )
 
             prepare_compiled_context_callables(compiled_contexts)
-            AutoRegisterRegistryPreparation.prepare_loaded_registries()
             worker_assignments = PipelineCompiler._calculate_worker_assignments(
                 list(compiled_contexts.keys()),
                 num_workers,
@@ -2163,18 +1681,18 @@ def _resolve_step_axis_filters(
         return
 
     for snapshot in step_snapshots:
-        step_filters = {}
+        step_filters: dict[str, StepAxisFilterResolution] = {}
         for well_filter in snapshot.well_filters:
             resolved_axis_values = WellFilterProcessor.resolve_filter_with_mode(
                 well_filter.well_filter,
                 well_filter.well_filter_mode,
                 available_axis_values,
             )
-            step_filters[well_filter.root] = {
-                "resolved_axis_values": set(resolved_axis_values),
-                "filter_mode": well_filter.well_filter_mode,
-                "original_filter": well_filter.well_filter,
-            }
+            step_filters[well_filter.root] = StepAxisFilterResolution(
+                resolved_axis_values=frozenset(str(value) for value in resolved_axis_values),
+                filter_mode=well_filter.well_filter_mode,
+                original_filter=well_filter.well_filter,
+            )
 
         if step_filters:
             context.step_axis_filters[snapshot.index] = step_filters

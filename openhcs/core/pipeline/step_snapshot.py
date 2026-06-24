@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.config import WellFilterConfig
 from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
@@ -54,6 +55,7 @@ class StepSnapshot:
     is_function_step: bool
     func: Any
     source_bindings: StepSourceBindingsConfig
+    source_identity_stack_axes: tuple[AllComponents, ...]
     processing: StepProcessingSnapshot
     materialization_config: Any
     injectable_values: Mapping[str, Any]
@@ -105,6 +107,11 @@ class StepSnapshot:
                 if isinstance(step, FunctionStep)
                 else EMPTY_SOURCE_BINDINGS
             ),
+            source_identity_stack_axes=(
+                step.source_identity_stack_axes
+                if isinstance(step, FunctionStep)
+                else ()
+            ),
             processing=processing,
             materialization_config=_saved_value(
                 step_state,
@@ -130,6 +137,12 @@ class StepSnapshot:
     @property
     def processing_config(self) -> Any:
         return self.processing.config
+
+    @property
+    def source_identity_stack_axis_values(self) -> frozenset[str]:
+        return frozenset(
+            component.value for component in self.source_identity_stack_axes
+        )
 
 
 def build_step_snapshots(

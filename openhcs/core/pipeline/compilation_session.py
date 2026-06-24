@@ -2,17 +2,59 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence
+from collections.abc import Iterator
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
 
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
 )
 from openhcs.core.steps.abstract import AbstractStep
+
+if TYPE_CHECKING:
+    from objectstate import ObjectState
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+
+
+PIPELINE_SOURCE_SCHEMA_METADATA_KEY = "source_schema"
+PIPELINE_SOURCE_IDENTITY_STACK_AXES_METADATA_KEY = "source_identity_stack_axes"
+
+
+@runtime_checkable
+class PipelineMetadataCarrier(Protocol):
+    """Structural protocol for pipeline declarations carrying metadata."""
+
+    metadata: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class CompilationPlateScope:
+    """Plate-root identity used for compiler ObjectState scopes and paths."""
+
+    path: Path
+
+    @classmethod
+    def from_context(cls, context: ProcessingContext) -> "CompilationPlateScope":
+        if context.plate_path is None:
+            raise ValueError("Compilation plate scope requires context.plate_path.")
+        return cls(Path(context.plate_path))
+
+    @classmethod
+    def from_path(cls, plate_path: Path | str | None) -> "CompilationPlateScope":
+        if plate_path is None:
+            raise ValueError("Compilation plate scope requires a plate path.")
+        return cls(Path(plate_path))
+
+    @property
+    def object_state_scope_id(self) -> str:
+        return str(self.path)
 
 
 @dataclass(slots=True)
@@ -26,12 +68,14 @@ class CompilationSession:
 
     context: ProcessingContext
     steps: Sequence[AbstractStep]
-    orchestrator: Any
-    step_state_map: Mapping[int, Any]
+    orchestrator: "PipelineOrchestrator"
+    step_state_map: Mapping[int, "ObjectState"]
     snapshots: tuple[StepSnapshot, ...]
     plans: MutableMapping[int, CompiledStepPlan]
     metadata_writer: bool = False
-    plate_path: Path | None = None
+    plate_scope: CompilationPlateScope | None = None
+    is_zmq_execution: bool = False
+    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_context(
@@ -39,11 +83,13 @@ class CompilationSession:
         *,
         context: ProcessingContext,
         steps: Sequence[AbstractStep],
-        orchestrator: Any,
-        step_state_map: Mapping[int, Any],
+        orchestrator: "PipelineOrchestrator",
+        step_state_map: Mapping[int, "ObjectState"],
         snapshots: tuple[StepSnapshot, ...] | None = None,
         metadata_writer: bool = False,
         plate_path: Path | None = None,
+        is_zmq_execution: bool = False,
+        source_identity_stack_axes: frozenset[str] = frozenset(),
     ) -> "CompilationSession":
         if context.step_plans is None:
             raise ValueError("CompilationSession requires context.step_plans.")
@@ -57,10 +103,18 @@ class CompilationSession:
             snapshots=snapshots,
             plans=context.step_plans,
             metadata_writer=metadata_writer,
-            plate_path=plate_path,
+            plate_scope=(
+                CompilationPlateScope.from_path(plate_path)
+                if plate_path is not None
+                else None
+            ),
+            is_zmq_execution=is_zmq_execution,
+            source_identity_stack_axes=source_identity_stack_axes,
         )
 
     def __post_init__(self) -> None:
+        if self.plate_scope is None and self.context.plate_path is not None:
+            self.plate_scope = CompilationPlateScope.from_context(self.context)
         if len(self.steps) != len(self.snapshots):
             raise ValueError(
                 "CompilationSession requires one StepSnapshot per step: "
@@ -82,12 +136,18 @@ class CompilationSession:
                 )
 
     @property
-    def global_config(self) -> Any:
+    def global_config(self) -> "GlobalPipelineConfig":
         return self.context.global_config
 
     @property
     def axis_id(self) -> str:
         return self.context.axis_id
+
+    @property
+    def plate_path(self) -> Path | None:
+        if self.plate_scope is None:
+            return None
+        return self.plate_scope.path
 
     def step(self, index: int) -> AbstractStep:
         return self.steps[index]
@@ -95,7 +155,17 @@ class CompilationSession:
     def snapshot(self, index: int) -> StepSnapshot:
         return self.snapshots[index]
 
-    def step_state(self, index: int) -> Any:
+    @property
+    def step_count(self) -> int:
+        return len(self.snapshots)
+
+    def indexed_snapshots(self) -> Iterator[tuple[int, StepSnapshot]]:
+        return iter(enumerate(self.snapshots))
+
+    def reverse_snapshot_indices(self) -> range:
+        return range(self.step_count - 1, -1, -1)
+
+    def step_state(self, index: int) -> "ObjectState":
         try:
             return self.step_state_map[index]
         except KeyError as exc:
@@ -109,3 +179,51 @@ class CompilationSession:
             raise ValueError(
                 f"Missing compiled plan for step {index} ({snapshot.name})."
             ) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPipelineDefinition:
+    """ObjectState-resolved pipeline declaration shared by all axis sessions."""
+
+    steps: Sequence[AbstractStep]
+    step_state_map: Mapping[int, "ObjectState"]
+    snapshots: tuple[StepSnapshot, ...]
+    metadata: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    @classmethod
+    def metadata_from_steps(
+        cls,
+        steps: Sequence[AbstractStep],
+    ) -> Mapping[str, object]:
+        if not isinstance(steps, PipelineMetadataCarrier):
+            return MappingProxyType({})
+        return MappingProxyType(dict(steps.metadata))
+
+    @property
+    def source_identity_stack_axes(self) -> frozenset[str]:
+        explicit_axes = self.metadata.get(
+            PIPELINE_SOURCE_IDENTITY_STACK_AXES_METADATA_KEY
+        )
+        if explicit_axes is not None:
+            if isinstance(explicit_axes, str):
+                raise TypeError(
+                    "Pipeline metadata source_identity_stack_axes must be a "
+                    "sequence of axis names, got str."
+                )
+            return frozenset(str(axis) for axis in explicit_axes)
+
+        source_schema = self.metadata.get(PIPELINE_SOURCE_SCHEMA_METADATA_KEY)
+        if source_schema is None:
+            return frozenset()
+        if not isinstance(source_schema, PipelineImageSchema):
+            raise TypeError(
+                "Pipeline metadata source_schema must be PipelineImageSchema, "
+                f"got {type(source_schema).__name__}."
+            )
+        return frozenset(
+            str(component.value)
+            for component in source_schema.source_stack_components
+            if component.value is not None
+        )

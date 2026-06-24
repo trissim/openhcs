@@ -23,10 +23,15 @@ from openhcs.constants.constants import (
     VALID_MEMORY_TYPES,
     get_openhcs_config,
 )
+from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.function_patterns import CompiledFunctionPattern
+from openhcs.core.function_patterns import (
+    CompiledFunctionPattern,
+    FunctionPatternSyntax,
+    normalize_function_pattern,
+)
 from openhcs.core.steps.function_step import FunctionStep
 
 from openhcs.core.components.validation import GenericValidator
@@ -49,14 +54,28 @@ class ParameterKindPolicy:
 
 
 @dataclass(frozen=True)
-class ArtifactManagedRuntimeScope:
-    """Compiled execution scope for adapter-managed runtime artifacts."""
+class FunctionStepArtifactContractScope:
+    """Compiled execution scope for FunctionStep artifact contract validation."""
 
     step_name: str
     variable_components: tuple[Enum, ...]
     group_by: Enum | None
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
     compiled_function_pattern: CompiledFunctionPattern
+    variable_component_key_counts: Mapping[str, int] | None = None
+    source_identity_stack_axes: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if self.variable_component_key_counts is None:
+            return
+        missing_axes = self.variable_component_axes() - frozenset(
+            self.variable_component_key_counts
+        )
+        if missing_axes:
+            raise ValueError(
+                "FunctionStepArtifactContractScope missing component-key "
+                f"count(s) for variable axis: {', '.join(sorted(missing_axes))}."
+            )
 
     @classmethod
     def from_step_plan(
@@ -65,7 +84,8 @@ class ArtifactManagedRuntimeScope:
         *,
         group_by: Enum | None = None,
         variable_components: tuple[Enum, ...] | None = None,
-    ) -> "ArtifactManagedRuntimeScope":
+        variable_component_key_counts: Mapping[str, int] | None = None,
+    ) -> "FunctionStepArtifactContractScope":
         resolved_components = step_plan.variable_components
         if resolved_components is None:
             resolved_components = ()
@@ -80,27 +100,39 @@ class ArtifactManagedRuntimeScope:
             group_by=step_plan.group_by if group_by is None else group_by,
             artifact_outputs=resolved_outputs,
             compiled_function_pattern=step_plan.compiled_function_pattern,
+            variable_component_key_counts=variable_component_key_counts,
+            source_identity_stack_axes=step_plan.source_identity_stack_axes,
+        )
+
+    def variable_component_axes(self) -> frozenset[str]:
+        """Return axes stacked inside one function invocation."""
+        return frozenset(
+            str(component.value)
+            for component in self.variable_components
+            if component.value is not None
         )
 
     def expansion_axes(self) -> frozenset[str]:
         """Return execution axes that can fan out one semantic invocation."""
-        axes = {
-            str(component.value)
-            for component in self.variable_components
-            if component.value is not None
-        }
+        axes = set(self.variable_component_axes())
         if self.group_by is not None and self.group_by.value is not None:
             axes.add(str(self.group_by.value))
         return frozenset(axes)
+
+    def multi_plane_variable_axes(self) -> frozenset[str]:
+        """Return variable axes that can contribute multiple planes."""
+        axes = self.variable_component_axes() - self.source_identity_stack_axes
+        if self.variable_component_key_counts is None:
+            return axes
+        return frozenset(
+            axis for axis in axes if self.variable_component_key_counts[axis] > 1
+        )
 
     def artifact_managed_invocation_names(self) -> tuple[str, ...]:
         """Return runtime-adapter invocation names that consume and produce artifacts."""
         names: list[str] = []
         for invocation in self.compiled_function_pattern.iter_invocations():
-            runtime_adapter = invocation.contract.runtime_adapter
-            if runtime_adapter is None or not runtime_adapter.manages_artifact_inputs:
-                continue
-            if not invocation.artifact_input_keys:
+            if not invocation.runtime_domain.adapter_manages_artifact_inputs:
                 continue
             if not any(
                 key in self.artifact_outputs
@@ -110,6 +142,17 @@ class ArtifactManagedRuntimeScope:
             names.append(invocation.key.function_name)
         return tuple(names)
 
+    def source_identity_materialized_outputs(
+        self,
+    ) -> tuple[ArtifactOutputPlan, ...]:
+        """Return outputs whose materialized filenames need scalar source identity."""
+        return tuple(
+            output
+            for output in self.artifact_outputs.values()
+            if output.materialization is not NO_ARTIFACT_MATERIALIZATION
+            and output.kind.materialization_uses_source_identity_filename
+        )
+
 
 @dataclass(frozen=True)
 class ArtifactManagedRuntimeScopePolicy:
@@ -117,12 +160,16 @@ class ArtifactManagedRuntimeScopePolicy:
 
     forbidden_expansion_axes: frozenset[str]
 
-    def validate(self, scope: ArtifactManagedRuntimeScope) -> None:
+    def validate(self, scope: FunctionStepArtifactContractScope) -> None:
         invocation_names = scope.artifact_managed_invocation_names()
         if not invocation_names:
             return
 
-        forbidden_axes = self.forbidden_expansion_axes & scope.expansion_axes()
+        forbidden_axes = (
+            self.forbidden_expansion_axes
+            & scope.expansion_axes()
+            - scope.source_identity_stack_axes
+        )
         if not forbidden_axes:
             return
 
@@ -140,6 +187,36 @@ class ArtifactManagedRuntimeScopePolicy:
 _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY = ArtifactManagedRuntimeScopePolicy(
     forbidden_expansion_axes=frozenset((AllComponents.CHANNEL.value,)),
 )
+
+
+@dataclass(frozen=True)
+class SourceIdentityMaterializationPolicy:
+    """Validation policy for source-identity-named artifact materialization."""
+
+    def validate(self, scope: FunctionStepArtifactContractScope) -> None:
+        variable_axes = scope.multi_plane_variable_axes()
+        if not variable_axes:
+            return
+
+        outputs = scope.source_identity_materialized_outputs()
+        if not outputs:
+            return
+
+        output_labels = ", ".join(
+            f"{output.name} ({output.kind.value})" for output in outputs
+        )
+        axis_labels = ", ".join(sorted(axis.upper() for axis in variable_axes))
+        raise ValueError(
+            "FunctionStep "
+            f"{scope.step_name!r} materializes source-identity-named artifact "
+            f"output(s) {output_labels} while processing multi-plane variable "
+            f"component(s) {axis_labels}. Runtime artifact materialization "
+            "requires one source image identity per output record; split those "
+            "component(s) across invocations before materialization."
+        )
+
+
+_SOURCE_IDENTITY_MATERIALIZATION_POLICY = SourceIdentityMaterializationPolicy()
 
 
 def _parameter_kind_policy_by_kind(
@@ -188,9 +265,6 @@ def inconsistent_memory_types_error(step_name, func1, func2):
 
 def invalid_memory_type_error(func_name, input_type, output_type, valid_types):
     return f"Function '{func_name}' has invalid memory types: {input_type}/{output_type}. Valid: {valid_types}"
-
-def invalid_function_error(location, func):
-    return f"Invalid function in {location}: {func}"
 
 def invalid_pattern_error(pattern):
     return f"Invalid function pattern: {pattern}"
@@ -665,7 +739,7 @@ class FuncStepContractValidator:
         """Validate FunctionStep structure from the compiled plan SSOT."""
         func_pattern = step_plan.func
         step_name = step_plan.step_name
-        FuncStepContractValidator._extract_functions_from_pattern(
+        FuncStepContractValidator._contracts_from_pattern(
             func_pattern,
             step_name,
         )
@@ -673,7 +747,10 @@ class FuncStepContractValidator:
         config = get_openhcs_config()
         validator = GenericValidator(config)
         group_by = step_plan.group_by
-        variable_components = step_plan.variable_components or ()
+        if step_plan.variable_components is None:
+            variable_components = ()
+        else:
+            variable_components = step_plan.variable_components
 
         group_by = FuncStepContractValidator.normalized_group_by(
             group_by,
@@ -700,11 +777,42 @@ class FuncStepContractValidator:
             if not dict_validation_result.is_valid:
                 raise ValueError(dict_validation_result.error_message)
 
-        FuncStepContractValidator.validate_artifact_managed_runtime_scope(
+        artifact_scope = FunctionStepArtifactContractScope.from_step_plan(
             step_plan,
             group_by=group_by,
             variable_components=tuple(variable_components),
+            variable_component_key_counts=(
+                FuncStepContractValidator.variable_component_key_counts(
+                    orchestrator,
+                    tuple(variable_components),
+                )
+            ),
         )
+        FuncStepContractValidator.validate_artifact_contract_scope(artifact_scope)
+
+    @staticmethod
+    def validate_artifact_contract_scope(
+        scope: FunctionStepArtifactContractScope,
+    ) -> None:
+        """Validate every artifact contract policy for one compiled step scope."""
+        _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
+        _SOURCE_IDENTITY_MATERIALIZATION_POLICY.validate(scope)
+
+    @staticmethod
+    def variable_component_key_counts(
+        orchestrator,
+        variable_components: tuple[Enum, ...],
+    ) -> Mapping[str, int] | None:
+        """Return concrete component-key cardinality when compile owns it."""
+        if orchestrator is None:
+            return None
+        counts: dict[str, int] = {}
+        for component in variable_components:
+            if component.value is None:
+                continue
+            axis = str(component.value)
+            counts[axis] = len(tuple(orchestrator.get_component_keys(component)))
+        return MappingProxyType(counts)
 
     @staticmethod
     def validate_artifact_managed_runtime_scope(
@@ -714,12 +822,27 @@ class FuncStepContractValidator:
         variable_components: tuple[Enum, ...] | None = None,
     ) -> None:
         """Reject execution axes that duplicate named runtime artifact semantics."""
-        scope = ArtifactManagedRuntimeScope.from_step_plan(
+        scope = FunctionStepArtifactContractScope.from_step_plan(
             step_plan,
             group_by=group_by,
             variable_components=variable_components,
         )
         _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
+
+    @staticmethod
+    def validate_source_identity_materialization_scope(
+        step_plan,
+        *,
+        group_by: Enum | None = None,
+        variable_components: tuple[Enum, ...] | None = None,
+    ) -> None:
+        """Reject multi-plane invocation shapes for scalar-source materialization."""
+        scope = FunctionStepArtifactContractScope.from_step_plan(
+            step_plan,
+            group_by=group_by,
+            variable_components=variable_components,
+        )
+        _SOURCE_IDENTITY_MATERIALIZATION_POLICY.validate(scope)
 
     @staticmethod
     def validate_funcstep(
@@ -751,7 +874,7 @@ class FuncStepContractValidator:
         step_name = step.name
 
         # Validate pattern structure before generic config validation.
-        FuncStepContractValidator._extract_functions_from_pattern(func_pattern, step_name)
+        FuncStepContractValidator._contracts_from_pattern(func_pattern, step_name)
 
         # Validate using generic validation system
         config = get_openhcs_config()
@@ -854,13 +977,10 @@ class FuncStepContractValidator:
         Raises:
             ValueError: If the function pattern violates memory type contracts
         """
-        # Extract all functions from the pattern
-        functions = FuncStepContractValidator.validate_pattern_structure(func, step_name)
-
-        if not functions:
-            raise ValueError(f"No valid functions found in pattern for step {step_name}")
-
-        contracts = [CallableContract.from_callable(fn) for fn in functions]
+        contracts = FuncStepContractValidator._contracts_from_pattern(
+            func,
+            step_name,
+        )
         first_contract = contracts[0]
         first_fn = first_contract.func
 
@@ -993,14 +1113,14 @@ class FuncStepContractValidator:
 
     @staticmethod
     def validate_pattern_structure(
-        func: Any,
+        func: FunctionPatternSyntax,
         step_name: str
     ) -> List[Callable]:
         """
         Validate and extract all functions from a function pattern.
 
-        This is a public wrapper for _extract_functions_from_pattern that provides
-        a stable API for pattern structure validation.
+        This wraps the function-pattern normalizer so validation shares the same
+        traversal and disabled-item semantics as compiler/runtime planning.
 
         Supports nested patterns of arbitrary depth, including:
         - Direct callable
@@ -1018,107 +1138,23 @@ class FuncStepContractValidator:
         Raises:
             ValueError: If the function pattern is invalid
         """
-        return FuncStepContractValidator._extract_functions_from_pattern(func, step_name)
+        contracts = FuncStepContractValidator._contracts_from_pattern(
+            func,
+            step_name,
+        )
+        return [contract.func for contract in contracts]
 
     @staticmethod
-    def _is_function_reference(obj):
-        """Check if an object is a FunctionReference."""
+    def _contracts_from_pattern(
+        func: FunctionPatternSyntax,
+        step_name: str,
+    ) -> list[CallableContract]:
+        """Return callable contracts from the function-pattern authority."""
         try:
-            from openhcs.core.pipeline.compiler import FunctionReference
-            return isinstance(obj, FunctionReference)
-        except ImportError:
-            return False
-
-    @staticmethod
-    def _resolve_function_reference(func_or_ref):
-        """Return a FunctionReference as-is (it proxies attrs via __getattr__), or return the original callable."""
-        return func_or_ref
-
-    @staticmethod
-    def _extract_functions_from_pattern(
-        func: Any,
-        step_name: str
-    ) -> List[Callable]:
-        """
-        Extract all functions from a function pattern.
-
-        Supports nested patterns of arbitrary depth, including:
-        - Direct callable
-        - FunctionReference objects
-        - Tuple of (callable/FunctionReference, kwargs)
-        - List of callables or patterns
-        - Dict of keyed callables or patterns
-
-        Args:
-            func: The function pattern to extract functions from
-            step_name: The name of the step containing the function
-
-        Returns:
-            List of functions in the pattern
-
-        Raises:
-            ValueError: If the function pattern is invalid
-        """
-        functions = []
-
-        # Case 1: Direct FunctionReference — don't resolve, it proxies attrs via __getattr__
-        from openhcs.core.pipeline.compiler import FunctionReference
-        if isinstance(func, FunctionReference):
-            functions.append(func)
-            return functions
-
-        # Case 2: Direct callable
-        if callable(func) and not isinstance(func, type):
-            functions.append(func)
-            return functions
-
-        # Case 3: Tuple of (callable/FunctionReference, kwargs[, invocation_options])
-        if (
-            isinstance(func, tuple)
-            and len(func) in {2, 3}
-            and isinstance(func[1], dict)
-        ):
-            first = func[0]
-            if isinstance(first, FunctionReference):
-                # Don't resolve — FunctionReference proxies attrs via __getattr__
-                functions.append(first)
-            elif callable(first) and not isinstance(first, type):
-                functions.append(first)
-            return functions
-
-        # Case 4: List of patterns
-        if isinstance(func, list):
-            from openhcs.core.pipeline.compiler import FunctionReference
-            for i, f in enumerate(func):
-                # Check if it's a valid pattern (including FunctionReference)
-                is_valid_pattern = (
-                    isinstance(f, (list, dict, tuple, FunctionReference)) or
-                    (callable(f) and not isinstance(f, type))
-                )
-                if is_valid_pattern:
-                    nested_functions = FuncStepContractValidator._extract_functions_from_pattern(f, step_name)
-                    functions.extend(nested_functions)
-                else:
-                    raise ValueError(invalid_function_error(f"list at index {i}", f))
-
-            return functions
-
-        # Case 5: Dict of keyed patterns
-        if isinstance(func, dict):
-            from openhcs.core.pipeline.compiler import FunctionReference
-            for key, f in func.items():
-                # Check if it's a valid pattern (including FunctionReference)
-                is_valid_pattern = (
-                    isinstance(f, (list, dict, tuple, FunctionReference)) or
-                    (callable(f) and not isinstance(f, type))
-                )
-                if is_valid_pattern:
-                    nested_functions = FuncStepContractValidator._extract_functions_from_pattern(f, step_name)
-                    functions.extend(nested_functions)
-                else:
-                    raise ValueError(invalid_function_error(f"dict with key '{key}'", f))
-
-            return functions
-
-        # Invalid type
-        raise ValueError(invalid_pattern_error(func))
+            normalized = normalize_function_pattern(func)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(invalid_pattern_error(func)) from exc
+        contracts = [item.contract for item in normalized.iter_items()]
+        if not contracts:
+            raise ValueError(f"No valid functions found in pattern for step {step_name}")
+        return contracts

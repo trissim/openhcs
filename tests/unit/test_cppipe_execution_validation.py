@@ -174,7 +174,7 @@ def _successful_execution_with_measurement_record(
     )
     return DirectPipelineExecution(
         compiled_contexts={
-            "A01": SimpleNamespace(runtime_value_store=store),
+            "A01": SimpleNamespace(runtime_value_store=store, step_plans={}),
         },
         execution_results={
             "A01": SimpleNamespace(is_success=lambda: True),
@@ -199,7 +199,7 @@ def _successful_execution_with_image_record() -> DirectPipelineExecution:
     )
     return DirectPipelineExecution(
         compiled_contexts={
-            "A01": SimpleNamespace(runtime_value_store=store),
+            "A01": SimpleNamespace(runtime_value_store=store, step_plans={}),
         },
         execution_results={
             "A01": SimpleNamespace(is_success=lambda: True),

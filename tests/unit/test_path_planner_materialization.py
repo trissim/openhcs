@@ -18,6 +18,7 @@ from openhcs.core.pipeline.path_planner import (
     PathPlanner,
     PathPlannerArtifactStage,
     PathPlannerExecutionGroups,
+    PathPlannerGroupScope,
     PathPlannerMaterializationStage,
     PathPlannerPathAuthority,
     PathPlannerStepAssemblyStage,
@@ -132,13 +133,13 @@ def test_group_by_namespaces_compiler_owned_outputs():
     namespaced = planner.artifacts.namespace_grouped_outputs_for_runtime_consumers(
         identify,
         declarations,
-        ["1", "2"],
+        PathPlannerGroupScope.from_raw(("1", "2")),
     )
 
     assert namespaced.output_groups["nuclei"] == {"1", "2"}
 
 
-def test_group_by_preserves_runtime_adapter_artifact_output_scope():
+def test_group_by_namespaces_runtime_adapter_artifact_outputs():
     @runtime_adapter(
         "runtime",
         lambda _request: object(),
@@ -167,11 +168,11 @@ def test_group_by_preserves_runtime_adapter_artifact_output_scope():
     namespaced = planner.artifacts.namespace_grouped_outputs_for_runtime_consumers(
         correct_illumination,
         declarations,
-        ["1", "2"],
+        PathPlannerGroupScope.from_raw(("1", "2")),
     )
 
     assert declarations.output_groups["Hoechst"] == {None}
-    assert namespaced.output_groups["Hoechst"] == {None}
+    assert namespaced.output_groups["Hoechst"] == {"1", "2"}
 
 
 def test_planner_uses_invocation_aware_artifact_declaration_provider():
@@ -240,7 +241,9 @@ def test_execution_groups_use_normalized_group_by_for_variable_conflicts():
         name="source_bound_cellprofiler_step",
     )
 
-    assert planner.execution_groups.get_execution_groups(snapshot) == [None]
+    assert planner.execution_groups.get_execution_groups(snapshot) == (
+        PathPlannerGroupScope.ungrouped()
+    )
 
 
 def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():
@@ -257,6 +260,7 @@ def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():
         planner.artifacts.process_artifact_inputs(
             {"nuclei": ArtifactSpec("nuclei", ArtifactKind.MEASUREMENTS)},
             {},
+            consumer_scope=PathPlannerGroupScope.ungrouped(),
             sid=2,
             step_name="measure",
         )
@@ -277,7 +281,7 @@ def test_artifact_input_plan_broadcasts_single_grouped_producer_to_consumer_grou
     inputs = planner.artifacts.process_artifact_inputs(
         {"illumination": ArtifactSpec("illumination", ArtifactKind.IMAGE)},
         {},
-        consumer_groups=["2", "3"],
+        consumer_scope=PathPlannerGroupScope.from_raw(("2", "3")),
         sid=2,
         step_name="apply_illumination",
     )
@@ -309,10 +313,13 @@ def test_main_input_dependency_uses_scope_identity_for_step_output_edges():
             axis_id="A01",
         ),
     }
-    planner.snapshots_by_index = {
+    snapshots_by_index = {
         0: SimpleNamespace(scope_id="plate::functionstep_0"),
         1: SimpleNamespace(scope_id="plate::functionstep_1"),
     }
+    planner.session = SimpleNamespace(
+        snapshot=lambda index: snapshots_by_index[index],
+    )
     planner.steps = PathPlannerStepAssemblyStage(planner)
 
     dependency = planner.steps.main_input_dependency(
@@ -341,9 +348,9 @@ def test_main_input_dependency_preserves_pipeline_start_edges():
         )
     }
     planner.initial_input = Path("/data/plate1/images")
-    planner.snapshots_by_index = {
-        1: SimpleNamespace(scope_id="plate::functionstep_1")
-    }
+    planner.session = SimpleNamespace(
+        snapshot=lambda index: {1: SimpleNamespace(scope_id="plate::functionstep_1")}[index],
+    )
     planner.paths = SimpleNamespace(
         build_output_path=lambda *_args, **_kwargs: Path(
             "/data/plate1_processed/images"

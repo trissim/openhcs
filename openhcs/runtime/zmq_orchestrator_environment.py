@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
+
+from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
+
+if TYPE_CHECKING:
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.debug import DebugExecutionConfig, DebugExecutionPolicy
 
 
 logger = logging.getLogger(__name__)
@@ -14,20 +20,18 @@ logger = logging.getLogger(__name__)
 class ZMQOrchestratorEnvironment:
     """Prepared execution environment for one ZMQ orchestrator run."""
 
-    global_config: Any
-    debug_execution_policy: Any
-    debug_execution_config: Any | None
+    global_config: GlobalPipelineConfig
+    debug_execution_policy: DebugExecutionPolicy
+    debug_execution_config: DebugExecutionConfig | None
     plate_path_str: str
 
 
-@dataclass(frozen=True, slots=True)
-class ZMQOrchestratorEnvironmentRequest:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
     """Inputs needed to prepare the worker execution environment."""
 
     execution_id: str
-    plate_id: str
-    execution_plate_id: str | None
-    global_config: Any
+    global_config: GlobalPipelineConfig
     config_params: dict | None
 
     def prepare(self) -> ZMQOrchestratorEnvironment:
@@ -89,7 +93,10 @@ class ZMQOrchestratorEnvironmentRequest:
             )
 
     def prepared_plate_path(self, storage_registry) -> str:
-        plate_path_str = str(self.execution_plate_id or self.plate_id)
+        if self.selected_pipeline_path is not None and self.execution_plate_id is not None:
+            plate_path_str = str(self.execution_plate_id)
+        else:
+            plate_path_str = str(self.plate_id)
         is_omero_plate_id = False
         try:
             int(plate_path_str)

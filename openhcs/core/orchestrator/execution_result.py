@@ -11,7 +11,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping, Optional
 
-from openhcs.core.runtime_stores import StoredRuntimeValue, require_runtime_value_store
+from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.runtime_stores import StoredRuntimeValue
 
 
 class RuntimeExecutionTransportSerialization:
@@ -62,14 +63,11 @@ class RuntimeExecutionObservation:
 
     contexts: tuple[RuntimeContextObservation, ...] = field(default_factory=tuple)
 
-    def merge_into(self, execution_contexts: Mapping[object, object]) -> None:
+    def merge_into(self, execution_contexts: Mapping[str, ProcessingContext]) -> None:
         """Merge returned runtime records into parent-owned compiled contexts."""
         for context_observation in self.contexts:
             context = execution_contexts[context_observation.context_key]
-            store = require_runtime_value_store(
-                context,
-                owner_name=f"compiled context {context_observation.context_key!r}",
-            )
+            store = context.runtime_value_store
             store.merge_observed_values(context_observation.records)
 
 
