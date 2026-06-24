@@ -5,20 +5,15 @@ from __future__ import annotations
 import json
 import os
 import pickle
-import secrets
 import threading
 import time
-import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
-from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
-
-from openhcs.constants.constants import CONTROL_PORT_OFFSET
 from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.ui_bridge import (
@@ -27,7 +22,6 @@ from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeResult,
     UiBranchCatalog,
     UiBranchSwitchRequest,
-    UiBridgeConnectionFields,
     UiBridgeConnectionSpec,
     UiBridgeDescriptorFile,
     UiBridgeDescriptorWirePayload,
@@ -66,13 +60,12 @@ from openhcs.agent.dto.ui_bridge import (
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
-    UiBridgeDescriptorDirectoryAuthority,
 )
 from openhcs.agent.services.ui_bridge_transport import (
     AgentDtoJsonCodec,
     UiBridgeOperationName,
 )
-from openhcs.pyqt_gui.config import AgentUiBridgeConfig, AgentUiBridgeDescriptorPaths
+from openhcs.pyqt_gui.config import AgentUiBridgeConfig
 from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
@@ -126,102 +119,23 @@ UiBridgeOperationDispatchResult = (
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeServerIdentitySeed:
-    value: str | None = None
-
-    def resolve(self) -> str:
-        if self.value is not None:
-            return self.value
-        return f"ui-{uuid.uuid4()}"
-
-
-@dataclass(frozen=True, slots=True)
-class UiBridgeServerAuthSeed:
-    value: str | None = None
-
-    def resolve(self) -> str:
-        if self.value is not None:
-            return self.value
-        return secrets.token_urlsafe(32)
-
-
-@dataclass(frozen=True, slots=True)
-class UiBridgeDescriptorPathRequest:
-    directory_path: Path | None = None
-    explicit_file_path: Path | None = None
-
-    @classmethod
-    def from_agent_paths(
-        cls,
-        paths: AgentUiBridgeDescriptorPaths,
-    ) -> "UiBridgeDescriptorPathRequest":
-        return cls(
-            directory_path=(
-                Path(paths.directory_path)
-                if paths.directory_path is not None
-                else None
-            ),
-            explicit_file_path=(
-                Path(paths.explicit_file_path)
-                if paths.explicit_file_path is not None
-                else None
-            ),
+class UiBridgeServerBinding(UiBridgeConnectionSpec):
+    def __post_init__(self) -> None:
+        missing_fields = tuple(
+            field_name
+            for field_name, value in (
+                ("port", self.port),
+                ("descriptor_file_path", self.descriptor_file_path),
+                ("bridge_instance_id", self.bridge_instance_id),
+                ("auth_token", self.auth_token),
+            )
+            if value is None
         )
-
-    def path_for(self, bridge_instance_id: str) -> Path:
-        if self.explicit_file_path is not None:
-            return self.explicit_file_path.expanduser()
-        return self.directory_or_default() / f"ui_bridge_{bridge_instance_id}.json"
-
-    def directory_or_default(self) -> Path:
-        if self.directory_path is not None:
-            return self.directory_path.expanduser()
-        return UiBridgeDescriptorDirectoryAuthority.default_descriptor_dir()
-
-
-@dataclass(frozen=True, slots=True)
-class UiBridgeServerConfig:
-    connection: ExecutionConnectionSpec = field(
-        default_factory=lambda: ExecutionConnectionSpec(
-            host=DEFAULT_UI_BRIDGE_HOST,
-            port=0,
-            transport_mode=DEFAULT_UI_BRIDGE_TRANSPORT,
-        )
-    )
-    descriptor_path_request: UiBridgeDescriptorPathRequest = field(
-        default_factory=UiBridgeDescriptorPathRequest
-    )
-    identity_seed: UiBridgeServerIdentitySeed = field(
-        default_factory=UiBridgeServerIdentitySeed
-    )
-    auth_seed: UiBridgeServerAuthSeed = field(default_factory=UiBridgeServerAuthSeed)
-    poll_timeout_ms: int = 100
-    shutdown_timeout_seconds: float = 2.0
-
-    @property
-    def resolved_bridge_instance_id(self) -> str:
-        return self.identity_seed.resolve()
-
-    @property
-    def resolved_auth_token(self) -> str:
-        return self.auth_seed.resolve()
-
-    @classmethod
-    def from_agent_config(
-        cls,
-        config: AgentUiBridgeConfig,
-    ) -> "UiBridgeServerConfig":
-        return cls(
-            connection=config.connection,
-            descriptor_path_request=UiBridgeDescriptorPathRequest.from_agent_paths(
-                config.descriptor_paths
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class UiBridgeServerBinding:
-    fields: UiBridgeConnectionFields
+        if missing_fields:
+            raise ValueError(
+                "UI bridge binding requires resolved fields: "
+                + ", ".join(missing_fields)
+            )
 
     @classmethod
     def from_runtime(
@@ -232,81 +146,29 @@ class UiBridgeServerBinding:
         descriptor_file_path: Path,
         auth_token: str,
     ) -> "UiBridgeServerBinding":
+        if connection.port is None:
+            raise ValueError("UI bridge binding requires a resolved data port.")
         return cls(
-            fields=UiBridgeConnectionFields.from_values(
-                host=connection.host,
-                port=connection.port,
-                transport_mode=connection.transport_mode,
-                persistent=connection.persistent,
-                auth_token=auth_token,
-                descriptor_file_path=str(descriptor_file_path),
-                bridge_instance_id=bridge_instance_id,
-            )
+            host=connection.host,
+            port=connection.port,
+            transport_mode=connection.transport_mode,
+            persistent=connection.persistent,
+            auth_token=auth_token,
+            descriptor_file_path=str(descriptor_file_path),
+            bridge_instance_id=bridge_instance_id,
         )
 
     @property
     def connection(self) -> ExecutionConnectionSpec:
-        if self.fields.connection is None:
-            raise RuntimeError("UI bridge binding is missing connection fields.")
-        return self.fields.connection
-
-    @property
-    def bridge_instance_id(self) -> str:
-        if self.fields.bridge_instance_id is None:
-            raise RuntimeError("UI bridge binding is missing an instance id.")
-        return self.fields.bridge_instance_id
-
-    @property
-    def descriptor_file_path(self) -> Path:
-        if self.fields.descriptor_file_path is None:
-            raise RuntimeError("UI bridge binding is missing a descriptor path.")
-        return Path(self.fields.descriptor_file_path)
-
-    @property
-    def auth_token(self) -> str:
-        if self.fields.auth_token is None:
-            raise RuntimeError("UI bridge binding is missing an auth token.")
-        return self.fields.auth_token
+        return ExecutionConnectionSpec(
+            host=self.host,
+            port=self.port,
+            transport_mode=self.transport_mode,
+            persistent=self.persistent,
+        )
 
     def token_bearing_connection(self) -> UiBridgeConnectionSpec:
-        return UiBridgeConnectionSpec.from_fields(
-            self.fields,
-        )
-
-
-class UiBridgeDescriptorWriter:
-    """Own the token-bearing descriptor file for one running UI bridge."""
-
-    def __init__(self, config: UiBridgeServerConfig) -> None:
-        self._config = config
-
-    def path_for(self, bridge_instance_id: str) -> Path:
-        return self._config.descriptor_path_request.path_for(bridge_instance_id)
-
-    def write(
-        self,
-        descriptor: UiBridgeDescriptorFile,
-    ) -> Path:
-        path = Path(descriptor.descriptor_file_path).expanduser()
-        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                to_jsonable(UiBridgeDescriptorWirePayload.from_descriptor(descriptor)),
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        path.chmod(0o600)
-        return path
-
-    def remove(self, path: Path | None) -> None:
-        if path is None:
-            return
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            return
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -783,13 +645,12 @@ class UiBridgeControlServer:
     def __init__(
         self,
         bridge: UiAgentBridgeService,
-        config: UiBridgeServerConfig | None = None,
+        config: AgentUiBridgeConfig | None = None,
     ) -> None:
         self._bridge = bridge
-        self._config = config or UiBridgeServerConfig()
-        self._bridge_instance_id = self._config.resolved_bridge_instance_id
-        self._auth_token = self._config.resolved_auth_token
-        self._descriptor_writer = UiBridgeDescriptorWriter(self._config)
+        self._config = config or AgentUiBridgeConfig()
+        self._bridge_instance_id = self._config.resolve_bridge_instance_id()
+        self._auth_token = self._config.resolve_auth_token()
         self._stop_event = threading.Event()
         self._ready_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -835,8 +696,10 @@ class UiBridgeControlServer:
         thread = self._thread
         if thread is not None:
             thread.join(self._config.shutdown_timeout_seconds)
-        self._descriptor_writer.remove(
-            self._binding.descriptor_file_path if self._binding is not None else None
+        self._remove_descriptor_file(
+            Path(self._binding.descriptor_file_path)
+            if self._binding is not None
+            else None
         )
         self._thread = None
         self._binding = None
@@ -853,14 +716,16 @@ class UiBridgeControlServer:
         try:
             connection = self._bind(socket)
             self._bind_browser_control_socket(browser_control_socket, connection)
-            descriptor_file_path = self._descriptor_writer.path_for(self._bridge_instance_id)
+            descriptor_file_path = self._config.descriptor_path_for(
+                self._bridge_instance_id
+            )
             self._binding = UiBridgeServerBinding.from_runtime(
                 connection=connection,
                 bridge_instance_id=self._bridge_instance_id,
                 descriptor_file_path=descriptor_file_path,
                 auth_token=self._auth_token,
             )
-            self._descriptor_writer.write(
+            self._write_descriptor_file(
                 UiBridgeDescriptorFile(
                     schema_version=SCHEMA_VERSION,
                     bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
@@ -899,34 +764,51 @@ class UiBridgeControlServer:
             self._startup_error = exc
             self._ready_event.set()
         finally:
-            self._descriptor_writer.remove(descriptor_file_path)
+            self._remove_descriptor_file(descriptor_file_path)
             browser_control_socket.close(linger=0)
             socket.close(linger=0)
             context.term()
 
+    def _write_descriptor_file(self, descriptor: UiBridgeDescriptorFile) -> Path:
+        path = Path(descriptor.descriptor_file_path).expanduser()
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                to_jsonable(UiBridgeDescriptorWirePayload.from_descriptor(descriptor)),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        return path
+
+    @staticmethod
+    def _remove_descriptor_file(path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+
     def _bind(self, socket) -> ExecutionConnectionSpec:
-        requested_connection = self._config.connection
-        mode = coerce_transport_mode(requested_connection.transport_mode)
+        requested_connection = self._config
+        mode = requested_connection.resolved_transport_mode()
         if mode is None or mode.value == DEFAULT_UI_BRIDGE_TRANSPORT:
             return self._bind_tcp(socket)
         if requested_connection.port is None:
             raise ValueError("Non-TCP UI bridge transport requires an explicit port.")
-        socket.bind(
-            get_zmq_transport_url(
-                requested_connection.port,
-                host=requested_connection.host,
-                mode=mode,
-                config=OPENHCS_ZMQ_CONFIG,
-            )
-        )
+        socket.bind(requested_connection.zmq_data_url(OPENHCS_ZMQ_CONFIG))
         return ExecutionConnectionSpec(
             host=requested_connection.host,
             port=requested_connection.port,
             transport_mode=mode.value,
+            persistent=requested_connection.persistent,
         )
 
     def _bind_tcp(self, socket) -> ExecutionConnectionSpec:
-        requested_connection = self._config.connection
+        requested_connection = self._config
         if requested_connection.port in (None, 0):
             port = socket.bind_to_random_port(f"tcp://{requested_connection.host}")
         else:
@@ -936,6 +818,7 @@ class UiBridgeControlServer:
             host=requested_connection.host,
             port=port,
             transport_mode=DEFAULT_UI_BRIDGE_TRANSPORT,
+            persistent=requested_connection.persistent,
         )
 
     def _bind_browser_control_socket(
@@ -943,21 +826,7 @@ class UiBridgeControlServer:
         socket,
         connection: ExecutionConnectionSpec,
     ) -> None:
-        if connection.port is None:
-            raise ValueError("UI bridge browser control socket requires a data port.")
-        control_port = connection.port + CONTROL_PORT_OFFSET
-        mode = coerce_transport_mode(connection.transport_mode)
-        if mode is None or mode.value == DEFAULT_UI_BRIDGE_TRANSPORT:
-            socket.bind(f"tcp://{connection.host}:{control_port}")
-            return
-        socket.bind(
-            get_zmq_transport_url(
-                control_port,
-                host=connection.host,
-                mode=mode,
-                config=OPENHCS_ZMQ_CONFIG,
-            )
-        )
+        socket.bind(connection.zmq_control_url(OPENHCS_ZMQ_CONFIG))
 
     def _browser_control_response_payload(
         self,
@@ -966,9 +835,9 @@ class UiBridgeControlServer:
     ) -> bytes:
         try:
             request = UiBridgeBrowserControlRequest.from_wire_payload(request_payload)
-            return pickle.dumps(
-                self._browser_control_handlers(connection)[request.message_type]()
-            )
+            if request.message_type is UiBridgeBrowserControlMessageType.PING:
+                return pickle.dumps(self._browser_pong(connection))
+            raise ValueError(f"Unsupported UI bridge browser control message: {request.message_type}")
         except Exception as exc:
             return pickle.dumps(
                 {
@@ -978,23 +847,12 @@ class UiBridgeControlServer:
                 }
             )
 
-    def _browser_control_handlers(
-        self,
-        connection: ExecutionConnectionSpec,
-    ) -> dict[UiBridgeBrowserControlMessageType, Callable[[], JsonObject]]:
-        return {
-            UiBridgeBrowserControlMessageType.PING: lambda: self._browser_pong(
-                connection
-            ),
-        }
-
     def _browser_pong(self, connection: ExecutionConnectionSpec) -> JsonObject:
-        if connection.port is None:
-            raise ValueError("UI bridge browser pong requires a data port.")
+        control_port = connection.zmq_control_port(OPENHCS_ZMQ_CONFIG)
         return {
             "type": UI_BRIDGE_BROWSER_PONG_TYPE,
             "port": connection.port,
-            "control_port": connection.port + CONTROL_PORT_OFFSET,
+            "control_port": control_port,
             "server": UI_BRIDGE_BROWSER_SERVER_NAME,
             "ready": True,
             "log_file_path": self._current_log_file_path(),

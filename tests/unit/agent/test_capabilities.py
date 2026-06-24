@@ -53,3 +53,15 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
         "time_travels_ui_state",
     )
     assert operation_status.side_effects == ()
+
+
+def test_viewer_probe_capability_declares_compact_liveness_contract():
+    registry = get_capability_registry()
+    capabilities = {capability.name: capability for capability in registry.capabilities}
+
+    probe = capabilities["openhcs_probe_viewer_window"]
+
+    assert probe.service == "viewer_window"
+    assert probe.runtime_requirements == ("running_openhcs_viewer_server",)
+    assert probe.data_exposure == ("viewer_identity", "viewer_layer_counts")
+    assert probe.output_type == "ViewerWindowProbeResult"

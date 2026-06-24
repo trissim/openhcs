@@ -27,6 +27,7 @@ from openhcs.runtime.zmq_execution_signature import (
     ZMQExecutionIdentity,
 )
 from openhcs.runtime.zmq_pipeline_transport import (
+    PipelineSourceExport,
     PipelineStepsBoundary,
     PipelineStepsCarrier,
 )
@@ -41,7 +42,6 @@ ZMQValue: TypeAlias = (
     | Sequence["ZMQValue"]
 )
 ZMQParams: TypeAlias = Mapping[str, ZMQValue]
-ZMQRequest: TypeAlias = dict[str, ZMQValue]
 PlateIdentifier: TypeAlias = str | Path
 
 
@@ -232,9 +232,10 @@ class PycodifiedPipelineStepSource(PipelineStepsCarrier):
         )
 
         generated_source = PycodifyAssignmentSourceRequest(
-            variable_name="pipeline_steps",
+            variable_name=PipelineSourceExport.PIPELINE_STEPS.value,
             value=self.source_pipeline.steps,
             header="# Edit this pipeline and save to apply changes",
+            clean_mode=False,
         ).source()
         return ZMQPipelineCodeTransport.from_pipeline_source(
             ZMQPipelineSourcePayload(
@@ -264,6 +265,7 @@ class PycodifyAssignmentSourceRequest:
     variable_name: str
     value: Sequence[AbstractStep] | GlobalPipelineConfig | PipelineConfig
     header: str
+    clean_mode: bool = True
 
     def source(self) -> str:
         import openhcs.serialization.pycodify_formatters  # noqa: F401
@@ -272,7 +274,7 @@ class PycodifyAssignmentSourceRequest:
         return generate_python_source(
             Assignment(self.variable_name, self.value),
             self.header,
-            True,
+            self.clean_mode,
         )
 
 
@@ -281,14 +283,40 @@ class ZMQExecutionRequestBuilder:
     task: OpenHCSExecutionSubmission
     pipeline_transport: PycodifiedPipelineCode
 
-    def request(self) -> ZMQRequest:
-        request: ZMQRequest = {
-            "type": "execute",
-            "pipeline_code": self.pipeline_transport.source,
-        }
-        request.update(self.task.identity.request_items())
-        request.update(self.task.compile_control.request_items())
-        return request
+    def request(self) -> "ZMQRequest":
+        return ZMQRequest.from_items(
+            (
+                ("type", "execute"),
+                ("pipeline_code", self.pipeline_transport.source),
+                *self.task.identity.request_items(),
+                *self.task.compile_control.request_items(),
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ZMQRequest:
+    """Nominal OpenHCS execution request before lowering to zmqruntime."""
+
+    values: Mapping[str, ZMQValue]
+
+    @classmethod
+    def from_items(
+        cls,
+        items: Sequence[tuple[str, ZMQValue]],
+    ) -> "ZMQRequest":
+        return cls(values=dict(items))
+
+    def with_items(
+        self,
+        items: Sequence[tuple[str, ZMQValue]],
+    ) -> "ZMQRequest":
+        values = dict(self.values)
+        values.update(items)
+        return ZMQRequest(values=values)
+
+    def as_wire_payload(self) -> dict[str, ZMQValue]:
+        return dict(self.values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,14 +447,18 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             config=OPENHCS_ZMQ_CONFIG,
         )
 
-    def serialize_task(self, task: OpenHCSExecutionSubmission, config=None) -> ZMQRequest:
+    def serialize_task(
+        self,
+        task: OpenHCSExecutionSubmission,
+        config=None,
+    ) -> dict[str, ZMQValue]:
         pipeline_code = PycodifiedPipelineCode.from_task(task)
         request = ZMQExecutionRequestBuilder(
             task=task,
             pipeline_transport=pipeline_code,
         ).request()
         config_projection = ZMQConfigProjection.from_task(task)
-        request.update(config_projection.request_items())
+        request = request.with_items(config_projection.request_items())
         logger.info(
             "Serialize task: plate=%s compile_only=%s artifact_id=%s step_count=%s pipeline_sha=%s config_sha=%s pipeline_config_sha=%s",
             task.plate_id,
@@ -437,7 +469,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             config_projection.config_sha,
             config_projection.pipeline_config_sha,
         )
-        return request
+        return request.as_wire_payload()
 
     def submit_pipeline(
         self,

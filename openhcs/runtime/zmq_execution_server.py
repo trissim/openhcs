@@ -6,8 +6,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 import logging
+import sys
 import time
 import json
+from types import ModuleType
 from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
@@ -43,8 +45,11 @@ from openhcs.runtime.zmq_server_hooks import (
 )
 from openhcs.runtime.zmq_worker_execution import ZMQWorkerExecutionRequest
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.progress import ProgressEvent, ProgressPhase
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.runtime.zmq_pipeline_transport import (
+    PipelineSourceExport,
+    PipelineStepsNamespaceProjection,
     PipelineStepsBoundary,
     PipelineStepsCarrier,
 )
@@ -53,79 +58,19 @@ from openhcs.runtime.zmq_pipeline_transport import (
 logger = logging.getLogger(__name__)
 
 
-class ZMQProgressTransportRecord:
-    """Explicit access boundary for raw progress dictionaries from ZMQ workers."""
+CONFIG_CODE_OBJECT_NAME = "config"
 
-    def __init__(self, payload):
-        self.payload = payload
 
-    def require(self, field_name: str):
-        if field_name not in self.payload:
-            raise ValueError(
-                f"Progress update missing required field {field_name!r}: "
-                f"{self.payload}"
-            )
-        value = self.payload[field_name]
-        if value is None:
-            raise ValueError(
-                f"Progress update field {field_name!r} cannot be None: "
-                f"{self.payload}"
-            )
-        return value
+@dataclass(frozen=True, slots=True)
+class ConfigCodeNamespace:
+    """Validated namespace produced by config-code execution."""
 
-    def optional(self, field_name: str):
-        if field_name in self.payload:
-            return self.payload[field_name]
-        return None
+    values: dict[str, Any]
 
-    def text_or_empty(self, field_name: str) -> str:
-        if field_name not in self.payload:
-            return ""
-        value = self.payload[field_name]
-        if value is None:
-            return ""
-        return str(value)
-
-    @property
-    def execution_id(self) -> str:
-        return str(self.require("execution_id"))
-
-    @property
-    def phase(self):
-        return self.optional("phase")
-
-    @property
-    def axis_id(self) -> str:
-        return self.text_or_empty("axis_id")
-
-    @property
-    def worker_slot(self) -> str:
-        return str(self.require("worker_slot"))
-
-    @property
-    def owned_wells(self) -> list[str]:
-        value = self.require("owned_wells")
-        if not isinstance(value, list):
-            raise TypeError(
-                "Worker progress owned_wells must be a list, "
-                f"got {type(value).__name__}."
-            )
-        return [str(axis_id) for axis_id in value]
-
-    def with_worker_assignments(
-        self,
-        assignments: dict[str, list[str]],
-    ) -> dict:
-        enriched = dict(self.payload)
-        enriched["worker_assignments"] = assignments
-        enriched["total_wells"] = sorted(
-            {
-                axis_id
-                for assigned_axes in assignments.values()
-                for axis_id in assigned_axes
-            }
-        )
-        return enriched
+    def require_config(self, missing_message: str):
+        if CONFIG_CODE_OBJECT_NAME not in self.values:
+            raise ValueError(missing_message)
+        return self.values[CONFIG_CODE_OBJECT_NAME]
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,7 +306,6 @@ class ZMQExecutionServer(ExecutionServer):
         """
         if not self.data_socket:
             return
-        import json
         import queue
 
         logger = logging.getLogger(__name__)
@@ -373,13 +317,18 @@ class ZMQExecutionServer(ExecutionServer):
                 if count > 0:
                     logger.info(f"Flushed {count} progress update(s) to ZMQ")
                 break
-            progress_record = ZMQProgressTransportRecord(progress_update)
+            event = ProgressEvent.from_dict(progress_update)
+            progress_payload = event.to_dict()
             logger.info(
-                f"Flushing to ZMQ: step_name={progress_record.optional('step_name')!r}, "
-                f"axis={progress_record.optional('axis_id')!r}, plate_id={progress_record.optional('plate_id')!r}, "
-                f"percent={progress_record.optional('percent')!r}, total_wells={progress_record.optional('total_wells')!r}"
+                "Flushing to ZMQ: step_name=%r, axis=%r, plate_id=%r, "
+                "percent=%r, total_wells=%r",
+                event.step_name,
+                event.axis_id,
+                event.plate_id,
+                event.percent,
+                event.total_wells,
             )
-            json_str = json.dumps(progress_update)
+            json_str = json.dumps(progress_payload)
             logger.info(f"Full JSON being sent: {json_str[:300]}")
             self.data_socket.send_string(json_str)
             count += 1
@@ -421,15 +370,15 @@ class ZMQExecutionServer(ExecutionServer):
         ).enrich(super()._create_pong_response())
 
     def _enqueue_progress(self, progress_update: dict) -> None:
-        if "total_wells" in progress_update:
-            progress_record = ZMQProgressTransportRecord(progress_update)
+        event = ProgressEvent.from_dict(progress_update)
+        if event.total_wells is not None:
             logger.info(
                 "_enqueue_progress: total_wells=%s, keys=%s, step_name=%s",
-                progress_record.optional("total_wells"),
+                event.total_wells,
                 list(progress_update.keys()),
-                progress_record.optional("step_name"),
+                event.step_name,
             )
-        self.progress_queue.put(progress_update)
+        self.progress_queue.put(event.to_dict())
 
     def _forward_worker_progress(self, worker_queue) -> None:
         import logging
@@ -440,32 +389,47 @@ class ZMQExecutionServer(ExecutionServer):
             if progress_update is None:
                 logger.info("Progress forwarder received None, exiting")
                 break
-            progress_record = ZMQProgressTransportRecord(progress_update)
-            execution_id = progress_record.execution_id
-            assignments = self._worker_assignments_for_execution(execution_id)
+            event = ProgressEvent.from_dict(progress_update)
+            assignments = self._worker_assignments_for_execution(event.execution_id)
 
             # Pipeline-level INIT events (e.g. viewer launch) bypass worker
             # claim validation — they carry no worker_slot / owned_wells.
-            phase = progress_record.phase
-            axis_id = progress_record.axis_id
-            if phase == "init" and not axis_id:
-                self.progress_queue.put(progress_update)
+            if event.phase == ProgressPhase.INIT and not event.axis_id:
+                self.progress_queue.put(event.to_dict())
                 continue
 
-            worker_slot = progress_record.worker_slot
-            owned_wells = progress_record.owned_wells
-            self._validate_worker_claim(worker_slot, owned_wells, assignments)
+            if event.worker_slot is None:
+                raise ValueError(
+                    "Worker progress missing required field 'worker_slot': "
+                    f"{progress_update}"
+                )
+            if event.owned_wells is None:
+                raise ValueError(
+                    "Worker progress missing required field 'owned_wells': "
+                    f"{progress_update}"
+                )
+            owned_wells = [str(axis_id) for axis_id in event.owned_wells]
+            self._validate_worker_claim(event.worker_slot, owned_wells, assignments)
             # Attach topology metadata to every worker progress event so the UI
             # cannot lose worker/well ownership due first-message ordering.
-            progress_update = progress_record.with_worker_assignments(assignments)
+            enriched_event = event.with_worker_topology(
+                worker_assignments=assignments,
+                total_wells=sorted(
+                    {
+                        axis_id
+                        for assigned_axes in assignments.values()
+                        for axis_id in assigned_axes
+                    }
+                ),
+            )
             logger.info(
                 "Forwarding progress: pid=%s, axis=%s, step_name=%s, worker_slot=%s",
-                progress_record.optional("pid"),
-                progress_record.optional("axis_id"),
-                progress_record.optional("step_name"),
-                worker_slot,
+                enriched_event.pid,
+                enriched_event.axis_id,
+                enriched_event.step_name,
+                enriched_event.worker_slot,
             )
-            self.progress_queue.put(progress_update)
+            self.progress_queue.put(enriched_event.to_dict())
 
     def _worker_assignments_for_execution(
         self,
@@ -560,13 +524,28 @@ class ZMQExecutionServer(ExecutionServer):
 
         resolved_config = self._resolve_request_config(request_payload)
 
-        from openhcs.runtime.zmq_pipeline_transport import ZMQPipelineCodeTransport
-
-        namespace = {}
-        exec(request_payload.pipeline_code, namespace)
-        execution_pipeline = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+        module_name = f"openhcs_zmq_pipeline_{request_payload.pipeline_sha}"
+        module = ModuleType(module_name)
+        module.__file__ = f"<{module_name}>"
+        sys.modules[module_name] = module
+        try:
+            exec(
+                compile(
+                    request_payload.pipeline_code,
+                    module.__file__,
+                    "exec",
+                ),
+                module.__dict__,
+            )
+        finally:
+            sys.modules.pop(module_name, None)
+        execution_pipeline = PipelineStepsNamespaceProjection(
+            module.__dict__
+        ).boundary_or_none()
         if not execution_pipeline:
-            raise ValueError("Code must define 'pipeline_steps'")
+            raise ValueError(
+                f"Code must define {PipelineSourceExport.PIPELINE_STEPS.value!r}"
+            )
         request_context = ZMQExecutionContext(
             execution_id=execution_id,
             request_payload=request_payload,
@@ -637,9 +616,7 @@ class ZMQExecutionServer(ExecutionServer):
     def _config_from_code(config_code: str, missing_message: str):
         namespace = {}
         exec(config_code, namespace)
-        if "config" not in namespace:
-            raise ValueError(missing_message)
-        return namespace["config"]
+        return ConfigCodeNamespace(namespace).require_config(missing_message)
 
     def _build_config_from_params(self, p: ZMQConfigParamsPayload):
         from openhcs.core.config import (
@@ -681,6 +658,7 @@ class ZMQExecutionServer(ExecutionServer):
             execution_id=request_context.execution_id,
             plate_id=request_context.plate_id,
             execution_plate_id=request_context.execution_plate_id,
+            selected_pipeline_path=request_context.request_payload.selected_pipeline_path,
             global_config=request_context.global_config,
             config_params=request_context.config_params,
         ).prepare()

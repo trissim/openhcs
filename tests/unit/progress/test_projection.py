@@ -1,4 +1,11 @@
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from dataclasses import replace as dataclass_replace
+
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.core.progress.projection import (
     PlateRuntimeState,
     build_execution_runtime_projection,
@@ -19,10 +26,12 @@ def _event(
     total_wells=None,
 ) -> ProgressEvent:
     return ProgressEvent(
-        execution_id=execution_id,
-        plate_id=plate_id,
-        axis_id=axis_id,
-        step_name=step_name,
+        identity=ProgressIdentity(
+            execution_id=execution_id,
+            plate_id=plate_id,
+            axis_id=axis_id,
+            step_name=step_name,
+        ),
         phase=phase,
         status=status,
         percent=percent,
@@ -115,7 +124,7 @@ def test_projection_dedupes_multiple_execution_ids_for_same_plate():
         total=2,
     )
     # Make second execution newer.
-    exec2 = exec2.replace(timestamp=2.0)
+    exec2 = dataclass_replace(exec2, timestamp=2.0)
 
     projection = build_execution_runtime_projection(
         {

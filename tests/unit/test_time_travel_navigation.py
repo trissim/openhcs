@@ -1,4 +1,5 @@
 from openhcs.pyqt_gui.services.time_travel_navigation import (
+    TimeTravelSourceScope,
     should_include_time_travel_scope,
 )
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
@@ -30,23 +31,31 @@ def test_time_travel_navigation_filters_unrelated_dirty_scopes() -> None:
     triggering_scope = "/tmp/plate::functionstep_5"
 
     assert should_include_time_travel_scope(
-        changed_scope_id=triggering_scope,
-        triggering_scope=triggering_scope,
+        TimeTravelSourceScope(
+            changed_scope_id=triggering_scope,
+            triggering_scope=triggering_scope,
+        )
     )
     assert should_include_time_travel_scope(
-        changed_scope_id=f"{triggering_scope}::cellprofilerruntimecallable_0",
-        triggering_scope=triggering_scope,
+        TimeTravelSourceScope(
+            changed_scope_id=f"{triggering_scope}::cellprofilerruntimecallable_0",
+            triggering_scope=triggering_scope,
+        )
     )
     assert not should_include_time_travel_scope(
-        changed_scope_id="/tmp/plate::functionstep_9",
-        triggering_scope=triggering_scope,
+        TimeTravelSourceScope(
+            changed_scope_id="/tmp/plate::functionstep_9",
+            triggering_scope=triggering_scope,
+        )
     )
 
 
 def test_time_travel_navigation_keeps_legacy_global_refresh_when_scope_unknown() -> None:
     assert should_include_time_travel_scope(
-        changed_scope_id="/tmp/plate::functionstep_9",
-        triggering_scope=None,
+        TimeTravelSourceScope(
+            changed_scope_id="/tmp/plate::functionstep_9",
+            triggering_scope=None,
+        )
     )
 
 

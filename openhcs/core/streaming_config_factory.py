@@ -9,10 +9,17 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from objectstate import DataclassFieldAccess, get_base_config_type
 from polystore.filemanager import FileManager
+from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import (
+    ViewerStreamBackendKwargs,
+    ViewerStreamMessageContext,
+    ViewerStreamProducer,
+    ViewerStreamRequest,
+    ViewerStreamSource,
     ViewerStreamSourceIdentity,
+    ViewerStreamSourceMetadata,
 )
-from zmqruntime.viewer_protocol import ViewerTransportEndpoint
+from zmqruntime.viewer_protocol import ViewerTransportEndpoint, ViewerWireValue
 
 from openhcs.constants.constants import Backend, DEFAULT_EXECUTION_SERVER_PORT
 
@@ -29,6 +36,39 @@ class StreamingViewerSurface:
     runtime_config: "StreamingViewerRuntimeConfig"
     display_config: "StreamingConfig"
     source: ViewerStreamSourceIdentity
+
+    def viewer_stream_request(
+        self,
+        *,
+        producer: ViewerStreamProducer,
+        source_metadata: ViewerStreamSourceMetadata,
+        message_context: ViewerStreamMessageContext,
+    ) -> ViewerStreamRequest:
+        return ViewerStreamRequest.from_message_context(
+            message_context=message_context,
+            viewer_transport=self.runtime_config.transport_endpoint,
+            display_config=self.display_config,
+            source=ViewerStreamSource(
+                identity=self.source,
+                metadata=source_metadata,
+            ),
+            producer=producer,
+        )
+
+    def viewer_backend_kwargs(
+        self,
+        *,
+        producer: ViewerStreamProducer,
+        source_metadata: ViewerStreamSourceMetadata,
+        message_context: ViewerStreamMessageContext,
+    ) -> ViewerStreamBackendKwargs:
+        return ViewerStreamBackendKwargs(
+            self.viewer_stream_request(
+                producer=producer,
+                source_metadata=source_metadata,
+                message_context=message_context,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,51 +186,37 @@ class StreamingConfigBehaviorMixin:
         import_module(self.streaming_spec.visualizer_module)
         from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
 
-        visualizer_type = _resolve_visualizer_type(
+        visualizer_type = ManagedViewerTypeResolver.resolve(
             ManagedViewerLifecycleMixin,
-            viewer_name=self.streaming_spec.viewer_name,
-            visualizer_module_name=self.streaming_spec.visualizer_module,
+            self.streaming_spec,
         )
         return visualizer_type(
             filemanager=filemanager,
             runtime_config=self.viewer_runtime_config(),
         )
 
-def build_component_order() -> list[str]:
-    """Build canonical streaming component order from filename components."""
+class ManagedViewerTypeResolver:
+    """Resolve managed viewer runtime classes from streaming config declarations."""
 
-    from openhcs.constants import AllComponents
+    @classmethod
+    def resolve(
+        cls,
+        viewer_base_type: type,
+        spec: StreamingViewerConfigSpec,
+    ) -> type:
+        for visualizer_type in cls.viewer_types(viewer_base_type):
+            if visualizer_type.viewer_type == spec.viewer_name:
+                return visualizer_type
+        raise KeyError(
+            f"Imported {spec.visualizer_module!r}, but no managed viewer type "
+            f"declares viewer_type={spec.viewer_name!r}."
+        )
 
-    component_order: list[str] = []
-    seen: set[str] = set()
-    for component in AllComponents:
-        component_name = component.value
-        if component_name in seen:
-            continue
-        component_order.append(component_name)
-        seen.add(component_name)
-    return component_order
-
-
-def _resolve_visualizer_type(
-    viewer_base_type: type,
-    *,
-    viewer_name: str,
-    visualizer_module_name: str,
-) -> type:
-    for visualizer_type in _iter_viewer_types(viewer_base_type):
-        if visualizer_type.viewer_type == viewer_name:
-            return visualizer_type
-    raise KeyError(
-        f"Imported {visualizer_module_name!r}, but no managed viewer type "
-        f"declares viewer_type={viewer_name!r}."
-    )
-
-
-def _iter_viewer_types(viewer_base_type: type) -> Iterator[type]:
-    for visualizer_type in viewer_base_type.__subclasses__():
-        yield visualizer_type
-        yield from _iter_viewer_types(visualizer_type)
+    @classmethod
+    def viewer_types(cls, viewer_base_type: type) -> Iterator[type]:
+        for visualizer_type in viewer_base_type.__subclasses__():
+            yield visualizer_type
+            yield from cls.viewer_types(visualizer_type)
 
 
 def get_all_streaming_ports(

@@ -5,6 +5,7 @@ import numpy as np
 from openhcs.core.config import FijiDisplayConfig, FijiLUT
 from openhcs.runtime.fiji_viewer_server import (
     FijiBatchWireParser,
+    FijiControlMessageAuthority,
     FijiDimensionAxis,
     FijiDisplayConfigWireAdapter,
     FijiImagePayload,
@@ -16,6 +17,7 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiWindowRegistry,
     FijiWireItem,
 )
+from openhcs.runtime.viewer_protocol import ViewerControlMessageType
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
     ViewerComponentValueDomainPayload,
@@ -117,6 +119,21 @@ def test_fiji_window_registry_closes_replaced_hyperstack() -> None:
     assert registry.open_hyperstack("A14") is new_image_plus
 
 
+def test_fiji_state_control_message_fails_loudly_until_projector_exists() -> None:
+    response = FijiControlMessageAuthority(FijiWindowRegistry()).response_for(
+        {"type": ViewerControlMessageType.STATE.value}
+    )
+
+    wire_response = response.to_wire_mapping()
+
+    assert wire_response["status"] == "error"
+    assert wire_response["type"] == "state_ack"
+    assert (
+        "Fiji live viewer state polling is not implemented"
+        in wire_response["message"]
+    )
+
+
 def test_fiji_batch_message_normalizes_wire_items() -> None:
     default_config = FijiDisplayConfig()
     batch = FijiBatchWireParser(
@@ -148,8 +165,8 @@ def test_fiji_batch_message_normalizes_wire_items() -> None:
     assert image_payload.data is batch.items[0].data
     assert image_payload.metadata == {"channel": 1}
     assert image_payload.image_id == "img-1"
-    assert batch.component_names_metadata.store.display_name("channel", 1) == "DNA"
-    assert batch.component_axis_semantics.value_domain.to_wire_mapping() == {"channel": [1]}
+    assert batch.store.display_name("channel", 1) == "DNA"
+    assert batch.to_wire_mapping() == {"channel": [1]}
 
 
 def test_fiji_window_item_projection_preserves_nominal_items() -> None:

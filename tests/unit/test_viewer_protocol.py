@@ -243,3 +243,135 @@ def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():
     viewer.connected = False
     assert not viewer.is_running
     assert not viewer.lifecycle_state.is_active
+
+
+def test_prepare_fresh_viewer_start_releases_endpoint_after_shutdown_ack():
+    class BoundEndpoint:
+        def __init__(self):
+            self.bound = True
+            self.release_calls = 0
+            self.wait_calls = 0
+
+        def in_use(self):
+            return self.bound
+
+        def wait_until_released(self, *, timeout, poll_interval=0.1):
+            self.wait_calls += 1
+            return not self.bound
+
+        def release_bound_ports(self):
+            self.release_calls += 1
+            self.bound = False
+
+    class FreshViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "Fresh"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self, endpoint):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=True,
+                    presentation=StreamingViewerPresentation("Fresh"),
+                ),
+                transport_config=OPENHCS_ZMQ_CONFIG,
+            )
+            self.runtime_endpoint = endpoint
+            self.shutdown_requests = 0
+
+        def check_connected_viewer(self) -> bool:
+            return True
+
+        def request_bound_viewer_shutdown(self, timeout: float = 1.0) -> bool:
+            self.shutdown_requests += 1
+            return True
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    endpoint = BoundEndpoint()
+    viewer = FreshViewer(endpoint)
+
+    viewer.prepare_fresh_viewer_start()
+
+    assert viewer.shutdown_requests == 1
+    assert endpoint.wait_calls == 2
+    assert endpoint.release_calls == 1
+    assert not endpoint.in_use()
+
+
+def test_prepare_fresh_viewer_start_reports_still_bound_after_forced_release():
+    class StuckEndpoint:
+        def __init__(self):
+            self.release_calls = 0
+
+        def in_use(self):
+            return True
+
+        def wait_until_released(self, *, timeout, poll_interval=0.1):
+            return False
+
+        def release_bound_ports(self):
+            self.release_calls += 1
+
+    class StuckViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "Stuck"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self, endpoint):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=True,
+                    presentation=StreamingViewerPresentation("Stuck"),
+                ),
+                transport_config=OPENHCS_ZMQ_CONFIG,
+            )
+            self.runtime_endpoint = endpoint
+
+        def check_connected_viewer(self) -> bool:
+            return True
+
+        def request_bound_viewer_shutdown(self, timeout: float = 1.0) -> bool:
+            return True
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    endpoint = StuckEndpoint()
+    viewer = StuckViewer(endpoint)
+
+    with pytest.raises(RuntimeError, match="forced endpoint release"):
+        viewer.prepare_fresh_viewer_start()
+
+    assert endpoint.release_calls == 1

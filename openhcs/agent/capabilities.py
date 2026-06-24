@@ -28,7 +28,11 @@ class AgentContractName(Enum):
     UI_WINDOW_SNAPSHOT_RESULT = "UiWindowSnapshotResult"
     UI_OBJECT_STATE_SCOPE_CATALOG = "UiObjectStateScopeCatalog"
     UI_SNAPSHOT_RESTORE_RESULT = "UiSnapshotRestoreResult"
+    VIEWER_WINDOW_PROBE_RESULT = "ViewerWindowProbeResult"
     VIEWER_WINDOW_SNAPSHOT_RESULT = "ViewerWindowSnapshotResult"
+    VIEWER_WINDOW_STATE_RESULT = "ViewerWindowStateResult"
+    VIEWER_WINDOW_VALIDATION_SUMMARY_RESULT = "ViewerWindowValidationSummaryResult"
+    ARTIFACT_PLAN_INSPECTION = "ArtifactPlanInspection"
 
 
 class MutatingCapabilityNamePolicy:
@@ -291,6 +295,18 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         output_type="OrchestratorSession",
     ),
     AgentCapabilitySpec(
+        name="openhcs_inspect_pipeline_source_artifact_plan",
+        kind=CapabilityKind.TOOL,
+        title="Inspect source artifact plan",
+        description=(
+            "Compiles pycodified pipeline source with an explicit progress queue "
+            "and returns bounded axis, step, group-key, path, and artifact-output plans."
+        ),
+        service="execution_session",
+        input_type="PycodifiedPipelineSessionRequest",
+        output_type=AgentContractName.ARTIFACT_PLAN_INSPECTION.value,
+    ),
+    AgentCapabilitySpec(
         name="openhcs_submit_compile",
         kind=CapabilityKind.TOOL,
         title="Submit compile job",
@@ -358,6 +374,46 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         security_requirements=("agent_path_policy",),
         input_type="ViewerWindowSnapshotRequest",
         output_type=AgentContractName.VIEWER_WINDOW_SNAPSHOT_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_get_viewer_window_state",
+        kind=CapabilityKind.TOOL,
+        title="Get viewer window state",
+        description="Returns structured layer, component, and axis state from a running OpenHCS viewer through its ZMQ control socket.",
+        service="viewer_window",
+        runtime_requirements=("running_openhcs_viewer_server",),
+        data_exposure=("viewer_layer_state", "viewer_axis_state"),
+        input_type="ViewerWindowStateRequest",
+        output_type=AgentContractName.VIEWER_WINDOW_STATE_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_probe_viewer_window",
+        kind=CapabilityKind.TOOL,
+        title="Probe viewer window",
+        description="Quickly reports whether a running OpenHCS viewer control endpoint is reachable.",
+        service="viewer_window",
+        runtime_requirements=("running_openhcs_viewer_server",),
+        data_exposure=("viewer_identity", "viewer_layer_counts"),
+        input_type="ViewerWindowStateRequest",
+        output_type=AgentContractName.VIEWER_WINDOW_PROBE_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_validate_viewer_window_state",
+        kind=CapabilityKind.TOOL,
+        title="Validate viewer window state",
+        description=(
+            "Summarizes whether a running OpenHCS viewer has mounted layers, "
+            "expected axis labels, and nonzero streamed payload summaries."
+        ),
+        service="viewer_window",
+        runtime_requirements=("running_openhcs_viewer_server",),
+        data_exposure=(
+            "viewer_layer_state",
+            "viewer_axis_state",
+            "viewer_payload_summaries",
+        ),
+        input_type="ViewerWindowValidationRequest",
+        output_type=AgentContractName.VIEWER_WINDOW_VALIDATION_SUMMARY_RESULT.value,
     ),
     AgentCapabilitySpec(
         name="openhcs_ui_list_bridges",

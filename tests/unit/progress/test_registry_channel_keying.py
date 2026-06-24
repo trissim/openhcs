@@ -1,4 +1,10 @@
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus, registry
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+    registry,
+)
 
 
 def _event(
@@ -12,10 +18,12 @@ def _event(
     total: int = 1,
 ) -> ProgressEvent:
     return ProgressEvent(
-        execution_id="exec-1",
-        plate_id="/tmp/plate",
-        axis_id=axis_id,
-        step_name=step_name,
+        identity=ProgressIdentity(
+            execution_id="exec-1",
+            plate_id="/tmp/plate",
+            axis_id=axis_id,
+            step_name=step_name,
+        ),
         phase=phase,
         status=status,
         percent=percent,

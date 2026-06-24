@@ -5,19 +5,25 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.steps.abstract import AbstractStep
 
-PipelineStepSequence = list[AbstractStep] | tuple[AbstractStep, ...]
+PipelineStepSequence = Sequence[AbstractStep]
 
 
 @dataclass(frozen=True, slots=True)
 class PipelineStepsBoundary(Sequence[AbstractStep]):
     """Nominal carrier for executable OpenHCS pipeline steps."""
 
-    steps: Sequence[AbstractStep]
+    steps: list[AbstractStep]
+
+    def __init__(self, steps: PipelineStepSequence) -> None:
+        # Compilation resolves step ObjectState by replacing the submitted sequence
+        # in-place, so the transport boundary owns the mutable list contract.
+        object.__setattr__(self, "steps", list(steps))
 
     def __getitem__(self, index):
         return self.steps[index]
@@ -41,6 +47,25 @@ class PipelineStepsCarrier(ABC, metaclass=AutoRegisterMeta):
     @property
     def pipeline_steps(self) -> Sequence[AbstractStep]:
         return self.pipeline_steps_boundary.steps
+
+
+class PipelineSourceExport(str, Enum):
+    """Named exports produced by pycodified pipeline transport source."""
+
+    PIPELINE_STEPS = "pipeline_steps"
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineStepsNamespaceProjection:
+    """Read the executable pipeline export from an executed source namespace."""
+
+    namespace: Mapping[str, PipelineStepSequence]
+
+    def boundary_or_none(self) -> PipelineStepsBoundary | None:
+        export_name = PipelineSourceExport.PIPELINE_STEPS.value
+        if export_name not in self.namespace:
+            return None
+        return PipelineStepsBoundary(self.namespace[export_name])
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,11 +92,3 @@ class ZMQPipelineCodeTransport:
         payload: ZMQPipelineSourcePayload,
     ) -> "ZMQPipelineCodeTransport":
         return cls(source=payload.source)
-
-    @staticmethod
-    def pipeline_from_namespace(
-        namespace: Mapping[str, PipelineStepSequence],
-    ) -> PipelineStepsBoundary | None:
-        if "pipeline_steps" not in namespace:
-            return None
-        return PipelineStepsBoundary(namespace["pipeline_steps"])

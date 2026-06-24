@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import ClassVar
 
 from openhcs.agent.dto.common import (
     AgentError,
     AgentResultEnvelope,
     JsonObject,
-    JsonValue,
     SCHEMA_VERSION,
 )
 
@@ -20,6 +18,41 @@ class ExecutionConnectionSpec:
     port: int | None = None
     transport_mode: str | None = None
     persistent: bool = True
+
+    def require_port(self, purpose: str) -> int:
+        if self.port is None:
+            raise ValueError(f"{purpose} requires an explicit port.")
+        return self.port
+
+    def resolved_transport_mode(self):
+        from zmqruntime.transport import coerce_transport_mode
+
+        return coerce_transport_mode(self.transport_mode)
+
+    def zmq_data_url(self, config) -> str:
+        from zmqruntime.transport import get_zmq_transport_url
+
+        return get_zmq_transport_url(
+            self.require_port("ZMQ data URL"),
+            host=self.host,
+            mode=self.resolved_transport_mode(),
+            config=config,
+        )
+
+    def zmq_control_port(self, config) -> int:
+        from zmqruntime.transport import get_control_port
+
+        return get_control_port(self.require_port("ZMQ control port"), config)
+
+    def zmq_control_url(self, config) -> str:
+        from zmqruntime.transport import get_control_url
+
+        return get_control_url(
+            self.require_port("ZMQ control URL"),
+            self.transport_mode,
+            host=self.host,
+            config=config,
+        )
 
     def zmq_client_kwargs(self) -> JsonObject:
         kwargs: JsonObject = {
@@ -95,6 +128,42 @@ class ExecutionJobStatus(ExecutionJobIdentity, AgentResultEnvelope):
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactPlanSummary:
+    name: str
+    kind: str
+    path: str
+    group_keys: tuple[str | None, ...] = ()
+    paths_by_group: tuple[JsonObject, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledStepPlanSummary:
+    step_index: int
+    step_name: str
+    axis_id: str
+    output_dir: str | None
+    execution_groups: tuple[str | None, ...] = ()
+    artifact_outputs: tuple[ArtifactPlanSummary, ...] = ()
+    truncated_artifact_output_count: int = 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArtifactPlanInspection(AgentResultEnvelope):
+    schema_version: str
+    plate_path: str
+    axis_filter: tuple[str, ...] = ()
+    axis_count: int = 0
+    axes: tuple[str, ...] = ()
+    truncated_axis_count: int = 0
+    step_count: int = 0
+    steps: tuple[CompiledStepPlanSummary, ...] = ()
+    truncated_step_count: int = 0
+    worker_assignments: JsonObject = field(default_factory=dict)
+    progress_event_count: int = 0
+    errors: tuple[AgentError, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeServerInfo(ExecutionConnectionProjection):
     schema_version: str
     reachable: bool
@@ -120,7 +189,8 @@ class RuntimeServerInfo(ExecutionConnectionProjection):
         fields = RuntimeServerPayload(response)
         resolved_connection = replace(
             connection,
-            port=fields.field("port").as_optional_int(
+            port=fields.optional_int(
+                "port",
                 protocol_default=connection.port,
             ),
         )
@@ -128,15 +198,15 @@ class RuntimeServerInfo(ExecutionConnectionProjection):
             schema_version=SCHEMA_VERSION,
             connection=resolved_connection,
             reachable=True,
-            ready=fields.field("ready").as_optional_bool(),
-            server=fields.field("server").as_optional_str(),
-            control_port=fields.field("control_port").as_optional_int(),
-            active_executions=fields.field("active_executions").as_optional_int(),
-            running_executions=fields.field("running_executions").as_json_object_tuple(),
-            queued_executions=fields.field("queued_executions").as_json_object_tuple(),
-            workers=fields.field("workers").as_json_object_tuple(),
-            uptime=fields.field("uptime").as_optional_float(),
-            log_file_path=fields.field("log_file_path").as_optional_str(),
+            ready=fields.optional_bool("ready"),
+            server=fields.optional_str("server"),
+            control_port=fields.optional_int("control_port"),
+            active_executions=fields.optional_int("active_executions"),
+            running_executions=fields.json_object_tuple("running_executions"),
+            queued_executions=fields.json_object_tuple("queued_executions"),
+            workers=fields.json_object_tuple("workers"),
+            uptime=fields.optional_float("uptime"),
+            log_file_path=fields.optional_str("log_file_path"),
             response=response,
         )
 
@@ -159,62 +229,53 @@ class RuntimeExecutionStatus(ExecutionConnectionProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeServerPayloadField:
-    value: JsonValue
-
-    def as_optional_bool(self) -> bool | None:
-        if isinstance(self.value, bool):
-            return self.value
-        return None
-
-    def as_optional_float(self) -> float | None:
-        if isinstance(self.value, (int, float)):
-            return float(self.value)
-        return None
-
-    def as_optional_int(self, *, protocol_default: int | None = None) -> int | None:
-        if isinstance(self.value, bool):
-            return protocol_default
-        if isinstance(self.value, int):
-            return self.value
-        return protocol_default
-
-    def as_optional_str(self) -> str | None:
-        if self.value is None:
-            return None
-        return str(self.value)
-
-    def as_json_object_tuple(self) -> tuple[JsonObject, ...]:
-        if not isinstance(self.value, list):
-            return ()
-        return tuple(dict(item) for item in self.value if isinstance(item, dict))
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeServerPayload:
     response: JsonObject
 
-    def field(self, name: str) -> RuntimeServerPayloadField:
-        if name in self.response:
-            return RuntimeServerPayloadField(self.response[name])
-        return RuntimeServerPayloadField(None)
+    def optional_bool(self, name: str) -> bool | None:
+        value = self.response.get(name)
+        if isinstance(value, bool):
+            return value
+        return None
+
+    def optional_float(self, name: str) -> float | None:
+        value = self.response.get(name)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    def optional_int(self, name: str, *, protocol_default: int | None = None) -> int | None:
+        value = self.response.get(name)
+        if isinstance(value, bool):
+            return protocol_default
+        if isinstance(value, int):
+            return value
+        return protocol_default
+
+    def optional_str(self, name: str) -> str | None:
+        value = self.response.get(name)
+        if value is None:
+            return None
+        return str(value)
+
+    def json_object_tuple(self, name: str) -> tuple[JsonObject, ...]:
+        value = self.response.get(name)
+        if not isinstance(value, list):
+            return ()
+        return tuple(dict(item) for item in value if isinstance(item, dict))
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeExecutionStatusResponsePayload:
-    MISSING_STATUS: ClassVar[str] = "unknown"
-
-    status: str
-    raw: JsonObject
-
-    @classmethod
-    def from_response(
-        cls,
-        response: JsonObject,
-    ) -> "RuntimeExecutionStatusResponsePayload":
-        if "status" in response:
-            return cls(status=str(response["status"]), raw=response)
-        return cls(status=cls.MISSING_STATUS, raw=response)
+def execution_status_from_response(
+    response: JsonObject,
+    *,
+    fallback: str,
+) -> str:
+    execution = response.get("execution")
+    if isinstance(execution, dict) and "status" in execution:
+        return str(execution["status"])
+    if "status" in response:
+        return str(response["status"])
+    return fallback
 
 
 def unreachable_runtime_server_info(
@@ -236,13 +297,12 @@ def runtime_execution_status_from_response(
     execution_id: str | None,
     response: JsonObject,
 ) -> RuntimeExecutionStatus:
-    payload = RuntimeExecutionStatusResponsePayload.from_response(response)
     return RuntimeExecutionStatus(
         schema_version=SCHEMA_VERSION,
         connection=connection,
         execution_id=execution_id,
-        status=payload.status,
-        response=payload.raw,
+        status=execution_status_from_response(response, fallback="unknown"),
+        response=response,
     )
 
 

@@ -11,8 +11,6 @@ from typing import TypeVar, get_args, get_origin, get_type_hints
 
 from typing_extensions import TypeForm
 
-from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
-
 from openhcs.agent.dto.common import JsonObject, JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
@@ -254,7 +252,7 @@ class UiBridgeControlClient:
         socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
         socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
         try:
-            socket.connect(self._endpoint_url(connection))
+            socket.connect(connection.zmq_data_url(OPENHCS_ZMQ_CONFIG))
             socket.send_json(request_payload)
             response = socket.recv_json()
         except zmq.Again as exc:
@@ -283,17 +281,6 @@ class UiBridgeControlClient:
         if not isinstance(operation, str):
             raise TypeError("UI bridge request payload field 'operation' must be a string.")
         return operation
-
-    @staticmethod
-    def _endpoint_url(connection: UiBridgeConnectionSpec) -> str:
-        if connection.port is None:
-            raise UiBridgeGatewayUnavailableError
-        return get_zmq_transport_url(
-            connection.port,
-            host=connection.host,
-            mode=coerce_transport_mode(connection.transport_mode),
-            config=OPENHCS_ZMQ_CONFIG,
-        )
 
     @staticmethod
     def _payload_object(payload: UiBridgeOperationRequestPayload) -> JsonObject:

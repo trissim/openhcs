@@ -7,16 +7,22 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import count
 from pathlib import Path
+from types import ModuleType
+import sys
 
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import (
+    ArtifactPlanInspection,
+    ArtifactPlanSummary,
+    CompiledStepPlanSummary,
     ExecutionConnectionSpec,
     ExecutionJobRef,
     ExecutionJobStatus,
     OrchestratorSession,
     OrchestratorSessionRef,
+    execution_status_from_response,
 )
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.services.config_service import ConfigService
@@ -29,9 +35,16 @@ from openhcs.runtime.zmq_execution_client import (
 )
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 from openhcs.runtime.zmq_pipeline_transport import (
+    PipelineSourceExport,
+    PipelineStepsNamespaceProjection,
     PipelineStepsBoundary,
     PipelineStepsCarrier,
 )
+
+
+MAX_INSPECTION_AXES = 8
+MAX_INSPECTION_STEPS = 24
+MAX_INSPECTION_ARTIFACT_OUTPUTS_PER_STEP = 16
 
 
 class ExecutionJobKind(Enum):
@@ -39,18 +52,83 @@ class ExecutionJobKind(Enum):
     EXECUTE = "execute"
 
 
-class ExecutionResponseDefault(Enum):
-    SUBMITTED = "submitted"
+class AgentProgressQueue:
+    def __init__(self) -> None:
+        self.events: list[JsonObject] = []
+
+    def put(self, event) -> None:
+        if isinstance(event, dict):
+            self.events.append(dict(event))
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionResponseView:
-    payload: JsonObject
+class CompileInspectionInput:
+    plate: Path
+    pipeline_source: str
+    axis_filter: tuple[str, ...]
+    configs: ExecutionConfigBundle
+    progress_queue: AgentProgressQueue
 
-    def status(self, fallback: str) -> str:
-        if "status" in self.payload:
-            return str(self.payload["status"])
-        return fallback
+
+class CompileInspectionGatewayABC(ABC):
+    @abstractmethod
+    def compile(self, request: CompileInspectionInput) -> JsonObject:
+        raise NotImplementedError
+
+
+class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
+    def compile(self, request: CompileInspectionInput) -> JsonObject:
+        from openhcs.config_framework.lazy_factory import ensure_global_config_context
+        from openhcs.core.config import GlobalPipelineConfig
+        import openhcs.processing.func_registry as func_registry_module
+        from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+        from openhcs.core.progress import set_progress_queue
+
+        ensure_global_config_context(
+            GlobalPipelineConfig,
+            request.configs.global_pipeline,
+        )
+        with func_registry_module._registry_lock:
+            if not func_registry_module._registry_initialized:
+                func_registry_module._auto_initialize_registry()
+
+        module_name = "openhcs_agent_compile_inspection"
+        module = ModuleType(module_name)
+        module.__file__ = f"<{module_name}>"
+        sys.modules[module_name] = module
+        try:
+            exec(
+                compile(request.pipeline_source, module.__file__, "exec"),
+                module.__dict__,
+            )
+        finally:
+            sys.modules.pop(module_name, None)
+
+        pipeline_boundary = PipelineStepsNamespaceProjection(
+            module.__dict__
+        ).boundary_or_none()
+        if pipeline_boundary is None:
+            raise ValueError(
+                f"Code must define {PipelineSourceExport.PIPELINE_STEPS.value!r}"
+            )
+
+        orchestrator = PipelineOrchestrator(
+            plate_path=request.plate,
+            pipeline_config=request.configs.plate_pipeline,
+            progress_callback=None,
+        )
+        orchestrator.initialize()
+        set_progress_queue(request.progress_queue)
+        try:
+            return dict(
+                orchestrator.compile_pipelines(
+                    pipeline_definition=pipeline_boundary.steps,
+                    well_filter=list(request.axis_filter) or None,
+                    is_zmq_execution=True,
+                )
+            )
+        finally:
+            set_progress_queue(None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +384,11 @@ class PycodifiedPipelineSessionRequest(ExecutionPipelineSessionRequest):
     pipeline_source: str
 
     def __post_init__(self) -> None:
+        if self.identity.execution_plate_id is not None:
+            raise ValueError(
+                "Pycodified source sessions execute plate_id directly; "
+                "execution_plate_id must be None."
+            )
         if self.identity.selected_pipeline_path is not None:
             raise ValueError(
                 "Pycodified source sessions use pipeline_source as the selected "
@@ -343,13 +426,12 @@ class ExecutionJobRecord:
 
     def status(self, response: JsonObject | None = None) -> ExecutionJobStatus:
         payload = self.response if response is None else response
-        response_view = ExecutionResponseView(payload)
         return ExecutionJobStatus(
             schema_version=SCHEMA_VERSION,
             job_id=self.ref.job_id,
             session_id=self.ref.session_id,
             kind=self.ref.kind,
-            status=response_view.status(self.ref.status),
+            status=execution_status_from_response(payload, fallback=self.ref.status),
             uri=self.ref.uri,
             server_execution_id=self.ref.server_execution_id,
             response=payload,
@@ -395,13 +477,12 @@ class ExecutionJobStore:
         response: JsonObject,
     ) -> ExecutionJobRef:
         job_id = f"job-{next(self._counter)}"
-        response_view = ExecutionResponseView(response)
         ref = ExecutionJobRef(
             schema_version=SCHEMA_VERSION,
             job_id=job_id,
             session_id=session_id,
             kind=kind.value,
-            status=response_view.status(ExecutionResponseDefault.SUBMITTED.value),
+            status=execution_status_from_response(response, fallback="submitted"),
             uri=self.job_uri(job_id),
             server_execution_id=_server_execution_id(response),
         )
@@ -471,12 +552,16 @@ class ExecutionSessionService:
         pipeline_service: PipelineAuthoringService,
         config_service: ConfigService,
         client_factory: ExecutionClientFactoryABC | None = None,
+        compile_inspection_gateway: CompileInspectionGatewayABC | None = None,
     ) -> None:
         self._path_policy = path_policy
         self._pipeline_service = pipeline_service
         self._config_service = config_service
         factory = client_factory or ZMQExecutionClientFactory()
         self._client_gateway = ExecutionClientGateway(factory)
+        self._compile_inspection_gateway = (
+            compile_inspection_gateway or InProcessCompileInspectionGateway()
+        )
         self._session_store = ExecutionSessionStore()
         self._job_store = ExecutionJobStore()
 
@@ -512,6 +597,47 @@ class ExecutionSessionService:
         request: PycodifiedPipelineSessionRequest,
     ) -> OrchestratorSessionRef:
         return self._create_session(request)
+
+    def inspect_pipeline_source_artifact_plan(
+        self,
+        request: PycodifiedPipelineSessionRequest,
+        *,
+        axis_filter: tuple[str, ...] = (),
+    ) -> ArtifactPlanInspection:
+        progress_queue = AgentProgressQueue()
+        plate = self._path_policy.assert_readable(request.identity.plate_id)
+        try:
+            compilation = self._compile_inspection_gateway.compile(
+                CompileInspectionInput(
+                    plate=plate,
+                    pipeline_source=request.pipeline_source,
+                    axis_filter=axis_filter,
+                    configs=ExecutionConfigBundle(
+                        global_pipeline=GlobalConfigSelection(
+                            request.global_config_id
+                        ).resolve(self._config_service),
+                        plate_pipeline=PipelineConfigSelection(
+                            request.pipeline_config_id
+                        ).resolve(self._config_service),
+                    ),
+                    progress_queue=progress_queue,
+                )
+            )
+        except Exception as exc:
+            return ArtifactPlanInspection(
+                schema_version=SCHEMA_VERSION,
+                plate_path=str(plate),
+                axis_filter=axis_filter,
+                progress_event_count=len(progress_queue.events),
+                errors=(AgentError.from_exception("compile_inspection_failed", exc),),
+            )
+
+        return artifact_plan_inspection_from_compilation(
+            plate_path=str(plate),
+            axis_filter=axis_filter,
+            compilation=compilation,
+            progress_event_count=len(progress_queue.events),
+        )
 
     def _create_session(
         self,
@@ -578,7 +704,7 @@ class ExecutionSessionService:
         )
 
     def get_job_status(self, job_id: str) -> ExecutionJobStatus:
-        job = self._job(job_id)
+        job = self._job_store.job_record(job_id)
         if job.ref.server_execution_id is None:
             return job.status()
         try:
@@ -620,10 +746,6 @@ class ExecutionSessionService:
             return updated.status()
         return ref
 
-    def _job(self, job_id: str) -> ExecutionJobRecord:
-        return self._job_store.job_record(job_id)
-
-
 def _server_execution_id(response: JsonObject) -> str | None:
     if "execution_id" not in response:
         return None
@@ -631,6 +753,86 @@ def _server_execution_id(response: JsonObject) -> str | None:
     if execution_id is None:
         return None
     return str(execution_id)
+
+
+def artifact_plan_inspection_from_compilation(
+    *,
+    plate_path: str,
+    axis_filter: tuple[str, ...],
+    compilation: JsonObject,
+    progress_event_count: int,
+) -> ArtifactPlanInspection:
+    execution_bundle = compilation["execution_bundle"]
+    compiled_contexts = dict(execution_bundle.runtime_contexts)
+    axes = tuple(sorted(str(axis_id) for axis_id in compiled_contexts.keys()))
+    step_summaries = tuple(
+        _bounded_step_summaries(compiled_contexts, axes[:MAX_INSPECTION_AXES])
+    )
+    return ArtifactPlanInspection(
+        schema_version=SCHEMA_VERSION,
+        plate_path=plate_path,
+        axis_filter=axis_filter,
+        axis_count=len(axes),
+        axes=axes[:MAX_INSPECTION_AXES],
+        truncated_axis_count=max(0, len(axes) - MAX_INSPECTION_AXES),
+        step_count=sum(len(context.step_plans) for context in compiled_contexts.values()),
+        steps=step_summaries,
+        truncated_step_count=max(
+            0,
+            sum(len(context.step_plans) for context in compiled_contexts.values())
+            - len(step_summaries),
+        ),
+        worker_assignments={
+            str(worker): [str(axis_id) for axis_id in axis_ids]
+            for worker, axis_ids in dict(compilation["worker_assignments"]).items()
+        },
+        progress_event_count=progress_event_count,
+    )
+
+
+def _bounded_step_summaries(compiled_contexts, axes: tuple[str, ...]):
+    emitted = 0
+    for axis_id in axes:
+        context = compiled_contexts[axis_id]
+        for step_plan in context.step_plans.values():
+            if emitted >= MAX_INSPECTION_STEPS:
+                return
+            emitted += 1
+            artifact_outputs = tuple(
+                _artifact_summary(plan)
+                for plan in tuple(step_plan.artifact_outputs.values())[
+                    :MAX_INSPECTION_ARTIFACT_OUTPUTS_PER_STEP
+                ]
+            )
+            yield CompiledStepPlanSummary(
+                step_index=int(step_plan.step_index),
+                step_name=str(step_plan.step_name),
+                axis_id=str(step_plan.axis_id),
+                output_dir=_optional_path_text(step_plan.output_dir),
+                execution_groups=tuple(step_plan.execution_groups),
+                artifact_outputs=artifact_outputs,
+                truncated_artifact_output_count=max(
+                    0,
+                    len(step_plan.artifact_outputs)
+                    - MAX_INSPECTION_ARTIFACT_OUTPUTS_PER_STEP,
+                ),
+            )
+
+
+def _artifact_summary(plan) -> ArtifactPlanSummary:
+    paths_by_group = ()
+    if plan.paths_by_group is not None:
+        paths_by_group = tuple(
+            {"group_key": group_key, "path": path}
+            for group_key, path in plan.paths_by_group.items()
+        )
+    return ArtifactPlanSummary(
+        name=str(plan.name),
+        kind=str(plan.kind.value),
+        path=str(plan.path),
+        group_keys=tuple(plan.group_keys),
+        paths_by_group=paths_by_group,
+    )
 
 
 def _optional_path_text(path: Path | None) -> str | None:

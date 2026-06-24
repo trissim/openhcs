@@ -9,7 +9,12 @@ import time
 
 from zmqruntime.messages import MessageFields
 
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,12 +156,40 @@ class ZMQProgressEmitter(ZMQProgressTarget):
                 message=error,
             )
 
-    def emit(self, **kwargs) -> None:
+    def emit(
+        self,
+        *,
+        axis_id: str,
+        step_name: str,
+        phase: ProgressPhase,
+        status: ProgressStatus,
+        percent: float,
+        completed: int,
+        total: int,
+        error: str | None = None,
+        message: str | None = None,
+        total_wells: list[str] | None = None,
+        worker_assignments: dict[str, list[str]] | None = None,
+        step_names: list[str] | None = None,
+    ) -> None:
         event = ProgressEvent(
+            identity=ProgressIdentity(
+                execution_id=self.execution_id,
+                plate_id=self.plate_id,
+                axis_id=axis_id,
+                step_name=step_name,
+            ),
+            phase=phase,
+            status=status,
+            percent=percent,
+            completed=completed,
+            total=total,
             timestamp=time.time(),
             pid=os.getpid(),
-            execution_id=self.execution_id,
-            plate_id=self.plate_id,
-            **kwargs,
+            error=error,
+            message=message,
+            total_wells=total_wells,
+            worker_assignments=worker_assignments,
+            step_names=step_names,
         )
         self.enqueue(event.to_dict())

@@ -8,6 +8,7 @@ import platform
 import re
 import subprocess
 import sys
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from polystore.streaming_constants import StreamingDataType
 from zmqruntime.config import TransportMode as ZMQTransportMode, ZMQConfig
 from zmqruntime.streaming import VisualizerProcessManager
 from zmqruntime.viewer_protocol import (
+    ViewerBatchMessageType,
     ViewerBatchContextWireField,
     ViewerBatchWireField,
     ViewerControlResponseField,
@@ -57,6 +59,20 @@ class ViewerType(Enum):
 
     FIJI = "fiji"
     NAPARI = "napari"
+
+
+class ViewerControlMessageType(Enum):
+    """Shared control-message names consumed by viewer servers."""
+
+    SCREENSHOT = "screenshot"
+    STATE = "state"
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerTypeIdentity:
+    """Inherited viewer identity for runtime protocol records."""
+
+    viewer_type: ViewerType
 
 
 class ViewerPersistenceMode(Enum):
@@ -173,6 +189,7 @@ class NapariLayerKind(Enum):
     IMAGE = "image"
     SHAPES = "shapes"
     POINTS = "points"
+    LABELS = "labels"
 
 
 class FijiPayloadKind(Enum):
@@ -259,10 +276,9 @@ class ViewerHeartbeatPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class ViewerHeartbeatDescriptor:
+class ViewerHeartbeatDescriptor(ViewerTypeIdentity):
     """Viewer-specific fields added to a streaming server pong response."""
 
-    viewer_type: ViewerType
     server_name: str
 
     def apply_to(
@@ -282,15 +298,36 @@ NAPARI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.NAPARI, "NapariViewer")
 FIJI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.FIJI, "FijiViewerServer")
 
 
-@dataclass(frozen=True, slots=True)
-class NapariViewerServerRequest:
-    """Nominal launch request consumed by the Napari viewer server."""
+def viewer_lifecycle_registry_key(
+    name: str,
+    cls: type,
+) -> str:
+    """Derive the lifecycle registry key from the declared detached entrypoint."""
+    del name
+    if "detached_server_entrypoint" not in cls.__dict__:
+        raise TypeError(
+            f"{cls.__name__} must declare detached_server_entrypoint to register "
+            "as a managed viewer lifecycle."
+        )
+    entrypoint = cls.__dict__["detached_server_entrypoint"]
+    return entrypoint.viewer_type.value
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerServerLaunchRequest:
+    """Shared launch request fields for OpenHCS viewer server processes."""
 
     port: int
-    viewer_title: str
-    replace_layers: bool = False
     log_file_path: str | None = None
     transport_mode: ViewerTransportMode = ViewerTransportMode.IPC
+
+
+@dataclass(frozen=True, slots=True)
+class NapariViewerServerRequest(ViewerServerLaunchRequest):
+    """Nominal launch request consumed by the Napari viewer server."""
+
+    viewer_title: str
+    replace_layers: bool = False
 
 
 VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME: Mapping[str, ViewerProcessPlatform] = {
@@ -362,6 +399,17 @@ class ViewerRuntimeEndpoint:
             host=self.host,
             config=self.config,
         )
+
+    def wait_until_released(
+        self,
+        *,
+        timeout: float,
+        poll_interval: float = 0.1,
+    ) -> bool:
+        deadline = time.monotonic() + timeout
+        while self.in_use() and time.monotonic() < deadline:
+            time.sleep(poll_interval)
+        return not self.in_use()
 
     def ping(
         self,
@@ -447,10 +495,9 @@ class DetachedViewerPythonArguments:
 
 
 @dataclass(frozen=True, slots=True)
-class DetachedViewerLaunchRequest:
+class DetachedViewerLaunchRequest(ViewerTypeIdentity):
     """Authoritative detached launch request for a viewer process."""
 
-    viewer_type: ViewerType
     port: int
     python_code: str
     log_file: Path
@@ -504,10 +551,9 @@ class DetachedViewerLaunchRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class DetachedViewerServerEntrypointSpec:
+class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
     """Declared server function used to launch one detached viewer family."""
 
-    viewer_type: ViewerType
     module_name: str
     function_name: str
     extra_imports: tuple[str, ...] = ()
@@ -817,6 +863,7 @@ class ManagedViewerLifecycleMixin(
     """Shared liveness property for viewer process managers."""
 
     __registry_key__ = "viewer_type"
+    __key_extractor__ = staticmethod(viewer_lifecycle_registry_key)
     __skip_if_no_key__ = True
 
     __registry__: ClassVar[dict[str, type["ManagedViewerLifecycleMixin"]]]
@@ -881,6 +928,36 @@ class ManagedViewerLifecycleMixin(
             require_ready=request.require_ready,
         )
 
+    def request_bound_viewer_shutdown(self, timeout: float = 1.0) -> bool:
+        """Ask the viewer currently bound to this endpoint to terminate."""
+        response = ViewerControlMessageRequest(
+            endpoint=self.runtime_endpoint,
+            message_type="force_shutdown",
+            timeout=timeout,
+        ).send()
+        return response.succeeded()
+
+    def prepare_fresh_viewer_start(self) -> None:
+        """Ensure this viewer endpoint is not backed by a previous run."""
+        if not self.runtime_endpoint.in_use():
+            return
+
+        if self.check_connected_viewer():
+            if not self.request_bound_viewer_shutdown():
+                raise RuntimeError(
+                    f"{self.viewer_process_label} viewer on port {self.required_port} "
+                    "did not acknowledge shutdown before a fresh start."
+                )
+            if self.runtime_endpoint.wait_until_released(timeout=3.0):
+                return
+
+        self.runtime_endpoint.release_bound_ports()
+        if not self.runtime_endpoint.wait_until_released(timeout=2.0):
+            raise RuntimeError(
+                f"{self.viewer_process_label} viewer on port {self.required_port} "
+                "remained bound after forced endpoint release."
+            )
+
     def existing_viewer_is_ready(self) -> bool:
         request = ViewerControlPingRequest.from_mode(
             mode=ViewerControlPingMode.EXISTING_VIEWER,
@@ -892,7 +969,7 @@ class ManagedViewerLifecycleMixin(
         )
 
     def wait_for_ready(self, timeout: float = 10.0) -> bool:
-        """Implement VisualizerProcessManager readiness through the viewer endpoint."""
+        """Satisfy zmqruntime's process-manager readiness contract."""
         return self.runtime_endpoint.wait_ready(
             timeout=timeout,
             require_ready=True,
@@ -924,6 +1001,27 @@ class ManagedViewerLifecycleMixin(
 
     def get_launch_env(self) -> dict[str, str]:
         return ViewerQtEnvironmentPolicy().apply_to(dict(os.environ))
+
+    def cleanup_viewer_client(self) -> None:
+        """Release client-side resources before forced viewer termination."""
+
+    def force_stop(self, timeout: float = 5.0) -> None:
+        """Terminate the viewer process regardless of persistence policy."""
+        with self._lock:
+            self.cleanup_viewer_client()
+            if self.process is not None:
+                killed = ViewerProcessHandle.from_process(self.process).terminate(
+                    timeout=timeout,
+                    kill_timeout=2.0,
+                )
+                if killed:
+                    logging.getLogger(type(self).__module__).warning(
+                        "%s viewer required force kill during shutdown",
+                        self.viewer_process_label,
+                    )
+                self.process = None
+            self.runtime_endpoint.release_bound_ports()
+            self.lifecycle_state.mark_stopped()
 
     def start(self, detached: bool = True) -> subprocess.Popen[bytes]:
         self.start_viewer(async_mode=False)
@@ -975,6 +1073,11 @@ class ManagedViewerLifecycleMixin(
                 error,
             )
             return False
+
+    def clear_viewer_state(self) -> bool:
+        """Clear accumulated viewer state for a new pipeline run."""
+
+        return self.send_control_message("clear_state")
 
     @property
     def is_running(self) -> bool:

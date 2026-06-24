@@ -63,6 +63,9 @@ from openhcs.pyqt_gui.widgets.plate_manager import (
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     dispatch_widget_action,
 )
+from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
+    commit_focused_widget_edits,
+)
 
 
 ORCHESTRATOR_DOCUMENT_TITLE = "Plate manager orchestrator config"
@@ -577,6 +580,7 @@ class PlateManagerActionProvider(
                 action_enum=PlateManagerAction,
                 routes=self._manager.ACTION_ROUTES,
                 async_runner=self._manager.service_adapter.execute_async_operation,
+                before_dispatch=commit_focused_widget_edits,
             )
         except Exception as exc:
             return self._invoke_error(

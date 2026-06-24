@@ -7,6 +7,7 @@ from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
 
 from openhcs.runtime.viewer_protocol import (
+    NapariLayerKind,
     ViewerComponentValueOrdering,
 )
 from openhcs.runtime.napari_streaming_handlers import (
@@ -14,23 +15,19 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariAxisPresentation,
     NapariComponentGroupStore,
     NapariDimensionLayerState,
+    NapariImageLayerPresentationPolicy,
     NapariLayerBatchDebouncePolicy,
     NapariLayerUpdateAuthority,
     NapariLayerRouteStateStore,
     NapariShapeLabelRasterizer,
     NapariStreamLayerAddress,
     NapariStreamLayerItem,
-    NapariStreamingDataTypeHandler,
-    build_napari_streaming_data_type_handlers,
-    napari_streaming_data_type_handler,
 )
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
     ViewerComponentLayout,
-    ViewerComponentLabelAuthority,
     ViewerComponentMetadataNormalizer,
     ViewerComponentNameMetadata,
-    ViewerComponentNameMetadataWirePayload,
     ViewerComponentValueDomainPayload,
     ViewerComponentCoordinateAuthority,
     ViewerDisplayAxisDomain,
@@ -43,24 +40,14 @@ from openhcs.runtime.viewer_component_system import (
 
 
 def _component_name_metadata(payload, context="test component metadata"):
-    return ViewerComponentNameMetadata.from_wire_payload(
-        ViewerComponentNameMetadataWirePayload.from_mapping(
-            payload,
-            context=context,
-        ),
+    return ViewerComponentNameMetadata.from_wire_mapping(
+        payload,
         context=context,
     )
 
 
 def _component_value_domain(payload, context="test component value domain"):
     return ViewerComponentValueDomainPayload.from_wire_mapping(payload, context=context)
-
-
-def _handler_marker(name: str):
-    def marker(*args, **kwargs):
-        return name, args, kwargs
-
-    return marker
 
 
 def _layer_item(
@@ -85,17 +72,25 @@ def _axis_presentation(
     component_values: dict | None = None,
     payload_axis_labels: tuple[str, ...] = (),
     axis_offsets: tuple[int, ...] | None = None,
+    scalar_component_values: dict | None = None,
 ) -> NapariAxisPresentation:
     if component_values is None:
         component_values = {component: [1] for component in projected_axis_components}
     if axis_offsets is None:
         axis_offsets = tuple(0 for _ in projected_axis_components)
+    if scalar_component_values is None:
+        scalar_component_values = {}
+    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.empty()
     return NapariAxisPresentation(
-        layer_key=layer_key,
-        axis_projection=ViewerLayerAxisProjection(
+        entries=component_axis_semantics.entries,
+        layout=component_axis_semantics.layout,
+        route_key=layer_key,
+        projection=ViewerLayerAxisProjection(
             projected_axis_components=projected_axis_components,
             component_values=component_values,
+            routed_component_values=component_values,
             axis_offsets=axis_offsets,
+            scalar_component_values=scalar_component_values,
         ),
         payload_axis_labels=payload_axis_labels,
     )
@@ -104,64 +99,49 @@ def _axis_presentation(
 def _axis_projection(
     projected_axis_components,
     component_values,
+    scalar_component_values=None,
 ) -> ViewerLayerAxisProjection:
+    if scalar_component_values is None:
+        scalar_component_values = {}
     return ViewerLayerAxisProjection(
         projected_axis_components=tuple(projected_axis_components),
         component_values=component_values,
+        routed_component_values=component_values,
         axis_offsets=tuple(0 for _ in projected_axis_components),
+        scalar_component_values=scalar_component_values,
     )
 
 
-def test_build_napari_streaming_data_type_handlers_declares_full_axis() -> None:
-    build_image = _handler_marker("build_image")
-    create_image = _handler_marker("create_image")
-    build_shapes = _handler_marker("build_shapes")
-    create_shapes = _handler_marker("create_shapes")
-    build_points = _handler_marker("build_points")
-    create_points = _handler_marker("create_points")
+def test_napari_viewer_state_projection_reports_shape_payload_occupancy():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
-    handlers = build_napari_streaming_data_type_handlers(
-        build_image_data=build_image,
-        create_image_layer=create_image,
-        build_shapes_data=build_shapes,
-        create_shapes_layer=create_shapes,
-        build_points_data=build_points,
-        create_points_layer=create_points,
+    summary = napari_viewer_server.NapariViewerStateProjection.payload_summary_for(
+        _layer_item(
+            {"well": "A14", "site": 1, "channel": 1},
+            data=[{"type": "polygon"}, {"type": "polygon"}],
+            stream_layer_data_type=StreamingDataType.SHAPES,
+        )
     )
 
-    assert set(handlers) == {
-        StreamingDataType.IMAGE,
-        StreamingDataType.SHAPES,
-        StreamingDataType.POINTS,
-    }
-    assert handlers[StreamingDataType.IMAGE] == NapariStreamingDataTypeHandler(
-        handled_stream_data_type=StreamingDataType.IMAGE,
-        build_nd_data=build_image,
-        create_layer=create_image,
-    )
-    assert handlers[StreamingDataType.SHAPES].build_nd_data is build_shapes
-    assert handlers[StreamingDataType.POINTS].create_layer is create_points
+    assert summary["payload_type"] == "list"
+    assert summary["item_count"] == 2
+    assert summary["nonzero_count"] == 2
 
 
-def test_napari_streaming_data_type_handler_accepts_string_data_type() -> None:
-    handlers = build_napari_streaming_data_type_handlers(
-        build_image_data=_handler_marker("build_image"),
-        create_image_layer=_handler_marker("create_image"),
-        build_shapes_data=_handler_marker("build_shapes"),
-        create_shapes_layer=_handler_marker("create_shapes"),
-        build_points_data=_handler_marker("build_points"),
-        create_points_layer=_handler_marker("create_points"),
+def test_napari_viewer_state_projection_reports_empty_shape_payloads_as_zero():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    summary = napari_viewer_server.NapariViewerStateProjection.payload_summary_for(
+        _layer_item(
+            {"well": "A14", "site": 1, "channel": 1},
+            data=[],
+            stream_layer_data_type=StreamingDataType.SHAPES,
+        )
     )
 
-    assert (
-        napari_streaming_data_type_handler(handlers, "image").handled_stream_data_type
-        is StreamingDataType.IMAGE
-    )
-
-
-def test_napari_streaming_data_type_handler_fails_loudly_for_missing_axis() -> None:
-    with pytest.raises(ValueError, match="No Napari streaming handler registered"):
-        napari_streaming_data_type_handler({}, StreamingDataType.IMAGE)
+    assert summary["payload_type"] == "list"
+    assert summary["item_count"] == 0
+    assert summary["nonzero_count"] == 0
 
 
 class _FakeLayerList(list):
@@ -176,7 +156,16 @@ class _FakeLayerList(list):
 class _FakeViewer:
     def __init__(self):
         self.layers = _FakeLayerList()
-        self.dims = type("Dims", (), {"axis_labels": None, "ndim": 2})()
+        self.dims = type(
+            "Dims",
+            (),
+            {
+                "axis_labels": None,
+                "current_step": (3, 0, 0, 0),
+                "ndim": 4,
+            },
+        )()
+        self.text_overlay = type("TextOverlay", (), {"text": ""})()
         self.calls = []
 
     def add_image(self, data, *, name, **kwargs):
@@ -187,6 +176,9 @@ class _FakeViewer:
 
     def add_points(self, data, *, name, **kwargs):
         return self._add_layer("points", data, name, kwargs)
+
+    def add_labels(self, data, *, name, **kwargs):
+        return self._add_layer("labels", data, name, kwargs)
 
     def _add_layer(self, layer_type, data, name, kwargs):
         layer = type("Layer", (), {"name": name, "data": data, "kwargs": kwargs})()
@@ -219,23 +211,32 @@ def test_napari_layer_update_authority_replaces_existing_image_without_global_ax
     layers = {}
     authority = NapariLayerUpdateAuthority()
 
-    first = authority.create_or_update_image(
-        viewer,
-        layers,
-        "route-nuclei",
-        "Nuclei",
-        "image-1",
-        colormap=None,
-        axis_labels=("z", "y", "x"),
+    first = authority.create_or_update(
+        layer_kind=NapariLayerKind.IMAGE,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-nuclei",
+        layer_name="Nuclei",
+        data="image-1",
+        layer_kwargs={
+            **NapariImageLayerPresentationPolicy.layer_kwargs("image-1", None),
+            "axis_labels": ("z", "y", "x"),
+        },
     )
-    second = authority.create_or_update_image(
-        viewer,
-        layers,
-        "route-nuclei",
-        "Nuclei",
-        "image-2",
-        colormap="green",
-        axis_labels=("c", "y", "x"),
+    second = authority.create_or_update(
+        layer_kind=NapariLayerKind.IMAGE,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-nuclei",
+        layer_name="Nuclei",
+        data="image-2",
+        layer_kwargs={
+            **NapariImageLayerPresentationPolicy.layer_kwargs(
+                "image-2",
+                "green",
+            ),
+            "axis_labels": ("c", "y", "x"),
+        },
     )
 
     assert first not in viewer.layers
@@ -268,13 +269,17 @@ def test_napari_layer_update_authority_preserves_user_selected_layer():
     layers = {}
     authority = NapariLayerUpdateAuthority()
 
-    new_layer = authority.create_or_update_image(
-        viewer,
-        layers,
-        "route-overlay",
-        "Overlay",
-        "image",
-        colormap=None,
+    new_layer = authority.create_or_update(
+        layer_kind=NapariLayerKind.IMAGE,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-overlay",
+        layer_name="Overlay",
+        data="image",
+        layer_kwargs=NapariImageLayerPresentationPolicy.layer_kwargs(
+            "image",
+            None,
+        ),
     )
 
     assert new_layer in viewer.layers
@@ -286,22 +291,30 @@ def test_napari_layer_update_authority_transfers_active_replaced_layer():
     layers = {}
     authority = NapariLayerUpdateAuthority()
 
-    first = authority.create_or_update_image(
-        viewer,
-        layers,
-        "route-nuclei",
-        "Nuclei",
-        "image-1",
-        colormap=None,
+    first = authority.create_or_update(
+        layer_kind=NapariLayerKind.IMAGE,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-nuclei",
+        layer_name="Nuclei",
+        data="image-1",
+        layer_kwargs=NapariImageLayerPresentationPolicy.layer_kwargs(
+            "image-1",
+            None,
+        ),
     )
     viewer.layers.selection.active = first
-    second = authority.create_or_update_image(
-        viewer,
-        layers,
-        "route-nuclei",
-        "Nuclei",
-        "image-2",
-        colormap=None,
+    second = authority.create_or_update(
+        layer_kind=NapariLayerKind.IMAGE,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-nuclei",
+        layer_name="Nuclei",
+        data="image-2",
+        layer_kwargs=NapariImageLayerPresentationPolicy.layer_kwargs(
+            "image-2",
+            None,
+        ),
     )
 
     assert first not in viewer.layers
@@ -313,13 +326,18 @@ def test_napari_layer_update_authority_marks_color_images_as_rgb():
     layers = {}
     authority = NapariLayerUpdateAuthority()
 
-    layer = authority.create_or_update_image(
-        viewer,
-        layers,
-        "route-overlay",
-        "Overlay",
-        np.zeros((2, 16, 16, 3), dtype=np.uint8),
-        colormap="green",
+    image = np.zeros((2, 16, 16, 3), dtype=np.uint8)
+    layer = authority.create_or_update(
+        layer_kind=NapariLayerKind.IMAGE,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-overlay",
+        layer_name="Overlay",
+        data=image,
+        layer_kwargs=NapariImageLayerPresentationPolicy.layer_kwargs(
+            image,
+            "green",
+        ),
     )
 
     assert layer in viewer.layers
@@ -330,7 +348,7 @@ def test_napari_display_pipeline_applies_dimension_labels_to_layer_route_state()
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
 
-    axis_labels = pipeline.dimension_labels.store.apply(
+    axis_labels = pipeline.dimension_label_store.apply(
         _axis_presentation(
             layer_key="route-labels",
             projected_axis_components=("channel",),
@@ -350,7 +368,7 @@ def test_napari_display_pipeline_labels_payload_local_image_planes():
     policy = napari_viewer_server.NapariImagePayloadAxisLabelPolicy()
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
 
-    axis_labels = pipeline.dimension_labels.store.apply(
+    axis_labels = pipeline.dimension_label_store.apply(
         _axis_presentation(
             layer_key="route-stack",
             projected_axis_components=("well",),
@@ -364,12 +382,55 @@ def test_napari_display_pipeline_labels_payload_local_image_planes():
     assert policy.axis_labels(np.zeros((16, 16, 3))) == ()
 
 
+def test_napari_image_display_projects_singleton_rgb_stack_before_axis_labels():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    item = _layer_item(
+        {"well": "A01", "site": 1, "channel": 2},
+        data=np.zeros((1, 16, 16, 3), dtype=np.float32),
+    )
+
+    projected_items = (
+        napari_viewer_server.NapariImageLayerDisplayHandler
+        ._project_layer_items_to_image_domain([item])
+    )
+    projected_data = projected_items[0].data
+
+    assert projected_data.shape == (16, 16, 3)
+    assert projected_items[0].address is item.address
+    assert napari_viewer_server.NapariImagePayloadAxisLabelPolicy.axis_labels(
+        projected_data
+    ) == ()
+
+
+def test_napari_display_pipeline_labels_collapsed_route_components():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
+
+    axis_labels = pipeline.dimension_label_store.apply(
+        _axis_presentation(
+            layer_key="route-stack",
+            projected_axis_components=("site",),
+            component_values={"site": [1, 2]},
+            scalar_component_values={
+                "channel": [1],
+                "timepoint": [1],
+                "z_index": [1],
+            },
+        )
+    )
+
+    state = pipeline.server.layer_route_state.dimension_state_for("route-stack")
+    assert axis_labels == ("site", "y", "x")
+    assert state.labels == {"site": ["Site 1", "Site 2"]}
+    assert state.scalar_labels == ("Ch1: DAPI",)
+
+
 def test_napari_display_pipeline_rejects_nonsemantic_payload_axis_labels() -> None:
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
 
     with pytest.raises(TypeError, match="semantic axis-name strings"):
-        pipeline.dimension_labels.store.apply(
+        pipeline.dimension_label_store.apply(
             _axis_presentation(
                 layer_key="route-labels",
                 projected_axis_components=("channel",),
@@ -379,7 +440,7 @@ def test_napari_display_pipeline_rejects_nonsemantic_payload_axis_labels() -> No
         )
 
 
-def test_napari_display_pipeline_projects_route_axes_into_viewer_domain():
+def test_napari_display_pipeline_projects_route_axes_locally():
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
     component_value_domain = _component_value_domain(
@@ -426,10 +487,11 @@ def test_napari_display_pipeline_projects_route_axes_into_viewer_domain():
     assert second.projected_axis_components == ("channel", "site")
     assert second.component_values == {"channel": [4], "site": [1, 2]}
     assert second.axis_offsets == (3, 0)
+    assert second.scalar_component_values == {}
     assert second.translate() == (3.0, 0.0, 0.0, 0.0)
 
 
-def test_napari_axis_projector_uses_declared_domain_and_drops_singletons():
+def test_napari_axis_projector_validates_declared_domain_and_drops_route_singletons():
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
     projection = ViewerLayerAxisProjector().project(
@@ -446,7 +508,9 @@ def test_napari_axis_projector_uses_declared_domain_and_drops_singletons():
 
     assert projection.projected_axis_components == ("channel",)
     assert projection.component_values == {"channel": [4]}
+    assert projection.routed_component_values == {"channel": [4]}
     assert projection.axis_offsets == (3,)
+    assert projection.scalar_component_values == {"z_index": [1]}
 
 
 def test_napari_axis_projector_keeps_singleton_route_in_shared_viewer_domain():
@@ -457,16 +521,36 @@ def test_napari_axis_projector_keeps_singleton_route_in_shared_viewer_domain():
             projected_axis_components=("site", "channel"),
             route_component_values={"site": [1, 2], "channel": [4]},
             viewer_component_values={"site": [1, 2], "channel": [1, 2, 3, 4, 5]},
-            declared_component_values={"site": [1, 2], "channel": [4]},
+            declared_component_values={"site": [1, 2], "channel": [1, 2, 3, 4, 5]},
         )
     )
 
     assert projection.projected_axis_components == ("site", "channel")
     assert projection.component_values == {"site": [1, 2], "channel": [4]}
+    assert projection.routed_component_values == {"site": [1, 2], "channel": [4]}
     assert projection.axis_offsets == (0, 3)
+    assert projection.scalar_component_values == {}
 
 
-def test_napari_axis_projector_uses_declared_domain_for_noncontiguous_routes():
+def test_napari_axis_projector_preserves_route_offset_in_shared_viewer_domain():
+    pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    projection = ViewerLayerAxisProjector().project(
+        ViewerLayerAxisProjectionRequest.from_component_values(
+            projected_axis_components=("site", "channel"),
+            route_component_values={"site": [1, 2], "channel": [4, 5]},
+            viewer_component_values={"site": [1, 2], "channel": [1, 2, 3, 4, 5]},
+            declared_component_values={"site": [1, 2], "channel": [1, 2, 3, 4, 5]},
+        )
+    )
+
+    assert projection.projected_axis_components == ("site", "channel")
+    assert projection.component_values == {"site": [1, 2], "channel": [4, 5]}
+    assert projection.axis_offsets == (0, 3)
+    assert projection.translate() == (0.0, 3.0, 0.0, 0.0)
+
+
+def test_napari_axis_projector_uses_route_domain_for_noncontiguous_routes():
     pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
     projection = ViewerLayerAxisProjector().project(
@@ -479,8 +563,29 @@ def test_napari_axis_projector_uses_declared_domain_for_noncontiguous_routes():
     )
 
     assert projection.projected_axis_components == ("channel",)
-    assert projection.component_values == {"channel": [1, 2, 3, 4, 5]}
+    assert projection.component_values == {"channel": [1, 3]}
+    assert projection.routed_component_values == {"channel": [1, 3]}
     assert projection.axis_offsets == (0,)
+    assert projection.scalar_component_values == {}
+
+
+def test_napari_axis_projector_keeps_route_domain_for_noncontiguous_shared_axis():
+    pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    projection = ViewerLayerAxisProjector().project(
+        ViewerLayerAxisProjectionRequest.from_component_values(
+            projected_axis_components=("channel",),
+            route_component_values={"channel": [1, 2, 3, 5]},
+            viewer_component_values={"channel": [1, 2, 3, 4, 5]},
+            declared_component_values={"channel": [1, 2, 3, 4, 5]},
+        )
+    )
+
+    assert projection.projected_axis_components == ("channel",)
+    assert projection.component_values == {"channel": [1, 2, 3, 5]}
+    assert projection.routed_component_values == {"channel": [1, 2, 3, 5]}
+    assert projection.axis_offsets == (0,)
+    assert projection.scalar_component_values == {}
 
 
 def test_napari_axis_projector_requires_declared_domain():
@@ -498,7 +603,6 @@ def test_napari_axis_projector_requires_declared_domain():
 
 
 def test_napari_component_name_metadata_merges_without_erasing_values():
-    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     metadata = _component_name_metadata(
         {
             "channel": {"1": "OrigDNA", "4": "OrigActin_Golgi_Membrane"},
@@ -506,11 +610,10 @@ def test_napari_component_name_metadata_merges_without_erasing_values():
         }
     )
 
-    napari_viewer_server.NapariComponentNameMetadataMerge.merge_into(
-        metadata,
+    metadata.merge(
         _component_name_metadata(
             {"channel": {"1": "OrigDNA"}, "well": {"B13": None}},
-        ),
+        )
     )
 
     assert metadata.to_wire_mapping() == {
@@ -558,7 +661,7 @@ def test_napari_display_pipeline_applies_active_route_axis_labels_to_viewer():
     )
     server.layer_route_state.set_active_dimension_label_route("nuclei")
 
-    pipeline.dimension_labels.setup_for_layer("nuclei")
+    pipeline.dimension_label_overlay.setup_for_layer("nuclei")
 
     assert server.viewer.dims.axis_labels == ("channel", "y", "x")
     assert server.viewer.text_overlay.text == "Ch1: DAPI"
@@ -604,10 +707,209 @@ def test_napari_display_pipeline_offsets_viewer_steps_for_route_local_labels():
     )
     server.layer_route_state.set_active_dimension_label_route("spots")
 
-    pipeline.dimension_labels.setup_for_layer("spots")
+    pipeline.dimension_label_overlay.setup_for_layer("spots")
 
     assert server.viewer.dims.axis_labels == ("channel", "site", "y", "x")
     assert server.viewer.text_overlay.text == "Ch4 | Site 2"
+
+
+def test_napari_display_pipeline_includes_collapsed_component_labels_in_overlay():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    class FakeSelection:
+        active = None
+
+    class FakeLayers:
+        selection = FakeSelection()
+
+    class FakeDims:
+        axis_labels = None
+        current_step = (1, 0, 0)
+        ndim = 3
+
+    class FakeTextOverlay:
+        text = ""
+
+    class FakeViewer:
+        layers = FakeLayers()
+        dims = FakeDims()
+        text_overlay = FakeTextOverlay()
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = FakeViewer()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    server.layer_route_state.set_dimension_state(
+        "rna",
+        NapariDimensionLayerState(
+            labels={"site": ["Site 1", "Site 2"]},
+            scalar_labels=("Ch4",),
+            presentation=_axis_presentation(
+                layer_key="rna",
+                projected_axis_components=("site",),
+                component_values={"site": [1, 2]},
+                scalar_component_values={"channel": [4]},
+            ),
+        ),
+    )
+    server.layer_route_state.set_active_dimension_label_route("rna")
+
+    pipeline.dimension_label_overlay.setup_for_layer("rna")
+
+    assert server.viewer.dims.axis_labels == ("site", "y", "x")
+    assert server.viewer.text_overlay.text == "Ch4 | Site 2"
+
+
+def test_napari_display_pipeline_uses_updated_route_when_selected_route_ndim_mismatches():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    selected_layer = object()
+    updated_layer = object()
+
+    class FakeSelection:
+        active = selected_layer
+
+    class FakeLayers:
+        selection = FakeSelection()
+
+    class FakeDims:
+        axis_labels = None
+        current_step = (1, 4, 0, 0)
+        ndim = 4
+
+    class FakeTextOverlay:
+        text = ""
+
+    class FakeViewer:
+        layers = FakeLayers()
+        dims = FakeDims()
+        text_overlay = FakeTextOverlay()
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = FakeViewer()
+    server.layer_route_state.set_layer("identify-primary", selected_layer)
+    server.layer_route_state.set_dimension_state(
+        "identify-primary",
+        NapariDimensionLayerState(
+            labels={"site": ["Site 1", "Site 2"]},
+            presentation=_axis_presentation(
+                layer_key="identify-primary",
+                projected_axis_components=("site",),
+                component_values={"site": [1, 2]},
+            ),
+        ),
+    )
+    server.layer_route_state.set_layer("measure-colocalization", updated_layer)
+    server.layer_route_state.set_dimension_state(
+        "measure-colocalization",
+        NapariDimensionLayerState(
+            labels={
+                "site": ["Site 1", "Site 2"],
+                "channel": ["Ch1", "Ch2", "Ch3", "Ch4", "Ch5"],
+            },
+            presentation=_axis_presentation(
+                layer_key="measure-colocalization",
+                projected_axis_components=("site", "channel"),
+                component_values={
+                    "site": [1, 2],
+                    "channel": [1, 2, 3, 4, 5],
+                },
+            ),
+        ),
+    )
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    pipeline.dimension_label_overlay.setup_for_layer("measure-colocalization")
+
+    assert server.layer_route_state.active_dimension_label_route == (
+        "measure-colocalization"
+    )
+    assert server.viewer.dims.axis_labels == ("site", "channel", "y", "x")
+    assert server.viewer.text_overlay.text == "Site 2 | Ch5"
+
+
+def test_napari_display_pipeline_falls_back_when_selected_route_lacks_current_step_labels():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    selected_layer = object()
+    fallback_layer = object()
+
+    class FakeSelection:
+        active = selected_layer
+
+    class FakeLayers:
+        selection = FakeSelection()
+
+    class FakeDims:
+        axis_labels = None
+        current_step = (0, 0, 1, 0, 0)
+        ndim = 5
+
+    class FakeTextOverlay:
+        text = ""
+
+    class FakeViewer:
+        layers = FakeLayers()
+        dims = FakeDims()
+        text_overlay = FakeTextOverlay()
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = FakeViewer()
+    server.layer_route_state.set_layer("identify-primary", selected_layer)
+    server.layer_route_state.set_dimension_state(
+        "identify-primary",
+        NapariDimensionLayerState(
+            labels={
+                "well": ["A14", "B13"],
+                "site": ["Site 1", "Site 2"],
+                "channel": ["Ch1: OrigDNA"],
+            },
+            presentation=_axis_presentation(
+                layer_key="identify-primary",
+                projected_axis_components=("well", "site", "channel"),
+                component_values={
+                    "well": ["A14", "B13"],
+                    "site": [1, 2],
+                    "channel": [1],
+                },
+            ),
+        ),
+    )
+    server.layer_route_state.set_layer("measure-colocalization", fallback_layer)
+    server.layer_route_state.set_dimension_state(
+        "measure-colocalization",
+        NapariDimensionLayerState(
+            labels={
+                "well": ["A14", "B13"],
+                "site": ["Site 1", "Site 2"],
+                "channel": [
+                    "Ch1: OrigDNA",
+                    "Ch2: OrigER",
+                    "Ch3: OrigRNA",
+                    "Ch4: OrigActin_Golgi_Membrane",
+                    "Ch5: OrigMito",
+                ],
+            },
+            presentation=_axis_presentation(
+                layer_key="measure-colocalization",
+                projected_axis_components=("well", "site", "channel"),
+                component_values={
+                    "well": ["A14", "B13"],
+                    "site": [1, 2],
+                    "channel": [1, 2, 3, 4, 5],
+                },
+            ),
+        ),
+    )
+    server.layer_route_state.set_active_dimension_label_route("identify-primary")
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    pipeline.dimension_label_overlay._update_overlay()
+
+    assert server.viewer.dims.axis_labels == ("well", "site", "channel", "y", "x")
+    assert server.viewer.text_overlay.text == "A14 | Site 1 | Ch2: OrigER"
 
 
 def test_napari_display_pipeline_rejects_axis_labels_for_wrong_viewer_ndim():
@@ -651,7 +953,7 @@ def test_napari_display_pipeline_rejects_axis_labels_for_wrong_viewer_ndim():
     )
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
 
-    pipeline.dimension_labels.setup_for_layer("labels")
+    pipeline.dimension_label_overlay.setup_for_layer("labels")
 
     assert server.viewer.dims.axis_labels == (
         "well",
@@ -734,18 +1036,13 @@ def test_napari_display_pipeline_registers_recreated_labels_before_selection_res
         }
     ]
 
-    pipeline.update_shapes_layer(
-        napari_viewer_server.NapariLayerTypedUpdateRequest(
-            layer_key=route_key,
-            layer_items=[
-                _layer_item({}, data=shapes, stream_layer_data_type=StreamingDataType.SHAPES)
-            ],
-            axis_projection=ViewerLayerAxisProjection(
-                projected_axis_components=(),
-                component_values={},
-                axis_offsets=(),
-            ),
-        )
+    pipeline.display_layer_batch(
+        layer_key=route_key,
+        items=[
+            _layer_item({}, data=shapes, stream_layer_data_type=StreamingDataType.SHAPES)
+        ],
+        display_payload=ViewerComponentAxisSemanticsAuthority.empty(),
+        component_names_metadata=ViewerComponentNameMetadata.empty(),
     )
 
     assert registration_observed == [True]
@@ -761,7 +1058,10 @@ def test_napari_viewer_clear_state_resets_accumulated_axis_domains():
     server.component_values = ViewerRouteComponentValueTracker()
     server.component_values.update("old", ["well"], [_layer_item({"well": "A14"})])
     server.display_axis_domain = ViewerDisplayAxisDomain()
-    server.display_axis_domain.update(["well"], [_layer_item({"well": "A14"})])
+    server.display_axis_domain.record_display_axis_values(
+        ["well"],
+        [_layer_item({"well": "A14"})],
+    )
     server.component_name_metadata = _component_name_metadata({"well": {"A14": "A14"}})
     server.layer_batch_processor_debounce_policy = NapariLayerBatchDebouncePolicy(
         delay_ms=123
@@ -773,10 +1073,10 @@ def test_napari_viewer_clear_state_resets_accumulated_axis_domains():
     server.clear_accumulated_stream_state()
 
     assert len(server.component_groups) == 0
-    assert server.component_values.domain.values_for(("old", ("well",)), ["well"]) == {
+    assert server.component_values.values_for(("old", ("well",)), ["well"]) == {
         "well": []
     }
-    assert server.display_axis_domain.values_for(["well"]) == {"well": []}
+    assert server.display_axis_domain.display_axis_values_for(["well"]) == {"well": []}
     assert server.component_name_metadata.to_wire_mapping() == {}
     assert server.batch_processors.debounce_policy.delay_ms == 123
 
@@ -810,22 +1110,33 @@ def test_napari_layer_update_authority_declares_shapes_and_points_kwargs():
     layers = {}
     authority = NapariLayerUpdateAuthority()
 
-    shapes = authority.create_or_update_shapes(
-        viewer,
-        layers,
-        "route-rois",
-        "ROIs",
-        shapes_data=[[[0, 0], [1, 1]]],
-        shape_types=["polygon"],
-        properties={"id": [1]},
+    shapes = authority.create_or_update(
+        layer_kind=NapariLayerKind.SHAPES,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-rois",
+        layer_name="ROIs",
+        data=[[[0, 0], [1, 1]]],
+        layer_kwargs={
+            "shape_type": ["polygon"],
+            "properties": {"id": [1]},
+            "edge_color": "red",
+            "face_color": "transparent",
+            "edge_width": 2,
+        },
     )
-    points = authority.create_or_update_points(
-        viewer,
-        layers,
-        "route-spots",
-        "Spots",
-        points_data=[[0, 0]],
-        properties={"id": [2]},
+    points = authority.create_or_update(
+        layer_kind=NapariLayerKind.POINTS,
+        viewer=viewer,
+        layers=layers,
+        route_key="route-spots",
+        layer_name="Spots",
+        data=[[0, 0]],
+        layer_kwargs={
+            "properties": {"id": [2]},
+            "face_color": "green",
+            "size": 3,
+        },
     )
 
     assert layers == {"route-rois": shapes, "route-spots": points}
@@ -904,25 +1215,25 @@ def test_napari_component_display_coordinator_splits_image_shape_roles():
         "component_modes": {"well": "stack"},
         "component_order": ["well"],
     }
+    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
+        ViewerMappingDisplayConfigInput(display_config),
+        _component_value_domain({"well": ["A01"]}),
+    )
 
     for data in (np.zeros((16, 16)), np.zeros((4, 16, 16, 3))):
         coordinator.display(
-            napari_viewer_server.NapariComponentAwareDisplayRequest.from_stream_layer_context(
-                data=data,
-                stream_layer_context=napari_viewer_server.NapariStreamLayerContext(
-                    component_axis_semantics=ViewerComponentAxisSemanticsAuthority.from_display_config(
-                        ViewerMappingDisplayConfigInput(display_config),
-                        _component_value_domain({"well": ["A01"]}),
-                    ),
-                    producer=producer,
-                    address=NapariStreamLayerAddress(
-                        components={"well": "A01"},
-                        path="/tmp/A01.tif",
-                        stream_layer_data_type=StreamingDataType.IMAGE,
-                    ),
+            data=data,
+            stream_layer_context=napari_viewer_server.NapariStreamLayerContext(
+                entries=component_axis_semantics.entries,
+                layout=component_axis_semantics.layout,
+                producer=producer,
+                address=NapariStreamLayerAddress(
+                    components={"well": "A01"},
+                    path="/tmp/A01.tif",
+                    stream_layer_data_type=StreamingDataType.IMAGE,
                 ),
-                server=server,
-            )
+            ),
+            server=server,
         )
 
     assert len(server.component_groups) == 2
@@ -931,6 +1242,72 @@ def test_napari_component_display_coordinator_splits_image_shape_roles():
     assert sorted(server.layer_route_state.layer_titles.values()) == [
         "5. OverlayOutlines",
         "5. OverlayOutlines RGB stack",
+    ]
+
+
+def test_napari_component_display_coordinator_projects_singleton_rgb_stack_before_routing():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    class _FakeDisplayPipeline:
+        def __init__(self):
+            self.scheduled = []
+
+        def schedule_layer_update(
+            self,
+            layer_key,
+            data_type,
+            component_axis_semantics,
+        ):
+            self.scheduled.append(
+                (layer_key, data_type, component_axis_semantics)
+            )
+
+    class _FakeServer:
+        def __init__(self):
+            self.viewer = _FakeViewer()
+            self.layer_route_state = NapariLayerRouteStateStore.empty()
+            self.display_pipeline = _FakeDisplayPipeline()
+            self.component_groups = NapariComponentGroupStore()
+            self.replace_layers = False
+
+    server = _FakeServer()
+    coordinator = napari_viewer_server.NapariComponentAwareDisplayCoordinator()
+    producer = StreamProducerIdentity.pipeline_output(
+        output_kind="main",
+        output_key="main",
+        step_name="OverlayOutlines",
+        pipeline_position=7,
+    )
+    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
+        ViewerMappingDisplayConfigInput(
+            {
+                "component_modes": {"well": "stack", "channel": "stack"},
+                "component_order": ["well", "channel"],
+            }
+        ),
+        _component_value_domain({"well": ["A01"], "channel": [2]}),
+    )
+
+    coordinator.display(
+        data=np.zeros((1, 16, 16, 3)),
+        stream_layer_context=napari_viewer_server.NapariStreamLayerContext(
+            entries=component_axis_semantics.entries,
+            layout=component_axis_semantics.layout,
+            producer=producer,
+            address=NapariStreamLayerAddress(
+                components={"well": "A01", "channel": 2},
+                path="/tmp/A01.tif",
+                stream_layer_data_type=StreamingDataType.IMAGE,
+            ),
+        ),
+        server=server,
+    )
+
+    route_key = next(iter(server.component_groups))
+    assert route_key.endswith("_color_plane")
+    assert tuple(server.component_groups.items_for(route_key)[0].data.shape) == (16, 16, 3)
+    assert list(server.layer_route_state.layer_titles.values()) == [
+        "8. OverlayOutlines RGB"
     ]
 
 
@@ -1059,6 +1436,70 @@ def test_viewer_component_coordinate_authority_rejects_missing_axis_component():
         )
 
 
+def test_napari_image_stack_builder_rejects_missing_projected_coordinates():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    with pytest.raises(ValueError, match="missing routed image"):
+        napari_viewer_server._build_nd_image_array(
+            [
+                _layer_item({"site": 1}, data=np.ones((2, 2))),
+            ],
+            _axis_projection(["site"], {"site": [1, 2]}),
+        )
+
+
+def test_napari_image_stack_builder_rejects_wrong_collapsed_component_value():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    with pytest.raises(ValueError, match="collapsed component 'channel'"):
+        napari_viewer_server._build_nd_image_array(
+            [
+                _layer_item({"site": 1, "channel": 3}, data=np.ones((2, 2))),
+            ],
+            _axis_projection(
+                ["site"],
+                {"site": [1]},
+                scalar_component_values={"channel": [4]},
+            ),
+        )
+
+
+def test_napari_image_stack_builder_preserves_route_local_collapsed_channels():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    image = napari_viewer_server._build_nd_image_array(
+        [
+            _layer_item({"site": 1, "channel": 4}, data=np.ones((2, 2))),
+            _layer_item({"site": 2, "channel": 4}, data=np.full((2, 2), 2)),
+        ],
+        _axis_projection(
+            ["site"],
+            {"site": [1, 2]},
+            scalar_component_values={"channel": [4]},
+        ),
+    )
+
+    assert image.shape == (2, 2, 2)
+    assert np.all(image[0] == 1)
+    assert np.all(image[1] == 2)
+
+
+def test_napari_image_stack_builder_rejects_unrouted_axis_values():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    with pytest.raises(ValueError, match="missing routed image"):
+        napari_viewer_server._build_nd_image_array(
+            [
+                _layer_item({"channel": 1}, data=np.ones((2, 2))),
+                _layer_item({"channel": 3}, data=np.full((2, 2), 3)),
+            ],
+            _axis_projection(
+                ["channel"],
+                {"channel": [1, 2, 3]},
+            ),
+        )
+
+
 def test_napari_shape_rasterizer_rejects_out_of_domain_stack_component():
     rasterizer = NapariShapeLabelRasterizer()
     shapes = [
@@ -1099,25 +1540,25 @@ def test_napari_component_value_tracker_tracks_observed_axis_values_by_route():
         [_layer_item({"channel": 1, "well": "A01"})],
     )
 
-    assert tracker.domain.values_for(("main", ("channel", "well")), ["channel", "well"]) == {
+    assert tracker.values_for(("main", ("channel", "well")), ["channel", "well"]) == {
         "channel": [2, 4],
         "well": ["A01", "B02"],
     }
-    assert tracker.domain.values_for(
+    assert tracker.values_for(
         ("artifact", ("channel", "well")),
         ["channel", "well"],
     ) == {
         "channel": [1],
         "well": ["A01"],
     }
-    assert tracker.domain.values_for(("main", ("site",)), ["site"]) == {"site": []}
+    assert tracker.values_for(("main", ("site",)), ["site"]) == {"site": []}
 
 
 def test_napari_display_axis_domain_tracks_shared_active_axis_values():
     domain = ViewerDisplayAxisDomain()
     projected_axis_components = ["site", "timepoint", "channel", "z_index", "well"]
 
-    domain.update(
+    domain.record_display_axis_values(
         projected_axis_components,
         [
             _layer_item(
@@ -1133,7 +1574,7 @@ def test_napari_display_axis_domain_tracks_shared_active_axis_values():
             for channel in [1, 2, 3, 4, 5]
         ],
     )
-    domain.update(
+    domain.record_display_axis_values(
         projected_axis_components,
         [
             _layer_item(
@@ -1148,7 +1589,7 @@ def test_napari_display_axis_domain_tracks_shared_active_axis_values():
         ],
     )
 
-    assert domain.values_for(projected_axis_components) == {
+    assert domain.display_axis_values_for(projected_axis_components) == {
         "site": [1, 2],
         "timepoint": [1],
         "channel": [1, 2, 3, 4, 5],
@@ -1184,7 +1625,7 @@ def test_napari_component_value_tracker_sorts_unpadded_indices_numerically():
         ],
     )
 
-    assert tracker.domain.values_for(("main", ("z_index",)), ["z_index"]) == {
+    assert tracker.values_for(("main", ("z_index",)), ["z_index"]) == {
         "z_index": [1, 2, 3, 9, 10, 11, 20, 100],
     }
 
@@ -1202,7 +1643,7 @@ def test_napari_component_value_tracker_skips_missing_axes_and_sorts_mixed_domai
         ],
     )
 
-    assert tracker.domain.values_for(
+    assert tracker.values_for(
         ("nuclei", ("well", "channel")),
         ["well", "channel"],
     ) == {
@@ -1211,21 +1652,19 @@ def test_napari_component_value_tracker_skips_missing_axes_and_sorts_mixed_domai
     }
 
 
-def test_viewer_component_label_authority_owns_channel_well_and_generic_labels():
-    authority = ViewerComponentLabelAuthority(
-        _component_name_metadata(
-            {
-                "channel": {"1": "DAPI", "2": "None"},
-                "well": {"A01": "A01"},
-                "site": {"3": "Field"},
-            },
-            context="test",
-        )
+def test_viewer_component_name_metadata_owns_channel_well_and_generic_labels():
+    metadata = _component_name_metadata(
+        {
+            "channel": {"1": "DAPI", "2": "None"},
+            "well": {"A01": "A01"},
+            "site": {"3": "Field"},
+        },
+        context="test",
     )
 
-    assert authority.axis_labels("channel", [1, 2]) == ["Ch1: DAPI", "Ch 2"]
-    assert authority.axis_labels("well", ["A01"]) == ["A01"]
-    assert authority.axis_labels("site", [3]) == ["Site 3: Field"]
+    assert metadata.axis_labels("channel", [1, 2]) == ["Ch1: DAPI", "Ch 2"]
+    assert metadata.axis_labels("well", ["A01"]) == ["A01"]
+    assert metadata.axis_labels("site", [3]) == ["Site 3: Field"]
 
 
 def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
@@ -1239,6 +1678,7 @@ def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
                     {
                         "type": "polygon",
                         "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                        "metadata": {"source_spatial_shape_yx": (3, 3)},
                     }
                 ],
             ),
@@ -1248,6 +1688,7 @@ def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
                     {
                         "type": "path",
                         "coordinates": [[0, 1], [1, 1], [2, 1]],
+                        "metadata": {"source_spatial_shape_yx": (3, 3)},
                     }
                 ],
             ),
@@ -1260,6 +1701,26 @@ def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
     assert labels[1, 0, 1] == 2
     assert labels[1, 1, 1] == 2
     assert labels[1, 2, 1] == 2
+
+
+def test_napari_shape_label_rasterizer_rejects_missing_source_canvas_shape_metadata():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    with pytest.raises(ValueError, match="source_spatial_shape_yx"):
+        rasterizer.rasterize(
+            layer_items=[
+                _layer_item(
+                    {"channel": 1},
+                    [
+                        {
+                            "type": "polygon",
+                            "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                        }
+                    ],
+                )
+            ],
+            axis_projection=_axis_projection(["channel"], {"channel": [1]}),
+        )
 
 
 def test_napari_shape_label_rasterizer_uses_source_canvas_shape_metadata():
@@ -1285,6 +1746,93 @@ def test_napari_shape_label_rasterizer_uses_source_canvas_shape_metadata():
     assert np.count_nonzero(labels[0] == 1) > 0
 
 
+def test_napari_shapes_layer_display_applies_route_global_axis_translate():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.layer_route_state.set_title("objects", "Objects")
+    server.viewer = _FakeViewer()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    presentation = _axis_presentation(
+        layer_key="objects",
+        projected_axis_components=("channel", "site"),
+        component_values={"channel": [4], "site": [1, 2]},
+        axis_offsets=(3, 0),
+    )
+
+    napari_viewer_server.NapariShapesLayerDisplayHandler().handle(
+        napari_viewer_server.NapariLayerDisplayRequest(
+            pipeline=pipeline,
+            presentation=presentation,
+            items=[
+                _layer_item(
+                    {"channel": 4, "site": 1},
+                    [
+                        {
+                            "type": "polygon",
+                            "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                            "metadata": {"source_spatial_shape_yx": (3, 3)},
+                        }
+                    ],
+                    stream_layer_data_type=StreamingDataType.SHAPES,
+                )
+            ],
+        )
+    )
+
+    layer_type, data, name, layer_kwargs = server.viewer.calls[-1]
+    assert layer_type == "labels"
+    assert name == "Objects"
+    assert data.shape == (1, 2, 3, 3)
+    assert np.count_nonzero(data[0, 0] == 1) > 0
+    assert layer_kwargs["axis_labels"] == ("channel", "site", "y", "x")
+    assert layer_kwargs["translate"] == (3.0, 0.0, 0.0, 0.0)
+
+
+def test_napari_points_layer_display_applies_route_global_axis_translate():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.layer_route_state.set_title("spots", "Spots")
+    server.viewer = _FakeViewer()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    presentation = _axis_presentation(
+        layer_key="spots",
+        projected_axis_components=("channel",),
+        component_values={"channel": [4]},
+        axis_offsets=(3,),
+    )
+
+    napari_viewer_server.NapariPointsLayerDisplayHandler().handle(
+        napari_viewer_server.NapariLayerDisplayRequest(
+            pipeline=pipeline,
+            presentation=presentation,
+            items=[
+                _layer_item(
+                    {"channel": 4},
+                    [
+                        {
+                            "type": "points",
+                            "coordinates": [[1, 2]],
+                            "metadata": {"label": 7, "component": 4},
+                        }
+                    ],
+                    stream_layer_data_type=StreamingDataType.POINTS,
+                )
+            ],
+        )
+    )
+
+    layer_type, data, name, layer_kwargs = server.viewer.calls[-1]
+    assert layer_type == "points"
+    assert name == "Spots"
+    assert data.shape == (1, 3)
+    assert tuple(data[0]) == (0, 1, 2)
+    assert layer_kwargs["axis_labels"] == ("channel", "y", "x")
+    assert layer_kwargs["translate"] == (3.0, 0.0, 0.0)
+    assert layer_kwargs["properties"] == {"label": [7], "component": [4]}
+
+
 def test_napari_shape_label_rasterizer_keeps_singleton_site_axis():
     rasterizer = NapariShapeLabelRasterizer()
 
@@ -1296,6 +1844,7 @@ def test_napari_shape_label_rasterizer_keeps_singleton_site_axis():
                     {
                         "type": "polygon",
                         "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                        "metadata": {"source_spatial_shape_yx": (3, 3)},
                     }
                 ],
             ),
@@ -1305,6 +1854,7 @@ def test_napari_shape_label_rasterizer_keeps_singleton_site_axis():
                     {
                         "type": "path",
                         "coordinates": [[0, 1], [1, 1], [2, 1]],
+                        "metadata": {"source_spatial_shape_yx": (3, 3)},
                     }
                 ],
             ),
@@ -1334,6 +1884,7 @@ def test_napari_shape_label_rasterizer_rejects_missing_projected_axis_components
                         {
                             "type": "polygon",
                             "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                            "metadata": {"source_spatial_shape_yx": (3, 3)},
                         }
                     ],
                 )
@@ -1356,6 +1907,7 @@ def test_napari_shape_label_rasterizer_keeps_points_as_extent_only():
                     {
                         "type": "points",
                         "coordinates": [[4, 5]],
+                        "metadata": {"source_spatial_shape_yx": (5, 6)},
                     }
                 ],
             )

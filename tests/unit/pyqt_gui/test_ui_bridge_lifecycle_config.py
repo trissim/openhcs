@@ -6,7 +6,6 @@ import socket
 
 import zmq
 
-from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.constants.constants import CONTROL_PORT_OFFSET
 from openhcs.pyqt_gui.config import (
     DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
@@ -21,8 +20,6 @@ from openhcs.pyqt_gui.services.ui_bridge_server import (
     UI_BRIDGE_BROWSER_PONG_TYPE,
     UiBridgeControlServer,
     UiBridgeBrowserControlMessageType,
-    UiBridgeDescriptorPathRequest,
-    UiBridgeServerConfig,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
@@ -39,21 +36,18 @@ def test_agent_ui_bridge_config_reads_environment(monkeypatch) -> None:
     config = get_default_pyqt_gui_config().agent_bridge
 
     assert config.enabled is True
-    assert config.connection.host == "127.0.0.2"
-    assert config.connection.port == 7999
-    assert config.connection.transport_mode == DEFAULT_UI_BRIDGE_TRANSPORT
+    assert config.host == "127.0.0.2"
+    assert config.port == 7999
+    assert config.transport_mode == DEFAULT_UI_BRIDGE_TRANSPORT
     assert config.timeout_ms == 1234
-    assert config.descriptor_paths.directory_path == "/tmp/openhcs-bridge"
+    assert config.descriptor_directory_path == "/tmp/openhcs-bridge"
 
 
-def test_agent_ui_bridge_config_is_disabled_by_default(monkeypatch) -> None:
+def test_agent_ui_bridge_config_is_enabled_by_default(monkeypatch) -> None:
     monkeypatch.delenv("OPENHCS_ENABLE_UI_BRIDGE", raising=False)
 
-    assert AgentUiBridgeConfig.from_environment().enabled is False
-    assert (
-        AgentUiBridgeConfig.from_environment().connection.transport_mode
-        == DEFAULT_AGENT_UI_BRIDGE_TRANSPORT
-    )
+    assert AgentUiBridgeConfig.from_environment().enabled is True
+    assert AgentUiBridgeConfig.from_environment().transport_mode == DEFAULT_AGENT_UI_BRIDGE_TRANSPORT
 
 
 def test_main_window_ui_bridge_lifecycle_stop_is_idempotent() -> None:
@@ -75,11 +69,9 @@ def test_main_window_zmq_scan_ports_include_ui_bridge(monkeypatch) -> None:
     )
     harness = _MainWindowPortScanHarness(
         bridge_config=AgentUiBridgeConfig(
-            connection=ExecutionConnectionSpec(
-                host="127.0.0.1",
-                port=7999,
-                transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
-            )
+            host="127.0.0.1",
+            port=7999,
+            transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
         ),
     )
 
@@ -90,15 +82,11 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
     port = TcpDataControlPortPairAuthority.acquire()
     server = UiBridgeControlServer(
         bridge=object(),
-        config=UiBridgeServerConfig(
-            connection=ExecutionConnectionSpec(
-                host="127.0.0.1",
-                port=port,
-                transport_mode=DEFAULT_UI_BRIDGE_TRANSPORT,
-            ),
-            descriptor_path_request=UiBridgeDescriptorPathRequest(
-                directory_path=tmp_path,
-            ),
+        config=AgentUiBridgeConfig(
+            host="127.0.0.1",
+            port=port,
+            transport_mode=DEFAULT_UI_BRIDGE_TRANSPORT,
+            descriptor_directory_path=tmp_path,
         ),
     )
 
@@ -134,15 +122,11 @@ def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(tmp_path
     port = TcpDataControlPortPairAuthority.acquire()
     server = UiBridgeControlServer(
         bridge=object(),
-        config=UiBridgeServerConfig(
-            connection=ExecutionConnectionSpec(
-                host="127.0.0.1",
-                port=port,
-                transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
-            ),
-            descriptor_path_request=UiBridgeDescriptorPathRequest(
-                directory_path=tmp_path,
-            ),
+        config=AgentUiBridgeConfig(
+            host="127.0.0.1",
+            port=port,
+            transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
+            descriptor_directory_path=tmp_path,
         ),
     )
     scan_service = ZMQServerScanService(

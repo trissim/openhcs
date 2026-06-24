@@ -95,7 +95,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
     for Qt compatibility and true persistence across pipeline runs.
     """
 
-    viewer_type = ViewerType.NAPARI.value
     viewer_process_label = "Napari"
     detached_server_entrypoint = NAPARI_VIEWER_ENTRYPOINT
 
@@ -155,31 +154,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
 
         with self._lock:
             port = self.required_port
-            # Check if there's already a napari viewer running on the configured port
-            port_in_use = self.runtime_endpoint.in_use()
-            logger.info(f"🔬 VISUALIZER: Port {port} in use: {port_in_use}")
-
-            if port_in_use:
-                # Try to connect to existing viewer first before killing it
-                logger.info(
-                    f"🔬 VISUALIZER: Port {port} is in use, attempting to connect to existing viewer..."
-                )
-                if self._try_connect_to_existing_viewer():
-                    logger.info(
-                        f"🔬 VISUALIZER: Successfully connected to existing viewer on port {port}"
-                    )
-                    self.lifecycle_state.mark_connected_external()
-                    return
-                else:
-                    # Existing viewer is unresponsive - kill it and start fresh
-                    logger.info(
-                        f"🔬 VISUALIZER: Existing viewer on port {port} is unresponsive, killing and restarting..."
-                    )
-                    self.runtime_endpoint.release_bound_ports()
-                    # Wait a moment for ports to be freed
-                    import time
-
-                    time.sleep(0.5)
+            self.prepare_fresh_viewer_start()
 
             if self.lifecycle_state.is_active:
                 logger.warning("Napari viewer is already running.")
@@ -219,23 +194,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
             else:
                 logger.error("🔬 VISUALIZER: Failed to start napari viewer process")
 
-    def _try_connect_to_existing_viewer(self) -> bool:
-        """
-        Try to connect to an existing napari viewer and verify it's responsive.
-
-        Returns True only if we can successfully handshake with the viewer.
-        """
-        try:
-            if self.existing_viewer_is_ready():
-                self._setup_zmq_client()
-                return True
-            return False
-        except Exception as e:
-            logger.debug(
-                f"Failed to connect to existing viewer on port {self.required_port}: {e}"
-            )
-            return False
-
     def _setup_zmq_client(self):
         """Set up ZeroMQ client to send data to viewer process."""
         data_url = self.runtime_endpoint.data_url()
@@ -247,15 +205,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
         # Brief delay for ZMQ connection to establish
         time.sleep(ZMQ_CONNECTION_DELAY_MS / 1000.0)
         logger.info(f"🔬 VISUALIZER: ZMQ client connected to {data_url}")
-
-    def clear_viewer_state(self) -> bool:
-        """
-        Clear accumulated viewer state (component groups) for a new pipeline run.
-
-        Returns:
-            True if state was cleared successfully, False otherwise
-        """
-        return self.send_control_message("clear_state")
 
     def send_image_data(
         self, step_id: str, image_data: np.ndarray, axis_id: str = "unknown"
@@ -297,6 +246,9 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
         if self.zmq_context:
             self.zmq_context.term()
             self.zmq_context = None
+
+    def cleanup_viewer_client(self) -> None:
+        self._cleanup_zmq()
 
     def visualize_path(
         self, step_id: str, path: str, backend: str, axis_id: Optional[str] = None

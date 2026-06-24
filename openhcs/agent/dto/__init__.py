@@ -35,6 +35,9 @@ from openhcs.agent.dto.functions import (
     FunctionParameterSpec,
 )
 from openhcs.agent.dto.execution import (
+    ArtifactPlanInspection,
+    ArtifactPlanSummary,
+    CompiledStepPlanSummary,
     ExecutionConnectionSpec,
     ExecutionJobRef,
     ExecutionJobStatus,
@@ -49,9 +52,16 @@ from openhcs.agent.dto.pipeline import (
     PipelineValidationResult,
 )
 from openhcs.agent.dto.viewer import (
+    ViewerWindowLayerValidationSummary,
     ViewerWindowDescriptor,
+    ViewerWindowLayerState,
+    ViewerWindowProbeResult,
     ViewerWindowSnapshotRequest,
     ViewerWindowSnapshotResult,
+    ViewerWindowStateRequest,
+    ViewerWindowStateResult,
+    ViewerWindowValidationRequest,
+    ViewerWindowValidationSummaryResult,
 )
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,

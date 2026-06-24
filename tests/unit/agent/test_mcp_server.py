@@ -1,6 +1,7 @@
 import asyncio
 import importlib.util
 import inspect
+import json
 
 import openhcs.mcp.server as server
 
@@ -34,6 +35,24 @@ def test_mcp_tools_have_blind_agent_descriptions():
     assert all(tool.description for tool in tools)
 
 
+def test_mcp_health_check_tool_returns_promptly():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    async def call_health_check():
+        built = server.build_server()
+        return await asyncio.wait_for(
+            built.call_tool("openhcs_health_check", {}),
+            timeout=2,
+        )
+
+    result = asyncio.run(call_health_check())
+    payload = json.loads(result[0].text)
+
+    assert payload["status"] == "ok"
+    assert payload["service"] == "openhcs.mcp"
+
+
 def test_mcp_server_exposes_execution_session_tools():
     if importlib.util.find_spec("mcp") is None:
         return
@@ -49,10 +68,14 @@ def test_mcp_server_exposes_execution_session_tools():
 
     assert "openhcs_create_orchestrator_session" in tool_names
     assert "openhcs_create_orchestrator_session_from_pipeline_source" in tool_names
+    assert "openhcs_inspect_pipeline_source_artifact_plan" in tool_names
     assert "openhcs_submit_compile" in tool_names
     assert "openhcs_submit_pipeline_execution" in tool_names
     assert "openhcs_get_execution_status" in tool_names
     assert "openhcs_viewer_snapshot_window" in tool_names
+    assert "openhcs_get_viewer_window_state" in tool_names
+    assert "openhcs_probe_viewer_window" in tool_names
+    assert "openhcs_validate_viewer_window_state" in tool_names
 
 
 def test_mcp_server_exposes_ui_bridge_tools():
@@ -89,3 +112,15 @@ def test_mcp_ui_bridge_timeout_policy_is_fail_fast():
         assert "must not exceed" in str(exc)
     else:
         raise AssertionError("large UI bridge MCP timeout was accepted")
+
+
+def test_mcp_viewer_timeout_policy_is_fail_fast():
+    assert server.McpViewerTimeoutPolicy.resolve(None) == 750
+    assert server.McpViewerTimeoutPolicy.resolve(2000) == 2000
+
+    try:
+        server.McpViewerTimeoutPolicy.resolve(120_000)
+    except ValueError as exc:
+        assert "must not exceed" in str(exc)
+    else:
+        raise AssertionError("large viewer MCP timeout was accepted")

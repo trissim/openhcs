@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import subprocess
 import threading
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -72,7 +71,6 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
     Follows same architecture as NapariStreamVisualizer.
     """
 
-    viewer_type = ViewerType.FIJI.value
     viewer_process_label = "Fiji"
     detached_server_entrypoint = FIJI_VIEWER_ENTRYPOINT
 
@@ -109,25 +107,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
 
         with self._lock:
             port = self.required_port
-            # Check if there's already a viewer running on the configured port
-            if self.runtime_endpoint.in_use():
-                # Try to connect to existing viewer first
-                logger.info(
-                    f"🔬 FIJI VISUALIZER: Port {port} is in use, attempting to connect to existing viewer..."
-                )
-                if self._try_connect_to_existing_viewer():
-                    logger.info(
-                        f"🔬 FIJI VISUALIZER: Successfully connected to existing viewer on port {port}"
-                    )
-                    self.lifecycle_state.mark_connected_external()
-                    return
-                else:
-                    # Existing viewer is unresponsive - kill it and start fresh
-                    logger.info(
-                        f"🔬 FIJI VISUALIZER: Existing viewer on port {port} is unresponsive, killing and restarting..."
-                    )
-                    self.runtime_endpoint.release_bound_ports()
-                    time.sleep(0.5)
+            self.prepare_fresh_viewer_start()
 
             if self.lifecycle_state.is_active:
                 logger.warning("Fiji viewer is already running.")
@@ -179,10 +159,6 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
                         "🔬 FIJI VISUALIZER: Fiji viewer server failed to become ready"
                     )
 
-    def _try_connect_to_existing_viewer(self) -> bool:
-        """Try to connect to an existing Fiji viewer and verify it's responsive."""
-        return self.existing_viewer_is_ready()
-
     def _wait_for_server_ready(self, timeout: float = 10.0) -> bool:
         """Wait for Fiji server to be ready via ping/pong."""
         logger.info(
@@ -200,15 +176,6 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
             f"🔬 FIJI VISUALIZER: Timeout waiting for server on port {self.required_port}"
         )
         return False
-
-    def clear_viewer_state(self) -> bool:
-        """
-        Clear accumulated viewer state (dimension values, hyperstack metadata) for a new pipeline run.
-
-        Returns:
-            True if state was cleared successfully, False otherwise
-        """
-        return self.send_control_message("clear_state")
 
     def stop_viewer(self) -> None:
         """Stop Fiji viewer server (only if not persistent)."""

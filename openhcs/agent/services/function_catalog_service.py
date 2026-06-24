@@ -351,10 +351,8 @@ def _normalized_search_text(value: str) -> str:
 
 
 def _metadata_display_name(function_id: str, metadata: FunctionMetadata) -> str:
-    if metadata.original_name:
-        return metadata.original_name
-    if metadata.name:
-        return metadata.name
+    if metadata.display_name:
+        return metadata.display_name
     return function_id.rsplit(":", 1)[-1]
 
 

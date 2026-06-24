@@ -6,16 +6,24 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import product
 from typing import ClassVar, Generic, TypeAlias, TypeVar
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
+from polystore.streaming_constants import StreamingDataType
 from zmqruntime.viewer_protocol import (
     ViewerBatchDisplayPayload,
+    ViewerBatchContextWireField,
+    ViewerBatchMessageType,
+    ViewerBatchWireField,
     ViewerComponentMode,
     ViewerDisplayConfigWireField,
+    ViewerWireMapping,
+    ViewerWireValue,
     viewer_component_mode_value,
 )
 
+from openhcs.constants.constants import AllComponents
 from openhcs.runtime.viewer_protocol import ViewerComponentValueOrdering
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
@@ -31,8 +39,47 @@ DisplayComponentName: TypeAlias = str | Enum
 DisplayConfigMappingValue: TypeAlias = Mapping[str, DisplayModeValue] | Sequence[DisplayComponentName]
 ComponentMetadataItems: TypeAlias = Sequence[Mapping[str, ComponentValue] | None]
 ComponentAxisValues: TypeAlias = Mapping[str, Sequence[ComponentValue]]
+ComponentNameMetadataWireMapping: TypeAlias = Mapping[
+    str,
+    Mapping[ComponentWireValue, ComponentWireValue],
+]
+ViewerBatchField: TypeAlias = ViewerBatchWireField | ViewerBatchContextWireField
 DisplayConfigT = TypeVar("DisplayConfigT")
 WindowProjectionProviderT = TypeVar("WindowProjectionProviderT")
+HandlerRequestT = TypeVar("HandlerRequestT")
+HandlerT = TypeVar("HandlerT", bound="ViewerStreamingDataTypeHandler")
+
+
+class ViewerStreamingDataTypeHandlerMeta(AutoRegisterMeta):
+    """Create one streaming-data-type registry for each concrete viewer family."""
+
+    REGISTRY_KEY = "streaming_data_type"
+    FAMILY_ROOT_MARKER = "__viewer_streaming_data_type_template__"
+
+    def __new__(mcs, name: str, bases: tuple[type, ...], attrs: dict):
+        starts_backend_family = any(
+            mcs.FAMILY_ROOT_MARKER in base.__dict__
+            and base.__dict__[mcs.FAMILY_ROOT_MARKER] is True
+            for base in bases
+        )
+        if starts_backend_family:
+            registry = LazyDiscoveryDict()
+            attrs["__registry__"] = registry
+            attrs["__registry_key__"] = mcs.REGISTRY_KEY
+            attrs["__skip_if_no_key__"] = True
+            return super().__new__(
+                mcs,
+                name,
+                bases,
+                attrs,
+                registry_config=RegistryConfig(
+                    registry_dict=registry,
+                    key_attribute=mcs.REGISTRY_KEY,
+                    skip_if_no_key=True,
+                    registry_name=f"{name} streaming data type",
+                ),
+            )
+        return super().__new__(mcs, name, bases, attrs)
 
 
 class ViewerComponentSemanticRole(Enum):
@@ -41,52 +88,38 @@ class ViewerComponentSemanticRole(Enum):
     COLOR = "color"
 
 
-@dataclass(frozen=True, slots=True)
-class ViewerComponentRolePolicy:
-    """Central policy for mapping conventional component names to viewer roles."""
+class ViewerStreamingDataTypeHandler(
+    ABC,
+    Generic[HandlerRequestT],
+    metaclass=ViewerStreamingDataTypeHandlerMeta,
+):
+    """Template for viewer handlers registered by streaming payload type."""
 
-    color_component_candidates: tuple[str, ...] = ("channel",)
-    indexed_component_candidates: frozenset[str] = frozenset(
-        {"site", "channel", "z_index", "timepoint"}
-    )
+    __viewer_streaming_data_type_template__: ClassVar[bool] = True
+    __registry__: ClassVar[
+        Mapping[StreamingDataType, type["ViewerStreamingDataTypeHandler"]]
+    ]
+    streaming_data_type: ClassVar[StreamingDataType | None] = None
 
-    def role_component(
-        self,
-        *,
-        role: ViewerComponentSemanticRole,
-        layout: "ViewerComponentLayout",
-    ) -> str | None:
-        candidates = self._candidates(role)
-        for component in layout.component_order:
-            if component not in candidates:
-                continue
-            return component
-        return None
+    @classmethod
+    def registered_data_types(cls) -> tuple[StreamingDataType, ...]:
+        return tuple(cls.__registry__)
 
-    def role_component_for_mode(
-        self,
-        *,
-        role: ViewerComponentSemanticRole,
-        layout: "ViewerComponentLayout",
-        mode: DisplayModeValue,
-    ) -> str | None:
-        candidates = self._candidates(role)
-        mode_value = viewer_component_mode_value(mode)
-        for component in layout.component_order:
-            if component not in candidates:
-                continue
-            if layout.component_modes[component] != mode_value:
-                continue
-            return component
-        return None
+    @classmethod
+    def for_data_type(
+        cls: type[HandlerT],
+        payload_stream_data_type: StreamingDataType,
+    ) -> HandlerT:
+        if payload_stream_data_type not in cls.__registry__:
+            raise ValueError(
+                f"No {cls.__name__} registered for type {payload_stream_data_type!r}."
+            )
+        handler_type = cls.__registry__[payload_stream_data_type]
+        return handler_type()
 
-    def is_indexed(self, component: str) -> bool:
-        return component in self.indexed_component_candidates
-
-    def _candidates(self, role: ViewerComponentSemanticRole) -> tuple[str, ...]:
-        if role is ViewerComponentSemanticRole.COLOR:
-            return self.color_component_candidates
-        raise ValueError(f"No component-role policy for {role!r}.")
+    @abstractmethod
+    def handle(self, request: HandlerRequestT) -> None:
+        """Handle one typed streaming payload batch."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,25 +269,9 @@ class ViewerComponentLayout(ViewerBatchDisplayPayload):
             WindowProjectionSource.from_payload_providers(items)
         )
 
-    def component_value_counts(self, payloads: Sequence[Mapping]) -> tuple[tuple[str, int], ...]:
-        counts = []
-        for component_name in self.component_order:
-            values = set()
-            for payload in payloads:
-                metadata = payload["metadata"]
-                if component_name in metadata:
-                    values.add(metadata[component_name])
-            counts.append((component_name, len(values)))
-        return tuple(counts)
-
-
 @dataclass(slots=True)
 class ViewerComponentMetadataNormalizer:
     """Normalize component metadata before viewer coordinate indexing."""
-
-    role_policy: ViewerComponentRolePolicy = field(
-        default_factory=ViewerComponentRolePolicy
-    )
 
     def normalize(self, components: ComponentMap) -> ComponentMap:
         return {
@@ -263,7 +280,8 @@ class ViewerComponentMetadataNormalizer:
         }
 
     def normalize_value(self, component: str, value: ComponentValue) -> ComponentValue:
-        if not self.role_policy.is_indexed(component):
+        component_identity = AllComponents.from_value(component)
+        if component_identity is None or not component_identity.is_variable_axis():
             return value
         if isinstance(value, str):
             stripped = value.strip()
@@ -412,27 +430,133 @@ class ViewerComponentValueParser:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class ViewerComponentValueNameEntry:
-    """One display-name mapping for a component value."""
-
-    value_key: str
-    display_name: ComponentValue
+class ViewerComponentMetadataPayload:
+    """Parse component metadata mappings into canonical viewer component values."""
 
     @classmethod
-    def from_wire(
+    def component_map(
         cls,
-        value_key: ComponentWireValue,
-        display_name: ComponentWireValue,
+        payload: ViewerWireMapping,
         *,
         context: str,
-    ) -> "ViewerComponentValueNameEntry":
-        return cls(
-            value_key=str(value_key),
-            display_name=ViewerComponentValueParser.parse(
-                display_name,
-                context=context,
-            ),
+    ) -> ComponentMap:
+        return {
+            str(component): ViewerComponentValueParser.parse(value, context=context)
+            for component, value in payload.items()
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerBatchPayloadFields:
+    """Fail-loud typed access to one viewer batch wire payload."""
+
+    payload: ViewerWireMapping
+    context: str
+
+    def required_value(self, field: ViewerBatchField) -> ViewerWireValue:
+        if field.value not in self.payload:
+            raise ValueError(f"{self.context} missing required field: {field.value!r}")
+        return self.payload[field.value]
+
+    def required_mapping(self, field: ViewerBatchField) -> ViewerWireMapping:
+        value = self.required_value(field)
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{self.context} field {field.value!r} must be a mapping.")
+        return value
+
+    def optional_mapping(self, field: ViewerBatchField) -> ViewerWireMapping:
+        if field.value not in self.payload:
+            return {}
+        value = self.payload[field.value]
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{self.context} field {field.value!r} must be a mapping.")
+        return value
+
+    def required_sequence(self, field: ViewerBatchField) -> Sequence[ViewerWireValue]:
+        value = self.required_value(field)
+        if isinstance(value, str) or not isinstance(value, Sequence):
+            raise TypeError(f"{self.context} field {field.value!r} must be a sequence.")
+        return value
+
+    def required_mapping_items(
+        self,
+        field: ViewerBatchField,
+    ) -> list[ViewerWireMapping]:
+        items = []
+        for index, item in enumerate(self.required_sequence(field)):
+            if not isinstance(item, Mapping):
+                raise TypeError(
+                    f"{self.context} field {field.value!r} item {index} must be a mapping."
+                )
+            items.append(item)
+        return items
+
+    def required_optional_string(self, field: ViewerBatchField) -> str | None:
+        value = self.required_value(field)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError(
+                f"{self.context} field {field.value!r} must be a string or None."
+            )
+        return value
+
+    def message_type(self) -> ViewerBatchMessageType:
+        return ViewerBatchMessageType(
+            str(self.required_value(ViewerBatchWireField.TYPE))
+        )
+
+    def require_batch_message(self) -> None:
+        message_type = self.message_type()
+        if message_type is not ViewerBatchMessageType.BATCH:
+            raise ValueError(
+                f"{self.context} must be a batch message, got {message_type.value!r}."
+            )
+
+    def require_fields(self, fields: Sequence[ViewerBatchField]) -> None:
+        missing = tuple(field.value for field in fields if field.value not in self.payload)
+        if missing:
+            raise ValueError(f"{self.context} missing required fields: {missing!r}.")
+
+    def required_component_names_metadata(
+        self,
+        *,
+        context: str,
+    ) -> ViewerComponentNameMetadata:
+        return ViewerComponentNameMetadata.from_wire_mapping(
+            self.required_mapping(ViewerBatchWireField.COMPONENT_NAMES_METADATA),
+            context=context,
+        )
+
+    def optional_component_names_metadata(
+        self,
+        *,
+        context: str,
+    ) -> ViewerComponentNameMetadata:
+        return ViewerComponentNameMetadata.from_wire_mapping(
+            self.optional_mapping(ViewerBatchWireField.COMPONENT_NAMES_METADATA),
+            context=context,
+        )
+
+    def component_value_domain(
+        self,
+        *,
+        context: str,
+    ) -> ViewerComponentValueDomainPayload:
+        return ViewerComponentValueDomainPayload.from_wire_mapping(
+            self.required_mapping(ViewerBatchWireField.COMPONENT_VALUE_DOMAIN),
+            context=context,
+        )
+
+    def component_axis_semantics(
+        self,
+        display_config: ViewerDisplayConfigInput,
+        *,
+        context: str,
+    ) -> "ViewerComponentAxisSemantics":
+        return ViewerComponentAxisSemanticsAuthority.from_display_config(
+            display_config,
+            self.component_value_domain(context=context),
         )
 
 
@@ -443,46 +567,30 @@ class ViewerComponentValueNameStore:
     names_by_value: dict[str, ComponentValue] = field(default_factory=dict)
 
     @classmethod
-    def from_entries(
-        cls,
-        entries: Sequence[ViewerComponentValueNameEntry],
-    ) -> "ViewerComponentValueNameStore":
-        store = cls()
-        store.merge_entries(entries)
-        return store
-
-    @classmethod
     def from_mapping(
         cls,
         value_names: Mapping[ComponentWireValue, ComponentWireValue],
         *,
         context: str,
     ) -> "ViewerComponentValueNameStore":
-        entries = []
-        for value_key, display_name in value_names.items():
-            entries.append(
-                ViewerComponentValueNameEntry.from_wire(
-                    value_key,
-                    display_name,
-                    context=context,
-                )
-            )
-        return cls.from_entries(entries)
+        store = cls()
+        store.merge_mapping(value_names, context=context)
+        return store
 
-    def merge_entries(self, entries: Sequence[ViewerComponentValueNameEntry]) -> None:
-        self.names_by_value.update(
-            (entry.value_key, entry.display_name)
-            for entry in entries
-        )
+    def merge_mapping(
+        self,
+        value_names: Mapping[ComponentWireValue, ComponentWireValue],
+        *,
+        context: str,
+    ) -> None:
+        for value_key, display_name in value_names.items():
+            self.names_by_value[str(value_key)] = ViewerComponentValueParser.parse(
+                display_name,
+                context=context,
+            )
 
     def merge_store(self, value_names: "ViewerComponentValueNameStore") -> None:
-        self.merge_entries(value_names.entries())
-
-    def entries(self) -> tuple[ViewerComponentValueNameEntry, ...]:
-        return tuple(
-            ViewerComponentValueNameEntry(value_key, display_name)
-            for value_key, display_name in self.names_by_value.items()
-        )
+        self.names_by_value.update(value_names.names_by_value)
 
     def normalized_values(
         self,
@@ -507,17 +615,24 @@ class ViewerComponentNameMetadataStore:
 
     values: dict[str, ViewerComponentValueNameStore] = field(default_factory=dict)
 
-    def merge_payload(
+    def merge_mapping(
         self,
-        incoming: "ViewerComponentNameMetadataPayload",
+        incoming: ComponentNameMetadataWireMapping,
         *,
         context: str,
     ) -> None:
-        for component, value_names in incoming.stores():
+        for component, value_names in incoming.items():
+            if not isinstance(value_names, Mapping):
+                raise TypeError(
+                    f"Component-name metadata entry for {component!r} must be a mapping."
+                )
             component_key = str(component)
             if component_key not in self.values:
                 self.values[component_key] = ViewerComponentValueNameStore()
-            self.values[component_key].merge_store(value_names)
+            self.values[component_key].merge_mapping(
+                value_names,
+                context=context,
+            )
 
     def merge_store(self, incoming: "ViewerComponentNameMetadataStore") -> None:
         for component, value_names in incoming.values.items():
@@ -553,90 +668,23 @@ class ViewerComponentNameMetadataStore:
         return component in self.values
 
 
-@dataclass(frozen=True, slots=True)
-class ViewerComponentNameMetadataEntry:
-    """One component's value-name metadata payload."""
-
-    component: str
-    value_names: ViewerComponentValueNameStore
-
-    @classmethod
-    def from_mapping(
-        cls,
-        component: str,
-        value_names: Mapping[ComponentWireValue, ComponentWireValue],
-        *,
-        context: str,
-    ) -> "ViewerComponentNameMetadataEntry":
-        return cls(
-            component=str(component),
-            value_names=ViewerComponentValueNameStore.from_mapping(
-                value_names,
-                context=context,
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerComponentNameMetadataWirePayload:
-    """Raw wire mapping for component-value display names."""
-
-    entries: tuple[ViewerComponentNameMetadataEntry, ...]
-
-    @classmethod
-    def from_mapping(
-        cls,
-        payload: Mapping[str, Mapping[ComponentWireValue, ComponentWireValue]],
-        *,
-        context: str,
-    ) -> "ViewerComponentNameMetadataWirePayload":
-        entries = []
-        for component, value_names in payload.items():
-            if not isinstance(value_names, Mapping):
-                raise TypeError(
-                    f"Component-name metadata entry for {component!r} must be a mapping."
-                )
-            entries.append(
-                ViewerComponentNameMetadataEntry.from_mapping(
-                    component,
-                    value_names,
-                    context=context,
-                )
-            )
-        return cls(tuple(entries))
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerComponentNameMetadataPayload:
-    """Validated component-name metadata payload."""
-
-    values: tuple[ViewerComponentNameMetadataEntry, ...]
-
-    @classmethod
-    def from_wire_payload(
-        cls,
-        payload: ViewerComponentNameMetadataWirePayload,
-        *,
-        context: str,
-    ) -> "ViewerComponentNameMetadataPayload":
-        return cls(payload.entries)
-
-    def stores(self):
-        return (
-            (entry.component, entry.value_names)
-            for entry in self.values
-        )
-
-    def to_wire_mapping(self):
-        return {
-            entry.component: entry.value_names.to_wire_mapping()
-            for entry in self.values
-        }
-
-
-@dataclass(slots=True)
+@dataclass(frozen=True, kw_only=True)
 class ViewerComponentNameMetadata:
     """Component-value display names shared by viewer receivers."""
+
+    ABBREVIATIONS: ClassVar[Mapping[str, str]] = {
+        AllComponents.CHANNEL.value: "Ch",
+        AllComponents.Z_INDEX.value: "Z",
+        AllComponents.TIMEPOINT.value: "T",
+        AllComponents.SITE.value: "Site",
+        AllComponents.WELL.value: "Well",
+    }
+    METADATA_FORMATTERS: ClassVar[
+        Mapping[str, Callable[[ComponentValue, ComponentValue], str]]
+    ] = {
+        AllComponents.CHANNEL.value: lambda value, name: f"Ch{value}: {name}",
+        AllComponents.WELL.value: lambda _value, name: str(name),
+    }
 
     store: ViewerComponentNameMetadataStore = field(
         default_factory=ViewerComponentNameMetadataStore
@@ -647,29 +695,14 @@ class ViewerComponentNameMetadata:
         return cls()
 
     @classmethod
-    def from_wire_payload(
+    def from_wire_mapping(
         cls,
-        payload: ViewerComponentNameMetadataWirePayload,
-        *,
-        context: str,
-    ) -> "ViewerComponentNameMetadata":
-        return cls.from_payload(
-            ViewerComponentNameMetadataPayload.from_wire_payload(
-                payload,
-                context=context,
-            ),
-            context=context,
-        )
-
-    @classmethod
-    def from_payload(
-        cls,
-        payload: ViewerComponentNameMetadataPayload,
+        payload: ComponentNameMetadataWireMapping,
         *,
         context: str,
     ) -> "ViewerComponentNameMetadata":
         metadata = cls.empty()
-        metadata.store.merge_payload(
+        metadata.store.merge_mapping(
             payload,
             context=context,
         )
@@ -687,118 +720,8 @@ class ViewerComponentNameMetadata:
             for component, value_names in self.store.values.items()
         }
 
-    def __bool__(self) -> bool:
-        return bool(self.store)
-
-    def __contains__(self, component: str) -> bool:
-        return component in self.store
-
-    def __iter__(self):
-        return iter(self.store.values)
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerComponentAxisSemantics:
-    """Shared component-axis layout plus declared value-domain carrier."""
-
-    layout: ViewerComponentLayout
-    value_domain: ViewerComponentValueDomainPayload
-    role_policy: ViewerComponentRolePolicy = field(
-        default_factory=ViewerComponentRolePolicy
-    )
-
-    @property
-    def component_order(self) -> tuple[str, ...]:
-        return self.layout.component_order
-
-    @property
-    def component_modes(self) -> ComponentModeMap:
-        return self.layout.component_modes
-
-class ViewerComponentAxisSemanticsAuthority:
-    """Build component-axis semantics from external config/domain inputs."""
-
-    @staticmethod
-    def from_display_config(
-        display_config: ViewerDisplayConfigInput,
-        value_domain: ViewerComponentValueDomainPayload,
-    ) -> ViewerComponentAxisSemantics:
-        return ViewerComponentAxisSemantics(
-            layout=display_config.layout(),
-            value_domain=value_domain,
-        )
-
-    @staticmethod
-    def from_display_config_and_metadata(
-        *,
-        display_config: ViewerDisplayConfigInput,
-        metadata_items: ComponentMetadataItems,
-    ) -> ViewerComponentAxisSemantics:
-        layout = display_config.layout()
-        return ViewerComponentAxisSemantics(
-            layout=layout,
-            value_domain=ViewerComponentValueDomainPayload.from_component_metadata(
-                component_layout=layout,
-                metadata_items=metadata_items,
-            ),
-        )
-
-    @staticmethod
-    def empty() -> ViewerComponentAxisSemantics:
-        return ViewerComponentAxisSemantics(
-            layout=ViewerComponentLayout.from_parts(
-                component_modes={},
-                component_order=(),
-            ),
-            value_domain=ViewerComponentValueDomainPayload.empty(),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerComponentAxisSemanticsCarrier:
-    """Carrier for objects already bound to component-axis semantics."""
-
-    component_axis_semantics: ViewerComponentAxisSemantics
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerDisplayBatchContext(ViewerComponentAxisSemanticsCarrier, Generic[DisplayConfigT]):
-    """Shared viewer batch context for display config and component domains."""
-
-    viewer_display_config: DisplayConfigT
-    component_names_metadata: ViewerComponentNameMetadata
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerComponentLabelAuthority:
-    """Build human-readable labels for component values."""
-
-    component_names_metadata: ViewerComponentNameMetadata
-    abbreviations: Mapping[str, str] = field(
-        default_factory=lambda: {
-            "channel": "Ch",
-            "z_index": "Z",
-            "timepoint": "T",
-            "site": "Site",
-            "well": "Well",
-        }
-    )
-    metadata_formatters: Mapping[
-        str,
-        Callable[[ComponentValue, ComponentValue], str],
-    ] = field(
-        default_factory=lambda: {
-            "channel": lambda value, name: f"Ch{value}: {name}",
-            "well": lambda _value, name: str(name),
-        }
-    )
-
-    @classmethod
-    def empty(cls) -> "ViewerComponentLabelAuthority":
-        return cls(ViewerComponentNameMetadata.empty())
-
     def display_name(self, component: str, value: ComponentValue) -> str | None:
-        name = self.component_names_metadata.store.display_name(component, value)
+        name = self.store.display_name(component, value)
         if name is None or str(name).lower() == "none":
             return None
         return str(name)
@@ -810,8 +733,8 @@ class ViewerComponentLabelAuthority:
         return f"{self.abbreviation(component)} {value}"
 
     def abbreviation(self, component: str) -> str:
-        if component in self.abbreviations:
-            return self.abbreviations[component]
+        if component in self.ABBREVIATIONS:
+            return self.ABBREVIATIONS[component]
         return component
 
     def axis_label(self, component: str, value: ComponentValue) -> str:
@@ -819,7 +742,7 @@ class ViewerComponentLabelAuthority:
         if name is None:
             return self.compact_label(component, value)
 
-        formatter = self.metadata_formatters.get(component)
+        formatter = self.METADATA_FORMATTERS.get(component)
         if formatter is not None:
             return formatter(value, name)
         return f"{component.title()} {value}: {name}"
@@ -866,6 +789,106 @@ class ViewerComponentLabelAuthority:
         if labels:
             return " | ".join(labels)
         return default
+
+    def __bool__(self) -> bool:
+        return bool(self.store)
+
+    def __contains__(self, component: str) -> bool:
+        return component in self.store
+
+    def __iter__(self):
+        return iter(self.store.values)
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerComponentAxisSemantics(ViewerComponentValueDomainPayload):
+    """Shared component-axis layout plus declared value-domain carrier."""
+
+    layout: ViewerComponentLayout
+
+    @property
+    def component_order(self) -> tuple[str, ...]:
+        return self.layout.component_order
+
+    @property
+    def component_modes(self) -> ComponentModeMap:
+        return self.layout.component_modes
+
+    def role_component_for_mode(
+        self,
+        *,
+        role: ViewerComponentSemanticRole,
+        mode: DisplayModeValue,
+    ) -> str | None:
+        mode_value = viewer_component_mode_value(mode)
+        for component in self.layout.component_order:
+            if self.layout.component_modes[component] != mode_value:
+                continue
+            component_identity = AllComponents.from_value(component)
+            if (
+                component_identity is not None
+                and self.component_has_role(component_identity, role)
+            ):
+                return component
+        return None
+
+    @staticmethod
+    def component_has_role(
+        component: AllComponents,
+        role: ViewerComponentSemanticRole,
+    ) -> bool:
+        if role is ViewerComponentSemanticRole.COLOR:
+            return component.is_default_group_by_axis()
+        raise ValueError(f"No component role mapping for {role!r}.")
+
+class ViewerComponentAxisSemanticsAuthority:
+    """Build component-axis semantics from external config/domain inputs."""
+
+    @staticmethod
+    def from_display_config(
+        display_config: ViewerDisplayConfigInput,
+        value_domain: ViewerComponentValueDomainPayload,
+    ) -> ViewerComponentAxisSemantics:
+        return ViewerComponentAxisSemantics(
+            entries=value_domain.entries,
+            layout=display_config.layout(),
+        )
+
+    @staticmethod
+    def from_display_config_and_metadata(
+        *,
+        display_config: ViewerDisplayConfigInput,
+        metadata_items: ComponentMetadataItems,
+    ) -> ViewerComponentAxisSemantics:
+        layout = display_config.layout()
+        return ViewerComponentAxisSemantics(
+            entries=ViewerComponentValueDomainPayload.from_component_metadata(
+                component_layout=layout,
+                metadata_items=metadata_items,
+            ).entries,
+            layout=layout,
+        )
+
+    @staticmethod
+    def empty() -> ViewerComponentAxisSemantics:
+        return ViewerComponentAxisSemantics(
+            entries=(),
+            layout=ViewerComponentLayout.from_parts(
+                component_modes={},
+                component_order=(),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerDisplayBatchContext(
+    ViewerComponentAxisSemantics,
+    ViewerComponentNameMetadata,
+    Generic[DisplayConfigT],
+):
+    """Shared viewer batch context for display config and component domains."""
+
+    viewer_display_config: DisplayConfigT
 
 
 @dataclass(slots=True)
@@ -927,6 +950,23 @@ class ViewerComponentValueDomainView:
             )
         return component_values
 
+    def require_contains(
+        self,
+        component: str,
+        route_values: Sequence[ComponentValue],
+        *,
+        owner: str,
+    ) -> None:
+        domain_values = self.required_values(component)
+        missing = tuple(
+            value for value in route_values if value not in domain_values
+        )
+        if missing:
+            raise ValueError(
+                f"{owner} component domain for '{component}' does not contain "
+                f"route value(s) {missing!r}; domain={domain_values!r}."
+            )
+
     def has_multiple_values(self, component: str) -> bool:
         if component not in self.values:
             return False
@@ -934,10 +974,8 @@ class ViewerComponentValueDomainView:
 
 
 @dataclass(slots=True)
-class ViewerRouteComponentValueTracker:
+class ViewerRouteComponentValueTracker(ViewerComponentValueDomain):
     """Track observed component values for one routed viewer layer."""
-
-    domain: ViewerComponentValueDomain = field(default_factory=ViewerComponentValueDomain)
 
     def update(
         self,
@@ -945,7 +983,8 @@ class ViewerRouteComponentValueTracker:
         axis_components: Sequence[str],
         layer_items: Sequence[ViewerComponentAddressedItem],
     ) -> None:
-        self.domain.update(
+        ViewerComponentValueDomain.update(
+            self,
             self.domain_key(route_key, axis_components),
             axis_components,
             layer_items,
@@ -959,21 +998,53 @@ class ViewerRouteComponentValueTracker:
         return (route_key, tuple(axis_components))
 
 
-@dataclass(slots=True)
-class ViewerDisplayAxisDomain:
-    """Track shared viewer axis values for one stack-component layout."""
+class ViewerDisplayAxisDomainContract(ABC):
+    """Axis-domain contract observed by viewer layer projection."""
 
-    domain: ViewerComponentValueDomain = field(default_factory=ViewerComponentValueDomain)
-
-    def update(
+    @abstractmethod
+    def record_display_axis_values(
         self,
         axis_components: Sequence[str],
         layer_items: Sequence[ViewerComponentAddressedItem],
     ) -> None:
-        self.domain.update(tuple(axis_components), axis_components, layer_items)
+        """Record observed values for the shared viewer axis domain."""
 
-    def values_for(self, axis_components: Sequence[str]) -> ComponentValues:
-        return self.domain.values_for(tuple(axis_components), axis_components)
+    @abstractmethod
+    def display_axis_values_for(
+        self,
+        axis_components: Sequence[str],
+    ) -> ComponentValues:
+        """Return observed values for the shared viewer axis domain."""
+
+
+@dataclass(slots=True)
+class ViewerDisplayAxisDomain(
+    ViewerComponentValueDomain,
+    ViewerDisplayAxisDomainContract,
+):
+    """Track shared viewer axis values for one stack-component layout."""
+
+    def record_display_axis_values(
+        self,
+        axis_components: Sequence[str],
+        layer_items: Sequence[ViewerComponentAddressedItem],
+    ) -> None:
+        ViewerComponentValueDomain.update(
+            self,
+            tuple(axis_components),
+            axis_components,
+            layer_items,
+        )
+
+    def display_axis_values_for(
+        self,
+        axis_components: Sequence[str],
+    ) -> ComponentValues:
+        return ViewerComponentValueDomain.values_for(
+            self,
+            tuple(axis_components),
+            axis_components,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -982,7 +1053,91 @@ class ViewerLayerAxisProjection:
 
     projected_axis_components: tuple[str, ...]
     component_values: ComponentValues
+    routed_component_values: ComponentValues
     axis_offsets: tuple[int, ...]
+    scalar_component_values: ComponentValues = field(default_factory=dict)
+
+    def axis_shape(self) -> tuple[int, ...]:
+        """Return the viewer-domain stack shape for projected component axes."""
+        return tuple(
+            len(self.component_values[component])
+            for component in self.projected_axis_components
+        )
+
+    def coordinate_index(
+        self,
+        components: Mapping[str, ComponentValue],
+        *,
+        context: str,
+    ) -> tuple[int, ...]:
+        """Return the projected viewer coordinate for one component address."""
+        self.require_matching_scalar_components(components, context=context)
+        return tuple(
+            ViewerComponentCoordinateAuthority.index(
+                components=components,
+                component_values=self.component_values,
+                component=component,
+                context=context,
+            )
+            for component in self.projected_axis_components
+        )
+
+    def invalid_missing_indices(
+        self,
+        items: Sequence[ViewerComponentAddressedItem],
+    ) -> tuple[tuple[int, ...], ...]:
+        """Return route-local projected coordinates without payloads."""
+        expected_indices = self.expected_indices()
+        occupied_indices = {
+            self.coordinate_index(item.address.components, context="viewer item")
+            for item in items
+        }
+        return tuple(sorted(expected_indices - occupied_indices))
+
+    def expected_indices(self) -> set[tuple[int, ...]]:
+        """Return all viewer coordinates implied by the projected axis domains."""
+        if not self.projected_axis_components:
+            return {()}
+        return set(
+            product(
+                *(
+                    tuple(
+                        ViewerComponentCoordinateAuthority.index(
+                            components={component: value},
+                            component_values=self.component_values,
+                            component=component,
+                            context="viewer route domain",
+                        )
+                        for value in self.routed_component_values[component]
+                    )
+                    for component in self.projected_axis_components
+                )
+            )
+        )
+
+    def require_matching_scalar_components(
+        self,
+        components: Mapping[str, ComponentValue],
+        *,
+        context: str,
+    ) -> None:
+        """Validate component values collapsed out of the viewer axis projection."""
+        for component, values in self.scalar_component_values.items():
+            if len(values) != 1:
+                raise ValueError(
+                    f"Collapsed component {component!r} must have one value, "
+                    f"got {values!r}."
+                )
+            value = ViewerComponentCoordinateAuthority.required_value(
+                components,
+                component,
+                context=context,
+            )
+            if value != values[0]:
+                raise ValueError(
+                    f"{context} for collapsed component {component!r} has "
+                    f"value {value!r}; expected {values[0]!r}."
+                )
 
     def axis_offset(self, axis_index: int) -> int:
         """Return the viewer-domain offset for a projected axis."""
@@ -1007,6 +1162,7 @@ class ViewerLayerAxisProjectedComponent:
 
     component: str
     values: list[ComponentValue]
+    routed_values: list[ComponentValue]
     axis_offset: int
 
 
@@ -1018,53 +1174,53 @@ class ViewerLayerAxisProjectionStep:
     request: "ViewerLayerAxisProjectionRequest"
 
     def projected_axis(self) -> ViewerLayerAxisProjectedComponent | None:
-        coordinate_values = self.coordinate_domain_values()
-        if self.collapses_to_coordinate_singleton(coordinate_values):
+        route_values = self.route_domain_values()
+        if self.collapses_to_coordinate_singleton(route_values):
             return None
-        values, offset = self.project_component_values(coordinate_values)
+        values, offset = self.project_component_values()
         return ViewerLayerAxisProjectedComponent(
             component=self.component,
             values=values,
+            routed_values=list(route_values),
             axis_offset=offset,
         )
+
+    def collapsed_component_values(self) -> list[ComponentValue] | None:
+        route_values = self.route_domain_values()
+        if not self.collapses_to_coordinate_singleton(route_values):
+            return None
+        return list(route_values)
 
     def collapses_to_coordinate_singleton(
         self,
         coordinate_values: Sequence[ComponentValue],
     ) -> bool:
-        return len(coordinate_values) == 1
+        return (
+            len(coordinate_values) == 1
+            and not self.request.declared_domain.has_multiple_values(self.component)
+        )
 
-    def coordinate_domain_values(self) -> list[ComponentValue]:
-        declared_values = self.request.declared_domain.required_values(self.component)
-        if len(declared_values) > 1:
-            return declared_values
-
-        viewer_values = self.request.viewer_domain.required_values(self.component)
-        if self.viewer_domain_carries_route(viewer_values):
-            return viewer_values
-
-        return declared_values
-
-    def viewer_domain_carries_route(
-        self,
-        viewer_values: Sequence[ComponentValue],
-    ) -> bool:
-        if len(viewer_values) <= 1:
-            return False
+    def route_domain_values(self) -> list[ComponentValue]:
         route_values = self.request.route_domain.required_values(self.component)
-        return all(value in viewer_values for value in route_values)
+        self.request.declared_domain.require_contains(
+            self.component,
+            route_values,
+            owner="declared",
+        )
+        self.request.viewer_domain.require_contains(
+            self.component,
+            route_values,
+            owner="viewer",
+        )
+        return route_values
 
-    def project_component_values(
-        self,
-        coordinate_values: Sequence[ComponentValue],
-    ) -> tuple[list[ComponentValue], int]:
-        route_values = self.request.route_domain.required_values(self.component)
+    def project_component_values(self) -> tuple[list[ComponentValue], int]:
+        route_values = self.route_domain_values()
+        coordinate_values = self.request.declared_domain.required_values(self.component)
         start_index = self.viewer_index(route_values[0], coordinate_values)
-        if self.is_contiguous_subset(start_index, route_values, coordinate_values):
-            return route_values, start_index
-        # Non-contiguous routes cannot be represented by one translated dense block.
-        # Use the full coordinate domain so each value keeps its declared index.
-        return list(coordinate_values), 0
+        if not self.is_contiguous_subset(start_index, route_values, coordinate_values):
+            return route_values, 0
+        return route_values, start_index
 
     def viewer_index(
         self,
@@ -1143,22 +1299,24 @@ class ViewerLayerAxisProjectionRequestAuthority:
         component_axis_semantics: ViewerComponentAxisSemantics,
         layer_items: Sequence[ViewerComponentAddressedItem],
         route_value_tracker: ViewerRouteComponentValueTracker,
-        display_axis_domain: ViewerDisplayAxisDomain,
+        display_axis_domain: ViewerDisplayAxisDomainContract,
     ) -> ViewerLayerAxisProjectionRequest:
         axis_components = component_axis_semantics.layout.components_for_mode(
             ViewerComponentMode.STACK
         )
         route_value_tracker.update(route_key, axis_components, layer_items)
-        display_axis_domain.update(axis_components, layer_items)
+        display_axis_domain.record_display_axis_values(axis_components, layer_items)
         return ViewerLayerAxisProjectionRequest.from_component_values(
             projected_axis_components=axis_components,
-            route_component_values=route_value_tracker.domain.values_for(
+            route_component_values=route_value_tracker.values_for(
                 route_value_tracker.domain_key(route_key, axis_components),
                 axis_components,
             ),
-            viewer_component_values=display_axis_domain.values_for(axis_components),
+            viewer_component_values=display_axis_domain.display_axis_values_for(
+                axis_components
+            ),
             declared_component_values=(
-                component_axis_semantics.value_domain.required_component_values(
+                component_axis_semantics.required_component_values(
                     axis_components
                 )
             ),
@@ -1172,18 +1330,28 @@ class ViewerLayerAxisProjector:
         self,
         request: ViewerLayerAxisProjectionRequest,
     ) -> ViewerLayerAxisProjection:
+        steps = request.projection_steps()
         projected_axes = tuple(
             projected_axis
-            for step in request.projection_steps()
+            for step in steps
             if (projected_axis := step.projected_axis()) is not None
         )
+        scalar_component_values = {
+            step.component: values
+            for step in steps
+            if (values := step.collapsed_component_values()) is not None
+        }
 
         return ViewerLayerAxisProjection(
             projected_axis_components=tuple(axis.component for axis in projected_axes),
             component_values={
                 axis.component: axis.values for axis in projected_axes
             },
+            routed_component_values={
+                axis.component: axis.routed_values for axis in projected_axes
+            },
             axis_offsets=tuple(axis.axis_offset for axis in projected_axes),
+            scalar_component_values=scalar_component_values,
         )
 
 

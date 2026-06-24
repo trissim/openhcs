@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Self
 
@@ -51,6 +51,9 @@ DEFAULT_MCP_WINDOW_SNAPSHOT_DIR = Path("/tmp/openhcs-mcp-window-snapshots")
 DEFAULT_MCP_UI_BRIDGE_TIMEOUT_MS = 750
 MAX_MCP_UI_BRIDGE_TIMEOUT_MS = 2_000
 MIN_MCP_UI_BRIDGE_TIMEOUT_MS = 1
+DEFAULT_MCP_VIEWER_TIMEOUT_MS = 750
+MAX_MCP_VIEWER_TIMEOUT_MS = 2_000
+MIN_MCP_VIEWER_TIMEOUT_MS = 1
 
 
 def build_server(context: OpenHCSAgentContext | None = None):
@@ -248,7 +251,6 @@ def build_server(context: OpenHCSAgentContext | None = None):
     def openhcs_create_orchestrator_session_from_pipeline_source(
         plate_path: str,
         pipeline_source: str,
-        execution_plate_path: str | None = None,
         global_config_id: str | None = None,
         pipeline_config_id: str | None = None,
         host: str = "localhost",
@@ -262,7 +264,6 @@ def build_server(context: OpenHCSAgentContext | None = None):
                 PycodifiedPipelineSessionRequest(
                     identity=ZMQExecutionIdentity(
                         plate_id=plate_path,
-                        execution_plate_id=execution_plate_path,
                     ),
                     pipeline_source=pipeline_source,
                     global_config_id=global_config_id,
@@ -281,6 +282,32 @@ def build_server(context: OpenHCSAgentContext | None = None):
     def openhcs_get_orchestrator_session(session_id: str) -> dict:
         """Return one opaque execution session's plate, pipeline, and connection identity."""
         return to_jsonable(ctx.execution_service.get_session(session_id))
+
+    @server.tool()
+    def openhcs_inspect_pipeline_source_artifact_plan(
+        plate_path: str,
+        pipeline_source: str,
+        axis_filter: list[str] | None = None,
+        well_filter: list[str] | None = None,
+        global_config_id: str | None = None,
+        pipeline_config_id: str | None = None,
+    ) -> dict:
+        """Compile pycodified pipeline source and return a bounded artifact plan inspection."""
+        selected_axis_filter = axis_filter if axis_filter is not None else well_filter
+        return to_jsonable(
+            ctx.execution_service.inspect_pipeline_source_artifact_plan(
+                PycodifiedPipelineSessionRequest(
+                    identity=ZMQExecutionIdentity(
+                        plate_id=plate_path,
+                    ),
+                    pipeline_source=pipeline_source,
+                    global_config_id=global_config_id,
+                    pipeline_config_id=pipeline_config_id,
+                    connection=ExecutionConnectionSpec(),
+                ),
+                axis_filter=tuple(selected_axis_filter or ()),
+            )
+        )
 
     @server.tool()
     def openhcs_submit_compile(
@@ -370,7 +397,7 @@ def build_server(context: OpenHCSAgentContext | None = None):
         host: str = "localhost",
         transport_mode: str | None = None,
         capture_scope: str = "widget",
-        timeout_ms: int = 5000,
+        timeout_ms: int | None = None,
     ) -> dict:
         """Capture a running viewer window, such as Napari, to a PNG resource path."""
         resolved_output_dir = _writable_output_dir(ctx, output_dir_path)
@@ -383,7 +410,64 @@ def build_server(context: OpenHCSAgentContext | None = None):
                 ),
                 host=host,
                 transport_mode=transport_mode,
-                timeout_ms=timeout_ms,
+                timeout_ms=McpViewerTimeoutPolicy.resolve(timeout_ms),
+            )
+        )
+
+    @server.tool()
+    def openhcs_get_viewer_window_state(
+        port: int,
+        host: str = "localhost",
+        transport_mode: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict:
+        """Return structured layer, component, and axis state from a running viewer."""
+        return to_jsonable(
+            ctx.viewer_window_service.window_state(
+                port=port,
+                host=host,
+                transport_mode=transport_mode,
+                timeout_ms=McpViewerTimeoutPolicy.resolve(timeout_ms),
+            )
+        )
+
+    @server.tool()
+    def openhcs_probe_viewer_window(
+        port: int,
+        host: str = "localhost",
+        transport_mode: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict:
+        """Quickly report whether a viewer control endpoint is reachable."""
+        return to_jsonable(
+            ctx.viewer_window_service.probe_window(
+                port=port,
+                host=host,
+                transport_mode=transport_mode,
+                timeout_ms=McpViewerTimeoutPolicy.resolve(timeout_ms),
+            )
+        )
+
+    @server.tool()
+    def openhcs_validate_viewer_window_state(
+        port: int,
+        host: str = "localhost",
+        transport_mode: str | None = None,
+        timeout_ms: int | None = None,
+        expected_layer_count: int | None = None,
+        required_axis_labels: tuple[str, ...] = (),
+        require_nonzero_payloads: bool = True,
+    ) -> dict:
+        """Summarize viewer layers, expected axes, and nonzero payloads."""
+        return to_jsonable(
+            ctx.viewer_window_service.validation_summary(
+                port=port,
+                host=host,
+                transport_mode=transport_mode,
+                timeout_ms=McpViewerTimeoutPolicy.resolve(timeout_ms),
+                expected_layer_count=expected_layer_count,
+                required_axis_labels=required_axis_labels,
+                require_nonzero_payloads=require_nonzero_payloads,
             )
         )
 
@@ -865,19 +949,54 @@ class McpUiBridgeTimeoutPolicy:
 
     @staticmethod
     def resolve(requested_timeout_ms: int | None) -> int:
+        return _mcp_ui_bridge_timeout_policy().resolve(requested_timeout_ms)
+
+
+class McpViewerTimeoutPolicy:
+    """Fail-fast timeout contract for viewer state and snapshot tools."""
+
+    @staticmethod
+    def resolve(requested_timeout_ms: int | None) -> int:
+        return _mcp_viewer_timeout_policy().resolve(requested_timeout_ms)
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedMcpTimeoutPolicy:
+    label: str
+    default_ms: int
+    min_ms: int
+    max_ms: int
+
+    def resolve(self, requested_timeout_ms: int | None) -> int:
         if requested_timeout_ms is None:
-            return DEFAULT_MCP_UI_BRIDGE_TIMEOUT_MS
-        if requested_timeout_ms < MIN_MCP_UI_BRIDGE_TIMEOUT_MS:
+            return self.default_ms
+        if requested_timeout_ms < self.min_ms:
             raise ValueError(
-                "UI bridge MCP timeout must be at least "
-                f"{MIN_MCP_UI_BRIDGE_TIMEOUT_MS}ms."
+                f"{self.label} MCP timeout must be at least {self.min_ms}ms."
             )
-        if requested_timeout_ms > MAX_MCP_UI_BRIDGE_TIMEOUT_MS:
+        if requested_timeout_ms > self.max_ms:
             raise ValueError(
-                "UI bridge MCP timeout must not exceed "
-                f"{MAX_MCP_UI_BRIDGE_TIMEOUT_MS}ms."
+                f"{self.label} MCP timeout must not exceed {self.max_ms}ms."
             )
         return requested_timeout_ms
+
+
+def _mcp_ui_bridge_timeout_policy() -> BoundedMcpTimeoutPolicy:
+    return BoundedMcpTimeoutPolicy(
+        label="UI bridge",
+        default_ms=DEFAULT_MCP_UI_BRIDGE_TIMEOUT_MS,
+        min_ms=MIN_MCP_UI_BRIDGE_TIMEOUT_MS,
+        max_ms=MAX_MCP_UI_BRIDGE_TIMEOUT_MS,
+    )
+
+
+def _mcp_viewer_timeout_policy() -> BoundedMcpTimeoutPolicy:
+    return BoundedMcpTimeoutPolicy(
+        label="Viewer",
+        default_ms=DEFAULT_MCP_VIEWER_TIMEOUT_MS,
+        min_ms=MIN_MCP_VIEWER_TIMEOUT_MS,
+        max_ms=MAX_MCP_VIEWER_TIMEOUT_MS,
+    )
 
 
 class UiObjectStateScopeVisibilityToolArgs:

@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
+from PyQt6.QtWidgets import QApplication
 
 from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeRequest,
@@ -28,13 +29,8 @@ from openhcs.agent.services.ui_bridge_service import (
 )
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
-from openhcs.pyqt_gui.services.ui_bridge_server import (
-    UiBridgeControlServer,
-    UiBridgeDescriptorPathRequest,
-    UiBridgeServerAuthSeed,
-    UiBridgeServerConfig,
-    UiBridgeServerIdentitySeed,
-)
+from openhcs.pyqt_gui.config import AgentUiBridgeConfig
+from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
@@ -63,13 +59,12 @@ class FakeEmptySelectionPolicy(str, Enum):
     ERROR = "error"
 
 
-def _bridge_server_config(directory_path: Path) -> UiBridgeServerConfig:
-    return UiBridgeServerConfig(
-        descriptor_path_request=UiBridgeDescriptorPathRequest(
-            directory_path=directory_path
-        ),
-        identity_seed=UiBridgeServerIdentitySeed(BRIDGE_INSTANCE_ID),
-        auth_seed=UiBridgeServerAuthSeed(BRIDGE_AUTH_TOKEN),
+def _bridge_server_config(directory_path: Path) -> AgentUiBridgeConfig:
+    return AgentUiBridgeConfig(
+        port=0,
+        descriptor_directory_path=directory_path,
+        bridge_instance_id=BRIDGE_INSTANCE_ID,
+        auth_token=BRIDGE_AUTH_TOKEN,
     )
 
 
@@ -150,6 +145,15 @@ class InlineDispatcher:
     def call(self, callback, *, timeout_ms: int = 5000):
         del timeout_ms
         return callback()
+
+
+class QtApplicationAuthority:
+    app_instance: QApplication | None = None
+
+    @classmethod
+    def app(cls) -> QApplication:
+        cls.app_instance = QApplication.instance() or QApplication([])
+        return cls.app_instance
 
 
 class FakePlateManager:
@@ -307,6 +311,7 @@ def test_plate_manager_state_surface_projects_runtime_row_status() -> None:
 
 
 def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
+    QtApplicationAuthority.app()
     manager = FakePlateManager(
         selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
     )
@@ -319,6 +324,7 @@ def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
             action_id=action.identity.action_id,
             selected_scope_ids=action.target_scope_ids,
             observed_selection_revision_token=action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
         )
     )
     stale = bridge.invoke_action(
@@ -327,6 +333,7 @@ def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
             action_id=action.identity.action_id,
             selected_scope_ids=action.target_scope_ids,
             observed_selection_revision_token="stale-token",
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
         )
     )
 
@@ -479,11 +486,11 @@ def test_ui_bridge_control_server_round_trips_documents_through_descriptor(
         assert state_catalog.surfaces[0].surface_id == UiStateSurfaceId.PLATE_MANAGER.value
         assert document.source == VALID_SOURCE
         assert state.payload["rows"][0]["plate_scope_id"] == PLATE_SCOPE_ID
-        assert binding.descriptor_file_path.exists()
+        assert Path(binding.descriptor_file_path).exists()
     finally:
         server.stop()
 
-    assert not binding.descriptor_file_path.exists()
+    assert not Path(binding.descriptor_file_path).exists()
 
 
 def test_ui_bridge_control_server_preserves_bad_auth_error(tmp_path: Path) -> None:
@@ -522,4 +529,4 @@ class _StaticUiBridgeDescriptorResolver:
         connection: UiBridgeConnectionSpec | None,
     ) -> UiBridgeConnectionResolution:
         del connection
-        return UiBridgeConnectionResolution(connection=self._connection)
+        return UiBridgeConnectionResolution.from_connection(self._connection)

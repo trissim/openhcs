@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
 from itertools import count
-from typing import TypeAlias, get_args, get_origin
+from types import UnionType
+from typing import Annotated, TypeAlias, Union, get_args, get_origin
 
 from objectstate import get_base_type_for_lazy
 
@@ -79,7 +81,7 @@ class ConfigService:
         patch: ConfigPatch | None = None,
     ) -> ConfigRef:
         cls = self._config_class(config_type)
-        values = _patch_values(patch)
+        values = _patch_values(cls, patch)
         instance = cls(**values)
         config_id = f"config-{next(self._counter)}"
         self._configs[config_id] = instance
@@ -134,10 +136,77 @@ class ConfigService:
         return AgentConfigKind.from_request(config_type).config_class
 
 
-def _patch_values(patch: ConfigPatch | None) -> dict[str, JsonValue]:
+def _patch_values(
+    cls: type[AgentConfig],
+    patch: ConfigPatch | None,
+) -> dict[str, object]:
     if patch is None:
         return {}
-    return dict(patch.values)
+    if not is_dataclass(cls):
+        return dict(patch.values)
+    return _coerce_dataclass_patch_values(cls, patch.values)
+
+
+def _coerce_dataclass_patch_values(
+    cls: type,
+    values: Mapping[str, JsonValue],
+) -> dict[str, object]:
+    field_by_name = {field.name: field for field in fields(cls)}
+    return {
+        name: (
+            _coerce_patch_value(field_by_name[name].type, value)
+            if name in field_by_name
+            else value
+        )
+        for name, value in values.items()
+    }
+
+
+def _coerce_patch_value(field_type, value: JsonValue) -> object:
+    unwrapped_type = _unwrap_annotated(field_type)
+    if value is None:
+        return None
+
+    dataclass_type = _dataclass_type(unwrapped_type)
+    if dataclass_type is not None and isinstance(value, Mapping):
+        return dataclass_type(**_coerce_dataclass_patch_values(dataclass_type, value))
+
+    enum_type = _unwrap_enum(unwrapped_type)
+    if enum_type is not None:
+        return _coerce_enum_value(enum_type, value)
+
+    return value
+
+
+def _dataclass_type(field_type) -> type | None:
+    field_type = _unwrap_annotated(field_type)
+    if isinstance(field_type, type) and is_dataclass(field_type):
+        return field_type
+    origin = get_origin(field_type)
+    if origin not in (Union, UnionType):
+        return None
+    for arg in get_args(field_type):
+        nested_type = _dataclass_type(arg)
+        if nested_type is not None:
+            return nested_type
+    return None
+
+
+def _coerce_enum_value(enum_type: type[Enum], value: object) -> Enum:
+    if isinstance(value, enum_type):
+        return value
+    for member in enum_type:
+        if value == member.value or value == member.name:
+            return member
+    raise ValueError(
+        f"{value!r} is not a valid {enum_type.__module__}.{enum_type.__name__}"
+    )
+
+
+def _unwrap_annotated(field_type):
+    if get_origin(field_type) is Annotated:
+        return get_args(field_type)[0]
+    return field_type
 
 
 def _field_schema(cls: type) -> tuple[ConfigFieldSchema, ...]:
@@ -202,6 +271,7 @@ def _enum_values(field_type) -> tuple[str, ...]:
 
 
 def _unwrap_enum(field_type) -> type[Enum] | None:
+    field_type = _unwrap_annotated(field_type)
     if isinstance(field_type, type) and issubclass(field_type, Enum):
         return field_type
     origin = get_origin(field_type)
