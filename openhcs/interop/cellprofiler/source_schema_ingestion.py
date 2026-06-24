@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, TypeAlias
+from typing import Any, ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
+from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_matching import is_image_path, source_filters_match
 from openhcs.core.source_schema_workspace import (
+    SourceSchemaCandidateDiscoveryMode,
     SourceSchemaImageSetProbe,
     SourceSchemaImageSetSelection,
     SourceSchemaWorkspaceMaterialization,
@@ -154,6 +156,16 @@ class CellProfilerSourceSchemaWorkspace(CellProfilerSourceSchemaProjection):
 
     prepared_pipeline: PreparedGeneratedPipeline
 
+    @property
+    def runtime_pipeline(self) -> Pipeline:
+        """Return the executable OpenHCS pipeline for this prepared workspace."""
+        return self.prepared_pipeline.runtime_pipeline
+
+    @property
+    def runtime_pipeline_steps(self) -> Sequence[Any]:
+        """Return executable OpenHCS steps without exposing generation internals."""
+        return self.prepared_pipeline.runtime_pipeline_steps
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerSourceSchemaPreparation(CellProfilerSourceSchemaProjection):
@@ -275,7 +287,7 @@ class CellProfilerSourceSchemaMaterializer:
     def materialize(self) -> tuple[Path, SourceSchemaWorkspaceMaterialization]:
         """Materialize source images and return their effective source root."""
 
-        source_root = CellProfilerSourceRootResolver(
+        resolved_source = CellProfilerSourceRootResolver(
             self.request.source_root,
             self.source_schema,
         ).source_root()
@@ -285,9 +297,10 @@ class CellProfilerSourceSchemaMaterializer:
                 CellProfilerSourceSchemaMaterializationScope.from_request(
                     self.request
                 ).materialize(
-                    source_root=source_root,
+                    source_root=resolved_source.root,
                     workspace_root=self.request.workspace_root,
                     source_schema=self.source_schema,
+                    source_files=resolved_source.source_files,
                 )
             )
         except Exception as exc:
@@ -295,7 +308,7 @@ class CellProfilerSourceSchemaMaterializer:
                 f"Failed to materialize CellProfiler source schema for "
                 f"{self.request.cppipe_path.name}: {exc}"
             ) from exc
-        return source_root, materialization
+        return resolved_source.root, materialization
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,8 +338,14 @@ class CellProfilerSourceSchemaMaterializationScope:
         source_root: Path,
         workspace_root: Path,
         source_schema: PipelineImageSchema,
+        source_files: Sequence[Path] | None = None,
     ) -> SourceSchemaWorkspaceMaterialization:
-        return self.bound_materializer()(source_root, workspace_root, source_schema)
+        return self.bound_materializer()(
+            source_root,
+            workspace_root,
+            source_schema,
+            source_files=source_files,
+        )
 
     def bound_materializer(self) -> CellProfilerSourceSchemaMaterializerCallable:
         return partial(
@@ -335,6 +354,7 @@ class CellProfilerSourceSchemaMaterializationScope:
             source_backend=self.source_backend,
             workspace_backend=self.workspace_backend,
             image_set_selection=self.image_set_selection,
+            candidate_discovery_mode=SourceSchemaCandidateDiscoveryMode.LOCAL_FILES,
         )
 
 
@@ -345,26 +365,40 @@ class CellProfilerSourceRootResolver:
     selected_root: Path
     schema: PipelineImageSchema
 
-    def source_root(self) -> Path:
+    def source_root(self) -> "CellProfilerResolvedSourceRoot":
         """Return a child image folder only when the source universe is unambiguous."""
         selected_root = Path(self.selected_root)
         if not selected_root.exists():
-            return selected_root
-        candidates = self._source_root_candidates(selected_root)
-        if len(candidates) == 1:
-            return candidates[0].root
-        usable_candidates = tuple(
-            candidate
-            for candidate in candidates
-            if SourceSchemaImageSetProbe(
-                source_root=candidate.root,
-                source_files=candidate.source_files,
-                schema=self.schema,
-            ).result().usable
+            return CellProfilerResolvedSourceRoot(selected_root, ())
+        fallback_candidates = self._source_root_candidates(selected_root)
+        for candidate_root in self._candidate_search_roots(selected_root):
+            usable_candidates = tuple(
+                candidate
+                for candidate in self._source_root_candidates(candidate_root)
+                if candidate.usable_for(self.schema)
+            )
+            if len(usable_candidates) == 1:
+                return usable_candidates[0].resolved_root()
+        if len(fallback_candidates) == 1:
+            return fallback_candidates[0].resolved_root()
+        return CellProfilerResolvedSourceRoot(
+            selected_root,
+            tuple(
+                path
+                for candidate in fallback_candidates
+                for path in candidate.source_files
+            ),
         )
-        if len(usable_candidates) == 1:
-            return usable_candidates[0].root
-        return selected_root
+
+    def _candidate_search_roots(self, selected_root: Path) -> tuple[Path, ...]:
+        roots = [selected_root]
+        if not any(selected_root.glob("*.cppipe")):
+            return tuple(roots)
+        for parent in selected_root.parents:
+            if any(parent.glob("*.cppipe")):
+                roots.append(parent)
+                break
+        return tuple(roots)
 
     def _source_root_candidates(
         self,
@@ -402,6 +436,28 @@ class CellProfilerSourceRootCandidate:
     root: Path
     source_files: tuple[Path, ...]
 
+    def usable_for(self, schema: PipelineImageSchema) -> bool:
+        return SourceSchemaImageSetProbe(
+            source_root=self.root,
+            source_files=self.source_files,
+            schema=schema,
+            discovery_mode=SourceSchemaCandidateDiscoveryMode.LOCAL_FILES,
+        ).result().usable
+
+    def resolved_root(self) -> "CellProfilerResolvedSourceRoot":
+        return CellProfilerResolvedSourceRoot(
+            root=self.root,
+            source_files=self.source_files,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerResolvedSourceRoot:
+    """Resolved CellProfiler image root plus the admitted source file universe."""
+
+    root: Path
+    source_files: tuple[Path, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerSourcePathAdmission:
@@ -430,12 +486,20 @@ class CellProfilerSourcePathAdmission:
         return CellProfilerSourcePathExclusion.ordered()
 
     def _schema_admits_path(self, relative_path: str) -> bool:
+        if self._schema_admits_source_artifact(relative_path):
+            return True
         if not is_image_path(relative_path):
             return False
         images_rule = self.schema.images_rule
         if images_rule is None:
             return True
         return source_filters_match(relative_path, images_rule.filters)
+
+    def _schema_admits_source_artifact(self, relative_path: str) -> bool:
+        return any(
+            source_filters_match(relative_path, assignment.selector.filters)
+            for assignment in self.schema.source_artifacts_by_alias.values()
+        )
 
 
 @dataclass(frozen=True, slots=True)

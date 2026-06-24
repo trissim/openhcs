@@ -19,7 +19,6 @@ from openhcs.interop.cellprofiler.source_schema_ingestion import (
     prepare_cellprofiler_source_schema_only_workspace,
     prepare_cellprofiler_source_schema_workspace,
 )
-from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +47,10 @@ class CellProfilerPlateWorkspaceRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerPlateWorkspaceResult:
+class CellProfilerPlateWorkspaceResult(CellProfilerPlateWorkspaceRequest):
     """Result of preparing a CellProfiler folder as an OpenHCS workspace."""
 
-    plate_root: Path
-    cppipe_path: Path | None
-    ingestion: CellProfilerSourceSchemaWorkspace | None
+    ingestion: CellProfilerSourceSchemaWorkspace | None = None
 
     @property
     def materialized(self) -> bool:
@@ -136,33 +133,17 @@ class CellProfilerPipelineFile:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerPlateWorkspacePreparer:
+class CellProfilerPlateWorkspacePreparer(CellProfilerPlateWorkspaceRequest):
     """Prepare direct `.cppipe` folders for OpenHCS plate initialization."""
 
-    request: CellProfilerPlateWorkspaceRequest
-
     def prepare(self) -> CellProfilerPlateWorkspaceResult:
-        plate_root = self.request.plate_root
-        cppipe_path = self.cppipe_path()
+        plate_root = self.plate_root
+        cppipe_path = self.resolved_cppipe_path()
         if cppipe_path is None:
             return CellProfilerPlateWorkspaceResult(
                 plate_root=plate_root,
                 cppipe_path=cppipe_path,
                 ingestion=None,
-            )
-        if self.openhcs_metadata_path().exists():
-            prepared = prepare_generated_pipeline(
-                cppipe_path,
-                output_path=self.generated_pipeline_path(cppipe_path),
-            )
-            return CellProfilerPlateWorkspaceResult(
-                plate_root=plate_root,
-                cppipe_path=cppipe_path,
-                ingestion=CellProfilerSourceSchemaWorkspace(
-                    prepared_pipeline=prepared,
-                    materialization=None,
-                    source_root=plate_root,
-                ),
             )
         ingestion = prepare_cellprofiler_source_schema_workspace(
             CellProfilerSourceSchemaWorkspaceRequest.from_paths(
@@ -183,21 +164,18 @@ class CellProfilerPlateWorkspacePreparer:
 
         return prepare_cellprofiler_input_workspace(
             InputWorkspacePreparationRequest(
-                selected_path=self.request.plate_root,
-                selected_pipeline_path=self.request.cppipe_path,
-                workspace_root=self.request.plate_root,
+                selected_path=self.plate_root,
+                selected_pipeline_path=self.cppipe_path,
+                workspace_root=self.plate_root,
             )
         )
 
-    def openhcs_metadata_path(self) -> Path:
-        return self.request.plate_root / OpenHCSMetadataHandler.METADATA_FILENAME
-
-    def cppipe_path(self) -> Path | None:
+    def resolved_cppipe_path(self) -> Path | None:
         candidates = self.cppipe_paths()
-        if self.request.cppipe_path is not None:
-            cppipe_path = self.request.cppipe_path
+        if self.cppipe_path is not None:
+            cppipe_path = self.cppipe_path
             if not cppipe_path.is_absolute():
-                cppipe_path = self.request.plate_root / cppipe_path
+                cppipe_path = self.plate_root / cppipe_path
             if cppipe_path.suffix != ".cppipe":
                 raise ValueError(f"Expected a .cppipe file, got {cppipe_path}.")
             if cppipe_path not in candidates:
@@ -209,19 +187,19 @@ class CellProfilerPlateWorkspacePreparer:
             return None
         if len(candidates) == 1:
             return candidates[0]
-        preferred = self.request.plate_root / f"{self.request.plate_root.name}.cppipe"
-        if preferred in candidates:
-            return preferred
+        same_named_cppipe = self.plate_root / f"{self.plate_root.name}.cppipe"
+        if same_named_cppipe in candidates:
+            return same_named_cppipe
         candidate_names = ", ".join(path.name for path in candidates)
         raise ValueError(
             "CellProfiler plate workspace contains multiple .cppipe files; "
-            f"expected one or {preferred.name}. Found: {candidate_names}"
+            f"expected one or {same_named_cppipe.name}. Found: {candidate_names}"
         )
 
     def cppipe_paths(self) -> tuple[Path, ...]:
         pipeline_files = tuple(
             CellProfilerPipelineFile.from_path(path)
-            for path in self.request.plate_root.glob("*.cppipe")
+            for path in self.plate_root.glob("*.cppipe")
             if CellProfilerPipelineFile.is_visible_cppipe(path)
         )
         return tuple(
@@ -229,7 +207,7 @@ class CellProfilerPlateWorkspacePreparer:
             for file in sorted(pipeline_files, key=lambda file: file.sort_key)
         )
 
-    def preferred_cppipe_path(self) -> Path | None:
+    def default_cppipe_path(self) -> Path | None:
         """Return the default CellProfiler pipeline for this physical plate."""
         candidates = self.cppipe_paths()
         if not candidates:
@@ -237,11 +215,9 @@ class CellProfilerPlateWorkspacePreparer:
         if len(candidates) == 1:
             return candidates[0]
 
-        preferred_name = (
-            self.request.plate_root / f"{self.request.plate_root.name}.cppipe"
-        )
-        if preferred_name in candidates:
-            return preferred_name
+        same_named_cppipe = self.plate_root / f"{self.plate_root.name}.cppipe"
+        if same_named_cppipe in candidates:
+            return same_named_cppipe
 
         final_pipelines = tuple(
             path
@@ -264,7 +240,7 @@ class CellProfilerPlateWorkspacePreparer:
         return candidates[0]
 
     def generated_pipeline_path(self, cppipe_path: Path) -> Path:
-        generated_dir = self.request.plate_root / ".openhcs_cellprofiler"
+        generated_dir = self.plate_root / ".openhcs_cellprofiler"
         generated_dir.mkdir(parents=True, exist_ok=True)
         return generated_dir / f"{cppipe_path.stem}_openhcs.py"
 
@@ -275,13 +251,11 @@ def prepare_cellprofiler_input_workspace(
     """Prepare a CellProfiler folder through the generic input workspace contract."""
 
     plate_root = request.selected_path
-    preparer = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest.from_paths(
-            plate_root,
-            cppipe_path=request.selected_pipeline_path,
-        )
+    preparer = CellProfilerPlateWorkspacePreparer.from_paths(
+        plate_root,
+        cppipe_path=request.selected_pipeline_path,
     )
-    cppipe_path = preparer.cppipe_path()
+    cppipe_path = preparer.resolved_cppipe_path()
     if cppipe_path is None:
         return InputWorkspacePreparationResult(
             original_source_root=plate_root,

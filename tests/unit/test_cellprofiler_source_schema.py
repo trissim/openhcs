@@ -2,7 +2,10 @@ import re
 from pathlib import Path
 
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
-from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator
+from openhcs.interop.cellprofiler.pipeline_generator import (
+    PipelineGenerator,
+    SourceProcessingComponentSemantics,
+)
 from openhcs.interop.cellprofiler.source_schema import compile_image_schema
 from openhcs.interop.cellprofiler.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
@@ -489,6 +492,60 @@ def test_compile_image_schema_ignores_disabled_metadata_regex_for_ordered_image_
     assert schema.metadata_rules == ()
 
 
+def test_codegen_groups_metadata_free_ordered_image_sets_by_workspace_site():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Extract metadata?", "No"),
+            ("Metadata extraction method", "Extract from file/folder names"),
+            ("Metadata source", "File name"),
+            (
+                "Regular expression to extract from file name",
+                r"^(?P<Site>[0-9]+)_(?P<Channel>[A-Z])",
+            ),
+        ],
+    )
+    names_and_types_module = _module_with_records(
+        2,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "3"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (file does contain "_D")'),
+            ("Name to assign these images", "OrigBlue"),
+            ("Select the image type", "Grayscale image"),
+            ("Select the rule criteria", 'and (file does contain "_F")'),
+            ("Name to assign these images", "OrigGreen"),
+            ("Select the image type", "Grayscale image"),
+            ("Select the rule criteria", 'and (file does contain "_R")'),
+            ("Name to assign these images", "OrigRed"),
+            ("Select the image type", "Grayscale image"),
+        ],
+    )
+    crop_module = ModuleBlock(
+        name="Crop",
+        module_num=3,
+        settings={
+            "Select the input image": "OrigBlue",
+            "Name the output image": "CropBlue",
+            "Select the cropping shape": "Rectangle",
+        },
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_ordered_sources",
+        source_cppipe=Path("source.cppipe"),
+        modules=[crop_module],
+        skipped_modules=[metadata_module, names_and_types_module],
+    )
+
+    assert "match_plan=SourceBindingMatchPlan(" in generated.code
+    assert "method=SourceBindingMatchMethod.ORDER" in generated.code
+    assert "variable_components=[]" in generated.code
+    assert "group_by=GroupBy.SITE" in generated.code
+
+
 def test_compile_image_schema_treats_binary_masks_as_stack_images():
     names_and_types_module = _module_with_records(
         1,
@@ -746,6 +803,79 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert "group_by=GroupBy.SITE" in generated.code
 
 
+def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r".*(?P<well>[A-Z]\d+)_s(?P<site>\d+)_w(?P<channel>\d)",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Select the rule criteria", 'and (metadata does channel "1")'),
+                ("Name to assign these images", "DAPI"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does channel "2")'),
+                ("Name to assign these images", "GFP"),
+                ("Select the image type", "Grayscale image"),
+                ("Match metadata", "[{'DAPI': 'well', 'GFP': 'well'}]"),
+                ("Image set matching method", "Metadata"),
+            ],
+        ),
+        _module_with_records(
+            3,
+            "Groups",
+            [
+                ("Do you want to group your images?", "Yes"),
+                ("Metadata category", "well"),
+            ],
+        ),
+    ]
+    processing_module = _module_with_records(
+        4,
+        "MeasureImageQuality",
+        [
+            ("Calculate metrics for which images?", "All loaded images"),
+            ("Image count", "1"),
+            ("Calculate blur metrics?", "Yes"),
+            ("Calculate saturation metrics?", "Yes"),
+            ("Calculate intensity metrics?", "Yes"),
+            ("Calculate thresholds?", "No"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([*setup_modules, processing_module])
+    contract = table.contracts_by_module_num[4]
+
+    assert tuple(
+        binding.alias for binding in contract.source_bindings.groups[0].bindings
+    ) == ("DAPI", "GFP")
+    assert contract.source_bindings.requires_step_input_channel_stack
+    assert contract.runtime_artifact_inputs == ()
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_measure_image_quality_all_loaded",
+        source_cppipe=Path("source.cppipe"),
+        modules=[processing_module],
+        skipped_modules=setup_modules,
+    )
+
+    assert "source_bindings=StepSourceBindingsConfig(" in generated.code
+    assert "# CellProfiler artifact inputs: image:DAPI, image:GFP" in generated.code
+    assert "VariableComponents.CHANNEL" in generated.code
+    assert "input_source=InputSource.PIPELINE_START" in generated.code
+
+
 def test_codegen_upgrades_pure_2d_runtime_callable_when_step_input_binding_selects_stack():
     setup_modules = [
         _module_with_records(
@@ -800,6 +930,87 @@ def test_codegen_upgrades_pure_2d_runtime_callable_when_step_input_binding_selec
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
 
 
+def test_imagemath_pipeline_start_operands_consume_source_alias_axis():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_xy(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "3"),
+                ("Process as 3D?", "Yes"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "origDNA"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "2")'),
+                ("Name to assign these images", "origMito"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "1")'),
+                ("Name to assign these images", "origMemb"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "0")'),
+            ],
+        ),
+    ]
+    processing_module = _module_with_records(
+        3,
+        "ImageMath",
+        [
+            ("Operation", "Add"),
+            ("Name the output image", "Monolayer"),
+            ("Image or measurement?", "Image"),
+            ("Select the first image", "origDNA"),
+            ("Multiply the first image by", "1.0"),
+            ("Image or measurement?", "Image"),
+            ("Select the second image", "origMemb"),
+            ("Multiply the second image by", "1.0"),
+            ("Image or measurement?", "Image"),
+            ("Select the third image", "origMito"),
+            ("Multiply the third image by", "1.0"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([*setup_modules, processing_module])
+    bindings = table.contracts_by_module_num[3].source_bindings.groups[0].bindings
+
+    assert tuple(binding.alias for binding in bindings) == (
+        "origDNA",
+        "origMemb",
+        "origMito",
+    )
+    assert tuple(binding.participates_in_image_stack for binding in bindings) == (
+        True,
+        False,
+        False,
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_imagemath_sources",
+        source_cppipe=Path("source.cppipe"),
+        modules=[processing_module],
+        skipped_modules=setup_modules,
+    )
+    step_start = generated.code.index("# CellProfiler artifact outputs: image:Monolayer")
+    step_source = generated.code[step_start:]
+
+    assert step_source.count("participates_in_image_stack=False") == 2
+    assert "variable_components=[VariableComponents.Z_INDEX]" in step_source
+    assert "VariableComponents.CHANNEL" not in step_source
+
+
 def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     setup_modules = [
         _module_with_records(
@@ -841,7 +1052,7 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     assert "SourceFilterClause(" in generated.code
     assert "SourceFilterMatchType.CONTAINS" in generated.code
     assert "input_source=InputSource.PIPELINE_START," in generated.code
-    assert "variable_components=[VariableComponents.SITE]," in generated.code
+    assert "variable_components=[]," in generated.code
     assert "group_by=GroupBy.NONE," in generated.code
 
 
@@ -905,11 +1116,8 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     )
     assert primary_match is not None
     primary_config = primary_match.group("body")
-    assert (
-        "variable_components=[VariableComponents.SITE, VariableComponents.TIMEPOINT]"
-        in primary_config
-    )
-    assert "group_by=GroupBy.NONE," in primary_config
+    assert "variable_components=[]," in primary_config
+    assert "group_by=GroupBy.TIMEPOINT," in primary_config
 
     measurement_match = re.search(
         r'name="MeasureObjectSizeShape".*?'
@@ -919,9 +1127,9 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     )
     assert measurement_match is not None
     measurement_config = measurement_match.group("body")
-    assert "variable_components=[VariableComponents.TIMEPOINT]," in measurement_config
+    assert "variable_components=[]," in measurement_config
     assert "VariableComponents.SITE" not in measurement_config
-    assert "group_by=GroupBy.SITE," in measurement_config
+    assert "group_by=GroupBy.TIMEPOINT," in measurement_config
 
 
 def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
@@ -988,8 +1196,8 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     assert primary_match is not None
     primary_config = primary_match.group("body")
     assert "VariableComponents.CHANNEL" not in primary_config
-    assert "variable_components=[VariableComponents.SITE]," in primary_config
-    assert "group_by=GroupBy.NONE," in primary_config
+    assert "variable_components=[]," in primary_config
+    assert "group_by=GroupBy.SITE," in primary_config
 
     secondary_match = re.search(
         r'name="IdentifySecondaryObjects".*?'
@@ -1002,6 +1210,90 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     assert "VariableComponents.CHANNEL" not in secondary_config
     assert "variable_components=[]," in secondary_config
     assert "group_by=GroupBy.SITE," in secondary_config
+
+
+def test_straightenworms_declares_step_source_identity_axis_for_source_images():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<well>[A-Z]\d+)_s(?P<site>\d+)_w(?P<channel>\d)",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "WormsBinary"),
+                ("Match metadata", "[{'WormsBinary': 'well'}, {'WormsBinary': 'site'}]"),
+                ("Image set matching method", "Metadata"),
+                ("Select the rule criteria", 'and (metadata does channel "1")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "mCherry"),
+                ("Match metadata", "[{'mCherry': 'well'}, {'mCherry': 'site'}]"),
+                ("Image set matching method", "Metadata"),
+                ("Select the rule criteria", 'and (metadata does channel "2")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "GFP"),
+                ("Match metadata", "[{'GFP': 'well'}, {'GFP': 'site'}]"),
+                ("Image set matching method", "Metadata"),
+                ("Select the rule criteria", 'and (metadata does channel "3")'),
+            ],
+        ),
+    ]
+    processing_modules = [
+        ModuleBlock(
+            name="UntangleWorms",
+            module_num=3,
+            settings={
+                "Select the input image": "WormsBinary",
+                "Name the output overlapping worm objects": "OverlappingWorms",
+                "Name the output non-overlapping worm objects": "NonOverlappingWorms",
+            },
+        ),
+        _module_with_records(
+            4,
+            "StraightenWorms",
+            [
+                ("Select the input untangled worm objects", "NonOverlappingWorms"),
+                ("Name the output straightened worm objects", "StraightenedWorms"),
+                ("Select an input image to straighten", "mCherry"),
+                ("Name the output straightened image", "Straightened_mCherry"),
+                ("Select an input image to straighten", "GFP"),
+                ("Name the output straightened image", "Straightened_GFP"),
+            ],
+        ),
+    ]
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_straighten_worms_source_identity",
+        source_cppipe=Path("source.cppipe"),
+        modules=processing_modules,
+        skipped_modules=setup_modules,
+    )
+
+    step_match = re.search(
+        r'name="StraightenWorms",\n(?P<body>.*?)'
+        r"processing_config=LazyProcessingConfig",
+        generated.code,
+        re.S,
+    )
+
+    assert step_match is not None
+    assert (
+        "source_identity_stack_axes=(AllComponents.CHANNEL,)"
+        in step_match.group("body")
+    )
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
@@ -1133,6 +1425,31 @@ def test_compile_image_schema_supports_order_based_matching():
     assert schema.match_plan.dimensions == ()
     assert schema.assignment_for_alias("DNA") is not None
     assert schema.assignment_for_alias("Actin") is not None
+
+
+def test_ordered_image_set_axis_is_not_source_alias_axis():
+    names_and_types_module = _module_with_records(
+        3,
+        "NamesAndTypes",
+        [
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "DNA"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (metadata does channel "1")'),
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "Actin"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (metadata does channel "2")'),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+    semantics = SourceProcessingComponentSemantics(schema)
+
+    assert semantics.image_set_components() == (AllComponents.SITE,)
+    assert semantics.source_alias_components() == ()
 
 
 def test_cellprofiler_image_schema_resolves_legacy_orig_color_aliases():

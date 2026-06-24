@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import ClassVar, Iterable, Mapping
@@ -28,6 +28,7 @@ from openhcs.interop.cellprofiler.relate_objects_settings import (
 )
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
+    NO_ARTIFACT_MATERIALIZATION,
 )
 from openhcs.core.artifacts import (
     CROP_MASK_ARTIFACT_SIDECAR,
@@ -39,7 +40,6 @@ from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.registry_strategies import (
     GeneratedLeafClassSpec,
-    RegisteredLeafClassSpec,
 )
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.core.source_bindings import (
@@ -63,6 +63,8 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.processing.backends.cellprofiler.library import canonical_module_name
+from pycodify import FormatContext, to_source
+import openhcs.serialization.pycodify_formatters as _openhcs_pycodify_formatters
 
 from openhcs.interop.cellprofiler.align_settings import align_image_plan
 from openhcs.interop.cellprofiler.area_occupied_settings import (
@@ -91,6 +93,9 @@ from openhcs.interop.cellprofiler.artifact_semantics import (
     function_special_outputs,
 )
 from openhcs.interop.cellprofiler.module_roles import INFRASTRUCTURE_MODULE_NAMES
+from openhcs.interop.cellprofiler.module_artifact_inputs import (
+    module_declared_artifact_inputs,
+)
 from openhcs.interop.cellprofiler.filter_objects_settings import (
     FilterObjectsOutputRole,
     filter_objects_child_count_object_names,
@@ -329,6 +334,16 @@ class ModuleInputRolePolicy(ABC, metaclass=AutoRegisterMeta):
         del module
         return False
 
+    def source_binding_participates_in_image_stack(
+        self,
+        module: ModuleBlock,
+        symbol: "CellProfilerSymbol",
+        input_symbols: tuple["CellProfilerSymbol", ...],
+    ) -> bool:
+        """Return whether an external source symbol anchors image-stack execution."""
+        del module, symbol, input_symbols
+        return True
+
 
 class DeduplicatingModuleInputRolePolicy(ModuleInputRolePolicy):
     """Default CellProfiler workspace behavior: same name and kind is one artifact."""
@@ -352,6 +367,38 @@ class CorrectIlluminationApplyInputRolePolicy(RolePreservingModuleInputRolePolic
     """Preserve repeated image/function pairs for paired illumination correction."""
 
     module_name = "CorrectIlluminationApply"
+
+
+class PrimaryImageAnchoredInputRolePolicy(ModuleInputRolePolicy):
+    """Treat the first external image input as the source execution anchor."""
+
+    def source_binding_participates_in_image_stack(
+        self,
+        module: ModuleBlock,
+        symbol: "CellProfilerSymbol",
+        input_symbols: tuple["CellProfilerSymbol", ...],
+    ) -> bool:
+        del module
+        if symbol.kind is not CellProfilerSymbolKind.IMAGE:
+            return True
+        first_external_image = next(
+            (
+                candidate
+                for candidate in input_symbols
+                if candidate.is_external_source
+                and candidate.kind is CellProfilerSymbolKind.IMAGE
+            ),
+            None,
+        )
+        if first_external_image is None:
+            return True
+        return symbol.key == first_external_image.key
+
+
+class ImageMathInputRolePolicy(PrimaryImageAnchoredInputRolePolicy):
+    """Bind ImageMath source operands relative to the primary source image."""
+
+    module_name = "ImageMath"
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,15 +609,35 @@ class _SymbolTableBuilder:
             source_schema=self._source_schema,
         )
 
+    @property
+    def source_schema(self) -> PipelineImageSchema:
+        return self._source_schema
+
     def source_bindings_for(
         self,
         symbols: Iterable[CellProfilerSymbol],
+        *,
+        module: ModuleBlock | None = None,
+        input_symbols: tuple[CellProfilerSymbol, ...] = (),
     ) -> StepSourceBindingsConfig:
         external_symbols = CellProfilerSymbol.unique_by_key(symbols)
         if not external_symbols:
             return EMPTY_SOURCE_BINDINGS
+        role_policy = (
+            ModuleInputRolePolicy.for_module(module.name)
+            if module is not None
+            else DeduplicatingModuleInputRolePolicy()
+        )
         bindings = tuple(
-            self._source_binding_for_symbol(symbol) for symbol in external_symbols
+            self._source_binding_for_symbol(
+                symbol,
+                participates_in_image_stack=role_policy.source_binding_participates_in_image_stack(
+                    module,
+                    symbol,
+                    input_symbols,
+                ),
+            )
+            for symbol in external_symbols
         )
         return StepSourceBindingsConfig(
             groups=(GroupedSourceBindings(bindings=bindings),),
@@ -616,6 +683,11 @@ class _SymbolTableBuilder:
                     "a different source artifact kind."
                 ) from exc
             if source_artifact is not None:
+                return self.external_source_artifact(normalized_name, kind)
+            if (
+                kind is CellProfilerSymbolKind.OBJECTS
+                and not self._source_schema.is_empty
+            ):
                 return self.external_source_artifact(normalized_name, kind)
             if kind is CellProfilerSymbolKind.IMAGE:
                 self._raise_if_name_is_known_as_other_kind(
@@ -733,8 +805,10 @@ class _SymbolTableBuilder:
     def _source_binding_for_symbol(
         self,
         symbol: CellProfilerSymbol,
+        *,
+        participates_in_image_stack: bool = True,
     ) -> NamedSourceBinding:
-        assignment = self._source_schema.resolved_source_artifact_for_alias(
+        assignment = self._source_schema.source_assignment_for_alias(
             symbol.name,
             symbol.kind.artifact_kind,
         )
@@ -742,8 +816,16 @@ class _SymbolTableBuilder:
             return NamedSourceBinding(
                 alias=symbol.name,
                 artifact_kind=symbol.kind.artifact_kind,
+                participates_in_image_stack=participates_in_image_stack,
             )
-        return assignment.to_binding()
+        binding = assignment.to_binding()
+        return replace(
+            binding,
+            participates_in_image_stack=(
+                binding.participates_in_image_stack
+                and participates_in_image_stack
+            ),
+        )
 
 
 def module_contract_literal(
@@ -752,6 +834,7 @@ def module_contract_literal(
     externally_materialized_outputs: frozenset[tuple[ArtifactKind, str]] = (
         frozenset()
     ),
+    import_collector: set[tuple[str, str]] | None = None,
 ) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
     artifact_literals = ArtifactSpecLiteralAuthority()
@@ -782,6 +865,8 @@ def module_contract_literal(
         output_specs += ","
     if len(contract.runtime_artifact_inputs) == 1:
         runtime_input_specs += ","
+    if import_collector is not None:
+        import_collector.update(artifact_literals.imports)
     return (
         "ModuleArtifactContract("
         f"module_name={contract.module_name!r}, "
@@ -795,6 +880,9 @@ def module_contract_literal(
 
 class ArtifactSpecLiteralAuthority:
     """Nominal authority for generated ArtifactSpec Python literals."""
+
+    def __init__(self) -> None:
+        self.imports: set[tuple[str, str]] = set()
 
     def declared_outputs_literal(self, contract: ModuleArtifactContracts) -> str:
         """Render declared outputs only when pruning made them differ from outputs."""
@@ -817,6 +905,14 @@ class ArtifactSpecLiteralAuthority:
         keyword_args: list[str] = []
         if materialization_literal is not None:
             keyword_args.append(f"materialization={materialization_literal}")
+        elif spec.materialization is NO_ARTIFACT_MATERIALIZATION:
+            keyword_args.append("materialization=NO_ARTIFACT_MATERIALIZATION")
+        elif spec.materialization is not None:
+            materialization_source = to_source(spec.materialization, FormatContext())
+            self.imports.update(materialization_source.imports)
+            keyword_args.append(
+                f"materialization={materialization_source.code}"
+            )
         elif (
             preserve_default_materialization
             and spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
@@ -881,6 +977,8 @@ def _named_source_binding_literal(binding: NamedSourceBinding) -> str:
         field_literals.append(f"selector={_source_selector_literal(binding.selector)}")
     if binding.origin is not SourceBindingOrigin.STEP_INPUT:
         field_literals.append(f"origin=SourceBindingOrigin.{binding.origin.name}")
+    if not binding.participates_in_image_stack:
+        field_literals.append("participates_in_image_stack=False")
     return f"NamedSourceBinding({', '.join(field_literals)})"
 
 
@@ -1231,7 +1329,9 @@ class CellProfilerContractAssemblyMixin:
             output_symbols=output_symbols,
             declared_output_symbols=output_symbols,
             source_bindings=builder.source_bindings_for(
-                symbol for symbol in input_symbols if symbol.is_external_source
+                (symbol for symbol in input_symbols if symbol.is_external_source),
+                module=module,
+                input_symbols=input_symbols,
             ),
         )
 
@@ -1442,7 +1542,18 @@ class SemanticSettingsContractCandidate:
         if not setting_symbols and not special_outputs:
             return cls()
 
-        inputs = tuple(
+        declared_inputs = tuple(
+            builder.require(
+                declared_input.name,
+                CellProfilerSymbolKind.from_artifact_kind(declared_input.kind),
+                module,
+            )
+            for declared_input in module_declared_artifact_inputs(
+                module,
+                builder.source_schema,
+            )
+        )
+        setting_inputs = tuple(
             builder.require(
                 symbol.name,
                 CellProfilerSymbolKind.from_artifact_kind(symbol.role.artifact_kind),
@@ -1451,6 +1562,7 @@ class SemanticSettingsContractCandidate:
             for symbol in setting_symbols
             if symbol.role.is_input
         )
+        inputs = (*declared_inputs, *setting_inputs)
         outputs = _semantic_output_symbols(
             builder,
             module,
@@ -2387,84 +2499,72 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
         return (*required, *optional)
 
 
-@dataclass(frozen=True, slots=True)
-class MeasurementModuleContractBuilderSpec(RegisteredLeafClassSpec):
-    """Typed declaration for measurement-module AutoRegisterMeta leaves."""
+class ObjectMeasurementModuleContractBuilder(MeasurementModuleContractBuilder):
+    """Measurement contract for modules that consume object labels only."""
 
-    class_name: str
-    module_name: str
-    doc: str
-    image_setting: str | SettingNameFamily | None = None
-    object_setting: str | SettingNameFamily | None = None
-    optional_object_setting: str | SettingNameFamily | None = None
-    base_type: ClassVar[type[object]] = MeasurementModuleContractBuilder
-
-    def class_attributes(self) -> Mapping[str, object]:
-        """Return the class attributes consumed by AutoRegisterMeta."""
-        attributes: dict[str, object] = {
-            "__doc__": self.doc,
-            "module_name": self.module_name,
-        }
-        if self.image_setting is not None:
-            attributes["image_setting"] = self.image_setting
-        if self.object_setting is not None:
-            attributes["object_setting"] = self.object_setting
-        if self.optional_object_setting is not None:
-            attributes["optional_object_setting"] = self.optional_object_setting
-        return attributes
+    object_setting = OBJECT_MEASUREMENT_SETTING
 
 
-for _measurement_contract_builder in (
-    MeasurementModuleContractBuilderSpec(
-        "MeasureObjectSizeShapeContractBuilder",
-        "MeasureObjectSizeShape",
-        "Compile MeasureObjectSizeShape object inputs into measurement contracts.",
-        object_setting=OBJECT_MEASUREMENT_SETTING,
-    ),
-    MeasurementModuleContractBuilderSpec(
-        "MeasureObjectIntensityContractBuilder",
-        "MeasureObjectIntensity",
-        "Compile MeasureObjectIntensity image/object inputs into measurements.",
-        image_setting=IMAGE_MEASUREMENT_SETTING,
-        object_setting=OBJECT_MEASUREMENT_SETTING,
-    ),
-    MeasurementModuleContractBuilderSpec(
-        "MeasureObjectIntensityDistributionContractBuilder",
-        "MeasureObjectIntensityDistribution",
-        "Compile radial-distribution image/object inputs into measurements.",
-        image_setting=IMAGE_MEASUREMENT_SETTING,
-        object_setting=OBJECT_MEASUREMENT_SETTING,
-    ),
-    MeasurementModuleContractBuilderSpec(
-        "MeasureTextureContractBuilder",
-        "MeasureTexture",
-        "Compile MeasureTexture image inputs and optional object masks.",
-        image_setting=IMAGE_MEASUREMENT_SETTING,
-        optional_object_setting=OBJECT_MEASUREMENT_SETTING,
-    ),
-    MeasurementModuleContractBuilderSpec(
-        "MeasureColocalizationContractBuilder",
-        "MeasureColocalization",
-        "Compile MeasureColocalization image inputs and optional object masks.",
-        image_setting=IMAGE_MEASUREMENT_SETTING,
-        optional_object_setting=OBJECT_MEASUREMENT_SETTING,
-    ),
-    MeasurementModuleContractBuilderSpec(
-        "MeasureGranularityContractBuilder",
-        "MeasureGranularity",
-        "Compile MeasureGranularity image inputs and optional object masks.",
-        image_setting=IMAGE_MEASUREMENT_SETTING,
-        optional_object_setting=OBJECT_MEASUREMENT_SETTING,
-    ),
-    MeasurementModuleContractBuilderSpec(
-        "MeasureImageIntensityContractBuilder",
-        "MeasureImageIntensity",
-        "Compile MeasureImageIntensity image inputs and optional object masks.",
-        image_setting=IMAGE_MEASUREMENT_SETTING,
-        optional_object_setting=SettingNameFamily("Select input object sets"),
-    ),
+class ImageObjectMeasurementModuleContractBuilder(MeasurementModuleContractBuilder):
+    """Measurement contract for modules that consume images and object labels."""
+
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    object_setting = OBJECT_MEASUREMENT_SETTING
+
+
+class ImageOptionalObjectMeasurementModuleContractBuilder(MeasurementModuleContractBuilder):
+    """Measurement contract for modules that consume images and optional objects."""
+
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    optional_object_setting = OBJECT_MEASUREMENT_SETTING
+
+
+class MeasureObjectSizeShapeContractBuilder(ObjectMeasurementModuleContractBuilder):
+    """Compile MeasureObjectSizeShape object inputs into measurement contracts."""
+
+    module_name = "MeasureObjectSizeShape"
+
+
+class MeasureObjectIntensityContractBuilder(ImageObjectMeasurementModuleContractBuilder):
+    """Compile MeasureObjectIntensity image/object inputs into measurements."""
+
+    module_name = "MeasureObjectIntensity"
+
+
+class MeasureObjectIntensityDistributionContractBuilder(
+    ImageObjectMeasurementModuleContractBuilder
 ):
-    _measurement_contract_builder.declare_in(globals())
+    """Compile radial-distribution image/object inputs into measurements."""
+
+    module_name = "MeasureObjectIntensityDistribution"
+
+
+class MeasureTextureContractBuilder(ImageOptionalObjectMeasurementModuleContractBuilder):
+    """Compile MeasureTexture image inputs and optional object masks."""
+
+    module_name = "MeasureTexture"
+
+
+class MeasureColocalizationContractBuilder(
+    ImageOptionalObjectMeasurementModuleContractBuilder
+):
+    """Compile MeasureColocalization image inputs and optional object masks."""
+
+    module_name = "MeasureColocalization"
+
+
+class MeasureGranularityContractBuilder(ImageOptionalObjectMeasurementModuleContractBuilder):
+    """Compile MeasureGranularity image inputs and optional object masks."""
+
+    module_name = "MeasureGranularity"
+
+
+class MeasureImageIntensityContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureImageIntensity image inputs and optional object masks."""
+
+    module_name = "MeasureImageIntensity"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    optional_object_setting = SettingNameFamily("Select input object sets")
 
 
 class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):

@@ -57,7 +57,7 @@ from openhcs.processing.backends.cellprofiler.structuring_elements import (
 from openhcs.processing.backends.cellprofiler.worms import (
     WormLabelOutputStrategy,
 )
-from benchmark.cellprofiler_library.functions.watershed import (
+from openhcs.processing.backends.cellprofiler.watershed import (
     WatershedMethodStrategy,
     WatershedSeedStrategy,
     WatershedRuntimeStrategy,
@@ -65,6 +65,8 @@ from benchmark.cellprofiler_library.functions.watershed import (
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerObjectMeasurementLabelArgumentPolicy,
     CellProfilerObjectMeasurementLabelArgumentRequest,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_execution import (
     MeasurementLabelExecutionModeStrategy,
 )
 from openhcs.core.aligned_image_payload import (
@@ -75,7 +77,11 @@ from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
     object_label_measurement_execution,
 )
-from openhcs.core.runtime_semantics import ObjectLabelDomainScope, RuntimePlaneAxis
+from openhcs.core.runtime_semantics import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
+    RuntimePlaneAxis,
+)
 from openhcs.core.runtime_values import ObjectLabelPayload
 
 
@@ -216,9 +222,9 @@ def test_measurement_label_execution_mode_follows_object_label_domain():
             full_stack_measurement,
             ObjectLabelPayload(
                 labels=np.zeros((3, 8, 8), dtype=np.int32),
-                domain_scope=ObjectLabelDomainScope.PLANE,
                 plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            ),
+            domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+                )),
             ImagePayloadExecutionMode.FULL_STACK,
             runtime_slice_count=1,
         )
@@ -255,9 +261,9 @@ def test_measurement_label_argument_policy_defers_aligned_stack_label_projection
     dense_labels = np.zeros((8, 8), dtype=np.int32)
     label_payload = ObjectLabelPayload(
         labels=np.zeros((2, 8, 8), dtype=np.int32),
-        domain_scope=ObjectLabelDomainScope.PLANE,
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-    )
+    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+        ))
     request = CellProfilerObjectMeasurementLabelArgumentRequest(
         dense_labels=dense_labels,
         label_payload=label_payload,

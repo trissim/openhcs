@@ -105,10 +105,17 @@ class SourceModuleSemantics:
             if not isinstance(node.func, ast.Name) or node.func.id != callable_name:
                 continue
             for argument in node.args:
+                if self.is_pixel_data_expression(argument):
+                    return True
                 if isinstance(argument, ast.Name) and argument.id in pixel_data_names:
                     return True
             for keyword in node.keywords:
-                if isinstance(keyword.value, ast.Name) and keyword.value.id in pixel_data_names:
+                if self.is_pixel_data_expression(keyword.value):
+                    return True
+                if (
+                    isinstance(keyword.value, ast.Name)
+                    and keyword.value.id in pixel_data_names
+                ):
                     return True
         return False
 
@@ -308,19 +315,12 @@ class WatershedBasicSemanticDefaultContract(SourceDictSemanticDefaultContract):
 
     def source_dict_fields(self) -> tuple[SourceDictField, ...]:
         from openhcs.processing.backends.cellprofiler.watershed import (
-            CELLPROFILER_WATERSHED_BASIC_DEFAULTS,
+            WatershedParameters,
         )
 
-        defaults = CELLPROFILER_WATERSHED_BASIC_DEFAULTS
-        return (
-            SourceDictField("seed_method", defaults.seed_method),
-            SourceDictField("max_seeds", defaults.max_seeds),
-            SourceDictField("min_distance", defaults.min_distance),
-            SourceDictField("min_intensity", defaults.min_intensity),
-            SourceDictField("connectivity", defaults.connectivity),
-            SourceDictField("compactness", defaults.compactness),
-            SourceDictField("watershed_line", defaults.watershed_line),
-            SourceDictField("gaussian_sigma", defaults.gaussian_sigma),
+        return tuple(
+            SourceDictField(source_key, absorbed_value)
+            for source_key, absorbed_value in WatershedParameters.basic_default_values().items()
         )
 
     def normalize_source_value(self, value: object) -> object:
@@ -341,3 +341,16 @@ class WatershedExecutionDomainContract(SourceVolumetricPixelDataExecutionContrac
         from openhcs.processing.backends.cellprofiler.watershed import watershed
 
         return watershed
+
+
+class ThresholdExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
+    contract_key = "Threshold.execution_domain"
+    module_name = "Threshold"
+    source_filename = "threshold.py"
+    callable_name = "threshold"
+
+    @property
+    def absorbed_callable(self) -> Callable[..., Any]:
+        from openhcs.processing.backends.cellprofiler.thresholding import threshold
+
+        return threshold

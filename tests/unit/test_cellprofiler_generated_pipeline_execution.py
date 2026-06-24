@@ -1,8 +1,10 @@
 import json
 import importlib.util
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
+from collections.abc import Callable, Mapping
 
 import imageio.v3 as imageio
 import numpy as np
@@ -20,10 +22,15 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     GeneratedPipelineSemanticContractsModule,
     materialize_generated_pipeline_import_module,
 )
+from openhcs.interop.cellprofiler.runtime.output_recording import (
+    IdentifyObjectsMeasurementRecordBuilder,
+)
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.constants import Backend
-from openhcs.core.callable_contract import CallableContract
+from openhcs.constants.constants import MEMORY_TYPE_NUMPY
+from openhcs.constants.input_source import InputSource
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
@@ -33,7 +40,10 @@ from openhcs.core.artifacts import (
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+from openhcs.core.runtime_semantics import (
+    RuntimePlaneProjection,
+    parent_child_relationship_artifact_name,
+)
 from openhcs.core.source_bindings import (
     ComponentSelector,
     CompiledSourceBindingPlan,
@@ -48,11 +58,18 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ObjectLabelSet,
     ObjectRelationship,
-    image_payload_with_context,
+    RuntimeImagePayloadContext,
+    image_payload_data,
+)
+from openhcs.core.function_patterns import (
+    CompiledFunctionGroup,
+    CompiledFunctionInvocation,
+    FunctionInvocationKey,
 )
 from openhcs.core.steps.function_runtime import (
-    FunctionExecutionRequest,
-    _execute_function_core,
+    ComponentArtifactPlans,
+    FunctionCoreExecutor,
+    FunctionRuntimeScope,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
@@ -85,6 +102,116 @@ FILTERED_CELLS = "FilteredCells"
 UNTANGLE_WORMS = "UntangleWorms"
 GENERATED_RUNTIME_SMOKE_PIPELINE_NAME = "cellprofiler_generated_runtime_smoke"
 GENERATED_RUNTIME_SMOKE_CPIPE = Path(f"{GENERATED_RUNTIME_SMOKE_PIPELINE_NAME}.cppipe")
+
+
+def test_identify_objects_threshold_measurements_keep_source_payload():
+    source_payload = RuntimeImagePayloadContext(
+        data=np.ones((4, 4), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A02_s002_w5_z001_t001.tif",
+            source_component_metadata={
+                "well": "A02",
+                "site": "2",
+                "channel": "5",
+                "extension": ".tif",
+            },
+        ),
+    ).payload()
+    request = SimpleNamespace(
+        output_value=[{"slice_index": 0, "final_threshold": 0.25}],
+        source=SimpleNamespace(payload=source_payload),
+        single_output_object_name=lambda: "Mitochondria",
+    )
+
+    record = IdentifyObjectsMeasurementRecordBuilder().build(request)
+
+    assert record.source_context.source_image_payload is source_payload
+
+
+@dataclass(frozen=True)
+class _CoreExecutionRequest:
+    func_callable: Callable
+    main_data_arg: object
+    base_kwargs: Mapping[str, object]
+    context: object
+    artifact_inputs: Mapping[str, ArtifactInputPlan]
+    artifact_outputs: Mapping[str, ArtifactOutputPlan]
+    source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
+    source_binding_context: SourceBindingRuntimeContext = SourceBindingRuntimeContext.empty()
+    group_key: str = "default"
+
+
+def _execute_function_core(request: _CoreExecutionRequest):
+    contract = CallableContract.from_callable(request.func_callable)
+    if contract.input_memory_type is None or contract.output_memory_type is None:
+        contract = replace(
+            contract,
+            metadata=CallableMetadata(
+                input_memory_type=MEMORY_TYPE_NUMPY,
+                output_memory_type=MEMORY_TYPE_NUMPY,
+                artifact_inputs=contract.artifact_inputs,
+                artifact_outputs=contract.artifact_outputs,
+                runtime_adapter=contract.runtime_adapter,
+                processing_contract=contract.processing_contract,
+                declared_processing_contract=contract.declared_processing_contract,
+                module_artifact_contract=contract.module_artifact_contract,
+                raw_processing_function=contract.raw_processing_function,
+                runtime_image_execution_mode=contract.runtime_image_execution_mode,
+                request_binding=contract.request_binding,
+            ),
+        )
+    invocation = CompiledFunctionInvocation(
+        key=FunctionInvocationKey.from_contract(
+            contract,
+            request.group_key,
+            0,
+        ),
+        contract=contract,
+        kwargs=tuple(request.base_kwargs.items()),
+        artifact_input_keys=tuple(request.artifact_inputs),
+        artifact_output_keys=tuple(request.artifact_outputs),
+    )
+    runtime_scope = FunctionRuntimeScope(
+        context=request.context,
+        execution_plan=SimpleNamespace(
+            step_index=0,
+            step_scope_id="test::function_step",
+            step_name="test",
+            axis_id=request.context.axis_id,
+            input_memory_type=contract.input_memory_type,
+            device_id=0,
+                source_binding_plan=request.source_binding_plan,
+                group_by_value=None,
+                source_identity_stack_axes=frozenset(),
+                group_projects_runtime_plane=False,
+            ),
+        compiled_group=CompiledFunctionGroup(
+            group_key=request.group_key,
+            invocations=(invocation,),
+        ),
+        artifacts=ComponentArtifactPlans(
+            inputs=request.artifact_inputs,
+            outputs=request.artifact_outputs,
+        ),
+        source_binding_context=request.source_binding_context,
+        runtime_plane_index=0,
+        runtime_plane_count=1,
+    )
+    group_key = invocation.key.runtime_group_key(runtime_scope.component_value)
+    return FunctionCoreExecutor(
+        main_data_arg=request.main_data_arg,
+        source_memory_type=contract.input_memory_type,
+        runtime_scope=runtime_scope,
+        invocation=invocation,
+        artifacts=runtime_scope.artifacts.select_for_invocation(invocation),
+        group_key=group_key,
+        plane_projection=RuntimePlaneProjection.for_execution_group(
+            group_key,
+            plane_index=None,
+            projects_runtime_plane=False,
+        ),
+    ).execute()
 
 
 def _object_labels(record):
@@ -179,11 +306,25 @@ def _generated_pipeline(
         pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
         source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=modules,
+        skipped_modules=_source_setup_modules(),
         prune_dead_unmaterialized_artifact_steps=(
             prune_dead_unmaterialized_artifact_steps
         ),
         materialize_terminal_images=materialize_terminal_images,
     )
+
+
+def _source_setup_modules() -> list[ModuleBlock]:
+    return [
+        _module_with_records(
+            0,
+            "Groups",
+            [
+                ("Do you want to group your images?", "Yes"),
+                ("Metadata category", "Site"),
+            ],
+        )
+    ]
 
 
 def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
@@ -282,17 +423,18 @@ def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
 ) -> None:
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
     module_name = "test_generated_contract_sidecar"
+    output_dir = tmp_path / "nested" / "generated"
 
     import_module_path = materialize_generated_pipeline_import_module(
         generated.code,
         module_name=module_name,
-        output_dir=tmp_path,
+        output_dir=output_dir,
         artifact_contracts=generated.runtime_module_contracts_by_module_num,
     )
 
-    sidecar_path = tmp_path / f"{module_name}.cellprofiler_contracts.json"
+    sidecar_path = output_dir / f"{module_name}.cellprofiler_contracts.json"
     assert sidecar_path.exists()
-    assert not (tmp_path / f"{module_name}.cellprofiler_contracts.pkl").exists()
+    assert not (output_dir / f"{module_name}.cellprofiler_contracts.pkl").exists()
 
     payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
     assert payload["schema"] == "openhcs.cellprofiler.generated_contracts"
@@ -317,6 +459,7 @@ def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
 ) -> None:
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
     module_name = "test_generated_semantic_contract_sidecar"
+    output_dir = tmp_path / "nested" / "generated"
     fingerprint = GeneratedPipelineSemanticContractsFingerprint.from_generation(
         source_cppipe=None,
         generated_code=generated.code,
@@ -326,15 +469,15 @@ def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
     import_module_path = materialize_generated_pipeline_import_module(
         generated.code,
         module_name=module_name,
-        output_dir=tmp_path,
+        output_dir=output_dir,
         artifact_contracts=generated.runtime_module_contracts_by_module_num,
         semantic_contracts=generated.artifact_contracts,
         semantic_contract_fingerprint=fingerprint,
     )
 
-    sidecar_path = tmp_path / f"{module_name}.cellprofiler_semantic_contracts.py"
+    sidecar_path = output_dir / f"{module_name}.cellprofiler_semantic_contracts.py"
     assert sidecar_path.exists()
-    assert not (tmp_path / f"{module_name}.cellprofiler_semantic_contracts.json").exists()
+    assert not (output_dir / f"{module_name}.cellprofiler_semantic_contracts.json").exists()
 
     restored = GeneratedPipelineSemanticContractsModule.load(
         sidecar_path,
@@ -399,10 +542,8 @@ def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
     measurement_step = namespace["pipeline_steps"][1]
 
     assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert measurement_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert measurement_step.processing_config.group_by is GroupBy.NONE
+    assert measurement_step.processing_config.variable_components == []
+    assert measurement_step.processing_config.group_by is GroupBy.SITE
 
 
 def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
@@ -461,10 +602,8 @@ def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measuremen
     measurement_step = namespace["pipeline_steps"][3]
 
     assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert measurement_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert measurement_step.processing_config.group_by is GroupBy.NONE
+    assert measurement_step.processing_config.variable_components == []
+    assert measurement_step.processing_config.group_by is GroupBy.SITE
 
 
 def test_generator_binds_canonical_morphology_alias_structuring_element():
@@ -564,6 +703,7 @@ def test_generator_binds_untangle_worms_training_xml(tmp_path: Path):
                 tmp_path / "worm.cppipe",
             )
         ],
+        skipped_modules=_source_setup_modules(),
     )
 
     assert "'min_worm_area': 12.5" in generated.code
@@ -614,14 +754,13 @@ def _run_generated_step(
     func, kwargs = _step_function_and_kwargs(step)
     kwargs["dtype_config"] = DtypeConfig()
     return _execute_function_core(
-        FunctionExecutionRequest(
+        _CoreExecutionRequest(
             func_callable=func,
             main_data_arg=image,
             base_kwargs=kwargs,
             context=context,
             artifact_inputs=_artifact_input_plans(contract),
             artifact_outputs=_artifact_output_plans(contract),
-            runtime_adapter=runtime_adapter_spec_from_callable(func),
             source_binding_plan=CompiledSourceBindingPlan.from_config(
                 step.source_bindings
             ),
@@ -968,6 +1107,7 @@ def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
+    pipeline_start_image = image
     source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
@@ -1008,6 +1148,7 @@ def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
+    pipeline_start_image = image
     source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
@@ -1130,7 +1271,7 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
         pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
         source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=_image_artifact_pipeline_modules(),
-        skipped_modules=[
+        skipped_modules=_source_setup_modules() + [
             _module(
                 5,
                 "SaveImages",
@@ -1146,9 +1287,7 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
     overlay_contract = generated.runtime_module_contracts_by_module_num[4]
     assert overlay_contract.outputs[0].name == OVERLAY_IMAGE
     assert overlay_contract.outputs[0].materialization is not None
-    assert "ArtifactSpec(" not in generated.code
     assert "tiff_stack(" not in generated.code
-    assert "NO_ARTIFACT_MATERIALIZATION" not in generated.code
     assert [contract.module_name for contract in generated.artifact_contracts] == [
         IDENTIFY_PRIMARY_OBJECTS,
         CONVERT_OBJECTS_TO_IMAGE,
@@ -1162,7 +1301,7 @@ def test_generator_can_ignore_saveimages_artifacts_for_value_only_runs():
         pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
         source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=_image_artifact_pipeline_modules(),
-        skipped_modules=[
+        skipped_modules=_source_setup_modules() + [
             _module(
                 5,
                 "SaveImages",
@@ -1187,6 +1326,7 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
+    pipeline_start_image = image
     source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
@@ -1194,10 +1334,15 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
         generated.artifact_contracts,
         strict=True,
     ):
+        step_input = (
+            pipeline_start_image
+            if step.processing_config.input_source is InputSource.PIPELINE_START
+            else image
+        )
         image = _run_generated_step(
             step,
             contract,
-            image,
+            step_input,
             context,
             source_binding_context=source_binding_context,
         )
@@ -1213,7 +1358,11 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
         f"{NUCLEI_IMAGE}__{SOURCE_IMAGE}"
     )
     assert color_image_records[0].value.data.shape == (64, 64, 3)
-    assert image.shape == color_image_records[0].value.data.shape
+    assert image_payload_data(image).shape == (1, 64, 64, 3)
+    np.testing.assert_allclose(
+        image_payload_data(image)[0],
+        color_image_records[0].value.data,
+    )
 
 
 def test_identify_primary_objects_uses_runtime_image_intensity_scale():
@@ -1228,13 +1377,13 @@ def test_identify_primary_objects_uses_runtime_image_intensity_scale():
 
     image = np.full((16, 16), 128, dtype=np.uint16)
     image[4:12, 4:12] = 512
-    source_scaled_image = image_payload_with_context(
+    source_scaled_image = RuntimeImagePayloadContext(
         image,
         metadata=ImagePayloadMetadata(
             intensity_scale=4095.0,
             source_dtype="uint16",
         ),
-    )
+    mask = None).payload()
 
     _raw_image, stats, labels = identify_primary_objects(
         source_scaled_image,
@@ -1255,7 +1404,10 @@ def test_identify_primary_objects_uses_runtime_image_intensity_scale():
 
 
 def test_runtime_image_metadata_uses_declared_tiff_intensity_scale(tmp_path):
-    from openhcs.core.runtime_values import image_payload_metadata_from_source
+    from openhcs.core.runtime_values import (
+        ImagePayloadSourceMetadataContext,
+        SourceImageIdentity,
+    )
 
     path = tmp_path / "source_12bit.tif"
     image = np.array([[0, 4095]], dtype=np.uint16)
@@ -1269,7 +1421,9 @@ def test_runtime_image_metadata_uses_declared_tiff_intensity_scale(tmp_path):
     )
     readback = imageio.imread(path)
 
-    metadata = image_payload_metadata_from_source(readback, source_path=str(path))
+    metadata = ImagePayloadSourceMetadataContext(
+        SourceImageIdentity(str(path))
+    ).metadata_request(readback).metadata()
 
     assert metadata.source_dtype == "uint16"
     assert metadata.intensity_scale == 4095.0
@@ -1316,14 +1470,13 @@ def test_runtime_adapter_receives_step_input_source_binding_context():
         )
     )
     selected_output = _execute_function_core(
-        FunctionExecutionRequest(
+        _CoreExecutionRequest(
             func_callable=select_named_input,
             main_data_arg=input_stack,
             base_kwargs={},
             context=context,
             artifact_inputs={},
             artifact_outputs={},
-            runtime_adapter=runtime_adapter_spec_from_callable(select_named_input),
             source_binding_plan=source_binding_plan,
             source_binding_context=source_binding_context,
         )
@@ -1355,10 +1508,15 @@ def test_generated_cellprofiler_pipeline_records_relationship_artifacts():
         generated.artifact_contracts,
         strict=True,
     ):
+        step_input = (
+            input_stack
+            if step.processing_config.input_source is InputSource.PIPELINE_START
+            else image
+        )
         image = _run_generated_step(
             step,
             contract,
-            image,
+            step_input,
             context,
             source_binding_context=source_binding_context,
         )

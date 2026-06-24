@@ -38,6 +38,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 from openhcs.processing.func_registry import register_function
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerModuleContractRegistry,
+    CellProfilerRuntimeCallable,
     CellProfilerRuntimeStepBinding,
 )
 from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
@@ -69,6 +70,7 @@ class GeneratedPipelineContractSidecar:
                 )
             ],
         }
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -316,6 +318,7 @@ class GeneratedPipelineSemanticContractsModule:
             header="# Generated CellProfiler semantic artifact contracts.",
             clean_mode=False,
         )
+        path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists() or path.read_text(encoding="utf-8") != source:
             path.write_text(source, encoding="utf-8")
 
@@ -470,13 +473,14 @@ class GeneratedPipelineRuntimeModule:
     def materialize_import_module(
         self,
         *,
-        output_dir: Path,
+        importable_path: Path,
         artifact_contracts: dict[int, Any] | None = None,
         semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
         semantic_contract_fingerprint: str | None = None,
     ) -> Path:
         """Write an importable module that restores registry visibility on import."""
-        importable_path = output_dir / f"{self.module_name}.py"
+        output_dir = importable_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
         contract_sidecar = output_dir / f"{self.module_name}.cellprofiler_contracts.json"
         contract_prelude = ""
         if artifact_contracts:
@@ -494,21 +498,21 @@ class GeneratedPipelineRuntimeModule:
         )
         semantic_prelude = "    CELLPROFILER_SEMANTIC_CONTRACTS = ()\n"
         if semantic_contracts:
+            if semantic_contract_fingerprint is None:
+                raise ValueError(
+                    "Generated semantic contract sidecars require a fingerprint."
+                )
             GeneratedPipelineSemanticContractsModule(
                 semantic_contracts,
                 fingerprint=semantic_contract_fingerprint,
             ).write(semantic_sidecar)
-            fingerprint_argument = (
-                ""
-                if semantic_contract_fingerprint is None
-                else f", expected_fingerprint={semantic_contract_fingerprint!r}"
-            )
             semantic_prelude = (
                 "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
                 "GeneratedPipelineSemanticContractsModule as _openhcs_cp_semantic_contracts\n"
                 "    CELLPROFILER_SEMANTIC_CONTRACTS = "
                 "_openhcs_cp_semantic_contracts.load("
-                f"{str(semantic_sidecar)!r}{fingerprint_argument})\n"
+                f"{str(semantic_sidecar)!r}, "
+                f"expected_fingerprint={semantic_contract_fingerprint!r})\n"
                 "    CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT = "
                 f"{semantic_contract_fingerprint!r}\n"
             )
@@ -580,6 +584,11 @@ class GeneratedPipelineRuntimeBindings:
     def apply(self) -> None:
         """Replace direct backend callables with artifact-managed runtime callables."""
         if not self.artifact_contracts:
+            return
+        if CellProfilerGeneratedRuntimeBindingState(
+            GeneratedPipelineModuleExports(self.module).pipeline_steps,
+            self.artifact_contracts,
+        ).matches_expected_contracts():
             return
 
         contract_matcher = CellProfilerGeneratedStepContractMatcher(
@@ -661,6 +670,60 @@ class GeneratedPipelineRuntimeBindings:
 
 
 @dataclass(frozen=True, slots=True)
+class CellProfilerGeneratedRuntimeBindingState:
+    """Detect whether generated CP steps already use runtime-bound callables."""
+
+    pipeline_steps: Sequence[Any]
+    contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+
+    def matches_expected_contracts(self) -> bool:
+        unmatched_contracts = [
+            contract.contract
+            for contract in CellProfilerGeneratedStepContracts(
+                self.contracts_by_module_num
+            ).ordered()
+        ]
+        actual_contracts: list[ModuleArtifactContract] = []
+        for step in self.pipeline_steps:
+            if not isinstance(step, FunctionStep):
+                continue
+            for func in self.function_spec_callables(step.func):
+                if isinstance(func, self.runtime_callable_type()):
+                    actual_contracts.append(func.contract)
+        if len(actual_contracts) != len(unmatched_contracts):
+            return False
+        for actual_contract in actual_contracts:
+            for index, expected_contract in enumerate(unmatched_contracts):
+                if actual_contract == expected_contract:
+                    del unmatched_contracts[index]
+                    break
+            else:
+                return False
+        return not unmatched_contracts
+
+    @staticmethod
+    def runtime_callable_type() -> type:
+        from openhcs.interop.cellprofiler.runtime.module_execution import (
+            CellProfilerRuntimeCallable,
+        )
+
+        return CellProfilerRuntimeCallable
+
+    def function_spec_callables(self, func_spec: Any) -> Iterator[Callable[..., Any]]:
+        if callable(func_spec):
+            yield func_spec
+            return
+        if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
+            func = func_spec[0]
+            if callable(func):
+                yield func
+            return
+        if isinstance(func_spec, list):
+            for item in func_spec:
+                yield from self.function_spec_callables(item)
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerPipelineRuntimeRebinder:
     """Re-derive runtime CellProfiler callables from generated-pipeline contracts."""
 
@@ -687,7 +750,10 @@ class CellProfilerPipelineRuntimeRebinder:
     def rebind(self, pipeline_steps: Sequence[Any]) -> list[Any]:
         """Return steps with raw CellProfiler functions rebound to runtime callables."""
         pipeline_steps = list(pipeline_steps)
-        if self._already_runtime_bound(pipeline_steps):
+        if CellProfilerGeneratedRuntimeBindingState(
+            pipeline_steps,
+            self.contracts_by_module_num,
+        ).matches_expected_contracts():
             return pipeline_steps
         CellProfilerModuleContractRegistry.register(
             self.generated_module_name,
@@ -700,39 +766,6 @@ class CellProfilerPipelineRuntimeRebinder:
             self.contracts_by_module_num,
         ).apply()
         return list(module.pipeline_steps)
-
-    def _already_runtime_bound(self, pipeline_steps: Sequence[Any]) -> bool:
-        from openhcs.interop.cellprofiler.runtime.module_execution import (
-            CellProfilerRuntimeCallable,
-        )
-
-        expected_module_names = tuple(
-            contract.contract.module_name
-            for contract in CellProfilerGeneratedStepContracts(
-                self.contracts_by_module_num
-            ).ordered()
-        )
-        actual_module_names: list[str] = []
-        for step in pipeline_steps:
-            if not isinstance(step, FunctionStep):
-                continue
-            for func in self._function_spec_callables(step.func):
-                if isinstance(func, CellProfilerRuntimeCallable):
-                    actual_module_names.append(func.contract.module_name)
-        return tuple(actual_module_names) == expected_module_names
-
-    def _function_spec_callables(self, func_spec: Any) -> Iterator[Callable[..., Any]]:
-        if callable(func_spec):
-            yield func_spec
-            return
-        if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
-            func = func_spec[0]
-            if callable(func):
-                yield func
-            return
-        if isinstance(func_spec, list):
-            for item in func_spec:
-                yield from self._function_spec_callables(item)
 
 
 @dataclass(frozen=True, slots=True)
@@ -786,6 +819,11 @@ class CellProfilerGeneratedStepFunctionSpec:
         return metadata[0]
 
     def _metadata_items(self, func_spec: Any) -> Iterator[Any]:
+        if isinstance(func_spec, CellProfilerRuntimeCallable):
+            metadata = cellprofiler_function_runtime_metadata(func_spec.raw_func)
+            if metadata is not None:
+                yield metadata
+            return
         if callable(func_spec):
             metadata = cellprofiler_function_runtime_metadata(func_spec)
             if metadata is not None:
@@ -793,10 +831,7 @@ class CellProfilerGeneratedStepFunctionSpec:
             return
         if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
             func = func_spec[0]
-            if callable(func):
-                metadata = cellprofiler_function_runtime_metadata(func)
-                if metadata is not None:
-                    yield metadata
+            yield from self._metadata_items(func)
             return
         if isinstance(func_spec, list):
             for item in func_spec:
@@ -980,15 +1015,17 @@ class GeneratedPipelineFunctionRegistration:
             func.__processing_contract__ = contract
             wrapped_func = registry.apply_contract_wrapper(func, contract)
             wrapped_func.__processing_contract__ = contract
+            callable_contract = CallableContract.from_callable(wrapped_func)
             wrapped_func.__function_metadata__ = FunctionMetadata(
                 name=metadata_name,
                 func=wrapped_func,
                 contract=contract,
                 registry=registry,
-                module=wrapped_func.__module__ or "",
-                doc=wrapped_func.__doc__ or "",
+                module=GeneratedPipelineFunction(wrapped_func).module_name,
+                doc=GeneratedPipelineFunction(wrapped_func).documentation,
                 tags=["openhcs", "generated", "cellprofiler"],
                 original_name=wrapped_func.__name__,
+                memory_type=callable_contract.input_memory_type,
             )
             register_function(wrapped_func, backend="openhcs")
             existing_references.add(reference)
@@ -1020,6 +1057,22 @@ class GeneratedPipelineFunction:
     @property
     def metadata_name(self) -> str:
         return f"{self.func.__module__}:{self.func.__name__}"
+
+    @property
+    def module_name(self) -> str:
+        module_name = self.func.__module__
+        if not isinstance(module_name, str) or not module_name:
+            raise ValueError(
+                f"Generated function {self.func.__name__!r} has no module name."
+            )
+        return module_name
+
+    @property
+    def documentation(self) -> str:
+        doc = self.func.__doc__
+        if doc is None:
+            return ""
+        return doc
 
 
 def generated_pipeline_module_name(module_path: Path, code: str) -> str:
@@ -1085,7 +1138,7 @@ def materialize_generated_pipeline_import_module(
             explicit_module_name=module_name,
         )
     ).materialize_import_module(
-        output_dir=output_dir,
+        importable_path=module_path,
         artifact_contracts=artifact_contracts,
         semantic_contracts=semantic_contracts,
         semantic_contract_fingerprint=semantic_contract_fingerprint,
@@ -1098,6 +1151,11 @@ def pipeline_from_generated_module(
     pipeline_name: str,
 ) -> Pipeline:
     """Compatibility facade for building a Pipeline from generated exports."""
+    module_file = module.__file__
+    if module_file is None:
+        raise ValueError(
+            f"Generated module {module.__name__!r} has no __file__ for identity."
+        )
     return GeneratedPipelineRuntimeModule(
-        GeneratedPipelineModuleIdentity(module_path=Path(module.__file__ or ""), code="")
+        GeneratedPipelineModuleIdentity(module_path=Path(module_file), code="")
     ).pipeline_from_module(module, pipeline_name=pipeline_name)

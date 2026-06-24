@@ -16,6 +16,10 @@ from openhcs.config_framework.global_config import get_current_global_config
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline import Pipeline
+from openhcs.core.pipeline.compilation_session import (
+    PIPELINE_SOURCE_IDENTITY_STACK_AXES_METADATA_KEY,
+    PIPELINE_SOURCE_SCHEMA_METADATA_KEY,
+)
 from openhcs.core.progress import set_progress_queue
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.vfs_protocol import FileManagerLike
@@ -49,6 +53,7 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
 from openhcs.interop.cellprofiler.pipeline_generator import (
     GeneratedPipeline,
     PipelineGenerator,
+    SourceProcessingAxisPlan,
 )
 
 
@@ -121,6 +126,16 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
     module: ModuleType
     pipeline: Pipeline
     registered_functions: tuple[str, ...]
+
+    @property
+    def runtime_pipeline(self) -> Pipeline:
+        """Return the executable OpenHCS pipeline imported from generated code."""
+        return self.pipeline
+
+    @property
+    def runtime_pipeline_steps(self) -> Sequence[Any]:
+        """Return executable OpenHCS steps without exposing generated-code exports."""
+        return self.runtime_pipeline.steps
 
     @property
     def import_result(self) -> CellProfilerPipelineImportResult:
@@ -207,7 +222,7 @@ def execute_pipeline_direct(
         set_progress_queue(progress_bridge.queue)
         with _optional_phase(phase_timing, compile_phase):
             compilation_result = orchestrator.compile_pipelines(
-                pipeline_definition=pipeline.steps,
+                pipeline_definition=pipeline,
                 well_filter=wells,
             )
         execution_bundle = compilation_result["execution_bundle"]
@@ -350,11 +365,6 @@ class CPPipePipelinePreparationRequest:
     def prepare(self) -> PreparedGeneratedPipeline:
         """Generate, persist, import, and register the requested pipeline."""
         converted = self.generation.generate()
-        converted.generated_pipeline.save(
-            self.output_path,
-            filemanager=self.generated_pipeline_filemanager,
-            backend=self.generated_pipeline_backend,
-        )
 
         module_name = GeneratedPipelineModuleIdentity(
             self.output_path,
@@ -376,21 +386,23 @@ class CPPipePipelinePreparationRequest:
                 explicit_module_name=module_name,
             )
         )
-        module = runtime_module.load_from_source(
-            filename=str(self.output_path),
-            artifact_contracts=artifact_contracts_by_module_num,
-            semantic_contracts=semantic_contracts,
-            semantic_contract_fingerprint=semantic_fingerprint,
-        )
         runtime_module.materialize_import_module(
-            output_dir=self.output_path.parent,
+            importable_path=self.output_path,
             artifact_contracts=artifact_contracts_by_module_num,
             semantic_contracts=semantic_contracts,
             semantic_contract_fingerprint=semantic_fingerprint,
         )
+        module = runtime_module.load_from_path(self.output_path)
         pipeline = runtime_module.pipeline_from_module(
             module,
             pipeline_name=converted.generated_pipeline.name,
+        )
+        pipeline.metadata[PIPELINE_SOURCE_SCHEMA_METADATA_KEY] = converted.source_schema
+        pipeline.metadata[PIPELINE_SOURCE_IDENTITY_STACK_AXES_METADATA_KEY] = tuple(
+            component.value
+            for component in SourceProcessingAxisPlan.from_schema(
+                converted.source_schema
+            ).source_identity_stack_components()
         )
         registered_functions = GeneratedPipelineFunctionRegistration(module).register()
         return PreparedGeneratedPipeline(

@@ -15,23 +15,51 @@ from benchmark.adapters.cellprofiler import (
     CELLPROFILER_LAST_IMAGE_SET_PARAM,
     DETERMINISTIC_PYTHONHASHSEED,
     HeadlessCellProfilerPipelinePolicy,
+    HeadlessCellProfilerPipelinePatch,
     NativeCellProfilerImportedMetadataPlacementPlan,
+    NativeCellProfilerImportedMetadataPipelinePatch,
     NativeCellProfilerInputDomainStrategyKey,
     NativeCellProfilerProvenanceField,
     PYTHONHASHSEED_ENV,
     CellProfilerAdapter,
     native_cellprofiler_reference_is_complete,
 )
+from benchmark.adapters.cellprofiler_installation import (
+    CellProfilerExecutableResolver,
+    CellProfilerExecutableSource,
+    OPENHCS_BENCHMARK_TOOL_ROOTS_ENV,
+)
 from benchmark.contracts.tool_adapter import ToolNotInstalledError
 from openhcs.core.pipeline_image_schema import ImportedMetadataTable
 from openhcs.core.source_bindings import SourceBindingRuntimeContext
-from openhcs.interop.cellprofiler.runtime.adapter import SourceCandidatePathProjection
+from openhcs.interop.cellprofiler.runtime.source_candidates import (
+    SourceCandidatePathProjection,
+)
 
 
 def test_cellprofiler_adapter_requires_executable(monkeypatch) -> None:
     monkeypatch.setattr(
-        "benchmark.adapters.cellprofiler.shutil.which",
+        "benchmark.adapters.cellprofiler_installation.shutil.which",
         lambda _name: None,
+    )
+    monkeypatch.setattr(
+        "benchmark.adapters.cellprofiler_installation.sys.executable",
+        "/missing/python",
+    )
+    monkeypatch.setattr(
+        CellProfilerExecutableResolver,
+        "_current_environment_candidates",
+        lambda _self: (),
+    )
+    monkeypatch.setattr(
+        CellProfilerExecutableResolver,
+        "_declared_tool_root_candidates",
+        lambda _self: (),
+    )
+    monkeypatch.setattr(
+        CellProfilerExecutableResolver,
+        "_local_workspace_tool_root_candidates",
+        lambda _self: (),
     )
 
     with pytest.raises(ToolNotInstalledError, match="CellProfiler executable"):
@@ -68,6 +96,58 @@ def test_native_cellprofiler_imported_metadata_places_files_by_path_columns(
     }
 
 
+def test_native_cellprofiler_imported_metadata_uses_shared_stale_path_resolution(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "AdvancedSegmentation" / "BBBC022_20585_AE"
+    source_root.mkdir(parents=True)
+    metadata_path = source_root.parent / "20585_AE.csv"
+    metadata_path.write_text("Metadata_Plate\n20585\n", encoding="utf-8")
+
+    resolved = NativeCellProfilerImportedMetadataPlacementPlan(
+        source_root,
+        (ImportedMetadataTable(location="/Users/pryder/Documents/tutorials/AdvancedSegmentation/20585_AE.csv"),),
+        (metadata_path,),
+    ).imported_metadata_path(
+        ImportedMetadataTable(
+            location="/Users/pryder/Documents/tutorials/AdvancedSegmentation/20585_AE.csv"
+        )
+    )
+
+    assert resolved == metadata_path
+
+
+def test_native_cellprofiler_imported_metadata_pipeline_patch_targets_staged_input(
+    tmp_path: Path,
+) -> None:
+    metadata_path = tmp_path / "source" / "20585_AE.csv"
+    metadata_path.parent.mkdir()
+    metadata_path.write_text("Metadata_Plate\n20585\n", encoding="utf-8")
+    source_text = "\n".join(
+        (
+            "CellProfiler Pipeline: http://www.cellprofiler.org",
+            "Metadata:[module_num:2|enabled:True]",
+            "    Metadata extraction method:Extract from file/folder names",
+            "    Metadata file location:Elsewhere...|",
+            "    Metadata file name:",
+            "    Metadata extraction method:Import from file",
+            "    Metadata file location:Default Input Folder|/Users/pryder/Documents/tutorials/AdvancedSegmentation",
+            "    Metadata file name:20585_AE.csv",
+            "",
+        )
+    )
+
+    patched = NativeCellProfilerImportedMetadataPipelinePatch(
+        (metadata_path,)
+    ).patch_text(source_text)
+
+    assert (
+        "    Metadata file location:Default Input Folder|\n"
+        "    Metadata file name:20585_AE.csv"
+    ) in patched
+    assert "/Users/pryder" not in patched
+
+
 def test_source_candidate_paths_preserve_virtual_well_identity_for_shared_source(
     tmp_path: Path,
 ) -> None:
@@ -82,7 +162,10 @@ def test_source_candidate_paths_preserve_virtual_well_identity_for_shared_source
     )
     adapter = SimpleNamespace(source_binding_context=context)
 
-    assert SourceCandidatePathProjection(str(source_path), adapter).paths() == (
+    assert tuple(
+        (path.path, path.resolved_path)
+        for path in SourceCandidatePathProjection(str(source_path), adapter).paths()
+    ) == (
         ("W001_s001_w1_z001_t001.tif", str(source_path)),
         ("W002_s001_w1_z001_t001.tif", str(source_path)),
     )
@@ -119,6 +202,64 @@ def test_cellprofiler_adapter_accepts_executable_env(monkeypatch) -> None:
     assert commands == [("/opt/cellprofiler/bin/cellprofiler", "--version")]
 
 
+def test_cellprofiler_resolver_discovers_local_workspace_tool_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "benchmark.adapters.cellprofiler_installation.shutil.which",
+        lambda _name: None,
+    )
+    repo_root = tmp_path / "openhcs-benchmark-platform"
+    executable = (
+        tmp_path
+        / "openhcs"
+        / ".venv-cellprofiler39"
+        / "bin"
+        / "cellprofiler"
+    )
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    resolver = CellProfilerExecutableResolver(
+        environment={},
+        repo_root=repo_root,
+        python_executable=tmp_path / "benchmark-venv" / "bin" / "python",
+    )
+
+    assert resolver.resolve() == executable
+    assert (
+        CellProfilerExecutableSource.LOCAL_WORKSPACE_TOOL_ROOT
+        in {candidate.source for candidate in resolver.candidates()}
+    )
+
+
+def test_cellprofiler_resolver_discovers_declared_tool_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "benchmark.adapters.cellprofiler_installation.shutil.which",
+        lambda _name: None,
+    )
+    tool_root = tmp_path / "cellprofiler-tools"
+    executable = tool_root / ".venv-cellprofiler39" / "bin" / "cellprofiler"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    resolver = CellProfilerExecutableResolver(
+        environment={OPENHCS_BENCHMARK_TOOL_ROOTS_ENV: str(tool_root)},
+        repo_root=tmp_path / "openhcs-benchmark-platform",
+        python_executable=tmp_path / "benchmark-venv" / "bin" / "python",
+    )
+
+    assert resolver.resolve() == executable
+    assert (
+        CellProfilerExecutableSource.DECLARED_TOOL_ROOT
+        in {candidate.source for candidate in resolver.candidates()}
+    )
+
+
 def test_cellprofiler_adapter_runs_cppipe_headless(
     tmp_path: Path,
     monkeypatch,
@@ -153,6 +294,11 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
             )
         assert env[PYTHONHASHSEED_ENV] == DETERMINISTIC_PYTHONHASHSEED
         assert cwd is not None
+        if "--file-list" in command:
+            execution_cppipe_path = Path(command[command.index("-p") + 1])
+            assert "Filter images?:No filtering" in execution_cppipe_path.read_text(
+                encoding="utf-8"
+            )
         output_root = Path(command[command.index("-o") + 1])
         output_root.mkdir(parents=True, exist_ok=True)
         (output_root / "Image.csv").write_text("ImageNumber,Count\n1,2\n")
@@ -366,8 +512,8 @@ def test_cellprofiler_adapter_isolates_embedded_image_plane_input_domain(
 ) -> None:
     dataset_path = tmp_path / "plate"
     dataset_path.mkdir()
-    (dataset_path / "url_D.TIF").write_bytes(b"not read by adapter")
-    (dataset_path / "url_F.TIF").write_bytes(b"not read by adapter")
+    Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(dataset_path / "url_D.TIF")
+    Image.fromarray(np.ones((2, 2), dtype=np.uint8)).save(dataset_path / "url_F.TIF")
     cppipe_path = tmp_path / "url_planes.cppipe"
     cppipe_path.write_text(
         "\n".join(
@@ -573,3 +719,27 @@ def test_headless_cellprofiler_cppipe_enables_saveimages_overwrite(
     assert "Overwrite existing files without warning?:No" in cppipe_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_headless_cellprofiler_cppipe_trusts_selected_source_universe(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text(
+        "CellProfiler Pipeline: http://www.cellprofiler.org\n"
+        "Images:[module_num:1|enabled:True]\n"
+        "    Filter images?:Images only\n",
+        encoding="utf-8",
+    )
+
+    execution_path = HeadlessCellProfilerPipelinePolicy.execution_path(
+        cppipe_path,
+        tmp_path / "outputs",
+        patches=(HeadlessCellProfilerPipelinePatch.TRUST_SELECTED_SOURCE_UNIVERSE,),
+    )
+
+    assert execution_path != cppipe_path
+    assert "Filter images?:No filtering" in execution_path.read_text(
+        encoding="utf-8"
+    )
+    assert "Filter images?:Images only" in cppipe_path.read_text(encoding="utf-8")

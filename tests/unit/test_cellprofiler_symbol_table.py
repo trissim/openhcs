@@ -883,7 +883,8 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CellProfilerAbsorbedFunctionBinding" not in generated.code
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "CellProfilerModuleContractBinding" not in generated.code
-    assert "ModuleArtifactContract(" not in generated.code
+    assert "_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {" in generated.code
+    assert "ModuleArtifactContract(" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
     assert generated.runtime_module_contracts_by_module_num[
         2
@@ -1166,7 +1167,7 @@ def test_crop_contract_marks_mask_sidecar_with_typed_role():
 
     assert crop_mask_spec.name == "CropBlue__crop_mask"
     assert crop_mask_spec.sidecar_role is ArtifactSidecarRole.CROP_MASK
-    assert "ArtifactSidecarRole.CROP_MASK" not in generated.code
+    assert "ArtifactSidecarRole.CROP_MASK" in generated.code
     assert generated.runtime_module_contracts_by_module_num[
         1
     ].outputs[1].sidecar_role is ArtifactSidecarRole.CROP_MASK

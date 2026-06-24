@@ -970,6 +970,37 @@ def test_correct_illumination_binds_legacy_object_size_alias():
     assert "approximate_object_size" not in bound.unmapped_kwargs
 
 
+def test_correct_illumination_binds_slice_dispatch_from_scope():
+    strategy = _ModuleSettingsBindingStrategy.for_module("CorrectIlluminationCalculate")
+    setting_name = (
+        "Calculate function for each image individually, or based on all images?"
+    )
+
+    each_bound = strategy.bind(
+        ModuleBlock(
+            name="CorrectIlluminationCalculate",
+            module_num=5,
+            settings={setting_name: "Each"},
+            setting_records=[ModuleSetting(setting_name, "Each")],
+        ),
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+    all_bound = strategy.bind(
+        ModuleBlock(
+            name="CorrectIlluminationCalculate",
+            module_num=5,
+            settings={setting_name: "All: First cycle"},
+            setting_records=[ModuleSetting(setting_name, "All: First cycle")],
+        ),
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert each_bound.kwargs["slice_by_slice"] is True
+    assert all_bound.kwargs["slice_by_slice"] is False
+
+
 def test_identify_primary_objects_consumes_legacy_input_output_aliases():
     module = ModuleBlock(
         name="IdentifyPrimaryObjects",

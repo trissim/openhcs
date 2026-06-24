@@ -2,27 +2,19 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections import OrderedDict
-from collections.abc import Hashable, Mapping, MutableMapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import lru_cache
-from inspect import isabstract
 import logging
-from operator import attrgetter
-from pathlib import Path
-import re
 import time
 from types import MappingProxyType
-from typing import Any, Callable, ClassVar, TypeVar, cast
-from weakref import WeakKeyDictionary
+from typing import Any, cast
 
-from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
-from openhcs.constants.constants import Backend, FileFormat
+from openhcs.constants.constants import Backend, FileFormat, get_multiprocessing_axis
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
 from openhcs.core.config import ZarrConfig
 from openhcs.core.function_patterns import DEFAULT_GROUP_KEY
@@ -46,6 +38,7 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.source_schema_workspace import source_schema_auxiliary_payload
 from openhcs.core.source_matching import (
+    SourceAxisMetadataScope,
     is_image_path,
     merge_source_metadata,
     metadata_from_rules,
@@ -57,6 +50,8 @@ from openhcs.core.source_matching import (
     source_metadata_component,
     source_metadata_values_equal,
     source_metadata_value,
+)
+from openhcs.core.source_path_identity import (
     source_path_identity_key,
     source_paths_equal,
 )
@@ -71,457 +66,168 @@ from openhcs.core.runtime_stores import (
 )
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
-    MeasurementTableRepeatedScalarGroupKey,
     RuntimeSliceProjection,
+    RuntimeProjectionAxis,
 )
 from openhcs.core.runtime_profile import RuntimeProfileLogger
-from openhcs.core.measurement_lookup_dialect import (
-    RuntimeMeasurementLookupDialectLike,
-    resolve_runtime_measurement_lookup_dialect,
-)
 from openhcs.core.runtime_artifact_queries import (
-    MeasurementFeatureQuery,
-    MeasurementTableAxisQuery,
-    MeasurementTableObjectFeatureSemantics,
     MeasurementTableUnion,
-    MeasurementValueIndexesByObject,
-    MeasurementValueIndexResult,
     RuntimeArtifactQueryContext,
-    measurement_value_indexes_for_object_feature_batch,
-    measurement_values_for_feature,
-    measurement_values_for_label_slices,
-    measurement_table_object_id_field,
     runtime_measurement_tables,
-    runtime_measurement_tables_for_scope,
-    runtime_measurement_tables_for_object,
     runtime_relationship,
     runtime_spatial_grid,
 )
+from openhcs.core.runtime_adapters import RuntimeExecutionAxisScope
+from openhcs.core.measurement_feature_queries import MeasurementTableObjectFeatureSemantics
 from openhcs.core.runtime_semantics import (
-    MeasurementRowAxisField,
-    MeasurementScope,
-    ObjectLabelMeasurementValues,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     RelationshipSemantics,
-    RuntimeObjectFeatureMeasurementQuery,
-    RuntimeObjectMeasurementQuery,
-    RuntimeObjectLabelMeasurementQuery,
     RuntimePlaneAxis,
     RuntimePlaneProjection,
     RuntimePlaneAxisProjector,
-    dense_object_label_id_domain,
-    parent_child_relationship_artifact_name,
 )
 from openhcs.core.runtime_values import (
-    ChannelSourceComponentMetadata,
     ColumnarRows,
     FieldSpec,
-    RuntimeArrayPayload,
-    SourceImagePlaneAxisPolicy,
-    SourceImagePlaneAxisRequest,
-    SourceComponentMetadata,
+    ImagePayloadMetadata,
+    ImagePayloadMetadataCompositionRequest,
+    ImagePayloadMetadataInput,
+    ImagePayloadSourceMetadataContext,
     MeasurementTable,
     NamedImage,
-    ImagePayloadMetadata,
-    ImagePayloadMetadataInput,
-    RuntimeImagePayloadContext,
     ObjectLabelData,
-    ObjectLabelPayload,
     ObjectLabelPure2DSliceAggregator,
-    ObjectLabelSet,
     ObjectLabelRepresentation,
+    ObjectLabelSet,
+    ObjectLabelValue,
+    ObjectLabelValueConstructionContext,
     ObjectRelationship,
+    RuntimeArrayPayload,
+    RuntimeImagePayloadContext,
+    RuntimeValue,
+    SourceAlignedObjectLabelProvenanceRequest,
+    SourceImageObjectLabelBuildRequest,
+    SourceImagePlaneAxisPolicy,
+    SourceImagePlaneAxisRequest,
     SparseIJVLabelRows,
     SpatialGrid,
-    ImagePayloadMetadataCompositionRequest,
-    SourceAlignedObjectLabelProvenanceRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    image_payload_metadata_from_source,
     image_payload_slice_context,
-    image_payload_with_context,
     normalize_artifact_value,
     object_label_dense_array,
-    SourceImageObjectLabelBuildRequest,
 )
-from openhcs.interop.cellprofiler.measurement_lookup import (
-    child_count_feature_child_name,
+from openhcs.core.source_image_provenance import (
+    SourceComponentMetadata,
+    SourceImageIdentity,
+    SourceImageProvenancePlanes,
 )
-from openhcs.core.registry_strategies import (
-    EnumKeyedStrategyMixin,
-    NominalTypeKeyedStrategyMixin,
+from openhcs.interop.cellprofiler.runtime.source_identity import (
+    CellProfilerCurrentImage,
+    CellProfilerParsedMetadataValue,
+    CurrentSourcePayloadPlaneSelection,
+    CurrentSourcePayloadPlaneSelectionAuthority,
+    CurrentSourcePayloadPlaneSelectionRequest,
+    MutableParsedSourceMetadata,
+    ParsedSourceCandidateABC,
+    ParsedSourceCandidatePathIdentity,
+    ParsedSourceMetadata,
+    RuntimeRecordSourceImageSetSelector,
+    RuntimeSourceIdentityAdapterABC,
+    SourceBindingRuntimePathIdentities,
+    SourceImageSetIdentityCompatibility,
+    SourcePayloadPlaneIdentitySequence,
+    SourcePlaneIdentitySequence,
+    SourceScopedPayload,
+    _SOURCE_PLANE_IDENTITY_POLICY,
 )
-from openhcs.interop.cellprofiler.measurement_dialect import (
-    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerFilePayload,
+    CellProfilerMeasurementVector,
+    ImagePayloadMaskValue,
+    ImagePayloadValue,
+    MeasurementRowsInput,
+    RuntimeArtifactNormalizationInput,
+    RuntimeArtifactPayloadValue,
+)
+from openhcs.interop.cellprofiler.runtime.adapter_protocols import (
+    CellProfilerFileManager,
+    CellProfilerFileManagerOption,
+    CellProfilerFilenameParser,
+    CellProfilerGlobalConfig,
+    CellProfilerMicroscopeHandler,
+    CellProfilerProcessingContext,
+    RequireProcessingContextBoundaryPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.projection import (
+    CurrentSourceImagePayloadProjection,
+    CurrentSourceObjectLabelPayloadProjection,
+    CurrentSourcePayloadPlaneSelector,
+    RuntimePlaneCurrentImageContext,
+    RuntimePlaneImagePayloadProjection,
+    RuntimePlaneProjectionContext,
+)
+from openhcs.interop.cellprofiler.runtime.adapter_scope import (
+    CellProfilerRuntimeScope,
+    CurrentSourceIdentityCacheScope,
+    RuntimeGroupMatchScope,
+)
+from openhcs.interop.cellprofiler.runtime.adapter_profile import (
+    AdapterProfileFieldValue,
+    AdapterProfileLog,
+    NativeRecordProfileContext,
+    SourceCandidateProfileEvent,
+)
+from openhcs.interop.cellprofiler.runtime.object_label_measurements import (
+    object_label_measurement_values_cache,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_tables import (
+    CellProfilerMeasurementCacheValue,
+    MeasurementTableCacheMutation,
+    MeasurementTableCacheMutationPolicy,
+    MeasurementTableSelection,
+    object_measurement_table_cache,
+    object_measurement_table_index_cache,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_artifact_records import (
+    CurrentSourceRuntimeInputGroupResolution,
+    RuntimeArtifactRecordResolver,
+    _is_default_runtime_group_key,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_artifact_cache_invalidation import (
+    FullRuntimeArtifactCacheInvalidationPolicy,
+    ImageRuntimeArtifactCacheInvalidationPolicy,
+    MeasurementRuntimeArtifactCacheInvalidationPolicy,
+    ObjectLabelRuntimeArtifactCacheInvalidationPolicy,
+    RelationshipRuntimeArtifactCacheInvalidationPolicy,
+    RuntimeArtifactCacheInvalidationPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_value_authorities import (
+    MatlabPayloadEntryName,
+    RuntimeRecordStackAuthority,
+    SpatialGridGroupValues,
+    SpatialGridInput,
+    SpatialGridValueAuthority,
+)
+from openhcs.interop.cellprofiler.runtime.source_candidates import (
+    CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE,
+    CellProfilerImageNumberResolver,
+    SourceBindingPlaneCandidateContext,
+    SourceCandidateRuntimeCache,
+)
+from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
+    PipelineStartPayloadCacheValue,
+    SourceBindingAxisResolutionAuthority,
+    SourceBindingAxisPlaneResolution,
+    SourceBindingResolutionRequest,
+    SourceBindingResolver,
 )
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
-_SOURCE_CANDIDATE_CACHE_LIMIT = 64
-_SOURCE_PLANE_IDENTITY_POLICY = SourceImageSetIdentityPolicy(
-    plane_member_component=None
-)
-_SOURCE_CANDIDATE_PROCESS_CACHE: OrderedDict[
-    tuple[Hashable, ...],
-    tuple["ParsedSourceCandidate", ...],
-] = OrderedDict()
-_OBJECT_FEATURE_VALUE_PROCESS_CACHE: WeakKeyDictionary[
-    RuntimeValueStore,
-    "ObjectFeatureValueProcessCache",
-] = WeakKeyDictionary()
-
-MeasurementTableSelection = tuple[MeasurementTable, ...] | None
-ImagePayloadValue = RuntimeArrayPayload | np.ndarray
-MeasurementCellValue = str | int | float | bool | None
-CellProfilerMeasurementVector = np.ndarray | Sequence[MeasurementCellValue]
-CellProfilerMeasurementSliceValues = tuple[CellProfilerMeasurementVector, ...]
-CellProfilerMeasurementCacheValue = (
-    tuple[MeasurementTable, ...]
-    | CellProfilerMeasurementVector
-    | CellProfilerMeasurementSliceValues
-)
-ObjectFeatureValueProcessCache = dict[
-    RuntimeObjectFeatureMeasurementQuery,
-    CellProfilerMeasurementVector,
-]
-ObjectLabelMeasurementValuesProcessCache = dict[
-    RuntimeObjectLabelMeasurementQuery,
-    CellProfilerMeasurementSliceValues,
-]
-CellProfilerFilePayload = (
-    ImagePayloadValue
-    | ObjectLabelPayload
-    | ObjectLabelSet
-    | MeasurementTable
-    | ObjectRelationship
-    | SpatialGrid
-    | SparseIJVLabelRows
-    | ColumnarRows
-)
-AdapterObjectLabelInput = ObjectLabelSet | ObjectLabelPayload | ObjectLabelData
-AdapterObjectLabelNominalType = (
-    type[ObjectLabelSet]
-    | type[ObjectLabelPayload]
-    | tuple[type[ObjectLabelSet] | type[ObjectLabelPayload], ...]
-)
-SpatialGridGroupValues = tuple[
-    SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
-    ...,
-]
-SourcePlaneIdentitySequence = tuple[frozenset[SourceImageSetIdentity], ...]
-AdapterProfileFieldValue = (
-    str | int | bool | tuple[int, ...] | SourceComponentMetadata | None
-)
-AdapterProfileFields = dict[str, AdapterProfileFieldValue]
-ImagePayloadMaskValue = ImagePayloadValue | None
-PipelineStartPayloadCacheValue = tuple[ImagePayloadValue, ...]
-SourceOrderCacheValue = int | tuple[str, ...]
-CellProfilerFileManagerOption = ZarrConfig | str | int | float | bool | None
-CellProfilerParsedMetadataValue = str | int | float | bool | None
-
-
-class CellProfilerFileManager(ABC):
-    """Nominal filemanager surface used by the CellProfiler runtime adapter."""
-
-    @abstractmethod
-    def load(
-        self,
-        file_path: str | Path,
-        backend: str,
-        **backend_options: CellProfilerFileManagerOption,
-    ) -> ImagePayloadValue:
-        """Load one payload from a backend."""
-
-    @abstractmethod
-    def load_batch(
-        self,
-        file_paths: Sequence[str | Path],
-        backend: str,
-        **backend_options: CellProfilerFileManagerOption,
-    ) -> Sequence[ImagePayloadValue]:
-        """Load several payloads from a backend."""
-
-    @abstractmethod
-    def save(
-        self,
-        data: CellProfilerFilePayload,
-        output_path: str | Path,
-        backend: str,
-        **backend_options: CellProfilerFileManagerOption,
-    ) -> None:
-        """Save one payload to a backend."""
-
-    @abstractmethod
-    def delete(
-        self,
-        path: str | Path,
-        backend: str,
-        recursive: bool = False,
-    ) -> bool:
-        """Delete one path from a backend."""
-
-    @abstractmethod
-    def ensure_directory(self, directory: str | Path, backend: str) -> str:
-        """Ensure a backend directory exists."""
-
-
-class CellProfilerGlobalConfig(ABC):
-    """Global config surface needed while loading source images."""
-
-    @property
-    @abstractmethod
-    def zarr_config(self) -> ZarrConfig | None:
-        """Return VFS zarr backend options."""
-
-
-class CellProfilerFilenameParser(ABC):
-    """Microscope filename parser surface needed for source ordering."""
-
-    @abstractmethod
-    def parse_filename(
-        self,
-        filename: str,
-    ) -> Mapping[str, CellProfilerParsedMetadataValue] | None:
-        """Parse source filename metadata."""
-
-
-class CellProfilerMicroscopeHandler(ABC):
-    """Microscope handler surface needed by the adapter."""
-
-    @property
-    @abstractmethod
-    def parser(self) -> CellProfilerFilenameParser:
-        """Return the filename parser."""
-
-
-class CellProfilerProcessingContext(ABC):
-    """Processing context surface consumed by CellProfiler runtime adapter."""
-
-    @property
-    @abstractmethod
-    def filemanager(self) -> CellProfilerFileManager:
-        """Return the OpenHCS VFS filemanager."""
-
-    @property
-    @abstractmethod
-    def input_dir(self) -> str:
-        """Return the processing input directory."""
-
-    @property
-    @abstractmethod
-    def global_config(self) -> CellProfilerGlobalConfig:
-        """Return the merged pipeline config."""
-
-    @property
-    @abstractmethod
-    def microscope_handler(self) -> CellProfilerMicroscopeHandler:
-        """Return the initialized microscope handler."""
-
-
-@dataclass(frozen=True, slots=True)
-class RequireProcessingContextBoundaryPolicy:
-    """Boundary policy for adapter paths that require source-loading services."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-
-    @property
-    def context(self) -> CellProfilerProcessingContext:
-        if self.adapter.processing_context is None:
-            raise RuntimeError(
-                "CellProfilerRuntimeAdapter.processing_context is required for "
-                "selector-bearing source resolution."
-            )
-        return self.adapter.processing_context
-
-
-@dataclass(frozen=True, slots=True)
-class ImagePayloadContextRequest:
-    """Nominal request for attaching image mask and source metadata."""
-
-    data: ImagePayloadValue
-    mask: ImagePayloadMaskValue
-    metadata: ImagePayloadMetadata
-
-    def payload(self) -> ImagePayloadValue:
-        return cast(
-            ImagePayloadValue,
-            RuntimeImagePayloadContext(self.data, self.mask, self.metadata).payload(),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ImagePayloadSourceMetadataRequest:
-    """Nominal request for deriving image metadata from a source path."""
-
-    image: ImagePayloadValue
-    source_path: str
-    read_backend: str | None
-    filemanager: CellProfilerFileManager | None
-
-    def metadata(self) -> ImagePayloadMetadata:
-        return image_payload_metadata_from_source(
-            self.image,
-            **dict(self.keyword_entries()),
-        )
-
-    def keyword_entries(
-        self,
-    ) -> tuple[tuple[str, str | CellProfilerFileManager | None], ...]:
-        return (
-            ("source_path", self.source_path),
-            ("read_backend", self.read_backend),
-            ("filemanager", self.filemanager),
-        )
-
-
-CellProfilerCurrentImage = ImagePayloadMetadataInput
-DenseLabelPayload = (
-    ObjectLabelSet
-    | ObjectLabelPayload
-    | SparseIJVLabelRows
-    | np.ndarray
-    | Sequence[int]
-    | Sequence[np.ndarray]
-)
-RuntimeArtifactPayloadValue = (
-    CellProfilerFilePayload
-    | NamedImage
-    | ImagePayloadMetadataInput
-    | ObjectLabelSet
-    | ObjectRelationship
-    | SpatialGrid
-    | RuntimeSliceAlignedValues[ImagePayloadValue]
-    | RuntimeSliceAlignedValues[SpatialGrid]
-)
-SourceScopedPayload = ImagePayloadMetadataInput | ObjectLabelSet | ObjectLabelPayload
-MeasurementRowsInput = (
-    ColumnarRows
-    | SparseIJVLabelRows
-    | Sequence[Mapping[str, MeasurementCellValue]]
-)
+AdapterObjectLabelInput = ObjectLabelValue | ObjectLabelData
 RelationshipIdVector = np.ndarray | Sequence[int]
-SpatialGridMappingValue = (
-    CellProfilerParsedMetadataValue
-    | tuple[int, ...]
-    | tuple[float, ...]
-)
-SpatialGridInputValue = SpatialGrid | Mapping[str, SpatialGridMappingValue]
-SpatialGridInput = SpatialGridInputValue | RuntimeSliceAlignedValues[SpatialGridInputValue]
-SpatialGridEquivalenceValue = (
-    str
-    | int
-    | float
-    | tuple[int, int]
-    | tuple[float, ...]
-    | tuple[tuple[int, int], ...]
-)
-ParsedSourceMetadata = Mapping[
-    str,
-    CellProfilerParsedMetadataValue | SourceComponentMetadata,
-]
-MutableParsedSourceMetadata = dict[
-    str,
-    CellProfilerParsedMetadataValue | SourceComponentMetadata,
-]
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectMeasurementTableCacheKey:
-    """Semantic cache key for object-subject measurement table queries."""
-
-    group_key: str | None
-    match_group: bool
-    object_name: str
-    current_source_identities: frozenset[SourceImageSetIdentity] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectMeasurementTableIndexCacheKey:
-    """Semantic cache key for object-subject measurement table indexes."""
-
-    group_key: str | None
-    match_group: bool
-    current_source_identities: frozenset[SourceImageSetIdentity] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class MeasurementTableAxisProjectionCacheKey:
-    """Semantic cache key for axis-projecting an immutable measurement table set."""
-
-    revision: int
-    axis: MeasurementRowAxisField
-    value: int
-    table_identities: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectFeatureAxisMeasurementTableCacheKey(RuntimeObjectMeasurementQuery):
-    """Semantic cache key for feature-bearing object tables in one row-axis scope."""
-
-    axis: MeasurementRowAxisField | None = None
-    value: int | None = None
-    current_source_identities: frozenset[SourceImageSetIdentity] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class MultiplaneObjectMeasurementTableCacheKey:
-    """Semantic cache key for object-feature tables aligned to label stacks."""
-
-    revision: int
-    axis_id: str
-    object_name: str
-    feature_name: str
-    label_domain: tuple[int, ...]
-    current_source_identities: frozenset[SourceImageSetIdentity]
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementSliceRequest:
-    """Inputs for one label-aligned object-measurement vector query."""
-
-    feature_name: str
-    labels: DenseLabelPayload
-    image_number: int | None = None
-    current_image: CellProfilerCurrentImage | None = None
-
-
-MeasurementTablesByObject = Mapping[str, tuple[MeasurementTable, ...]]
-MutableMeasurementTablesByObject = dict[str, tuple[MeasurementTable, ...]]
-ObjectFeatureAxisMeasurementTableCache = dict[
-    ObjectFeatureAxisMeasurementTableCacheKey,
-    tuple[MeasurementTable, ...],
-]
-ObjectFeatureProjectionBatchShapeValue = str | int | None
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeGroupKeyCacheScope:
-    """Cache-key component authority for grouped and ungrouped runtime queries."""
-
-    resolved_group_key: str | None
-    match_group: bool
-
-    @property
-    def component(self) -> str | None:
-        if self.match_group:
-            return self.resolved_group_key
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentImageCacheScope:
-    """Cache-key component authority for optional current-image payloads."""
-
-    current_image: CellProfilerCurrentImage | None
-
-    @property
-    def component(self) -> int | None:
-        if self.current_image is None:
-            return None
-        return id(self.current_image)
-
 
 @dataclass(frozen=True, slots=True)
 class SourceIdentitySetCardinality:
@@ -533,69 +239,6 @@ class SourceIdentitySetCardinality:
     def has_single_identity(self) -> bool:
         return len(self.identities) in {1}
 
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingAxisCardinality:
-    """Closed cardinality authority for source-binding axis sizes."""
-
-    axis_size: int | None
-
-    @property
-    def is_single_source_axis(self) -> bool:
-        return self.axis_size in {1}
-
-
-@dataclass(frozen=True, slots=True)
-class DenseLabelShapeSet:
-    """Shape-set authority for dense label memory preflight."""
-
-    arrays: tuple[np.ndarray, ...]
-
-    @property
-    def is_uniform(self) -> bool:
-        if not self.arrays:
-            return False
-        first_shape = tuple(self.arrays[0].shape)
-        return all(tuple(array.shape) == first_shape for array in self.arrays[1:])
-
-
-@dataclass(frozen=True, slots=True)
-class MatlabPayloadEntryName:
-    """Nominal classifier for MATLAB metadata entries."""
-
-    value: str
-
-    @property
-    def is_private_metadata(self) -> bool:
-        return self.value[:2] == "__"
-
-
-@dataclass(frozen=True, slots=True)
-class MeasurementTableObjectName:
-    """Display authority for optional measurement-table object names."""
-
-    table: MeasurementTable
-
-    @property
-    def display(self) -> str:
-        if self.table.object_name is None:
-            return "<none>"
-        return self.table.object_name
-
-
-@dataclass(frozen=True, slots=True)
-class SpatialGridSliceCount:
-    """Slice-count authority for grouped spatial-grid values."""
-
-    grid: SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]
-
-    @property
-    def value(self) -> int:
-        if isinstance(self.grid, RuntimeSliceAlignedValues):
-            return self.grid.slice_count
-        return 1
-
-
 @dataclass(frozen=True, slots=True)
 class DeclaredOutputResolution:
     """Resolution of a compiled output declaration for one artifact name."""
@@ -606,2548 +249,8 @@ class DeclaredOutputResolution:
     def is_declared(self) -> bool:
         return self.plan is not None
 
-
-@dataclass(frozen=True, slots=True)
-class ObjectMeasurementTableIndex:
-    """Nominal object-subject measurement table index."""
-
-    tables: tuple[MeasurementTable, ...]
-    tables_by_object: MeasurementTablesByObject
-    projected_tables_by_object: MeasurementTablesByObject = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    feature_names_by_table: Mapping[int, frozenset[str]] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    repeated_scalar_group_sizes: Mapping[MeasurementTableRepeatedScalarGroupKey, int] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    complete: bool = False
-
-    @classmethod
-    def from_tables(
-        cls,
-        tables: tuple[MeasurementTable, ...],
-    ) -> "ObjectMeasurementTableIndex":
-        """Return a complete index over the provided measurement tables."""
-        table_lists: dict[str, list[tuple[MeasurementTable, MeasurementTableObjectFeatureSemantics]]] = {}
-        group_sizes: dict[MeasurementTableRepeatedScalarGroupKey, int] = {}
-        logical_tables_by_name: dict[str, MeasurementTable] = {}
-        for name in dict.fromkeys(table.name for table in tables):
-            name_tables = tuple(table for table in tables if table.name == name)
-            name_table_semantics = tuple(
-                MeasurementTableObjectFeatureSemantics.from_table(table)
-                for table in name_tables
-            )
-            object_names = {
-                object_name
-                for semantics in name_table_semantics
-                for object_name in semantics.object_names
-            }
-            has_image_level_rows = any(
-                not semantics.object_names for semantics in name_table_semantics
-            )
-            if len(object_names) > 1 or (object_names and has_image_level_rows):
-                logical_tables_by_name[name] = MeasurementTableUnion(
-                    name,
-                    name_tables,
-                ).as_table()
-        for table in tables:
-            table_semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
-            group_key = RuntimeSliceProjection.measurement_table_repeated_scalar_group_key(
-                table
-            )
-            if group_key not in group_sizes:
-                group_sizes[group_key] = 0
-            group_sizes[group_key] += 1
-            for table_object_name in table_semantics.object_names:
-                if table_object_name not in table_lists:
-                    table_lists[table_object_name] = []
-                table_lists[table_object_name].append((table, table_semantics))
-        indexed_tables: MutableMeasurementTablesByObject = {}
-        projected_tables_by_object: MutableMeasurementTablesByObject = {}
-        feature_names_by_table: dict[int, frozenset[str]] = {}
-        for object_name, object_table_entries in table_lists.items():
-            object_tables_list: list[MeasurementTable] = []
-            emitted_logical_names: set[str] = set()
-            for table, _semantics in object_table_entries:
-                logical_table = logical_tables_by_name.get(table.name)
-                if logical_table is None:
-                    object_tables_list.append(table)
-                    continue
-                if table.name in emitted_logical_names:
-                    continue
-                object_tables_list.append(logical_table)
-                emitted_logical_names.add(table.name)
-            object_tables = tuple(object_tables_list)
-            object_specific_tables = tuple(
-                table for table, _semantics in object_table_entries
-            )
-            projected_tables = (
-                RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
-                    object_specific_tables
-                )
-            )
-            if not emitted_logical_names:
-                object_tables = projected_tables
-            indexed_tables[object_name] = object_tables
-            projected_tables_by_object[object_name] = projected_tables
-            for projected_table, (_table, table_semantics) in zip(
-                projected_tables,
-                object_table_entries,
-                strict=True,
-            ):
-                feature_names_by_table[id(projected_table)] = (
-                    table_semantics.feature_names
-                )
-        return cls(
-            tables=RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
-                tables
-            ),
-            tables_by_object=MappingProxyType(indexed_tables),
-            projected_tables_by_object=MappingProxyType(projected_tables_by_object),
-            feature_names_by_table=MappingProxyType(feature_names_by_table),
-            repeated_scalar_group_sizes=MappingProxyType(group_sizes),
-            complete=True,
-        )
-
-    @staticmethod
-    def table_object_names(table: MeasurementTable) -> tuple[str, ...]:
-        """Return all object subjects declared by a measurement table."""
-        return MeasurementTableObjectFeatureSemantics.from_table(table).object_names
-
-    def for_object(self, object_name: str) -> MeasurementTableSelection:
-        """Return indexed tables for one object, or ``None`` when unknown."""
-        if not self.complete:
-            return None
-        if object_name not in self.tables_by_object:
-            return ()
-        return self.tables_by_object[object_name]
-
-    def for_object_feature(
-        self,
-        object_name: str,
-        feature_name: str,
-        *,
-        dialect: RuntimeMeasurementLookupDialectLike = (
-            CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT
-        ),
-    ) -> MeasurementTableSelection:
-        """Return indexed object tables that may carry one feature."""
-        query_object_name = resolve_runtime_measurement_lookup_dialect(
-            dialect
-        ).feature_lookup(feature_name).query_object_name(object_name)
-        if query_object_name is None:
-            tables = self.tables
-        elif not self.complete:
-            tables = None
-        elif query_object_name in self.projected_tables_by_object:
-            tables = self.projected_tables_by_object[query_object_name]
-        else:
-            tables = ()
-        if tables is None:
-            return None
-        if not tables and query_object_name is not None:
-            tables = self.unnamed_object_feature_tables()
-        query = MeasurementFeatureQuery(feature_name, dialect=dialect)
-        return tuple(
-            table
-            for table in tables
-            if self._table_may_carry_feature(table, query)
-        )
-
-    def unnamed_object_feature_tables(self) -> tuple[MeasurementTable, ...]:
-        """Return object-id tables that do not declare a specific object name."""
-        return tuple(
-            table
-            for table in self.tables
-            if measurement_table_object_id_field(table) is not None
-            and not MeasurementTableObjectFeatureSemantics.from_table(table).object_names
-        )
-
-    def _table_may_carry_feature(
-        self,
-        table: MeasurementTable,
-        query: MeasurementFeatureQuery,
-    ) -> bool:
-        feature_names = self.feature_names_by_table.get(id(table))
-        semantics = None
-        if feature_names is not None:
-            semantics = MeasurementTableObjectFeatureSemantics(
-                object_names=(),
-                feature_names=feature_names,
-            )
-        return query.table_may_carry_feature(table, semantics)
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeRelationshipPlaneRecord:
-    """Relationship record projected onto one runtime label plane."""
-
-    relationship: ObjectRelationship
-    plane_index: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class RelationshipPlaneProjectionResolution:
-    """Typed result for projecting grouped relationship records onto label planes."""
-
-    records: tuple[RuntimeRelationshipPlaneRecord, ...] = ()
-    unavailable_reason: str | None = None
-
-    @property
-    def is_available(self) -> bool:
-        return self.unavailable_reason is None
-
-    def require_records(self) -> tuple[RuntimeRelationshipPlaneRecord, ...]:
-        if not self.is_available:
-            reason = self.unavailable_reason
-            if reason is None:
-                reason = "unavailable"
-            raise RelationshipChildCountUnavailable(reason)
-        return self.records
-
-
-@dataclass(frozen=True, slots=True)
-class RelationshipGroupPlaneOrder:
-    """Declared group-key order for relationship runtime-slice projection."""
-
-    plane_index_by_group_key: Mapping[str | None, int] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    unavailable_reason: str | None = None
-
-    @property
-    def is_available(self) -> bool:
-        return self.unavailable_reason is None
-
-
-@dataclass(frozen=True, slots=True)
-class MeasurementTableCacheMutation:
-    """Semantic cache mutation caused by one measurement-table write."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    table: MeasurementTable
-    table_semantics: MeasurementTableObjectFeatureSemantics
-
-    @property
-    def object_names(self) -> tuple[str, ...]:
-        return self.table_semantics.object_names
-
-    @property
-    def feature_names(self) -> frozenset[str]:
-        return self.table_semantics.feature_names
-
-
-class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
-    """Registered policy for measurement-table cache mutation side effects."""
-
-    __registry_key__ = "policy_name"
-    __skip_if_no_key__ = True
-
-    policy_name: ClassVar[str | None] = None
-
-    @classmethod
-    def registered_policies(cls) -> tuple["MeasurementTableCacheMutationPolicy", ...]:
-        """Return registered cache mutation policies in registry order."""
-        return tuple(
-            policy_type()
-            for policy_type in cls.__registry__.values()
-            if not isabstract(policy_type)
-        )
-
-    @abstractmethod
-    def apply(self, mutation: MeasurementTableCacheMutation) -> None:
-        """Apply this policy to a measurement-table cache mutation."""
-
-
-class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
-    """Shared mutation contract for measurement-query caches."""
-
-    def apply(self, mutation: MeasurementTableCacheMutation) -> None:
-        if not mutation.object_names:
-            return
-        self.apply_query_cache_mutation(mutation)
-
-    @abstractmethod
-    def apply_query_cache_mutation(self, mutation: MeasurementTableCacheMutation) -> None:
-        """Apply a mutation known to affect at least one object domain."""
-
-
-MeasurementQueryCacheEntry = (
-    RuntimeObjectMeasurementQuery
-    | RuntimeObjectLabelMeasurementQuery
-    | ObjectMeasurementTableCacheKey
-    | ObjectFeatureAxisMeasurementTableCacheKey
-)
-MeasurementQueryCacheValue = (
-    CellProfilerMeasurementCacheValue
-    | ObjectMeasurementTableIndex
-)
-
-
-class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
-    """Shared object/feature invalidation for measurement-query caches."""
-
-    entry_type: ClassVar[type[MeasurementQueryCacheEntry]]
-    feature_scoped: ClassVar[bool] = False
-    adapter_cache_accessor: ClassVar[
-        Callable[
-            ["CellProfilerRuntimeAdapter"],
-            MutableMapping[MeasurementQueryCacheEntry, MeasurementQueryCacheValue],
-        ]
-        | None
-    ] = None
-
-    def cache(
-        self,
-        mutation: MeasurementTableCacheMutation,
-    ) -> MutableMapping[MeasurementQueryCacheEntry, MeasurementQueryCacheValue]:
-        """Return the cache owned by this invalidation policy."""
-        cache_accessor = type(self).adapter_cache_accessor
-        if cache_accessor is None:
-            raise RuntimeError(
-                f"{type(self).__name__} must declare adapter_cache_accessor."
-            )
-        return cache_accessor(mutation.adapter)
-
-    def cache_entries(
-        self,
-        mutation: MeasurementTableCacheMutation,
-    ) -> tuple[MeasurementQueryCacheEntry, ...]:
-        """Return cache entries considered for this mutation."""
-        return tuple(self.cache(mutation))
-
-    def delete_entry(
-        self,
-        mutation: MeasurementTableCacheMutation,
-        entry: MeasurementQueryCacheEntry,
-    ) -> None:
-        """Delete one cache entry."""
-        del self.cache(mutation)[entry]
-
-    def entry_object_name(self, entry: MeasurementQueryCacheEntry) -> str | None:
-        """Return the object domain addressed by one cache entry."""
-        if not isinstance(entry, type(self).entry_type):
-            return None
-        return entry.object_name
-
-    def entry_feature_name(self, entry: MeasurementQueryCacheEntry) -> str | None:
-        """Return the feature addressed by one cache entry, when feature-scoped."""
-        if not type(self).feature_scoped:
-            return None
-        if not isinstance(entry, type(self).entry_type):
-            return None
-        return entry.feature_name
-
-    def apply_query_cache_mutation(self, mutation: MeasurementTableCacheMutation) -> None:
-        for entry in self.cache_entries(mutation):
-            entry_object_name = self.entry_object_name(entry)
-            if entry_object_name not in mutation.object_names:
-                continue
-            entry_feature_name = self.entry_feature_name(entry)
-            if (
-                entry_feature_name is not None
-                and mutation.feature_names
-                and entry_feature_name not in mutation.feature_names
-            ):
-                continue
-            self.delete_entry(mutation, entry)
-
-
-class ObjectFeatureValueCacheInvalidationPolicy(
-    MeasurementQueryCacheInvalidationPolicy
-):
-    """Invalidate object-feature vector cache entries touched by a table write."""
-
-    policy_name = "object_feature_value"
-    entry_type = RuntimeObjectMeasurementQuery
-    feature_scoped = True
-
-
-class ObjectLabelMeasurementValuesCacheInvalidationPolicy(
-    MeasurementQueryCacheInvalidationPolicy
-):
-    """Invalidate label-aligned measurement vector cache entries touched by a write."""
-
-    policy_name = "object_label_measurement_values"
-    entry_type = RuntimeObjectLabelMeasurementQuery
-    feature_scoped = True
-
-
-class ObjectMeasurementTableCacheInvalidationPolicy(
-    MeasurementQueryCacheInvalidationPolicy
-):
-    """Invalidate object-subject measurement table query cache entries."""
-
-    policy_name = "object_measurement_table"
-    entry_type = ObjectMeasurementTableCacheKey
-
-
-class ObjectFeatureAxisMeasurementTableCacheInvalidationPolicy(
-    MeasurementQueryCacheInvalidationPolicy
-):
-    """Invalidate feature-scoped object table selections touched by a write."""
-
-    policy_name = "object_feature_axis_measurement_table"
-    entry_type = ObjectFeatureAxisMeasurementTableCacheKey
-    feature_scoped = True
-
-
-class MeasurementQueryCacheInvalidationFamily:
-    """Bind measurement-query cache policy classes to the concrete adapter."""
-
-    @staticmethod
-    def bind_adapter_caches(
-        adapter_type: type["CellProfilerRuntimeAdapter"],
-    ) -> None:
-        ObjectFeatureValueCacheInvalidationPolicy.adapter_cache_accessor = (
-            adapter_type.object_feature_value_cache
-        )
-        ObjectLabelMeasurementValuesCacheInvalidationPolicy.adapter_cache_accessor = (
-            adapter_type.object_label_measurement_values_cache
-        )
-        ObjectMeasurementTableCacheInvalidationPolicy.adapter_cache_accessor = (
-            adapter_type.object_measurement_table_cache
-        )
-        ObjectFeatureAxisMeasurementTableCacheInvalidationPolicy.adapter_cache_accessor = (
-            adapter_type.object_feature_axis_measurement_table_cache
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class MeasurementFeatureAxisScopeSelection:
-    """Select the narrowest measurement-table scope that carries a feature."""
-
-    candidates: tuple[tuple[MeasurementTable, ...], ...]
-    query: MeasurementFeatureQuery
-    fallback: tuple[MeasurementTable, ...]
-
-    def select(self) -> tuple[MeasurementTable, ...]:
-        for candidate_tables in self.candidates:
-            if self.query.optional_value_index(candidate_tables) is not None:
-                return candidate_tables
-        return self.fallback
-
-
-class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
-    """Invalidate object-subject indexes touched by measurement-table writes."""
-
-    policy_name = "object_measurement_table_index"
-
-    def apply_query_cache_mutation(self, mutation: MeasurementTableCacheMutation) -> None:
-        object_table_index_cache = mutation.adapter.object_measurement_table_index_cache()
-        for cache_key in (
-            ObjectMeasurementTableIndexCacheKey(mutation.adapter.group_key, True),
-            ObjectMeasurementTableIndexCacheKey(None, False),
-        ):
-            object_table_index_cache.pop(cache_key, None)
-
-
-_OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE: WeakKeyDictionary[
-    RuntimeValueStore,
-    dict[ObjectMeasurementTableCacheKey, tuple[MeasurementTable, ...]],
-] = WeakKeyDictionary()
-_OBJECT_FEATURE_AXIS_MEASUREMENT_TABLE_PROCESS_CACHE: WeakKeyDictionary[
-    RuntimeValueStore,
-    ObjectFeatureAxisMeasurementTableCache,
-] = WeakKeyDictionary()
-_OBJECT_MEASUREMENT_TABLE_INDEX_PROCESS_CACHE: WeakKeyDictionary[
-    RuntimeValueStore,
-    dict[ObjectMeasurementTableIndexCacheKey, ObjectMeasurementTableIndex],
-] = WeakKeyDictionary()
-_OBJECT_LABEL_MEASUREMENT_VALUES_PROCESS_CACHE: WeakKeyDictionary[
-    RuntimeValueStore,
-    ObjectLabelMeasurementValuesProcessCache,
-] = WeakKeyDictionary()
-_PIPELINE_START_PAYLOAD_CACHE_LIMIT = 64
-_PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
-    tuple[Hashable, ...],
-    PipelineStartPayloadCacheValue,
-] = OrderedDict()
-_MAX_DENSE_LABEL_STACK_BYTES = 1 << 30
-_DEFAULT_RUNTIME_GROUP_KEYS = frozenset((None, DEFAULT_GROUP_KEY))
-
-
-def _is_default_runtime_group_key(group_key: str | None) -> bool:
-    """Return whether a runtime group key addresses the compiled default group."""
-    return group_key in _DEFAULT_RUNTIME_GROUP_KEYS
-
-
-class RelationshipChildCountUnavailable(RuntimeError):
-    """Raised internally when relationship child-count projection is not applicable."""
-
-
-@dataclass(frozen=True, slots=True)
-class SourceCandidateProfileEvent:
-    """Nominal profiler event for source-candidate matching and loading."""
-
-    label: str
-    seconds: float
-    count: int
-    alias: str | None = None
-    source: SourceBindingOrigin | None = None
-
-    def fields(self) -> AdapterProfileFields:
-        fields: AdapterProfileFields = {"count": self.count}
-        if self.alias is not None:
-            fields["alias"] = self.alias
-        if self.source is not None:
-            fields["source"] = self.source.value
-        return fields
-
-
-class AdapterProfileLog:
-    """Authoritative projection for runtime adapter profiling event fields."""
-
-    @staticmethod
-    def log(label: str, seconds: float, **fields: AdapterProfileFieldValue) -> None:
-        RuntimeProfileLogger.log(logger, label, seconds, **fields)
-
-    @staticmethod
-    def object_feature(
-        label: str,
-        seconds: float,
-        *,
-        object_name: str,
-        feature_name: str,
-        count: int | None = None,
-        cached: bool | None = None,
-        ndim: int | None = None,
-    ) -> None:
-        fields: AdapterProfileFields = {
-            "object": object_name,
-            "feature": feature_name,
-        }
-        if count is not None:
-            fields["count"] = count
-        if cached is not None:
-            fields["cached"] = cached
-        if ndim is not None:
-            fields["ndim"] = ndim
-        AdapterProfileLog.log(label, seconds, **fields)
-
-    @staticmethod
-    def label_batch(
-        label: str,
-        seconds: float,
-        *,
-        feature_name: str,
-        count: int | None = None,
-        cached: bool | None = None,
-        requested: int | None = None,
-        uncached: int | None = None,
-        fallback: str | None = None,
-    ) -> None:
-        fields: AdapterProfileFields = {"feature": feature_name}
-        if count is not None:
-            fields["count"] = count
-        if cached is not None:
-            fields["cached"] = cached
-        if requested is not None:
-            fields["requested"] = requested
-        if uncached is not None:
-            fields["uncached"] = uncached
-        if fallback is not None:
-            fields["fallback"] = fallback
-        AdapterProfileLog.log(label, seconds, **fields)
-
-    @staticmethod
-    def artifact(
-        label: str,
-        seconds: float,
-        *,
-        artifact_name: str,
-        kind: ArtifactKind | str | None = None,
-        payload_type: str | None = None,
-        group_key: str | None = None,
-        extra_fields: Mapping[str, AdapterProfileFieldValue] | None = None,
-    ) -> None:
-        fields: AdapterProfileFields = {"artifact": artifact_name}
-        if kind is not None:
-            fields["kind"] = kind.value if isinstance(kind, ArtifactKind) else kind
-        if payload_type is not None:
-            fields["payload_type"] = payload_type
-        if group_key is not None:
-            fields["group_key"] = group_key
-        if extra_fields:
-            fields.update(extra_fields)
-        AdapterProfileLog.log(label, seconds, **fields)
-
-    @staticmethod
-    def measurement_artifact(
-        label: str,
-        seconds: float,
-        *,
-        artifact_name: str,
-        object_name: str | None = None,
-        fields_declared: bool | None = None,
-    ) -> None:
-        fields: AdapterProfileFields = {"artifact": artifact_name}
-        if object_name is not None:
-            fields["object"] = object_name
-        if fields_declared is not None:
-            fields["fields"] = fields_declared
-        AdapterProfileLog.log(label, seconds, **fields)
-
-    @staticmethod
-    def measurement_cache(
-        label: str,
-        seconds: float,
-        *,
-        object_count: int,
-        feature_count: int,
-    ) -> None:
-        AdapterProfileLog.log(
-            label,
-            seconds,
-            objects=object_count,
-            features=feature_count,
-        )
-
-    @staticmethod
-    def measurement_cache_policy(
-        seconds: float,
-        *,
-        object_count: int,
-        feature_count: int,
-        policy_name: str,
-    ) -> None:
-        AdapterProfileLog.log(
-            "adapter_measurement_cache_policy",
-            seconds,
-            policy=policy_name,
-            objects=object_count,
-            features=feature_count,
-        )
-
-    @staticmethod
-    def measurement_slice_mismatch(
-        seconds: float,
-        *,
-        object_name: str,
-        measurement_slices: int,
-        label_slices: int,
-    ) -> None:
-        AdapterProfileLog.log(
-            "adapter_multiplane_measurement_slice_mismatch",
-            seconds,
-            object=object_name,
-            measurement_slices=measurement_slices,
-            label_slices=label_slices,
-        )
-
-    @staticmethod
-    def source_candidates(event: SourceCandidateProfileEvent) -> None:
-        AdapterProfileLog.log(event.label, event.seconds, **event.fields())
-
-
-@dataclass(frozen=True, slots=True)
-class NativeRecordProfileContext:
-    """Profiling context for one native artifact materialization."""
-
-    artifact_name: str
-    kind: ArtifactKind
-
-    def event(
-        self,
-        label: str,
-        seconds: float,
-        *,
-        payload_type: str | None = None,
-        group_key: str | None = None,
-    ) -> None:
-        AdapterProfileLog.artifact(
-            label,
-            seconds,
-            artifact_name=self.artifact_name,
-            kind=self.kind,
-            payload_type=payload_type,
-            group_key=group_key,
-        )
-
-    def group_event(
-        self,
-        label: str,
-        seconds: float,
-        group_key: str | None,
-    ) -> None:
-        self.event(label, seconds, group_key=group_key)
-
-    def normalized_value(
-        self,
-        seconds: float,
-        *,
-        payload_type: str,
-        group_key: str | None,
-    ) -> None:
-        self.event(
-            "adapter_normalize_artifact_value",
-            seconds,
-            payload_type=payload_type,
-            group_key=group_key,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectFeatureProfileContext:
-    """Profiling context for one object/feature measurement query."""
-
-    object_name: str
-    feature_name: str
-
-    def domain(self, seconds: float, *, count: int, ndim: int | None = None) -> None:
-        AdapterProfileLog.object_feature(
-            "adapter_object_label_query_domain",
-            seconds,
-            object_name=self.object_name,
-            feature_name=self.feature_name,
-            count=count,
-            ndim=ndim,
-        )
-
-    def get_objects(self, seconds: float) -> None:
-        AdapterProfileLog.object_feature(
-            "adapter_object_feature_get_objects",
-            seconds,
-            object_name=self.object_name,
-            feature_name=self.feature_name,
-        )
-
-    def counted_event(self, label: str, seconds: float, *, count: int) -> None:
-        AdapterProfileLog.object_feature(
-            label,
-            seconds,
-            object_name=self.object_name,
-            feature_name=self.feature_name,
-            count=count,
-        )
-
-    def object_domain(self, seconds: float, *, count: int) -> None:
-        self.counted_event(
-            "adapter_object_feature_domain",
-            seconds,
-            count=count,
-        )
-
-    def query_tables(self, seconds: float, *, count: int) -> None:
-        self.counted_event(
-            "adapter_object_label_query_tables",
-            seconds,
-            count=count,
-        )
-
-    def feature_tables(self, seconds: float, *, count: int) -> None:
-        self.counted_event(
-            "adapter_object_feature_tables",
-            seconds,
-            count=count,
-        )
-
-    def query_extract(self, seconds: float, *, count: int) -> None:
-        self.counted_event(
-            "adapter_object_label_query_extract",
-            seconds,
-            count=count,
-        )
-
-    def feature_extract(self, seconds: float, *, count: int) -> None:
-        self.counted_event(
-            "adapter_object_feature_extract",
-            seconds,
-            count=count,
-        )
-
-    def query_values(self, seconds: float, *, cached: bool) -> None:
-        AdapterProfileLog.object_feature(
-            "adapter_object_label_query_values",
-            seconds,
-            object_name=self.object_name,
-            feature_name=self.feature_name,
-            cached=cached,
-        )
-
-    def feature_values(self, seconds: float, *, cached: bool) -> None:
-        AdapterProfileLog.object_feature(
-            "adapter_object_feature_values",
-            seconds,
-            object_name=self.object_name,
-            feature_name=self.feature_name,
-            cached=cached,
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ObjectFeatureMeasurementContext(RuntimeObjectMeasurementQuery):
-    """Nominal context for one object-feature measurement lookup."""
-
-    image_number: int | None = None
-    current_image: CellProfilerCurrentImage | None = None
-
-    def resolved_group_key(self, adapter_group_key: str | None) -> str | None:
-        return adapter_group_key if self.group_key is None else self.group_key
-
-    def without_current_image(self) -> "ObjectFeatureMeasurementContext":
-        return ObjectFeatureMeasurementContext(
-            object_name=self.object_name,
-            feature_name=self.feature_name,
-            group_key=self.group_key,
-            image_number=self.image_number,
-            current_image=None,
-        )
-
-    def measurement_tables(
-        self,
-        adapter: "CellProfilerRuntimeAdapter",
-        *,
-        match_group: bool = True,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return adapter-visible tables for this object-feature context."""
-        return adapter.measurement_tables_for_object_feature(
-            self.object_name,
-            self.feature_name,
-            group_key=self.group_key,
-            match_group=match_group,
-            current_image=self.current_image,
-        )
-
-
-ObjectFeatureProjectionBatchShapeSelector = Callable[
-    [ObjectFeatureMeasurementContext],
-    ObjectFeatureProjectionBatchShapeValue,
-]
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectFeatureAxisProjectionBatchShape:
-    """Shared-shape predicate for batchable object-feature axis projections."""
-
-    contexts: Mapping[str, ObjectFeatureMeasurementContext]
-
-    @property
-    def is_batchable(self) -> bool:
-        return all(
-            (
-                self.shared(lambda context: context.feature_name),
-                self.shared(lambda context: context.group_key),
-                self.shared(lambda context: context.image_number),
-                self.shared(lambda context: id(context.current_image)),
-            )
-        )
-
-    def shared(self, selector: ObjectFeatureProjectionBatchShapeSelector) -> bool:
-        contexts = tuple(self.contexts.values())
-        if not contexts:
-            return False
-        first_value = selector(contexts[0])
-        return all(selector(context) == first_value for context in contexts[1:])
-
-
 @dataclass(slots=True)
-class ObjectFeatureAxisProjectedTables:
-    """Resolve and cache one object's feature tables projected to the active row axis."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    context: ObjectFeatureMeasurementContext
-    object_table_index: "ObjectMeasurementTableIndex"
-    cache: ObjectFeatureAxisMeasurementTableCache
-
-    def value(self) -> tuple[MeasurementTable, ...]:
-        cache_key = self.adapter._object_feature_axis_table_cache_key(self.context)
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        projected = self.projected_tables(self.source_tables())
-        self.cache[cache_key] = projected
-        return projected
-
-    def source_tables(self) -> tuple[MeasurementTable, ...]:
-        object_tables = self.object_table_index.for_object_feature(
-            self.context.object_name,
-            self.context.feature_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        if object_tables is not None:
-            return object_tables
-        return self.context.measurement_tables(self.adapter, match_group=True)
-
-    def projected_tables(
-        self,
-        object_tables: tuple[MeasurementTable, ...],
-    ) -> tuple[MeasurementTable, ...]:
-        if self.context.image_number is not None:
-            return self.adapter.measurement_tables_projected_to_axis(
-                object_tables,
-                MeasurementRowAxisField.IMAGE_NUMBER,
-                self.context.image_number,
-            )
-        runtime_slice_plane_index = self.adapter.runtime_slice_plane_index()
-        if runtime_slice_plane_index is None:
-            return object_tables
-        return self.adapter.measurement_tables_projected_to_axis(
-            object_tables,
-            MeasurementRowAxisField.SLICE_INDEX,
-            runtime_slice_plane_index,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectFeatureAxisProjectionBatch:
-    """Batch object-feature table projection around one shared feature context."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    contexts: Mapping[str, ObjectFeatureMeasurementContext]
-
-    def tables_by_object(self) -> MeasurementTablesByObject:
-        if not self.contexts:
-            return MappingProxyType({})
-        if not ObjectFeatureAxisProjectionBatchShape(self.contexts).is_batchable:
-            return self.individual_tables()
-        cached = self.cached_tables_by_object()
-        if len(cached) == len(self.contexts):
-            return MappingProxyType(cached)
-        return MappingProxyType(self.projected_tables_by_object(cached))
-
-    def individual_tables(self) -> MeasurementTablesByObject:
-        return MappingProxyType(
-            {
-                object_name: self.adapter.measurement_tables_for_object_feature_axis_projection(
-                    context,
-                )
-                for object_name, context in self.contexts.items()
-            }
-        )
-
-    def cached_tables_by_object(self) -> MutableMeasurementTablesByObject:
-        cache = self.adapter.object_feature_axis_measurement_table_cache()
-        return {
-            object_name: cached
-            for object_name, context in self.contexts.items()
-            for cached in (
-                cache.get(self.adapter._object_feature_axis_table_cache_key(context)),
-            )
-            if cached is not None
-        }
-
-    def projected_tables_by_object(
-        self,
-        cached: MeasurementTablesByObject,
-    ) -> MutableMeasurementTablesByObject:
-        cache = self.adapter.object_feature_axis_measurement_table_cache()
-        object_table_index = self.object_table_index()
-        tables_by_object = dict(cached)
-        for object_name, context in self.contexts_by_object(object_table_index).items():
-            tables_by_object[object_name] = ObjectFeatureAxisProjectedTables(
-                adapter=self.adapter,
-                context=context,
-                object_table_index=object_table_index,
-                cache=cache,
-            ).value()
-        return tables_by_object
-
-    def object_table_index(self) -> "ObjectMeasurementTableIndex":
-        first_context = next(iter(self.contexts.values()))
-        object_table_index = self.adapter.object_measurement_table_index(
-            group_key=first_context.group_key,
-            match_group=True,
-            current_image=first_context.current_image,
-        )
-        if object_table_index.tables:
-            return object_table_index
-        return self.adapter.object_measurement_table_index(
-            group_key=first_context.group_key,
-            match_group=False,
-            current_image=first_context.current_image,
-        )
-
-    def contexts_by_object(
-        self,
-        object_table_index: "ObjectMeasurementTableIndex",
-    ) -> Mapping[str, ObjectFeatureMeasurementContext]:
-        first_context = next(iter(self.contexts.values()))
-        context_by_object = dict(self.contexts)
-        for object_name in object_table_index.tables_by_object:
-            if object_name not in context_by_object:
-                context_by_object[object_name] = ObjectFeatureMeasurementContext(
-                    object_name=object_name,
-                    feature_name=first_context.feature_name,
-                    group_key=first_context.group_key,
-                    image_number=first_context.image_number,
-                    current_image=first_context.current_image,
-                )
-        return MappingProxyType(context_by_object)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ObjectFeatureLabelMeasurementContext(ObjectFeatureMeasurementContext):
-    """Object-feature measurement context with the label payload being queried."""
-
-    labels: DenseLabelPayload
-
-    @property
-    def label_array(self) -> np.ndarray:
-        return np.asarray(self.labels)
-
-    @property
-    def label_planes(self) -> tuple[np.ndarray, ...]:
-        label_array = self.label_array
-        if label_array.ndim <= 2:
-            return (label_array,)
-        return tuple(label_array[index] for index in range(label_array.shape[0]))
-
-    @property
-    def child_count_child_name(self) -> str:
-        child_name = child_count_feature_child_name(self.feature_name)
-        if child_name is None:
-            raise RelationshipChildCountUnavailable
-        return child_name
-
-    @property
-    def child_count_relationship_name(self) -> str:
-        return parent_child_relationship_artifact_name(
-            self.object_name,
-            self.child_count_child_name,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RelationshipChildCountLabelMeasurement:
-    """Resolve label-aligned child-count vectors from relationship artifacts."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    context: ObjectFeatureLabelMeasurementContext
-
-    def values(self) -> tuple[np.ndarray, ...] | None:
-        try:
-            return self.required_values()
-        except RelationshipChildCountUnavailable:
-            return None
-
-    def required_values(self) -> tuple[np.ndarray, ...]:
-        plane_records = self.valid_plane_records()
-        values = tuple(
-            self.values_for_plane(slice_index, label_plane, plane_records)
-            for slice_index, label_plane in enumerate(self.context.label_planes)
-        )
-        if any(value is None for value in values):
-            raise RelationshipChildCountUnavailable
-        return cast(tuple[np.ndarray, ...], values)
-
-    def valid_plane_records(self) -> tuple[RuntimeRelationshipPlaneRecord, ...]:
-        child_name = self.context.child_count_child_name
-        plane_records = self.plane_records()
-        if not plane_records:
-            raise RelationshipChildCountUnavailable
-        if any(
-            plane_record.relationship.source.name != self.context.object_name
-            or plane_record.relationship.target.name != child_name
-            for plane_record in plane_records
-        ):
-            raise RelationshipChildCountUnavailable
-        return plane_records
-
-    def plane_records(self) -> tuple[RuntimeRelationshipPlaneRecord, ...]:
-        return self.adapter._relationship_plane_projection_resolution(
-            self.context.child_count_relationship_name,
-            self.selected_records(),
-            label_plane_count=len(self.context.label_planes),
-        ).require_records()
-
-    def selected_records(self) -> tuple[StoredRuntimeValue, ...]:
-        records = self.relationship_records()
-        if len(records) > 1 and self.context.current_image is not None:
-            selected = RuntimeRecordSourceImageSetSelector(
-                self.adapter,
-                self.context.current_image,
-            ).select(records)
-            if selected:
-                records = selected
-        if len(records) > 1:
-            selected = self.adapter._records_for_current_group_component(
-                records,
-                self.context.current_image,
-            )
-            if selected:
-                records = selected
-        return records
-
-    def relationship_records(self) -> tuple[StoredRuntimeValue, ...]:
-        return self.adapter._relationship_records_for_child_count(
-            self.context.child_count_relationship_name,
-            group_key=self.context.group_key,
-            current_image=self.context.current_image,
-        )
-
-    def values_for_plane(
-        self,
-        slice_index: int,
-        label_plane: np.ndarray,
-        plane_records: tuple[RuntimeRelationshipPlaneRecord, ...],
-    ) -> np.ndarray | None:
-        object_ids = dense_object_label_id_domain(label_plane)
-        counts_by_parent = {object_id: 0.0 for object_id in object_ids}
-        for plane_record in plane_records:
-            relationship_slice_indices = self.relationship_slice_indices(
-                plane_record,
-                slice_index=slice_index,
-            )
-            if relationship_slice_indices is None:
-                return None
-            if not relationship_slice_indices:
-                continue
-            for parent_id, relationship_slice_index in zip(
-                plane_record.relationship.source_ids,
-                relationship_slice_indices,
-                strict=True,
-            ):
-                if relationship_slice_index != slice_index:
-                    continue
-                parent_id = int(parent_id)
-                if parent_id in counts_by_parent:
-                    counts_by_parent[parent_id] += 1.0
-        return ObjectLabelMeasurementValues.from_value_mapping(
-            object_ids,
-            counts_by_parent,
-        ).values
-
-    def relationship_slice_indices(
-        self,
-        plane_record: RuntimeRelationshipPlaneRecord,
-        *,
-        slice_index: int,
-    ) -> tuple[int, ...] | None:
-        relationship = plane_record.relationship
-        if plane_record.plane_index is not None:
-            if plane_record.plane_index != slice_index:
-                return ()
-            return tuple(plane_record.plane_index for _source_id in relationship.source_ids)
-        relationship_slice_indices = tuple(relationship.slice_indices)
-        if len(self.context.label_planes) > 1 and not relationship_slice_indices:
-            return None
-        if relationship_slice_indices:
-            return relationship_slice_indices
-        return tuple(0 for _source_id in relationship.source_ids)
-
-
-@dataclass(frozen=True, slots=True)
-class LabelBatchProfileContext:
-    """Profiling context for one label-slice measurement batch."""
-
-    feature_name: str
-
-    def cache(self, seconds: float, *, requested: int, uncached: int) -> None:
-        AdapterProfileLog.label_batch(
-            "adapter_object_label_batch_cache",
-            seconds,
-            feature_name=self.feature_name,
-            requested=requested,
-            uncached=uncached,
-        )
-
-    def values(
-        self,
-        seconds: float,
-        *,
-        cached: bool,
-        count: int,
-        fallback: str | None = None,
-    ) -> None:
-        AdapterProfileLog.label_batch(
-            "adapter_object_label_batch_values",
-            seconds,
-            feature_name=self.feature_name,
-            cached=cached,
-            count=count,
-            fallback=fallback,
-        )
-
-    def tables(self, seconds: float, *, count: int) -> None:
-        AdapterProfileLog.label_batch(
-            "adapter_object_label_batch_tables",
-            seconds,
-            feature_name=self.feature_name,
-            count=count,
-        )
-
-    def indexes(self, seconds: float, *, count: int) -> None:
-        AdapterProfileLog.label_batch(
-            "adapter_object_label_batch_indexes",
-            seconds,
-            feature_name=self.feature_name,
-            count=count,
-        )
-
-    def align(self, seconds: float, *, count: int) -> None:
-        AdapterProfileLog.label_batch(
-            "adapter_object_label_batch_align",
-            seconds,
-            feature_name=self.feature_name,
-            count=count,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchFeatureContext:
-    """Shared adapter/feature context for label-measurement batch stages."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    feature_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchRequestContext(
-    ObjectLabelMeasurementBatchFeatureContext
-):
-    """Shared request context for label-measurement batch stages."""
-
-    requests: Mapping[str, ObjectLabelMeasurementSliceRequest]
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchGroupContext(
-    ObjectLabelMeasurementBatchFeatureContext
-):
-    """Shared group context for label-measurement batch stages."""
-
-    group_key: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchRequestGroupContext(
-    ObjectLabelMeasurementBatchGroupContext
-):
-    """Shared grouped request context for label-measurement batch stages."""
-
-    requests: Mapping[str, ObjectLabelMeasurementSliceRequest]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeAdapterGroupImageContext:
-    """Shared adapter/group/current-image coordinates for runtime resolutions."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    group_key: str | None
-    current_image: CellProfilerCurrentImage | None
-
-
-@dataclass(slots=True)
-class ObjectLabelMeasurementBatchCacheState:
-    """Mutable cache scan state for a label-slice measurement batch."""
-
-    label_domains: dict[str, tuple[int, ...]]
-    label_arrays: dict[str, np.ndarray]
-    uncached_queries: dict[str, RuntimeObjectLabelMeasurementQuery]
-    values_by_object: dict[str, CellProfilerMeasurementSliceValues]
-
-    @property
-    def is_complete(self) -> bool:
-        return not self.uncached_queries
-
-    @property
-    def requires_multiplane_fallback(self) -> bool:
-        return any(
-            self.label_arrays[object_name].ndim > 2
-            for object_name in self.uncached_queries
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchCacheScan(ObjectLabelMeasurementBatchRequestContext):
-    """Resolve cached label-slice measurement values and uncached queries."""
-
-    resolved_group_key: str | None
-    object_label_values_cache: ObjectLabelMeasurementValuesProcessCache
-
-    def scan(self) -> ObjectLabelMeasurementBatchCacheState:
-        state = ObjectLabelMeasurementBatchCacheState({}, {}, {}, {})
-        for object_name, request in self.requests.items():
-            self.scan_request(state, object_name, request)
-        return state
-
-    def scan_request(
-        self,
-        state: ObjectLabelMeasurementBatchCacheState,
-        object_name: str,
-        request: ObjectLabelMeasurementSliceRequest,
-    ) -> None:
-        label_array = np.asarray(request.labels)
-        label_domain = self.adapter._dense_label_domain(request.labels)
-        state.label_arrays[object_name] = label_array
-        state.label_domains[object_name] = label_domain
-        query = RuntimeObjectLabelMeasurementQuery(
-            axis_id=self.adapter.axis_id,
-            group_key=self.resolved_group_key,
-            object_name=object_name,
-            feature_name=self.feature_name,
-            label_domain=label_domain,
-            image_number=request.image_number,
-        )
-        cached = self.adapter._measurement_cache.get(query)
-        if cached is None:
-            cached = self.object_label_values_cache.get(query)
-            if cached is not None:
-                self.adapter._measurement_cache[query] = cached
-        if cached is None:
-            state.uncached_queries[object_name] = query
-            return
-        state.values_by_object[object_name] = cached
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchTableContext(ObjectLabelMeasurementBatchGroupContext):
-    """Shared table-query context for label-measurement batch stages."""
-
-    tables_by_object: MeasurementTablesByObject
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchCacheTableContext(
-    ObjectLabelMeasurementBatchTableContext
-):
-    """Shared cache-mutating table context for label-measurement batch stages."""
-
-    state: ObjectLabelMeasurementBatchCacheState
-    object_label_values_cache: ObjectLabelMeasurementValuesProcessCache
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementPrewarmLabelResolution:
-    """Fail-loud resolution for optional prewarm object labels."""
-
-    labels: DenseLabelPayload | None = None
-    error: Exception | None = None
-
-    @property
-    def is_available(self) -> bool:
-        return self.labels is not None and self.error is None
-
-    def require(self) -> DenseLabelPayload:
-        if self.error is not None:
-            raise RuntimeError("Prewarm labels are unavailable.") from self.error
-        if self.labels is None:
-            raise RuntimeError("Prewarm labels are unavailable.")
-        return self.labels
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementPrewarmObjectLabels(RuntimeAdapterGroupImageContext):
-    """Resolve object labels for optional label-measurement prewarming."""
-
-    object_name: str
-
-    def resolve(self) -> ObjectLabelMeasurementPrewarmLabelResolution:
-        labels: DenseLabelPayload | None = None
-        with suppress(KeyError, RuntimeError, ValueError):
-            labels = self.adapter.get_objects(
-                self.object_name,
-                group_key=self.group_key,
-                current_image=self.current_image,
-            )
-        return ObjectLabelMeasurementPrewarmLabelResolution(labels=labels)
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchPrewarm(
-    ObjectLabelMeasurementBatchCacheTableContext
-):
-    """Collect additional table-indexable object queries for cache prewarming."""
-
-    requests: Mapping[str, ObjectLabelMeasurementSliceRequest]
-    resolved_group_key: str | None
-
-    def queries(self) -> dict[str, RuntimeObjectLabelMeasurementQuery]:
-        prewarm_queries: dict[str, RuntimeObjectLabelMeasurementQuery] = {}
-        common_request = next(iter(self.requests.values()))
-        for object_name in self.tables_by_object:
-            query = self.query_for_object(object_name, common_request)
-            if query is None:
-                continue
-            prewarm_queries[object_name] = query
-        return prewarm_queries
-
-    def query_for_object(
-        self,
-        object_name: str,
-        common_request: ObjectLabelMeasurementSliceRequest,
-    ) -> RuntimeObjectLabelMeasurementQuery | None:
-        if object_name in self.state.uncached_queries:
-            return None
-        labels_resolution = ObjectLabelMeasurementPrewarmObjectLabels(
-            adapter=self.adapter,
-            object_name=object_name,
-            group_key=self.group_key,
-            current_image=common_request.current_image,
-        ).resolve()
-        if not labels_resolution.is_available:
-            return None
-        label_domain = self.adapter._dense_label_domain(labels_resolution.require())
-        if not label_domain:
-            return None
-        self.state.label_domains[object_name] = label_domain
-        query = RuntimeObjectLabelMeasurementQuery(
-            axis_id=self.adapter.axis_id,
-            group_key=self.resolved_group_key,
-            object_name=object_name,
-            feature_name=self.feature_name,
-            label_domain=label_domain,
-            image_number=common_request.image_number,
-        )
-        if self.query_already_known(query):
-            return None
-        return query
-
-    def query_already_known(self, query: RuntimeObjectLabelMeasurementQuery) -> bool:
-        return (
-            query in self.state.uncached_queries.values()
-            or query in self.adapter._measurement_cache
-            or query in self.object_label_values_cache
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchValueIndexes(
-    ObjectLabelMeasurementBatchTableContext
-):
-    """Resolve table value indexes with adapter diagnostics on lookup failure."""
-
-    object_names: tuple[str, ...]
-
-    def resolve(self) -> MeasurementValueIndexesByObject:
-        try:
-            return measurement_value_indexes_for_object_feature_batch(
-                self.tables_by_object,
-                self.feature_name,
-                object_names=self.object_names,
-                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-            )
-        except ValueError as exc:
-            context = self.adapter._measurement_query_context(
-                group_key=self.group_key,
-                match_group=True,
-            )
-            all_tables = runtime_measurement_tables(context)
-            table_context = tuple(
-                f"{table.name}:{MeasurementTableObjectName(table).display}:"
-                f"{type(table.rows).__name__}"
-                for table in all_tables
-            )
-            raise ValueError(
-                f"{exc} Visible measurement tables in group "
-                f"{context.group_key!r}: {table_context!r}."
-            ) from exc
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementVectorProjection:
-    """Project one object's feature values from batch indexes or direct tables."""
-
-    tables: tuple[MeasurementTable, ...]
-    query: RuntimeObjectLabelMeasurementQuery
-    value_index: MeasurementValueIndexResult | None
-
-    def values(self) -> CellProfilerMeasurementVector:
-        if self.value_index is None:
-            return measurement_values_for_feature(
-                self.tables,
-                self.query.feature_name,
-                object_count=len(self.query.label_domain),
-                object_ids=self.query.label_domain,
-                object_name=self.query.object_name,
-                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-            )
-        values_by_label, positional_values = self.value_index
-        if values_by_label:
-            return ObjectLabelMeasurementValues.from_value_mapping(
-                self.query.label_domain,
-                values_by_label,
-            ).values
-        return ObjectLabelMeasurementValues.from_positional_values(
-            self.query.label_domain,
-            positional_values,
-        ).values
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementBatchAlignment(ObjectLabelMeasurementBatchCacheTableContext):
-    """Align resolved feature values to label domains and update caches."""
-
-    prewarm_queries: Mapping[str, RuntimeObjectLabelMeasurementQuery]
-    value_indexes_by_object: MeasurementValueIndexesByObject
-
-    def apply(self) -> None:
-        for object_name, query in {
-            **self.state.uncached_queries,
-            **self.prewarm_queries,
-        }.items():
-            value_slices = (
-                ObjectLabelMeasurementVectorProjection(
-                    tables=self.tables_by_object[object_name],
-                    query=query,
-                    value_index=self.value_indexes_by_object.get(object_name),
-                ).values(),
-            )
-            self.adapter._measurement_cache[query] = value_slices
-            self.object_label_values_cache[query] = value_slices
-            if object_name in self.state.uncached_queries:
-                self.state.values_by_object[object_name] = value_slices
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelMeasurementSliceBatchResolver(
-    ObjectLabelMeasurementBatchRequestGroupContext
-):
-    """Resolve a batch of label-slice object measurements for one feature."""
-
-    def resolve(self) -> Mapping[str, CellProfilerMeasurementSliceValues]:
-        started_at = time.perf_counter()
-        if not self.requests:
-            return MappingProxyType({})
-        profile = LabelBatchProfileContext(self.feature_name)
-        object_label_values_cache = self.adapter.object_label_measurement_values_cache()
-        state = self.cache_state(profile, object_label_values_cache)
-        if state.is_complete:
-            return self.cached_result(started_at, profile, state)
-        if state.requires_multiplane_fallback:
-            return self.multiplane_fallback(started_at, profile, state)
-        tables_by_object = self.tables_by_object(profile, state)
-        prewarm_queries = ObjectLabelMeasurementBatchPrewarm(
-            adapter=self.adapter,
-            tables_by_object=tables_by_object,
-            feature_name=self.feature_name,
-            group_key=self.group_key,
-            state=state,
-            object_label_values_cache=object_label_values_cache,
-            requests=self.requests,
-            resolved_group_key=self.resolved_group_key,
-        ).queries()
-        value_indexes_by_object = self.value_indexes(
-            profile,
-            tables_by_object,
-            state,
-            prewarm_queries,
-        )
-        align_started_at = time.perf_counter()
-        ObjectLabelMeasurementBatchAlignment(
-            adapter=self.adapter,
-            tables_by_object=tables_by_object,
-            feature_name=self.feature_name,
-            group_key=self.group_key,
-            state=state,
-            prewarm_queries=prewarm_queries,
-            value_indexes_by_object=value_indexes_by_object,
-            object_label_values_cache=object_label_values_cache,
-        ).apply()
-        profile.align(
-            time.perf_counter() - align_started_at,
-            count=len(state.uncached_queries),
-        )
-        profile.values(
-            time.perf_counter() - started_at,
-            cached=False,
-            count=len(state.values_by_object),
-        )
-        return MappingProxyType(state.values_by_object)
-
-    @property
-    def resolved_group_key(self) -> str | None:
-        if self.group_key is None:
-            return self.adapter.group_key
-        return self.group_key
-
-    def cache_state(
-        self,
-        profile: LabelBatchProfileContext,
-        object_label_values_cache: ObjectLabelMeasurementValuesProcessCache,
-    ) -> ObjectLabelMeasurementBatchCacheState:
-        cache_started_at = time.perf_counter()
-        state = ObjectLabelMeasurementBatchCacheScan(
-            adapter=self.adapter,
-            requests=self.requests,
-            feature_name=self.feature_name,
-            resolved_group_key=self.resolved_group_key,
-            object_label_values_cache=object_label_values_cache,
-        ).scan()
-        profile.cache(
-            time.perf_counter() - cache_started_at,
-            requested=len(self.requests),
-            uncached=len(state.uncached_queries),
-        )
-        return state
-
-    def cached_result(
-        self,
-        started_at: float,
-        profile: LabelBatchProfileContext,
-        state: ObjectLabelMeasurementBatchCacheState,
-    ) -> Mapping[str, CellProfilerMeasurementSliceValues]:
-        profile.values(
-            time.perf_counter() - started_at,
-            cached=True,
-            count=len(state.values_by_object),
-        )
-        return MappingProxyType(state.values_by_object)
-
-    def multiplane_fallback(
-        self,
-        started_at: float,
-        profile: LabelBatchProfileContext,
-        state: ObjectLabelMeasurementBatchCacheState,
-    ) -> Mapping[str, CellProfilerMeasurementSliceValues]:
-        for object_name in state.uncached_queries:
-            request = self.requests[object_name]
-            state.values_by_object[object_name] = (
-                self.adapter.measurement_values_for_label_slices(
-                    object_name,
-                    self.feature_name,
-                    request.labels,
-                    group_key=self.group_key,
-                    image_number=request.image_number,
-                    current_image=request.current_image,
-                )
-            )
-        profile.values(
-            time.perf_counter() - started_at,
-            cached=False,
-            fallback="multiplane",
-            count=len(state.values_by_object),
-        )
-        return MappingProxyType(state.values_by_object)
-
-    def tables_by_object(
-        self,
-        profile: LabelBatchProfileContext,
-        state: ObjectLabelMeasurementBatchCacheState,
-    ) -> MeasurementTablesByObject:
-        tables_started_at = time.perf_counter()
-        table_contexts = {
-            object_name: ObjectFeatureMeasurementContext(
-                object_name=object_name,
-                feature_name=self.feature_name,
-                group_key=self.group_key,
-                image_number=self.requests[object_name].image_number,
-                current_image=self.requests[object_name].current_image,
-            )
-            for object_name in state.uncached_queries
-        }
-        tables_by_object = ObjectFeatureAxisProjectionBatch(
-            self.adapter,
-            table_contexts,
-        ).tables_by_object()
-        profile.tables(
-            time.perf_counter() - tables_started_at,
-            count=sum(len(tables) for tables in tables_by_object.values()),
-        )
-        return tables_by_object
-
-    def value_indexes(
-        self,
-        profile: LabelBatchProfileContext,
-        tables_by_object: MeasurementTablesByObject,
-        state: ObjectLabelMeasurementBatchCacheState,
-        prewarm_queries: Mapping[str, RuntimeObjectLabelMeasurementQuery],
-    ) -> MeasurementValueIndexesByObject:
-        indexes_started_at = time.perf_counter()
-        indexed_object_names = tuple(
-            dict.fromkeys((*state.uncached_queries, *prewarm_queries))
-        )
-        value_indexes_by_object = ObjectLabelMeasurementBatchValueIndexes(
-            adapter=self.adapter,
-            tables_by_object=tables_by_object,
-            feature_name=self.feature_name,
-            object_names=indexed_object_names,
-            group_key=self.group_key,
-        ).resolve()
-        profile.indexes(
-            time.perf_counter() - indexes_started_at,
-            count=len(value_indexes_by_object),
-        )
-        return value_indexes_by_object
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelSourceImageDomain:
-    """Source-domain metadata inherited by object labels produced from an image."""
-
-    spatial_origin_yx: tuple[int, int] | None = None
-    source_spatial_shape_yx: tuple[int, int] | None = None
-    source_path: str | None = None
-    source_component_metadata: SourceComponentMetadata | None = None
-    channel_source_paths: tuple[str | None, ...] = ()
-    channel_source_component_metadata: ChannelSourceComponentMetadata = ()
-
-    @property
-    def has_source_coordinate(self) -> bool:
-        """Return whether this domain can identify its source plane."""
-        return any(
-            (
-                self.source_path is not None,
-                self.source_component_metadata is not None,
-                any(path is not None for path in self.channel_source_paths),
-                any(
-                    metadata is not None
-                    for metadata in self.channel_source_component_metadata
-                ),
-            )
-        )
-
-    @classmethod
-    def for_adapter_source_image(
-        cls,
-        adapter: "CellProfilerRuntimeAdapter",
-        source_image_name: str | None,
-    ) -> "ObjectLabelSourceImageDomain":
-        if source_image_name is None:
-            return cls()
-        requires_source_coordinate = adapter.requires_declared_source_image_domain(
-            source_image_name
-        )
-        if (
-            not requires_source_coordinate
-            and not adapter.has_runtime_artifact(
-                name=source_image_name,
-                kind=ArtifactKind.IMAGE,
-            )
-        ):
-            return cls()
-        source_image = adapter.get_image(source_image_name)
-        metadata = image_payload_metadata(source_image.data)
-        domain = cls(
-            spatial_origin_yx=metadata.spatial_origin_yx,
-            source_spatial_shape_yx=metadata.source_spatial_shape_yx,
-            source_path=metadata.source_path,
-            source_component_metadata=metadata.source_component_metadata,
-            channel_source_paths=metadata.channel_source_paths,
-            channel_source_component_metadata=metadata.channel_source_component_metadata,
-        )
-        if requires_source_coordinate and not domain.has_source_coordinate:
-            raise RuntimeError(
-                "Object labels produced from declared source image "
-                f"{source_image_name!r} require source coordinate metadata. "
-                "The source image artifact did not carry source_path, "
-                "source_component_metadata, channel_source_paths, or "
-                "channel_source_component_metadata."
-            )
-        return domain
-
-    def origin_or(self, existing: tuple[int, int] | None) -> tuple[int, int] | None:
-        return existing if existing is not None else self.spatial_origin_yx
-
-    def source_shape_or(
-        self,
-        existing: tuple[int, int] | None,
-    ) -> tuple[int, int] | None:
-        return existing if existing is not None else self.source_spatial_shape_yx
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelAdapterConstructionRequest:
-    """Inputs for recording a CellProfiler object-label result in OpenHCS."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    name: str
-    labels: AdapterObjectLabelInput
-    source_image_name: str | None = None
-    source_image_names: tuple[str, ...] = ()
-    dimensions: tuple[str, ...] = ()
-    representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
-
-    def source_image_names_or(
-        self,
-        existing: tuple[str, ...],
-    ) -> tuple[str, ...]:
-        """Return explicit names, preserving already-carried names first."""
-        if existing:
-            return existing
-        return self.source_image_names
-
-    def declared_source_image_names(self) -> tuple[str, ...]:
-        """Return source-image names declared by the adapter call."""
-        return self.source_image_names + tuple(
-            name
-            for name in (self.source_image_name,)
-            if name is not None and not self.source_image_names
-        )
-
-
-class ObjectLabelAdapterConstructionPolicy(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Registered adapter storage constructor for CellProfiler object labels."""
-
-    value_type: ClassVar[AdapterObjectLabelNominalType | None] = None
-    value_type_label: ClassVar[str | None] = None
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
-    fallback_policy_type: ClassVar[
-        type["ObjectLabelAdapterConstructionPolicy"] | None
-    ] = None
-
-    @classmethod
-    def for_labels(
-        cls,
-        labels: AdapterObjectLabelInput,
-    ) -> "ObjectLabelAdapterConstructionPolicy":
-        strategy = cls.for_nominal_value(labels)
-        if strategy is not None:
-            return strategy
-        fallback_type = cls.fallback_policy_type
-        if fallback_type is None:
-            raise TypeError(f"{cls.__name__} must declare fallback_policy_type.")
-        return fallback_type()
-
-    @staticmethod
-    def normalized_dense_labels(labels: ObjectLabelData | None) -> ObjectLabelData | None:
-        if labels is None:
-            return None
-        return cast(
-            ObjectLabelData,
-            RuntimeRecordStackAuthority.normalize_dense_object_label_payload(labels),
-        )
-
-    @abstractmethod
-    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
-        """Return an OpenHCS-native object-label set for adapter recording."""
-
-
-class ObjectLabelSetAdapterConstructionPolicy(ObjectLabelAdapterConstructionPolicy):
-    """Preserve native object-label metadata while recording through the adapter."""
-
-    value_type = ObjectLabelSet
-
-    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
-        labels = cast(ObjectLabelSet, request.labels)
-        return ObjectLabelSet(
-            name=request.name,
-            labels=cast(
-                ObjectLabelData,
-                self.normalized_dense_labels(labels.labels),
-            ),
-            unedited_labels=self.normalized_dense_labels(labels.unedited_labels),
-            small_removed_labels=self.normalized_dense_labels(
-                labels.small_removed_labels
-            ),
-            declared_object_count=labels.declared_object_count,
-            declared_object_ids=labels.declared_object_ids,
-            declared_object_id_domains=labels.declared_object_id_domains,
-            domain_scope=labels.domain_scope,
-            plane_axis=labels.plane_axis,
-            spatial_origin_yx=labels.spatial_origin_yx,
-            source_spatial_shape_yx=labels.source_spatial_shape_yx,
-            source_path=labels.source_path,
-            source_component_metadata=labels.source_component_metadata,
-            channel_source_paths=labels.channel_source_paths,
-            channel_source_component_metadata=labels.channel_source_component_metadata,
-            source_image_names=request.source_image_names_or(labels.source_image_names),
-            source_image_name=request.source_image_name or labels.source_image_name,
-            dimensions=request.dimensions or labels.dimensions,
-            representation=labels.representation,
-        )
-
-
-class ObjectLabelPayloadAdapterConstructionPolicy(ObjectLabelAdapterConstructionPolicy):
-    """Promote serialized object-label payload metadata into native adapter storage."""
-
-    value_type = ObjectLabelPayload
-
-    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
-        labels = cast(ObjectLabelPayload, request.labels)
-        return ObjectLabelSet(
-            name=request.name,
-            labels=cast(
-                ObjectLabelData,
-                self.normalized_dense_labels(labels.labels),
-            ),
-            unedited_labels=self.normalized_dense_labels(labels.unedited_labels),
-            small_removed_labels=self.normalized_dense_labels(
-                labels.small_removed_labels
-            ),
-            declared_object_count=labels.declared_object_count,
-            declared_object_ids=labels.declared_object_ids,
-            declared_object_id_domains=labels.declared_object_id_domains,
-            domain_scope=labels.domain_scope,
-            plane_axis=labels.plane_axis,
-            spatial_origin_yx=labels.spatial_origin_yx,
-            source_spatial_shape_yx=labels.source_spatial_shape_yx,
-            source_path=labels.source_path,
-            source_component_metadata=labels.source_component_metadata,
-            channel_source_paths=labels.channel_source_paths,
-            channel_source_component_metadata=labels.channel_source_component_metadata,
-            source_image_names=request.source_image_names_or(labels.source_image_names),
-            source_image_name=request.source_image_name,
-            dimensions=request.dimensions,
-            representation=request.representation,
-        )
-
-
-class RawObjectLabelAdapterConstructionPolicy(ObjectLabelAdapterConstructionPolicy):
-    """Build native adapter storage from raw dense CellProfiler label arrays."""
-
-    def construct(self, request: ObjectLabelAdapterConstructionRequest) -> ObjectLabelSet:
-        source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
-            request.adapter,
-            request.source_image_name,
-        )
-        return ObjectLabelSet(
-            name=request.name,
-            labels=cast(
-                ObjectLabelData,
-                self.normalized_dense_labels(request.labels),
-            ),
-            spatial_origin_yx=source_domain.spatial_origin_yx,
-            source_spatial_shape_yx=source_domain.source_spatial_shape_yx,
-            source_path=source_domain.source_path,
-            source_component_metadata=source_domain.source_component_metadata,
-            channel_source_paths=source_domain.channel_source_paths,
-            channel_source_component_metadata=(
-                source_domain.channel_source_component_metadata
-            ),
-            source_image_names=request.declared_source_image_names(),
-            source_image_name=request.source_image_name,
-            dimensions=request.dimensions,
-            representation=request.representation,
-        )
-
-
-ObjectLabelAdapterConstructionPolicy.fallback_policy_type = (
-    RawObjectLabelAdapterConstructionPolicy
-)
-
-
-RuntimeArtifactRecordResolution = tuple[StoredRuntimeValue, ...] | None
-
-
-class RuntimeArtifactSourceScopeStage(str, Enum):
-    """Runtime record resolution stage for current-source scoping diagnostics."""
-
-    GROUPED_INPUT = "grouped_input"
-    MATCHING_INPUT = "matching_input"
-    AXIS_FALLBACK = "axis_fallback"
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactSourceScopeStageSpec:
-    """Diagnostic policy for one current-source resolution stage."""
-
-    error_subject: str
-    include_scope_diagnostics: bool
-
-
-_SOURCE_SCOPE_STAGE_SPECS = MappingProxyType(
-    {
-        RuntimeArtifactSourceScopeStage.GROUPED_INPUT: RuntimeArtifactSourceScopeStageSpec(
-            error_subject="Grouped runtime artifact input",
-            include_scope_diagnostics=False,
-        ),
-        RuntimeArtifactSourceScopeStage.MATCHING_INPUT: RuntimeArtifactSourceScopeStageSpec(
-            error_subject="Runtime artifact input",
-            include_scope_diagnostics=False,
-        ),
-        RuntimeArtifactSourceScopeStage.AXIS_FALLBACK: RuntimeArtifactSourceScopeStageSpec(
-            error_subject="Runtime artifact",
-            include_scope_diagnostics=True,
-        ),
-    }
-)
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactRecordRequest:
-    """Runtime artifact lookup coordinates for one CellProfiler adapter call."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    name: str
-    kind: ArtifactKind
-    current_image: CellProfilerCurrentImage | None
-
-    def axis_records(self) -> tuple[StoredRuntimeValue, ...]:
-        return self.adapter.runtime_value_store.find(
-            name=self.name,
-            kind=self.kind,
-            axis_id=self.adapter.axis_id,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactInputPlanQuery:
-    """Runtime store query compiled from one artifact input plan."""
-
-    input_plan: ArtifactInputPlan
-    axis_id: str
-    group_key: str | None
-    backend: str
-
-    def query(self) -> RuntimeArtifactQuery:
-        if self.input_plan.path != "self":
-            return RuntimeArtifactQuery(
-                name=self.input_plan.name,
-                kind=self.input_plan.kind,
-                axis_id=self.axis_id,
-                target=RuntimeArtifactLocationTarget(
-                    RuntimeArtifactLocation(
-                        path=_input_plan_path_for_group(
-                            self.input_plan,
-                            self.group_key,
-                        ),
-                        backend=self.backend,
-                    )
-                ),
-            )
-        return RuntimeArtifactQuery(
-            name=self.input_plan.name,
-            kind=self.input_plan.kind,
-            axis_id=self.axis_id,
-            target=RuntimeArtifactGroupTarget(
-                _single_input_plan_group_key(self.input_plan)
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourceRuntimeInputGroupResolution:
-    """Infer a producer group only when the current source scope is singular."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    group_keys: frozenset[str]
-    current_image: CellProfilerCurrentImage | None
-
-    def resolve(self) -> str | None:
-        if self.is_multi_source_scope():
-            return None
-        return self.adapter.runtime_input_group_key_from_current_sources(self.group_keys)
-
-    def is_multi_source_scope(self) -> bool:
-        if self.current_image is None:
-            return False
-        identities = RuntimeRecordSourceImageSetSelector(
-            self.adapter,
-            self.current_image,
-        ).current_source_identities()
-        return len(identities) > 1
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactCurrentSourceScopeResolution:
-    """Resolve candidate records against the current source image scope."""
-
-    request: RuntimeArtifactRecordRequest
-    records: tuple[StoredRuntimeValue, ...]
-    stage_spec: RuntimeArtifactSourceScopeStageSpec
-
-    def resolve(self) -> RuntimeArtifactRecordResolution:
-        if self.request.current_image is None:
-            return self.records
-        selector = RuntimeRecordSourceImageSetSelector(
-            self.request.adapter,
-            self.request.current_image,
-        )
-        if not selector.has_current_source_scope():
-            return self.records
-        if selector.has_template_current_source_scope():
-            return self.records
-        if not selector.records_have_metadata_source_scope(self.records):
-            return self.records
-        scoped_records = selector.select(self.records)
-        if scoped_records:
-            return scoped_records
-        message = (
-            f"{self.stage_spec.error_subject} {self.request.name!r} "
-            f"({self.request.kind.value}) has records, but none match the "
-            "current source image scope."
-        )
-        if self.stage_spec.include_scope_diagnostics:
-            message = (
-                f"{message} "
-                f"current_paths={selector.current_source_paths()!r}; "
-                f"current_identities={selector.current_source_identities()!r}; "
-                f"record_identities="
-                f"{tuple(selector.record_source_identities(record) for record in self.records)!r}."
-            )
-        raise RuntimeError(message)
-
-
-RuntimeArtifactKindPolicyT = TypeVar(
-    "RuntimeArtifactKindPolicyT",
-    bound="RuntimeArtifactKindPolicyMixin",
-)
-
-
-class RuntimeArtifactKindPolicyMixin:
-    """Shared ArtifactKind registry lookup template for runtime artifact policies."""
-
-    __enum_member_attr__ = "kind"
-    kind: ClassVar[ArtifactKind | None] = None
-    default_policy_type: ClassVar[type["RuntimeArtifactKindPolicyMixin"] | None] = None
-
-    @classmethod
-    def for_kind(
-        cls: type[RuntimeArtifactKindPolicyT],
-        kind: ArtifactKind,
-    ) -> RuntimeArtifactKindPolicyT:
-        policy_types = tuple(
-            policy_type
-            for policy_type in (
-                cls.__registry__.get(kind.value),
-                cls.default_policy_type,
-            )
-            if policy_type is not None
-        )
-        if not policy_types:
-            raise LookupError(f"No runtime artifact policy registered for {kind!r}.")
-        return cast(type[RuntimeArtifactKindPolicyT], policy_types[0])()
-
-
-class RuntimeArtifactSourceScopePolicy(
-    RuntimeArtifactKindPolicyMixin,
-    EnumKeyedStrategyMixin[ArtifactKind],
-    metaclass=AutoRegisterMeta,
-):
-    """Resolve runtime artifact records according to source-scope semantics."""
-
-    __registry_family__ = RegistryFamily(
-        RegistryKeyAttribute.STRATEGY_LABEL,
-        registry_name="runtime_artifact_source_scope_policy",
-    )
-
-    def grouped_input_records(
-        self,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        return records
-
-    def query_miss_records(
-        self,
-        request: RuntimeArtifactRecordRequest,
-    ) -> RuntimeArtifactRecordResolution:
-        return None
-
-    def matching_records(
-        self,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        return None
-
-    def axis_records_after_query_miss(
-        self,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        return records
-
-
-class RuntimeArtifactGlobalScopePolicy(RuntimeArtifactSourceScopePolicy):
-    """Keep axis/group records intact for artifact kinds without source scoping."""
-
-
-RuntimeArtifactSourceScopePolicy.default_policy_type = RuntimeArtifactGlobalScopePolicy
-
-
-class RuntimeArtifactCurrentSourceScopePolicy(
-    RuntimeArtifactGlobalScopePolicy,
-    ABC,
-):
-    """Select records matching the current CellProfiler source image when needed."""
-
-    def grouped_input_records(
-        self,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        return self.records_for_source_scope_stage(
-            RuntimeArtifactSourceScopeStage.GROUPED_INPUT,
-            request,
-            records,
-        )
-
-    def query_miss_records(
-        self,
-        request: RuntimeArtifactRecordRequest,
-    ) -> RuntimeArtifactRecordResolution:
-        if request.current_image is None:
-            return None
-        candidate_records = request.axis_records()
-        if not candidate_records:
-            return None
-        selector = RuntimeRecordSourceImageSetSelector(
-            request.adapter,
-            request.current_image,
-        )
-        if not selector.has_current_source_scope():
-            return None
-        scoped_records = selector.select(candidate_records)
-        if scoped_records:
-            return scoped_records
-        return None
-
-    def matching_records(
-        self,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        if len(records) <= 1:
-            return None
-        return self.records_for_source_scope_stage(
-            RuntimeArtifactSourceScopeStage.MATCHING_INPUT,
-            request,
-            records,
-        )
-
-    def axis_records_after_query_miss(
-        self,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        return self.records_for_source_scope_stage(
-            RuntimeArtifactSourceScopeStage.AXIS_FALLBACK,
-            request,
-            records,
-        )
-
-    @staticmethod
-    def records_for_source_scope_stage(
-        stage: RuntimeArtifactSourceScopeStage,
-        request: RuntimeArtifactRecordRequest,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> RuntimeArtifactRecordResolution:
-        return RuntimeArtifactCurrentSourceScopeResolution(
-            request=request,
-            records=records,
-            stage_spec=_SOURCE_SCOPE_STAGE_SPECS[stage],
-        ).resolve()
-
-
-class ObjectLabelRuntimeArtifactSourceScopePolicy(
-    RuntimeArtifactCurrentSourceScopePolicy
-):
-    """Object-label records are scoped to the current source image when possible."""
-
-    kind = ArtifactKind.OBJECT_LABELS
-
-
-class MeasurementRuntimeArtifactSourceScopePolicy(
-    RuntimeArtifactCurrentSourceScopePolicy
-):
-    """Measurement records are scoped to the current source image when possible."""
-
-    kind = ArtifactKind.MEASUREMENTS
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactUniqueCandidateResolution:
-    """Typed resolution for an exact lookup miss with one semantic candidate."""
-
-    records: tuple[StoredRuntimeValue, ...]
-
-    @property
-    def is_resolved(self) -> bool:
-        return len(self.records) == 1
-
-    @property
-    def record(self) -> StoredRuntimeValue:
-        if not self.is_resolved:
-            raise RuntimeError(
-                "RuntimeArtifactUniqueCandidateResolution.record requires exactly "
-                f"one candidate, got {len(self.records)}."
-            )
-        return self.records[0]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactRecordResolver(RuntimeAdapterGroupImageContext):
-    """Resolve runtime records for one adapter artifact lookup."""
-
-    name: str
-    kind: ArtifactKind
-
-    def resolve(self) -> tuple[StoredRuntimeValue, ...]:
-        declared = RuntimeArtifactDeclaredInputResolution(self).resolve()
-        if declared is not None:
-            return declared
-        return RuntimeArtifactUndeclaredInputResolution(self).resolve()
-
-    @property
-    def input_plan(self) -> ArtifactInputPlan | None:
-        return self.adapter.artifact_inputs.get(self.name)
-
-    @property
-    def resolved_group_key(self) -> str | None:
-        return self.adapter.runtime_input_group_key(
-            name=self.name,
-            kind=self.kind,
-            group_key=self.group_key,
-            current_image=self.current_image,
-        )
-
-    @property
-    def record_request(self) -> RuntimeArtifactRecordRequest:
-        return RuntimeArtifactRecordRequest(
-            adapter=self.adapter,
-            name=self.name,
-            kind=self.kind,
-            current_image=self.current_image,
-        )
-
-    @property
-    def source_scope_policy(self) -> RuntimeArtifactSourceScopePolicy:
-        return RuntimeArtifactSourceScopePolicy.for_kind(self.kind)
-
-    def validate_input_plan_kind(self, input_plan: ArtifactInputPlan) -> None:
-        if input_plan.kind is self.kind:
-            return
-        raise ValueError(
-            f"CellProfiler artifact input '{self.name}' expected kind "
-            f"{self.kind.value}, got compiled kind {input_plan.kind.value}."
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactDeclaredInputResolution:
-    """Resolve records through a compiled artifact input plan."""
-
-    request: RuntimeArtifactRecordResolver
-
-    def resolve(self) -> RuntimeArtifactRecordResolution:
-        input_plan = self.request.input_plan
-        if input_plan is None:
-            return None
-        self.request.validate_input_plan_kind(input_plan)
-        grouped_resolution = self.grouped_resolution(input_plan)
-        if grouped_resolution is not None:
-            return grouped_resolution
-        return RuntimeArtifactDeclaredInputQueryResolution(
-            self.request,
-            input_plan,
-        ).resolve()
-
-    def grouped_resolution(
-        self,
-        input_plan: ArtifactInputPlan,
-    ) -> RuntimeArtifactRecordResolution:
-        if not _is_global_grouped_input_request(
-            input_plan,
-            self.request.resolved_group_key,
-        ):
-            return None
-        group_keys = input_plan.group_keys
-        if group_keys is None:
-            return None
-        records = RuntimeArtifactRecordDeduplication(
-            tuple(
-                self.request.adapter.runtime_value_store.resolve(
-                    RuntimeArtifactInputPlanQuery(
-                        input_plan=input_plan,
-                        axis_id=self.request.adapter.axis_id,
-                        group_key=input_group_key,
-                        backend=self.request.adapter.backend,
-                    ).query(),
-                    purpose="CellProfiler grouped runtime artifact input",
-                )
-                for input_group_key in group_keys
-            )
-        ).unique_by_location()
-        return self.request.source_scope_policy.grouped_input_records(
-            self.request.record_request,
-            records,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactDeclaredInputQueryResolution:
-    """Resolve records for a declared input plan's selected group."""
-
-    request: RuntimeArtifactRecordResolver
-    input_plan: ArtifactInputPlan
-
-    def resolve(self) -> tuple[StoredRuntimeValue, ...]:
-        query = RuntimeArtifactInputPlanQuery(
-            input_plan=self.group_input_plan(),
-            axis_id=self.request.adapter.axis_id,
-            group_key=self.request.resolved_group_key,
-            backend=self.request.adapter.backend,
-        ).query()
-        records = self.request.adapter.runtime_value_store.find_matching(query)
-        ambiguous_records = self.ambiguous_records(records)
-        if ambiguous_records:
-            return ambiguous_records
-        if not records:
-            query_miss_records = self.query_miss_records()
-            if query_miss_records is not None:
-                return query_miss_records
-        scoped_resolution = self.request.source_scope_policy.matching_records(
-            self.request.record_request,
-            records,
-        )
-        if scoped_resolution is not None:
-            return scoped_resolution
-        return (
-            self.request.adapter.runtime_value_store.resolve(
-                query,
-                purpose="CellProfiler runtime artifact input",
-            ),
-        )
-
-    def group_input_plan(self) -> ArtifactInputPlan:
-        grouped_plan = self.input_plan.for_group(self.request.resolved_group_key)
-        if grouped_plan is None:
-            return self.input_plan
-        return grouped_plan
-
-    def ambiguous_records(
-        self,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> tuple[StoredRuntimeValue, ...]:
-        if len(records) <= 1:
-            return ()
-        return self.request.adapter._records_for_ambiguous_producer_group_input(
-            records,
-            name=self.request.name,
-            kind=self.request.kind,
-            resolved_group_key=self.request.resolved_group_key,
-            current_image=self.request.current_image,
-        )
-
-    def query_miss_records(self) -> RuntimeArtifactRecordResolution:
-        candidate_records = self.request.record_request.axis_records()
-        unique_candidate = RuntimeArtifactUniqueCandidateResolution(candidate_records)
-        if unique_candidate.is_resolved:
-            return (unique_candidate.record,)
-        return self.request.source_scope_policy.query_miss_records(
-            self.request.record_request,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactUndeclaredInputResolution:
-    """Resolve records when no artifact input plan was compiled for the name."""
-
-    request: RuntimeArtifactRecordResolver
-
-    def resolve(self) -> tuple[StoredRuntimeValue, ...]:
-        try:
-            return (
-                self.request.adapter._query_context(self.request.group_key).resolve(
-                    name=self.request.name,
-                    kind=self.request.kind,
-                ),
-            )
-        except RuntimeError:
-            records = self.request.record_request.axis_records()
-            if records and _is_default_runtime_group_key(self.request.resolved_group_key):
-                scoped_resolution = (
-                    self.request.source_scope_policy.axis_records_after_query_miss(
-                        self.request.record_request,
-                        records,
-                    )
-                )
-                if scoped_resolution is not None:
-                    return scoped_resolution
-            raise
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactRecordLocationIdentity:
-    """Physical runtime-artifact location identity for duplicate-read detection."""
-
-    path: str
-    backend: str
-
-    @classmethod
-    def from_record(
-        cls,
-        record: StoredRuntimeValue,
-    ) -> "RuntimeArtifactRecordLocationIdentity":
-        return cls(path=record.path, backend=record.backend)
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeArtifactRecordDeduplication:
-    """Collapse repeated reads of the same persisted runtime record."""
-
-    records: tuple[StoredRuntimeValue, ...]
-
-    def unique_by_location(self) -> tuple[StoredRuntimeValue, ...]:
-        records_by_location: OrderedDict[
-            RuntimeArtifactRecordLocationIdentity,
-            StoredRuntimeValue,
-        ] = OrderedDict()
-        for record in self.records:
-            location_identity = RuntimeArtifactRecordLocationIdentity.from_record(
-                record
-            )
-            if location_identity not in records_by_location:
-                records_by_location[location_identity] = record
-        return tuple(records_by_location.values())
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelAdapterProfileFields:
-    """Typed profile payload for object-label adapter writes."""
-
-    label_shape: tuple[int, ...]
-    declared_object_count: int | None
-    declared_object_ids: int
-    declared_object_id_domains: int
-    domain_scope: str
-    plane_axis: str
-    source_path: str | None
-    source_component_metadata: SourceComponentMetadata | None
-    channel_source_paths: int
-    channel_source_component_metadata: int
-
-    @classmethod
-    def from_labels(cls, labels: ObjectLabelSet) -> "ObjectLabelAdapterProfileFields":
-        return cls(
-            label_shape=tuple(np.asarray(labels.labels).shape),
-            declared_object_count=labels.declared_object_count,
-            declared_object_ids=len(labels.declared_object_ids),
-            declared_object_id_domains=len(labels.declared_object_id_domains),
-            domain_scope=labels.domain_scope.value,
-            plane_axis=labels.plane_axis.value,
-            source_path=labels.source_path,
-            source_component_metadata=labels.source_component_metadata,
-            channel_source_paths=len(labels.channel_source_paths),
-            channel_source_component_metadata=len(
-                labels.channel_source_component_metadata
-            ),
-        )
-
-    def extra_fields(self) -> AdapterProfileFields:
-        source_component_metadata = None
-        if self.source_component_metadata is not None:
-            source_component_metadata = dict(self.source_component_metadata)
-        return AdapterProfileFieldMap(
-            entries=(
-                ("label_shape", self.label_shape),
-                ("declared_object_count", self.declared_object_count),
-                ("declared_object_ids", self.declared_object_ids),
-                ("declared_object_id_domains", self.declared_object_id_domains),
-                ("domain_scope", self.domain_scope),
-                ("plane_axis", self.plane_axis),
-                ("source_path", self.source_path),
-                ("source_component_metadata", source_component_metadata),
-                ("channel_source_paths", self.channel_source_paths),
-                (
-                    "channel_source_component_metadata",
-                    self.channel_source_component_metadata,
-                ),
-            ),
-        ).as_mapping()
-
-
-@dataclass(frozen=True, slots=True)
-class AdapterProfileFieldMap:
-    """Nominal profile-field carrier for runtime profiler payloads."""
-
-    entries: tuple[tuple[str, AdapterProfileFieldValue], ...]
-
-    def as_mapping(self) -> AdapterProfileFields:
-        return dict(self.entries)
-
-
-@dataclass(slots=True)
-class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
+class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAxisProjector):
     """CellProfiler-like API backed by typed OpenHCS runtime state.
 
     The adapter deliberately has no object/image/measurement dictionaries of its
@@ -3157,7 +260,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     """
 
     runtime_value_store: RuntimeValueStore
-    axis_id: str
+    axis_scope: RuntimeExecutionAxisScope
     artifact_inputs: Mapping[str, ArtifactInputPlan] = field(default_factory=dict)
     artifact_outputs: Mapping[str, ArtifactOutputPlan] = field(default_factory=dict)
     source_binding_plan: CompiledSourceBindingPlan = field(
@@ -3167,18 +270,22 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         default_factory=SourceBindingRuntimeContext.empty
     )
     group_key: str | None = None
-    axis_component: str | None = None
-    axis_component_value: str | None = None
     processing_context: CellProfilerProcessingContext | None = None
     filemanager: CellProfilerFileManager | None = None
     backend: str = Backend.MEMORY.value
     plane_projection: RuntimePlaneProjection = field(
         default_factory=RuntimePlaneProjection.stack
     )
-    _source_candidate_cache: dict[
+    source_identity_stack_axes: frozenset[str] = frozenset()
+    _source_paths_by_image_name_cache: dict[
+        tuple[int, str],
         tuple[str, ...],
-        tuple["ParsedSourceCandidate", ...],
-    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+    ] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     _pipeline_start_payload_cache: dict[
         tuple[Hashable, ...],
         PipelineStartPayloadCacheValue,
@@ -3201,18 +308,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         repr=False,
         compare=False,
     )
-    _label_domain_cache: dict[int, tuple[int, ...]] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    _source_order_cache: dict[tuple[Hashable, ...], SourceOrderCacheValue] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-        compare=False,
-    )
     _artifact_availability_cache: dict[tuple[Hashable, ...], bool] = field(
         default_factory=dict,
         init=False,
@@ -3227,8 +322,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 f"RuntimeValueStore, got {type(self.runtime_value_store).__name__}."
             )
 
-        if not self.axis_id:
-            raise ValueError("CellProfilerRuntimeAdapter.axis_id cannot be empty.")
         if not self.backend:
             raise ValueError("CellProfilerRuntimeAdapter.backend cannot be empty.")
         if not isinstance(self.source_binding_plan, CompiledSourceBindingPlan):
@@ -3249,6 +342,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 "RuntimePlaneProjection, got "
                 f"{type(self.plane_projection).__name__}."
             )
+        if not isinstance(self.axis_scope, RuntimeExecutionAxisScope):
+            raise TypeError(
+                "CellProfilerRuntimeAdapter.axis_scope must be "
+                "RuntimeExecutionAxisScope, got "
+                f"{type(self.axis_scope).__name__}."
+            )
 
         outputs = dict(self.artifact_outputs)
         for name, plan in outputs.items():
@@ -3265,192 +364,169 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         self.artifact_outputs = MappingProxyType(outputs)
         if self.group_key is not None:
             self.group_key = str(self.group_key)
-        if self.axis_component_value is not None:
-            self.axis_component_value = str(self.axis_component_value)
-
-    def _current_source_identity_cache_key(
-        self,
-        current_image: CellProfilerCurrentImage | None,
-    ) -> frozenset[SourceImageSetIdentity]:
-        """Return the semantic source-plane identity for scoped table caches."""
-        if current_image is None:
-            return frozenset()
-        return RuntimeRecordSourceImageSetSelector(
-            adapter=self,
-            current_image=current_image,
-        ).current_source_plane_identities()
 
     def cellprofiler_source_order_path(self, path: str) -> str:
         """Return the source path identity used for CellProfiler image ordering."""
         source_paths = self.source_binding_context.step_input_source_paths
-        mapped = source_paths.get(path) or path
+        mapped = source_paths.get(path)
+        if mapped is None:
+            mapped = path
         return source_path_identity_key(mapped)
-
-    def object_feature_value_cache(self) -> ObjectFeatureValueProcessCache:
-        """Return the process cache for stable object-feature vectors in this store."""
-        cache = _OBJECT_FEATURE_VALUE_PROCESS_CACHE.get(self.runtime_value_store)
-        if cache is None:
-            cache = {}
-            _OBJECT_FEATURE_VALUE_PROCESS_CACHE[self.runtime_value_store] = cache
-        return cache
-
-    def object_label_measurement_values_cache(
-        self,
-    ) -> ObjectLabelMeasurementValuesProcessCache:
-        """Return the process cache for label-aligned object-feature vectors."""
-        cache = _OBJECT_LABEL_MEASUREMENT_VALUES_PROCESS_CACHE.get(self.runtime_value_store)
-        if cache is None:
-            cache = {}
-            _OBJECT_LABEL_MEASUREMENT_VALUES_PROCESS_CACHE[self.runtime_value_store] = cache
-        return cache
-
-    def object_measurement_table_cache(
-        self,
-    ) -> dict[ObjectMeasurementTableCacheKey, tuple[MeasurementTable, ...]]:
-        """Return the process cache for object-subject measurement table queries."""
-        cache = _OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE.get(self.runtime_value_store)
-        if cache is None:
-            cache = {}
-            _OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE[self.runtime_value_store] = cache
-        return cache
-
-    def object_feature_axis_measurement_table_cache(
-        self,
-    ) -> ObjectFeatureAxisMeasurementTableCache:
-        """Return the process cache for feature/axis-scoped object table selections."""
-        cache = _OBJECT_FEATURE_AXIS_MEASUREMENT_TABLE_PROCESS_CACHE.get(
-            self.runtime_value_store
-        )
-        if cache is None:
-            cache = {}
-            _OBJECT_FEATURE_AXIS_MEASUREMENT_TABLE_PROCESS_CACHE[
-                self.runtime_value_store
-            ] = cache
-        return cache
-
-    def object_measurement_table_index_cache(
-        self,
-    ) -> dict[ObjectMeasurementTableIndexCacheKey, ObjectMeasurementTableIndex]:
-        """Return the process cache for object-subject measurement table indexes."""
-        cache = _OBJECT_MEASUREMENT_TABLE_INDEX_PROCESS_CACHE.get(
-            self.runtime_value_store
-        )
-        if cache is None:
-            cache = {}
-            _OBJECT_MEASUREMENT_TABLE_INDEX_PROCESS_CACHE[
-                self.runtime_value_store
-            ] = cache
-        return cache
 
     def cellprofiler_ordered_pipeline_image_paths(self) -> tuple[str, ...]:
         """Return loadable pipeline input paths in CellProfiler image order."""
-        cache_key = ("ordered_pipeline_image_paths",)
-        cached = self._source_order_cache.get(cache_key)
+        context = self.source_binding_context
+        cache_key = (
+            "ordered_pipeline_image_paths",
+            tuple(sorted(context.pipeline_input_files)),
+            tuple(sorted(context.step_input_source_paths.items())),
+        )
+        cache = CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE
+        cached = cache.cached_value(cache_key)
         if cached is not None:
-            return cached
+            return tuple(cached)
         ordered = tuple(
             dict.fromkeys(
                 self.cellprofiler_source_order_path(path)
-                for path in sorted(self.source_binding_context.pipeline_input_files)
+                for path in sorted(context.pipeline_input_files)
                 if is_image_path(path)
             )
         )
-        self._source_order_cache[cache_key] = ordered
-        return ordered
+        return tuple(cache.store_value(cache_key, ordered))
+
+    def source_axis_metadata_scope(self) -> "SourceAxisMetadataScope":
+        """Return the execution-local source metadata scope for this axis."""
+        return self.axis_scope.source_axis_metadata_scope()
+
+    def source_binding_runtime_path_identities(
+        self,
+    ) -> "SourceBindingRuntimePathIdentities":
+        """Return source-binding path identities for the current runtime scope."""
+        source_context = self.source_binding_context
+        step_input_source_paths = source_context.step_input_source_paths
+        current_step_input_files = source_context.current_step_input_files
+        return SourceBindingRuntimePathIdentities(
+            current_step_input=ParsedSourceCandidatePathIdentity.from_paths(
+                tuple(current_step_input_files)
+                + tuple(
+                    step_input_source_paths[path]
+                    for path in current_step_input_files
+                    if path in step_input_source_paths
+                )
+            ),
+            virtual_step_input=ParsedSourceCandidatePathIdentity.from_paths(
+                tuple(step_input_source_paths.keys())
+                + tuple(step_input_source_paths.values())
+            ),
+        )
 
     def cellprofiler_axis_image_number_start(self) -> int:
         """Return CP's 1-based image number for this runtime axis."""
+        if self.processing_context is None:
+            cache_key = (
+                "axis_image_number_start",
+                self.axis_scope.cache_key,
+                "no_processing_context",
+            )
+            cache = CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE
+            cached = cache.cached_value(cache_key)
+            if cached is not None:
+                return int(cached)
+            return int(cache.store_value(cache_key, 1))
+
+        parser_identity = RequireProcessingContextBoundaryPolicy(
+            self
+        ).context.microscope_handler.parser.semantic_identity()
         cache_key = (
             "axis_image_number_start",
-            str(self.axis_id),
-            self.axis_component,
-            self.axis_component_value,
+            self.axis_scope.cache_key,
+            tuple(sorted(self.source_binding_context.pipeline_input_files)),
+            tuple(sorted(self.source_binding_context.step_input_source_paths.items())),
+            self.source_binding_plan.metadata_rules,
+            parser_identity,
         )
-        cached = self._source_order_cache.get(cache_key)
+        cache = CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE
+        cached = cache.cached_value(cache_key)
         if cached is not None:
             return int(cached)
-        if self.processing_context is None:
-            self._source_order_cache[cache_key] = 1
-            return 1
 
-        axis_component = self.axis_component
-        axis_component_value = (
-            self.axis_component_value
-            if axis_component is not None and self.axis_component_value is not None
-            else str(self.axis_id)
-        )
-        metadata_by_path = self.source_binding_context.source_metadata_by_path
-        pipeline_paths = tuple(
-            path
-            for path in self.source_binding_context.pipeline_input_files
-            if is_image_path(path)
-        )
-        if axis_component is not None:
-            candidates = self.source_candidates(pipeline_paths)
-            image_numbers = CellProfilerImageNumberResolver.image_numbers_by_set(
-                candidates
-            )
-            for candidate in SourceCandidateMatcher.ordered_source_candidates(candidates):
-                metadata = metadata_by_path.get(candidate.path)
-                if metadata is None:
-                    metadata = metadata_by_path.get(str(Path(candidate.path).resolve()))
-                if metadata is None:
-                    metadata = metadata_by_path.get(candidate.resolved_path)
-                if metadata is None:
-                    metadata = candidate.metadata
-                metadata_value = semantic_source_metadata_value(metadata, axis_component)
-                if metadata_value is None or not source_metadata_values_equal(
-                    metadata_value,
-                    axis_component_value,
-                ):
-                    continue
-                image_number = image_numbers.get(candidate.source_identity)
-                if image_number is not None:
-                    self._source_order_cache[cache_key] = image_number
-                    return image_number
-
-        for index, path in enumerate(sorted(pipeline_paths), start=1):
-            metadata = metadata_by_path.get(path)
-            if metadata is None:
-                metadata = metadata_by_path.get(str(Path(path).resolve()))
-            if metadata is None:
-                metadata = metadata_by_path.get(self.cellprofiler_source_order_path(path))
-            if metadata and any(
-                str(value) == axis_component_value for value in metadata.values()
-            ):
-                self._source_order_cache[cache_key] = index
-                return index
-
-        parser = RequireProcessingContextBoundaryPolicy(
+        axis_scope = self.source_axis_metadata_scope()
+        image_number = CellProfilerImageNumberResolver.for_adapter(
             self
-        ).context.microscope_handler.parser
-        for index, path in enumerate(sorted(pipeline_paths), start=1):
-            parsed = parser.parse_filename(Path(path).name)
-            if parsed is None:
-                parsed = {}
-            if any(str(value) == axis_component_value for value in parsed.values()):
-                self._source_order_cache[cache_key] = index
-                return index
+        ).image_number_start_for_axis_scope(axis_scope)
+        return int(cache.store_value(cache_key, image_number))
 
-        self._source_order_cache[cache_key] = 1
-        return 1
+    def cellprofiler_image_number_start_for_source_paths(
+        self,
+        source_paths: tuple[str, ...],
+    ) -> int:
+        """Return the first CP ImageNumber represented by a source-path group."""
+        image_number = self.cellprofiler_image_number_for_source_paths(source_paths)
+        if image_number is not None:
+            return image_number
+        return self.cellprofiler_axis_image_number_start()
+
+    def cellprofiler_image_number_for_source_paths(
+        self,
+        source_paths: tuple[str, ...],
+    ) -> int | None:
+        """Return the CP ImageNumber for the first resolvable source path."""
+        if not source_paths:
+            return None
+        return CellProfilerImageNumberResolver.for_adapter(
+            self
+        ).image_number_start_for_paths(source_paths)
 
     def cellprofiler_image_number_for_payload(
         self,
         payload: ImagePayloadMetadataInput,
     ) -> int | None:
         """Return the CellProfiler ImageNumber for a payload carrying source paths."""
-        metadata = image_payload_metadata(payload)
-        source_paths = tuple(
-            str(path)
-            for path in metadata.channel_source_paths
-            if path is not None and str(path)
-        )
-        if not source_paths and metadata.source_path:
-            source_paths = (metadata.source_path,)
         return CellProfilerImageNumberResolver.for_adapter(self).image_number_for_paths(
-            source_paths
+            image_payload_metadata(payload).source_image_paths
         )
+
+    def cellprofiler_source_path_for_image_number(
+        self,
+        image_number: int,
+    ) -> str | None:
+        """Return a representative source path for one CellProfiler ImageNumber."""
+        return CellProfilerImageNumberResolver.for_adapter(self).source_path_for_image_number(
+            image_number
+        )
+
+    def cellprofiler_source_paths_for_image_name(
+        self,
+        image_name: str | None,
+    ) -> tuple[str, ...]:
+        """Return source paths carried by a runtime image with this source name."""
+        if image_name is None:
+            return ()
+        cache_key = (self.runtime_value_store.revision, image_name)
+        cached = self._source_paths_by_image_name_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        direct_records = self.runtime_value_store.find(
+            name=image_name,
+            kind=ArtifactKind.IMAGE,
+            axis_id=self.axis_scope.axis_id,
+        )
+        lineage_records = self.runtime_value_store.find(
+            kind=ArtifactKind.IMAGE,
+            axis_id=self.axis_scope.axis_id,
+        )
+        for record in (*direct_records, *lineage_records):
+            if (
+                record.key.name != image_name
+                and record.value.schema.source_image_name != image_name
+            ):
+                continue
+            source_paths = image_payload_metadata(record.value.data).source_image_paths
+            if source_paths:
+                self._source_paths_by_image_name_cache[cache_key] = source_paths
+                return source_paths
+        self._source_paths_by_image_name_cache[cache_key] = ()
+        return ()
 
     def source_image_payload_for_name(
         self,
@@ -3475,7 +551,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         RuntimeArtifactCacheInvalidationPolicy.for_kind(kind).invalidate(self)
 
     def require_artifact_available(self, *, name: str, kind: ArtifactKind) -> None:
-        """Fail loudly unless a runtime artifact is declared, bound, or resolvable."""
+        """Fail loudly unless an artifact is declared, bound, or resolvable."""
         cache_key = (
             "artifact_available",
             self.runtime_value_store.revision,
@@ -3484,6 +560,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             kind,
         )
         if self._artifact_availability_cache.get(cache_key):
+            return
+        if self._declared_output_resolution(name, kind).is_declared:
+            self._artifact_availability_cache[cache_key] = True
             return
         if self.has_source_binding(name, kind):
             self._artifact_availability_cache[cache_key] = True
@@ -3499,7 +578,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
     def has_runtime_artifact(self, *, name: str, kind: ArtifactKind) -> bool:
         """Return whether this execution scope contains a runtime artifact."""
-        return bool(self._query_context().find(name=name, kind=kind))
+        return bool(
+            RuntimeGroupMatchScope(group_key=None)
+            .runtime_scope(self)
+            .artifact_query_context()
+            .find(name=name, kind=kind)
+        )
 
     def requires_declared_source_image_domain(self, image_name: str) -> bool:
         """Return whether object labels must inherit source metadata from an image."""
@@ -3533,8 +617,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             mask=image_payload_mask(image),
         )
         payload = RuntimePlaneImagePayloadProjection(
-            self,
-            current_image=current_image,
+            RuntimePlaneProjectionContext(
+                adapter=self,
+                current_image_context=RuntimePlaneCurrentImageContext(current_image),
+            ),
         ).project(payload)
         return cast(ImagePayloadValue, payload)
 
@@ -3542,140 +628,54 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         """Return the current axis-local runtime-slice plane index."""
         return self.plane_projection.runtime_slice_plane_index()
 
+    def runtime_slice_axis_size(self) -> int | None:
+        """Return the current runtime-slice axis size when known."""
+        return self.plane_projection.runtime_slice_axis_size()
+
     def source_binding_axis_plane_index(
         self,
         source_aliases: tuple[str, ...],
     ) -> int | None:
         """Return the current axis-local source-binding plane index."""
-        source_aliases = SourceBindingAxisAliasResolution(
-            requested_aliases=source_aliases,
-            group_bindings=self.source_binding_plan.bindings_for_group(self.group_key),
-        ).aliases()
-        return SourceBindingAxisPlaneResolution(
-            source_aliases=source_aliases,
-            indexes=tuple(
-                index
-                for alias in source_aliases
-                for index in (self.source_binding_plane_index(alias),)
-                if index is not None
-            ),
-        ).plane_index()
+        return SourceBindingAxisResolutionAuthority.plane_index(
+            self,
+            tuple(source_aliases),
+        )
+
+    def source_binding_axis_plane_resolution(
+        self,
+        source_aliases: tuple[str, ...],
+    ) -> SourceBindingAxisPlaneResolution:
+        """Return the source-binding plane resolution for aliases."""
+        return SourceBindingAxisResolutionAuthority.plane_resolution(
+            self,
+            tuple(source_aliases),
+        )
 
     def source_binding_axis_size(
         self,
         source_aliases: tuple[str, ...],
     ) -> int | None:
         """Return the current source-binding group axis size."""
-        del source_aliases
-        bindings = self.source_binding_plan.bindings_for_group(self.group_key)
-        if not bindings:
-            return None
-        return len(bindings)
+        return SourceBindingAxisResolutionAuthority.axis_size(
+            self,
+            tuple(source_aliases),
+        )
 
     def source_binding_plane_index(self, alias: str) -> int | None:
         """Return the current axis-local plane index for a source alias."""
-        candidate_context = self.source_binding_plane_candidate_resolution(alias).context
-        if candidate_context is not None:
-            matched_context = self.source_binding_plane_matched_context(
-                candidate_context,
-            )
-            if matched_context is not None:
-                current_step_index = CurrentStepInputSourceBindingPlaneResolution(
-                    current_step_input_files=(
-                        self.source_binding_context.current_step_input_files
-                    ),
-                    axis_candidates=candidate_context.axis_candidates,
-                    matched_indexes=matched_context.matched_indexes,
-                ).plane_index()
-                if current_step_index is not None:
-                    return current_step_index
-                runtime_provenance_index = (
-                    RuntimeSourceProvenanceSourceBindingPlaneResolution(
-                        step_input_source_paths=(
-                            self.source_binding_context.step_input_source_paths
-                        ),
-                        axis_candidates=candidate_context.axis_candidates,
-                        matched_indexes=matched_context.matched_indexes,
-                    ).plane_index()
-                )
-                if runtime_provenance_index is not None:
-                    return runtime_provenance_index
-                matched_index = SourceBindingMatchedPlaneResolution(
-                    alias=matched_context.alias,
-                    axis_id=self.axis_id,
-                    matched_indexes=matched_context.matched_indexes,
-                    source_binding_axis_size=self.source_binding_axis_size((alias,)),
-                ).value
-                if matched_index is not None:
-                    return matched_index
-        group_index = self.source_binding_group_plane_index(alias)
-        if group_index is not None:
-            return group_index
-        return None
-
-    def source_binding_group_plane_index(self, alias: str) -> int | None:
-        """Return the declared source-binding group position for an alias."""
-        for index, binding in enumerate(
-            self.source_binding_plan.bindings_for_group(self.group_key)
-        ):
-            if binding.alias == alias:
-                return index
-        return None
-
-    def source_binding_plane_candidate_resolution(
-        self,
-        alias: str,
-    ) -> "SourceBindingPlaneCandidateResolution":
-        return SourceBindingPlaneCandidateResolution(
-            self.source_binding_plane_candidate_context(alias)
+        return SourceBindingAxisResolutionAuthority.plane_index(
+            self,
+            (alias,),
         )
 
     def source_binding_plane_candidate_context(
         self,
         alias: str,
     ) -> "SourceBindingPlaneCandidateContext | None":
-        return SourceBindingPlaneCandidateResolution.from_adapter(
+        return SourceBindingPlaneCandidateContext.from_adapter(
             self,
             alias,
-        ).context
-
-    def source_binding_plane_matched_context(
-        self,
-        context: "SourceBindingPlaneCandidateContext",
-    ) -> "SourceBindingPlaneMatchedContext | None":
-        matched_indexes = self.source_binding_matched_axis_indexes(
-            SourceBindingMatchedAxisRequest.from_context(context)
-        )
-        if not matched_indexes:
-            return None
-        return SourceBindingPlaneMatchedContext(
-            alias=context.request.alias,
-            matched_indexes=matched_indexes,
-        )
-
-    def source_binding_matched_axis_indexes(
-        self,
-        request: "SourceBindingMatchedAxisRequest",
-    ) -> tuple[int, ...]:
-        target_candidates = SourceCandidateMatcher.match_candidates(
-            candidates=request.target_candidates,
-            binding=request.binding,
-            inherit_components={},
-        )
-        current_candidates = SourceCandidateMatcher.match_image_set_candidates(
-            request.alias,
-            self.source_binding_plan.match_plan,
-            request.step_candidates,
-            target_candidates,
-            request.full_pipeline_candidates,
-            source_binding_plan=self.source_binding_plan,
-            group_key=self.group_key,
-        )
-        current_paths = {candidate.resolved_path for candidate in current_candidates}
-        return tuple(
-            index
-            for index, candidate in enumerate(request.axis_candidates)
-            if candidate.resolved_path in current_paths
         )
 
     def resolve_source_objects(
@@ -3752,7 +752,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         if binding is None:
             raise RuntimeError(
                 f"Missing compiled source binding for CellProfiler "
-                f"{kind.value} alias '{alias}' on axis '{self.axis_id}' and "
+                f"{kind.value} alias '{alias}' on axis '{self.axis_scope.axis_id}' and "
                 f"group {self.group_key!r}."
             )
         if binding.artifact_kind is not kind:
@@ -3813,8 +813,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 current_image,
             ).project(data)
         data = RuntimePlaneImagePayloadProjection(
-            self,
-            current_image=current_image,
+            RuntimePlaneProjectionContext(
+                adapter=self,
+                current_image_context=RuntimePlaneCurrentImageContext(
+                    current_image
+                ),
+            ),
         ).project(data)
         schema = record.value.schema
         image = NamedImage(
@@ -3841,18 +845,107 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         ),
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
-        construction_request = ObjectLabelAdapterConstructionRequest(
-            adapter=self,
-            name=name,
-            labels=labels,
-            source_image_name=source_image_name,
-            source_image_names=source_image_names,
-            dimensions=dimensions,
-            representation=representation,
-        )
-        object_labels = ObjectLabelAdapterConstructionPolicy.for_labels(
-            labels
-        ).construct(construction_request)
+        if isinstance(labels, ObjectLabelValue):
+            provenance_source_names = labels.source_image_names
+            if not provenance_source_names:
+                provenance_source_names = source_image_names
+            source_provenance = labels.source_provenance.with_source_image_names(
+                provenance_source_names
+            )
+            resolved_source_image_name = source_image_name
+            if resolved_source_image_name is None:
+                resolved_source_image_name = labels.source_image_name
+            resolved_dimensions = dimensions
+            if not resolved_dimensions:
+                resolved_dimensions = labels.dimensions
+            normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                labels.labels
+            )
+            normalized_unedited_labels = (
+                RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                    labels.unedited_labels
+                )
+            )
+            normalized_small_removed_labels = (
+                RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                    labels.small_removed_labels
+                )
+            )
+            object_labels = ObjectLabelValueConstructionContext.from_value(
+                labels,
+                source_provenance=source_provenance,
+            ).label_set(
+                name=name,
+                labels=cast(
+                    ObjectLabelData,
+                    normalized_labels,
+                ),
+                unedited_labels=cast(
+                    ObjectLabelData | None,
+                    normalized_unedited_labels,
+                ),
+                small_removed_labels=cast(
+                    ObjectLabelData | None,
+                    normalized_small_removed_labels,
+                ),
+                source_image_name=resolved_source_image_name,
+                dimensions=resolved_dimensions,
+                representation=labels.representation,
+            )
+        else:
+            construction_context = ObjectLabelValueConstructionContext(
+                domain=ObjectLabelDomain(),
+            )
+            source_provenance = construction_context.source_provenance
+            source_spatial_domain = construction_context.source_spatial_domain
+            if source_image_name is not None:
+                requires_source_coordinate = self.requires_declared_source_image_domain(
+                    source_image_name
+                )
+                if requires_source_coordinate or self.has_runtime_artifact(
+                    name=source_image_name,
+                    kind=ArtifactKind.IMAGE,
+                ):
+                    source_image = self.get_image(source_image_name)
+                    metadata = image_payload_metadata(source_image.data)
+                    source_provenance = metadata.source_provenance
+                    source_spatial_domain = (
+                        metadata.object_label_source_spatial_domain()
+                    )
+                    if (
+                        requires_source_coordinate
+                        and not source_provenance.addressable
+                        and not source_provenance.source_image_provenance_planes.has_values
+                    ):
+                        raise RuntimeError(
+                            "Object labels produced from declared source image "
+                            f"{source_image_name!r} require source coordinate "
+                            "metadata. The source image artifact did not carry "
+                            "source_path, source_component_metadata, or "
+                            "source_image_provenance_planes."
+                        )
+            declared_source_image_names = source_image_names
+            if not declared_source_image_names and source_image_name is not None:
+                declared_source_image_names = (source_image_name,)
+            source_provenance = source_provenance.with_source_image_names(
+                declared_source_image_names
+            )
+            object_labels = ObjectLabelValueConstructionContext(
+                domain=ObjectLabelDomain(),
+                source_provenance=source_provenance,
+                source_spatial_domain=source_spatial_domain,
+            ).label_set(
+                name=name,
+                labels=cast(
+                    ObjectLabelData,
+                    RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                        labels
+                    ),
+                ),
+                source_image_name=source_image_name,
+                dimensions=dimensions,
+                representation=representation,
+            )
         if source_image_payload is not None:
             object_labels = object_labels.with_source_image_context(source_image_payload)
             SourceAlignedObjectLabelProvenanceRequest(
@@ -3860,14 +953,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 labels=object_labels,
                 label_name=name,
             ).validate()
-        profile_fields = ObjectLabelAdapterProfileFields.from_labels(object_labels)
-        AdapterProfileLog.artifact(
+        AdapterProfileLog.object_label_artifact(
             "adapter_construct_object_labels",
             time.perf_counter() - construct_started_at,
             artifact_name=name,
-            kind=ArtifactKind.OBJECT_LABELS,
             payload_type=type(labels).__name__,
-            extra_fields=profile_fields.extra_fields(),
+            labels=object_labels,
         )
         return self._record_native_value(
             name,
@@ -3916,15 +1007,17 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
     def get_objects_across_groups(self, name: str) -> ObjectLabelSet:
         """Return object labels stacked across all producer groups for this axis."""
-        records = self.runtime_value_store.find(
+        records = RuntimeGroupMatchScope(
+            group_key=None,
+            match_group=False,
+        ).runtime_scope(self).artifact_query_context().find(
             name=name,
             kind=ArtifactKind.OBJECT_LABELS,
-            axis_id=self.axis_id,
         )
         if not records:
             raise RuntimeError(
                 f"Missing RuntimeValueStore object-label records for {name!r} "
-                f"on axis {self.axis_id!r}."
+                f"on axis {self.axis_scope.axis_id!r}."
             )
         if len(records) == 1:
             return ObjectLabelSet.from_runtime_value(records[0].value)
@@ -3943,8 +1036,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         input_plan = self.artifact_inputs.get(name)
         if input_plan is None or input_plan.kind is not kind:
             return requested_group_key
-        selected = input_plan.group_key_for_axis(
-            axis_id=self.axis_id,
+        selected = RuntimeGroupMatchScope(group_key=None).runtime_scope(
+            self
+        ).artifact_group_key(
+            input_plan,
             requested_group_key=requested_group_key,
         )
         if not _is_default_runtime_group_key(selected) or current_image is None:
@@ -3960,9 +1055,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         current_source_cardinality = SourceIdentitySetCardinality(
             current_source_scope.current_source_identities()
         )
-        if current_source_cardinality.has_single_identity:
+        step_input_files = self.source_binding_context.step_input_files
+        if current_source_cardinality.has_single_identity and step_input_files:
             for candidate in self.source_candidates(
-                self.source_binding_context.step_input_files
+                step_input_files
             ):
                 if not self.current_image_matches_source_candidate(current_image, candidate):
                     continue
@@ -4060,12 +1156,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         candidate: "ParsedSourceCandidate",
     ) -> bool:
         """Return whether the payload metadata names a parsed source candidate."""
-        metadata = image_payload_metadata(current_image)
-        source_paths = tuple(
-            str(path)
-            for path in (*metadata.channel_source_paths, metadata.source_path)
-            if path is not None and str(path)
-        )
+        source_paths = image_payload_metadata(current_image).source_image_path_tokens
         if not source_paths:
             return False
         candidate_paths = {
@@ -4086,6 +1177,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         fields: tuple[FieldSpec, ...] = (),
         object_id_field: str | None = None,
         source_image_name: str | None = None,
+        source_path: str | None = None,
+        source_component_metadata: SourceComponentMetadata | None = None,
+        source_image_provenance_planes: SourceImageProvenancePlanes | None = None,
     ) -> StoredRuntimeValue:
         validation_started_at = time.perf_counter()
         if object_name is not None:
@@ -4108,6 +1202,13 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             object_id_field=object_id_field,
             source_image_name=source_image_name,
             validated_runtime_schema=bool(fields),
+            source_path=source_path,
+            source_component_metadata=source_component_metadata,
+            source_image_provenance_planes=(
+                source_image_provenance_planes
+                if source_image_provenance_planes is not None
+                else SourceImageProvenancePlanes()
+            ),
         )
         AdapterProfileLog.measurement_artifact(
             "adapter_measurement_table_construct",
@@ -4149,560 +1250,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             tuple(MeasurementTable.from_runtime_value(record.value) for record in records),
         ).as_table()
 
-    def measurement_tables_for_object(
-        self,
-        object_name: str,
-        *,
-        group_key: str | None = None,
-        match_group: bool = True,
-        current_image: CellProfilerCurrentImage | None = None,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return prior measurement tables whose subject is an object set."""
-        resolved_group_key = self.group_key if group_key is None else group_key
-        current_source_identities = self._current_source_identity_cache_key(
-            current_image,
-        )
-        cache_key = ObjectMeasurementTableCacheKey(
-            group_key=RuntimeGroupKeyCacheScope(
-                resolved_group_key,
-                match_group,
-            ).component,
-            match_group=match_group,
-            object_name=object_name,
-            current_source_identities=current_source_identities,
-        )
-        cached = self._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        object_table_cache = self.object_measurement_table_cache()
-        cached = object_table_cache.get(cache_key)
-        if cached is not None:
-            self._measurement_cache[cache_key] = cached
-            return cached
-        object_table_index = self.object_measurement_table_index(
-            group_key=group_key,
-            match_group=match_group,
-            current_image=current_image,
-        )
-        tables = object_table_index.for_object(object_name)
-        if tables is None:
-            tables = runtime_measurement_tables_for_object(
-                self._measurement_query_context(
-                    group_key=group_key,
-                    match_group=match_group,
-                ),
-                object_name,
-            )
-            tables = RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
-                tables
-            )
-        object_table_cache[cache_key] = tables
-        self._measurement_cache[cache_key] = tables
-        return tables
-
-    def measurement_tables_for_object_feature(
-        self,
-        object_name: str,
-        feature_name: str,
-        *,
-        group_key: str | None = None,
-        match_group: bool = True,
-        current_image: CellProfilerCurrentImage | None = None,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return object tables that may carry the requested feature."""
-        object_table_index = self.object_measurement_table_index(
-            group_key=group_key,
-            match_group=match_group,
-            current_image=current_image,
-        )
-        tables = object_table_index.for_object_feature(object_name, feature_name)
-        if tables is None:
-            return self.measurement_tables_for_object(
-                object_name,
-                group_key=group_key,
-                match_group=match_group,
-                current_image=current_image,
-            )
-        return tables
-
-    def measurement_tables_for_object_feature_axis_scope(
-        self,
-        context: ObjectFeatureMeasurementContext,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return feature-bearing object tables in their declared runtime axis scope."""
-        scoped_table_sets = (
-            context.measurement_tables(self),
-            context.measurement_tables(self, match_group=False),
-        )
-        runtime_slice_plane_index = self.runtime_slice_plane_index()
-        candidates: list[tuple[MeasurementTable, ...]] = []
-        for tables in scoped_table_sets:
-            if context.image_number is not None:
-                candidates.append(
-                    MeasurementTableAxisQuery(
-                        MeasurementRowAxisField.IMAGE_NUMBER,
-                        context.image_number,
-                    ).tables(tables)
-                )
-            if runtime_slice_plane_index is not None:
-                candidates.append(
-                    MeasurementTableAxisQuery(
-                        MeasurementRowAxisField.SLICE_INDEX,
-                        runtime_slice_plane_index,
-                    ).tables(tables)
-                )
-            candidates.append(tables)
-        query = MeasurementFeatureQuery(
-            context.feature_name,
-            object_name=context.object_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        return MeasurementFeatureAxisScopeSelection(
-            candidates=tuple(candidates),
-            query=query,
-            fallback=scoped_table_sets[0],
-        ).select()
-
-    def measurement_tables_for_object_feature_axis_projection(
-        self,
-        context: ObjectFeatureMeasurementContext,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return feature-bearing object tables projected to the requested axis."""
-        axis, axis_value = self._measurement_axis_projection_key(context)
-        cache_key = self._object_feature_axis_table_cache_key(context)
-        cache = self.object_feature_axis_measurement_table_cache()
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-        tables = context.measurement_tables(self)
-        if not tables:
-            tables = context.measurement_tables(self, match_group=False)
-        projected = (
-            tables
-            if axis is None or axis_value is None
-            else self.measurement_tables_projected_to_axis(tables, axis, axis_value)
-        )
-        cache[cache_key] = projected
-        return projected
-
-    def _measurement_axis_projection_key(
-        self,
-        context: ObjectFeatureMeasurementContext,
-    ) -> tuple[MeasurementRowAxisField | None, int | None]:
-        """Return the row-axis projection requested by an object-feature context."""
-        if context.image_number is not None:
-            return MeasurementRowAxisField.IMAGE_NUMBER, context.image_number
-        runtime_slice_plane_index = self.runtime_slice_plane_index()
-        if runtime_slice_plane_index is None:
-            return None, None
-        return MeasurementRowAxisField.SLICE_INDEX, runtime_slice_plane_index
-
-    def measurement_tables_projected_to_axis(
-        self,
-        tables: tuple[MeasurementTable, ...],
-        axis: MeasurementRowAxisField,
-        value: int,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return ``tables`` projected to one runtime measurement row axis."""
-        cache_key = MeasurementTableAxisProjectionCacheKey(
-            revision=self.runtime_value_store.revision,
-            axis=axis,
-            value=int(value),
-            table_identities=tuple(id(table) for table in tables),
-        )
-        cached = self._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        projected = MeasurementTableAxisQuery(axis, value).tables(tables)
-        self._measurement_cache[cache_key] = projected
-        return projected
-
-    def _object_feature_axis_table_cache_key(
-        self,
-        context: ObjectFeatureMeasurementContext,
-    ) -> ObjectFeatureAxisMeasurementTableCacheKey:
-        axis, axis_value = self._measurement_axis_projection_key(context)
-        return ObjectFeatureAxisMeasurementTableCacheKey(
-            group_key=context.resolved_group_key(self.group_key),
-            object_name=context.object_name,
-            feature_name=context.feature_name,
-            axis=axis,
-            value=axis_value,
-            current_source_identities=self._current_source_identity_cache_key(
-                context.current_image,
-            ),
-        )
-
-    def object_measurement_table_index(
-        self,
-        *,
-        group_key: str | None = None,
-        match_group: bool = True,
-        current_image: CellProfilerCurrentImage | None = None,
-    ) -> ObjectMeasurementTableIndex:
-        """Return the cached object-subject measurement table index."""
-        resolved_group_key = self.group_key if group_key is None else group_key
-        index_cache_key = ObjectMeasurementTableIndexCacheKey(
-            group_key=RuntimeGroupKeyCacheScope(
-                resolved_group_key,
-                match_group,
-            ).component,
-            match_group=match_group,
-            current_source_identities=self._current_source_identity_cache_key(
-                current_image,
-            ),
-        )
-        object_table_index_cache = self.object_measurement_table_index_cache()
-        object_table_index = object_table_index_cache.get(index_cache_key)
-        if object_table_index is not None:
-            return object_table_index
-        source_tables = (
-            self.measurement_tables(
-                group_key=group_key,
-                match_group=match_group,
-                current_image=current_image,
-            )
-            if current_image is not None
-            else runtime_measurement_tables(
-                self._measurement_query_context(
-                    group_key=group_key,
-                    match_group=match_group,
-                )
-            )
-        )
-        object_table_index = ObjectMeasurementTableIndex.from_tables(source_tables)
-        object_table_index_cache[index_cache_key] = object_table_index
-        return object_table_index
-
-    def measurement_values_for_label_slices(
-        self,
-        object_name: str,
-        feature_name: str,
-        labels: DenseLabelPayload,
-        *,
-        group_key: str | None = None,
-        image_number: int | None = None,
-        current_image: CellProfilerCurrentImage | None = None,
-    ) -> CellProfilerMeasurementSliceValues:
-        """Return object measurements aligned to label planes with adapter caching."""
-        started_at = time.perf_counter()
-        context = ObjectFeatureLabelMeasurementContext(
-            object_name=object_name,
-            feature_name=feature_name,
-            group_key=group_key,
-            image_number=image_number,
-            current_image=current_image,
-            labels=labels,
-        )
-        profile = ObjectFeatureProfileContext(
-            context.object_name,
-            context.feature_name,
-        )
-        label_array = np.asarray(context.labels)
-        domain_started_at = time.perf_counter()
-        label_domain = self._dense_label_domain(context.labels)
-        profile.domain(
-            time.perf_counter() - domain_started_at,
-            count=len(label_domain),
-            ndim=label_array.ndim,
-        )
-        query = RuntimeObjectLabelMeasurementQuery(
-            axis_id=self.axis_id,
-            group_key=context.resolved_group_key(self.group_key),
-            object_name=context.object_name,
-            feature_name=context.feature_name,
-            label_domain=label_domain,
-            image_number=context.image_number,
-        )
-        cached = self._measurement_cache.get(query)
-        if cached is not None:
-            profile.query_values(
-                time.perf_counter() - started_at,
-                cached="adapter",
-            )
-            return cached
-        object_label_values_cache = self.object_label_measurement_values_cache()
-        cached = object_label_values_cache.get(query)
-        if cached is not None:
-            self._measurement_cache[query] = cached
-            profile.query_values(
-                time.perf_counter() - started_at,
-                cached="store",
-            )
-            return cached
-        relationship_child_counts = RelationshipChildCountLabelMeasurement(
-            self,
-            context,
-        ).values()
-        if relationship_child_counts is not None:
-            self._measurement_cache[query] = relationship_child_counts
-            object_label_values_cache[query] = relationship_child_counts
-            profile.query_values(
-                time.perf_counter() - started_at,
-                cached="relationship",
-            )
-            return relationship_child_counts
-        if label_array.ndim <= 2:
-            tables_started_at = time.perf_counter()
-            tables = self.measurement_tables_for_object_feature_axis_scope(
-                context.without_current_image()
-                if context.image_number is not None
-                else context,
-            )
-            profile.query_tables(
-                time.perf_counter() - tables_started_at,
-                count=len(tables),
-            )
-            extract_started_at = time.perf_counter()
-            values = (
-                measurement_values_for_feature(
-                    tables,
-                    context.feature_name,
-                    object_count=len(label_domain),
-                    object_ids=label_domain,
-                    object_name=context.object_name,
-                    dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-                ),
-            )
-            profile.query_extract(
-                time.perf_counter() - extract_started_at,
-                count=len(values[0]),
-            )
-            self._measurement_cache[query] = values
-            object_label_values_cache[query] = values
-            profile.query_values(
-                time.perf_counter() - started_at,
-                cached=False,
-            )
-            return values
-        tables_started_at = time.perf_counter()
-        tables = self._measurement_tables_for_multiplane_labels(
-            context,
-        )
-        profile.query_tables(
-            time.perf_counter() - tables_started_at,
-            count=len(tables),
-        )
-        extract_started_at = time.perf_counter()
-        if context.image_number is None or label_array.ndim > 2:
-            row_axis_start = context.image_number
-            if label_array.ndim > 2:
-                row_axis_start = None
-            values = measurement_values_for_label_slices(
-                tables,
-                context.feature_name,
-                context.labels,
-                object_name=context.object_name,
-                row_axis=(
-                    MeasurementRowAxisField.SLICE_INDEX
-                    if label_array.ndim > 2 or context.image_number is None
-                    else MeasurementRowAxisField.IMAGE_NUMBER
-                ),
-                row_axis_start=row_axis_start,
-                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-            )
-        else:
-            label_planes = tuple(
-                label_array[index] for index in range(label_array.shape[0])
-            )
-            values = tuple(
-                    measurement_values_for_feature(
-                        MeasurementTableAxisQuery(
-                            MeasurementRowAxisField.IMAGE_NUMBER,
-                            context.image_number + slice_index,
-                        ).tables(
-                        tables,
-                    ),
-                    context.feature_name,
-                    object_count=len(self._dense_label_domain(label_plane)),
-                    object_ids=self._dense_label_domain(label_plane),
-                    object_name=context.object_name,
-                    dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-                )
-                for slice_index, label_plane in enumerate(label_planes)
-            )
-        profile.query_extract(
-            time.perf_counter() - extract_started_at,
-            count=len(values),
-        )
-        self._measurement_cache[query] = values
-        object_label_values_cache[query] = values
-        profile.query_values(
-            time.perf_counter() - started_at,
-            cached=False,
-        )
-        return values
-
-    def _relationship_records_for_child_count(
-        self,
-        relationship_name: str,
-        *,
-        group_key: str | None,
-        current_image: CellProfilerCurrentImage | None,
-    ) -> tuple[StoredRuntimeValue, ...]:
-        """Return relationship records through the declared runtime-input path."""
-        if relationship_name in self.artifact_inputs:
-            return RuntimeArtifactRecordResolver(
-                adapter=self,
-                name=relationship_name,
-                kind=ArtifactKind.RELATIONSHIPS,
-                group_key=group_key,
-                current_image=current_image,
-            ).resolve()
-        return self._query_context(group_key).find(
-            name=relationship_name,
-            kind=ArtifactKind.RELATIONSHIPS,
-        )
-
-    def _relationship_plane_projection_resolution(
-        self,
-        relationship_name: str,
-        records: tuple[StoredRuntimeValue, ...],
-        *,
-        label_plane_count: int,
-    ) -> RelationshipPlaneProjectionResolution:
-        """Project grouped relationship records onto runtime label planes."""
-        if not records:
-            return RelationshipPlaneProjectionResolution(unavailable_reason="no_records")
-        if len(records) == 1:
-            return RelationshipPlaneProjectionResolution(
-                records=(
-                    RuntimeRelationshipPlaneRecord(
-                        ObjectRelationship.from_runtime_value(records[0].value),
-                    ),
-                )
-            )
-
-        group_order = self._relationship_plane_index_by_group_key(
-            relationship_name,
-            label_plane_count=label_plane_count,
-        )
-        if not group_order.is_available:
-            unavailable_reason = group_order.unavailable_reason
-            if unavailable_reason is None:
-                unavailable_reason = "group_order_unavailable"
-            return RelationshipPlaneProjectionResolution(
-                unavailable_reason=unavailable_reason
-            )
-        plane_index_by_group_key = group_order.plane_index_by_group_key
-        indexed_records: list[tuple[int, StoredRuntimeValue]] = []
-        for record in records:
-            group_key = record.key.scope.group_key
-            plane_index = plane_index_by_group_key.get(group_key)
-            if plane_index is None:
-                return RelationshipPlaneProjectionResolution(
-                    unavailable_reason="record_group_not_declared"
-                )
-            indexed_records.append((plane_index, record))
-        if len({plane_index for plane_index, _record in indexed_records}) != len(
-            indexed_records
-        ):
-            return RelationshipPlaneProjectionResolution(
-                unavailable_reason="duplicate_record_plane"
-            )
-        return RelationshipPlaneProjectionResolution(
-            records=tuple(
-                RuntimeRelationshipPlaneRecord(
-                    ObjectRelationship.from_runtime_value(record.value),
-                    plane_index=plane_index,
-                )
-                for plane_index, record in sorted(indexed_records)
-            )
-        )
-
-    def _relationship_plane_index_by_group_key(
-        self,
-        relationship_name: str,
-        *,
-        label_plane_count: int,
-    ) -> "RelationshipGroupPlaneOrder":
-        """Return declared runtime-slice group order for a relationship input."""
-        input_plan = self.artifact_inputs.get(relationship_name)
-        if input_plan is None:
-            return RelationshipGroupPlaneOrder(
-                unavailable_reason="undeclared_relationship_input"
-            )
-        input_group_keys = input_plan.group_keys
-        if input_group_keys is None:
-            group_keys = ()
-        else:
-            group_keys = tuple(input_group_keys)
-        if len(group_keys) != label_plane_count:
-            return RelationshipGroupPlaneOrder(unavailable_reason="group_count_mismatch")
-        if len(set(group_keys)) != len(group_keys):
-            return RelationshipGroupPlaneOrder(unavailable_reason="duplicate_group_keys")
-        return RelationshipGroupPlaneOrder(
-            plane_index_by_group_key=MappingProxyType(
-                {
-                    group_key: plane_index
-                    for plane_index, group_key in enumerate(group_keys)
-                }
-            )
-        )
-
-    def measurement_values_for_object_feature(
-        self,
-        object_name: str,
-        feature_name: str,
-        *,
-        group_key: str | None = None,
-    ) -> CellProfilerMeasurementVector:
-        """Return one object feature vector over the object's declared domain."""
-        started_at = time.perf_counter()
-        profile = ObjectFeatureProfileContext(object_name, feature_name)
-        objects_started_at = time.perf_counter()
-        objects = self.get_objects(object_name, group_key=group_key)
-        profile.get_objects(time.perf_counter() - objects_started_at)
-        domain_started_at = time.perf_counter()
-        object_domain = dense_object_label_id_domain(objects)
-        profile.object_domain(
-            time.perf_counter() - domain_started_at,
-            count=len(object_domain),
-        )
-        resolved_group_key = self.group_key if group_key is None else group_key
-        cache_key = RuntimeObjectFeatureMeasurementQuery(
-            group_key=resolved_group_key,
-            object_name=object_name,
-            feature_name=feature_name,
-            object_domain=object_domain,
-        )
-        object_feature_cache = self.object_feature_value_cache()
-        cached = object_feature_cache.get(cache_key)
-        if cached is not None:
-            profile.feature_values(
-                time.perf_counter() - started_at,
-                cached=True,
-            )
-            return cached
-        tables_started_at = time.perf_counter()
-        tables = self.measurement_tables_for_object(
-            object_name,
-            group_key=group_key,
-        )
-        profile.feature_tables(
-            time.perf_counter() - tables_started_at,
-            count=len(tables),
-        )
-        values_started_at = time.perf_counter()
-        values = measurement_values_for_feature(
-            tables,
-            feature_name,
-            object_count=len(object_domain),
-            object_ids=object_domain,
-            object_name=object_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        profile.feature_extract(
-            time.perf_counter() - values_started_at,
-            count=len(values),
-        )
-        object_feature_cache[cache_key] = values
-        profile.feature_values(
-            time.perf_counter() - started_at,
-            cached=False,
-        )
-        return values
-
     def apply_measurement_table_cache_mutation(
         self,
         table: MeasurementTable,
@@ -4721,7 +1268,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         mutation = MeasurementTableCacheMutation(
             adapter=self,
             table=table,
-            table_semantics=table_semantics,
+            object_names=table_semantics.object_names,
+            feature_names=table_semantics.feature_names,
         )
         for policy in MeasurementTableCacheMutationPolicy.registered_policies():
             policy_started_at = time.perf_counter()
@@ -4733,120 +1281,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 feature_count=len(table_semantics.feature_names),
             )
 
-    def _measurement_tables_for_multiplane_labels(
-        self,
-        context: ObjectFeatureLabelMeasurementContext,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return object tables aligned from producer groups into label planes."""
-        label_array = np.asarray(context.labels)
-        cache_key = MultiplaneObjectMeasurementTableCacheKey(
-            revision=self.runtime_value_store.revision,
-            axis_id=self.axis_id,
-            object_name=context.object_name,
-            feature_name=context.feature_name,
-            label_domain=self._dense_label_domain(context.labels),
-            current_source_identities=self._current_source_identity_cache_key(
-                context.current_image,
-            ),
-        )
-        cached = self._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        records = self.runtime_value_store.find(
-            kind=ArtifactKind.MEASUREMENTS,
-            axis_id=self.axis_id,
-            match_group=False,
-        )
-        scoped_tables: list[tuple[str | None, MeasurementTable]] = []
-        feature_query = MeasurementFeatureQuery(
-            context.feature_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        for record in records:
-            table = MeasurementTable.from_runtime_value(record.value)
-            if (
-                RuntimeSliceProjection.measurement_table_matches_object(
-                    table,
-                    context.object_name,
-                )
-                and feature_query.table_may_carry_feature(table)
-            ):
-                scoped_tables.append((record.key.scope.group_key, table))
-
-        if not scoped_tables:
-            tables = context.measurement_tables(self, match_group=False)
-            self._measurement_cache[cache_key] = tables
-            return tables
-
-        group_order = tuple(
-            dict.fromkeys(
-                group_key for group_key, _table in scoped_tables if group_key is not None
-            )
-        )
-        group_slice_counts = {
-            group_key: max(
-                RuntimeSliceProjection.measurement_table_effective_slice_count(table)
-                for table_group_key, table in scoped_tables
-                if table_group_key == group_key
-            )
-            for group_key in group_order
-        }
-        if (
-            label_array.ndim > 2
-            and not group_order
-            and len(scoped_tables) == 1
-            and RuntimeSliceProjection.measurement_table_effective_slice_count(
-                scoped_tables[0][1]
-            )
-            == 1
-            and _label_stack_repeats_first_plane(label_array)
-        ):
-            tables = (
-                RuntimeSliceProjection.measurement_table_broadcast_to_slice_count(
-                    scoped_tables[0][1],
-                    label_array.shape[0],
-                ),
-            )
-            self._measurement_cache[cache_key] = tables
-            return tables
-
-        group_offsets: dict[str, int] = {}
-        offset = 0
-        for group_key in group_order:
-            group_offsets[group_key] = offset
-            offset += group_slice_counts[group_key]
-
-        tables = tuple(
-            (
-                RuntimeSliceProjection.measurement_table_with_slice_offset(
-                    table,
-                    group_offsets[table_group_key],
-                )
-                if table_group_key is not None
-                else table
-            )
-            for table_group_key, table in scoped_tables
-        )
-        if offset and label_array.ndim > 2 and offset != label_array.shape[0]:
-            AdapterProfileLog.measurement_slice_mismatch(
-                0.0,
-                object_name=context.object_name,
-                measurement_slices=offset,
-                label_slices=label_array.shape[0],
-            )
-        self._measurement_cache[cache_key] = tables
-        return tables
-
-    def _dense_label_domain(self, labels: DenseLabelPayload) -> tuple[int, ...]:
-        cache_key = id(labels)
-        cached = self._label_domain_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        domain = dense_object_label_id_domain(labels)
-        self._label_domain_cache[cache_key] = domain
-        return domain
-
     def measurement_tables(
         self,
         *,
@@ -4855,33 +1289,26 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         current_image: CellProfilerCurrentImage | None = None,
     ) -> tuple[MeasurementTable, ...]:
         """Return measurement tables visible to the current runtime scope."""
-        resolved_group_key = self.group_key if group_key is None else group_key
+        runtime_scope = RuntimeGroupMatchScope(
+            group_key=group_key,
+            match_group=match_group,
+        ).runtime_scope(self, current_image=current_image)
         cache_key = (
             "all",
             self.runtime_value_store.revision,
-            RuntimeGroupKeyCacheScope(resolved_group_key, match_group).component,
+            runtime_scope.group_cache_component,
             match_group,
-            CurrentImageCacheScope(current_image).component,
+            runtime_scope.current_image_cache_component,
         )
         cached = self._measurement_cache.get(cache_key)
         if cached is not None:
             return cached
-        query_context = self._measurement_query_context(
-            group_key=group_key,
-            match_group=match_group,
-        )
+        query_context = runtime_scope.artifact_query_context()
         records = query_context.find(kind=ArtifactKind.MEASUREMENTS)
-        if len(records) > 1:
-            selected = self._records_for_current_group_component(records, current_image)
-            if selected:
-                records = selected
-        if current_image is not None and len(records) > 1:
-            selected = RuntimeRecordSourceImageSetSelector(
-                self,
-                current_image,
-            ).select(records)
-            if selected:
-                records = selected
+        records = RuntimeRecordSourceImageSetSelector(
+            self,
+            current_image,
+        ).select_runtime_scope(records)
         tables = tuple(
             MeasurementTable.from_runtime_value(record.value)
             for record in records
@@ -4890,154 +1317,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             tables = runtime_measurement_tables(
                 query_context
             )
-        self._measurement_cache[cache_key] = tables
-        return tables
-
-    def measurement_tables_for_image_feature_axis_scope(
-        self,
-        feature_name: str,
-        *,
-        current_image: CellProfilerCurrentImage | None = None,
-        group_key: str | None = None,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return image measurement tables in the narrowest scope carrying a feature."""
-        query = MeasurementFeatureQuery(
-            feature_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        candidates = (
-            self._measurement_tables_for_image_feature(
-                query,
-                group_key=group_key,
-                match_group=True,
-                current_image=current_image,
-            ),
-            RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
-                self._measurement_tables_for_image_feature(
-                    query,
-                    group_key=group_key,
-                    match_group=False,
-                    current_image=current_image,
-                )
-            ),
-            RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
-                self._measurement_tables_for_image_feature(
-                    query,
-                    group_key=group_key,
-                    match_group=False,
-                    current_image=None,
-                )
-            ),
-        )
-        fallback = self.measurement_tables(
-            group_key=group_key,
-            current_image=current_image,
-        )
-        return MeasurementFeatureAxisScopeSelection(
-            candidates=candidates,
-            query=query,
-            fallback=fallback,
-        ).select()
-
-    def _measurement_tables_for_image_feature(
-        self,
-        query: MeasurementFeatureQuery,
-        *,
-        group_key: str | None,
-        match_group: bool,
-        current_image: CellProfilerCurrentImage | None,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return visible image-measurement tables that may carry one feature."""
-        resolved_group_key = self.group_key if group_key is None else group_key
-        cache_key = (
-            "image_feature",
-            self.runtime_value_store.revision,
-            RuntimeGroupKeyCacheScope(resolved_group_key, match_group).component,
-            match_group,
-            CurrentImageCacheScope(current_image).component,
-            query.feature_name,
-        )
-        cached = self._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        query_context = self._measurement_query_context(
-            group_key=group_key,
-            match_group=match_group,
-        )
-        input_records: list[StoredRuntimeValue] = []
-        for input_plan in self.artifact_inputs.values():
-            if input_plan.kind is not ArtifactKind.MEASUREMENTS:
-                continue
-            input_records.extend(
-                RuntimeArtifactRecordResolver(
-                    adapter=self,
-                    name=input_plan.name,
-                    kind=ArtifactKind.MEASUREMENTS,
-                    group_key=group_key,
-                    current_image=current_image,
-                ).resolve()
-            )
-        source_records = (
-            tuple({id(record): record for record in input_records}.values())
-            if input_records
-            else query_context.find(kind=ArtifactKind.MEASUREMENTS)
-        )
-        table_records: list[tuple[StoredRuntimeValue, MeasurementTable]] = []
-        for record in source_records:
-            table = MeasurementTable.from_runtime_value(record.value)
-            if (
-                query.table_may_carry_feature(table)
-                or query.optional_value_index((table,)) is not None
-            ):
-                table_records.append((record, table))
-
-        records = tuple(record for record, _table in table_records)
-        tables_by_record_id = {id(record): table for record, table in table_records}
-        if len(records) > 1:
-            selected = self._records_for_current_group_component(records, current_image)
-            if selected:
-                records = selected
-        if current_image is not None and len(records) > 1:
-            selected = RuntimeRecordSourceImageSetSelector(
-                self,
-                current_image,
-            ).select(records)
-            if selected:
-                records = selected
-        tables = tuple(tables_by_record_id[id(record)] for record in records)
-        self._measurement_cache[cache_key] = tables
-        return tables
-
-    def measurement_tables_for_scope(
-        self,
-        scope: MeasurementScope,
-        *,
-        name: str | None = None,
-        group_key: str | None = None,
-        match_group: bool = True,
-    ) -> tuple[MeasurementTable, ...]:
-        """Return measurement tables for one generic semantic scope."""
-        resolved_group_key = self.group_key if group_key is None else group_key
-        cache_key = (
-            "scope",
-            self.runtime_value_store.revision,
-            RuntimeGroupKeyCacheScope(resolved_group_key, match_group).component,
-            match_group,
-            scope,
-            name,
-        )
-        cached = self._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        tables = runtime_measurement_tables_for_scope(
-            self._measurement_query_context(
-                group_key=group_key,
-                match_group=match_group,
-            ),
-            scope,
-            name,
-        )
         self._measurement_cache[cache_key] = tables
         return tables
 
@@ -5053,18 +1332,17 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         slice_count: int | None = None,
         source_path: str | None = None,
         source_component_metadata: SourceComponentMetadata | None = None,
-        channel_source_paths: tuple[str | None, ...] = (),
-        channel_source_component_metadata: ChannelSourceComponentMetadata = (),
+        source_image_provenance_planes: SourceImageProvenancePlanes | None = None,
     ) -> StoredRuntimeValue:
         if not self._declared_output_resolution(
             name,
             ArtifactKind.RELATIONSHIPS,
         ).is_declared:
-            self._require_artifact_declared_or_available(
+            self.require_artifact_available(
                 name=parent_object_name,
                 kind=ArtifactKind.OBJECT_LABELS,
             )
-            self._require_artifact_declared_or_available(
+            self.require_artifact_available(
                 name=child_object_name,
                 kind=ArtifactKind.OBJECT_LABELS,
             )
@@ -5086,8 +1364,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 slice_count=slice_count,
                 source_path=source_path,
                 source_component_metadata=source_component_metadata,
-                channel_source_paths=channel_source_paths,
-                channel_source_component_metadata=channel_source_component_metadata,
+                source_image_provenance_planes=(
+                    source_image_provenance_planes
+                    if source_image_provenance_planes is not None
+                    else SourceImageProvenancePlanes()
+                ),
             ),
         )
 
@@ -5098,93 +1379,23 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         group_key: str | None = None,
         current_image: CellProfilerCurrentImage | None = None,
     ) -> ObjectRelationship:
-        records = self._query_context(group_key).find(
+        query_context = RuntimeGroupMatchScope(
+            group_key=group_key
+        ).runtime_scope(self).artifact_query_context()
+        records = query_context.find(
             name=name,
             kind=ArtifactKind.RELATIONSHIPS,
         )
-        if len(records) > 1 and current_image is not None:
-            selected = RuntimeRecordSourceImageSetSelector(
-                self,
-                current_image,
-            ).select(records)
-            if selected:
-                records = selected
-        if len(records) > 1:
-            selected = self._records_for_current_group_component(records, current_image)
-            if selected:
-                records = selected
+        records = RuntimeRecordSourceImageSetSelector(
+            self,
+            current_image,
+        ).select_runtime_scope(records)
         if len(records) == 1:
             return ObjectRelationship.from_runtime_value(records[0].value)
         return runtime_relationship(
-            self._query_context(group_key),
+            query_context,
             name=name,
         )
-
-    def _records_for_current_group_component(
-        self,
-        records: tuple[StoredRuntimeValue, ...],
-        current_image: CellProfilerCurrentImage | None,
-    ) -> tuple[StoredRuntimeValue, ...]:
-        group_keys = {
-            str(record.key.scope.group_key)
-            for record in records
-            if record.key.scope.group_key is not None
-        }
-        source_tokens = self._current_source_path_tokens(current_image)
-        selected_group_keys = {
-            group_key
-            for group_key in group_keys
-            if any(group_key in token for token in source_tokens)
-        }
-        if len(selected_group_keys) == 1:
-            selected_group_key = next(iter(selected_group_keys))
-            return tuple(
-                record
-                for record in records
-                if record.key.scope.group_key == selected_group_key
-            )
-
-        current_components = self._path_group_components(source_tokens)
-        if len(current_components) != 1:
-            return ()
-        current_component = next(iter(current_components))
-        return tuple(
-            record
-            for record in records
-            if current_component
-            in self._path_group_components(self._record_path_tokens(record))
-        )
-
-    def _current_source_path_tokens(
-        self,
-        current_image: CellProfilerCurrentImage | None,
-    ) -> tuple[str, ...]:
-        tokens: list[str] = []
-        if current_image is not None:
-            metadata = image_payload_metadata(current_image)
-            tokens.extend(
-                str(path)
-                for path in (*metadata.channel_source_paths, metadata.source_path)
-                if path is not None and str(path)
-            )
-        tokens.extend(str(path) for path in self.source_binding_context.current_step_input_files)
-        path_tokens: list[str] = []
-        for token in tokens:
-            path = Path(token)
-            path_tokens.extend((token, path.name, path.stem))
-        return tuple(dict.fromkeys(path_tokens))
-
-    @staticmethod
-    def _record_path_tokens(record: StoredRuntimeValue) -> tuple[str, ...]:
-        path = Path(record.path)
-        return (record.path, path.name, path.stem)
-
-    @staticmethod
-    def _path_group_components(tokens: Sequence[str]) -> frozenset[str]:
-        components: set[str] = set()
-        for token in tokens:
-            components.update(re.findall(r"(?:(?<=_)|^)w\d+(?=_|$)", token))
-        return frozenset(components)
 
     def add_spatial_grid(
         self,
@@ -5242,17 +1453,20 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             group_native_value = (
                 RuntimeSliceProjection.value_for_slice(
                     native_value,
-                    slice_index,
-                    slice_count,
+                    RuntimeProjectionAxis(
+                        slice_index=slice_index,
+                        extent=slice_count,
+                    ),
                 )
                 if slice_count is not None and len(output_group_keys) > 1
                 else native_value
             )
             normalize_started_at = time.perf_counter()
-            runtime_value = normalize_artifact_value(
+            runtime_value = RuntimeGroupMatchScope(group_key=None).runtime_scope(
+                self
+            ).normalize_artifact_value(
                 plan,
                 group_native_value,
-                axis_id=self.axis_id,
             )
             profile.normalized_value(
                 time.perf_counter() - normalize_started_at,
@@ -5319,12 +1533,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         self._image_cache.clear()
         self._object_cache.clear()
         self._measurement_cache.clear()
-        self.object_feature_value_cache().clear()
-        self.object_label_measurement_values_cache().clear()
-        self.object_measurement_table_cache().clear()
-        self.object_feature_axis_measurement_table_cache().clear()
-        self.object_measurement_table_index_cache().clear()
-        self._label_domain_cache.clear()
+        object_label_measurement_values_cache(self.runtime_value_store).clear()
+        object_measurement_table_cache(self.runtime_value_store).clear()
+        object_measurement_table_index_cache(self.runtime_value_store).clear()
+        self._source_paths_by_image_name_cache.clear()
         self._artifact_availability_cache.clear()
 
     def clear_measurement_query_cache(self) -> None:
@@ -5354,94 +1566,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             )
         return plan
 
-    def _query_context(
-        self,
-        group_key: str | None = None,
-    ) -> RuntimeArtifactQueryContext:
-        resolved_group_key = self.group_key if group_key is None else group_key
-        return RuntimeArtifactQueryContext(
-            store=self.runtime_value_store,
-            axis_id=self.axis_id,
-            group_key=resolved_group_key,
-            match_group=True,
-        )
-
-    def _records_for_ambiguous_producer_group_input(
-        self,
-        records: tuple[StoredRuntimeValue, ...],
-        *,
-        name: str,
-        kind: ArtifactKind,
-        resolved_group_key: str | None,
-        current_image: CellProfilerCurrentImage | None,
-    ) -> tuple[StoredRuntimeValue, ...]:
-        """Resolve location reads that match multiple runtime-sliced producer groups."""
-        group_keys = {
-            str(record.key.scope.group_key)
-            for record in records
-            if record.key.scope.group_key is not None
-        }
-        if len(group_keys) <= 1:
-            return ()
-
-        if resolved_group_key is not None:
-            selected_group = str(resolved_group_key)
-            if selected_group in group_keys:
-                return tuple(
-                    record
-                    for record in records
-                    if str(record.key.scope.group_key) == selected_group
-                )
-
-        current_step_group = CurrentSourceRuntimeInputGroupResolution(
-            adapter=self,
-            group_keys=frozenset(group_keys),
-            current_image=current_image,
-        )
-        current_step_group_key = current_step_group.resolve()
-        if current_step_group_key is not None:
-            return tuple(
-                record
-                for record in records
-                if str(record.key.scope.group_key) == current_step_group_key
-            )
-        if current_image is None:
-            return records
-
-        selector = RuntimeRecordSourceImageSetSelector(
-            self,
-            current_image,
-        )
-        if not selector.has_current_source_scope():
-            return records
-        if selector.has_template_current_source_scope():
-            return records
-        if not selector.records_have_metadata_source_scope(records):
-            return records
-        scoped_records = selector.select(records)
-        if scoped_records:
-            return scoped_records
-        raise RuntimeError(
-            f"Runtime artifact input {name!r} ({kind.value}) has producer-group "
-            "records, but none match the current source image scope."
-        )
-
-    def _require_artifact_declared_or_available(
-        self,
-        *,
-        name: str,
-        kind: ArtifactKind,
-    ) -> None:
-        if self._declared_output_resolution(name, kind).is_declared:
-            return
-        RuntimeArtifactRecordResolver(
-            adapter=self,
-            name=name,
-            kind=kind,
-            group_key=None,
-            current_image=None,
-        ).resolve()
-
     def _declared_output_resolution(
         self,
         name: str,
@@ -5451,23 +1575,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         if name not in self.artifact_outputs:
             return DeclaredOutputResolution()
         return DeclaredOutputResolution(self._require_output_plan(name, kind))
-
-    def _measurement_query_context(
-        self,
-        *,
-        group_key: str | None,
-        match_group: bool,
-    ) -> RuntimeArtifactQueryContext:
-        resolved_group_key = self.group_key if group_key is None else group_key
-        return RuntimeArtifactQueryContext(
-            store=self.runtime_value_store,
-            axis_id=self.axis_id,
-            group_key=RuntimeGroupKeyCacheScope(
-                resolved_group_key,
-                match_group,
-            ).component,
-            match_group=match_group,
-        )
 
     @property
     def can_resolve_source_candidates(self) -> bool:
@@ -5497,3632 +1604,13 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         for the path tuple, source-binding context, metadata rules and filename
         parser, so the cache key carries those semantic inputs explicitly.
         """
-        candidates = self._source_candidate_cache.get(file_paths)
-        if candidates is not None:
-            return candidates
-        cache_key = _source_candidate_cache_key(file_paths, self)
-        candidates = None
-        candidates = _SOURCE_CANDIDATE_PROCESS_CACHE.get(cache_key)
-        if candidates is not None:
-            _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
-            self._source_candidate_cache[file_paths] = candidates
-        if candidates is None:
-            started_at = time.perf_counter()
-            candidates = _parse_source_candidates(file_paths, self)
-            self._source_candidate_cache[file_paths] = candidates
-            _SOURCE_CANDIDATE_PROCESS_CACHE[cache_key] = candidates
-            _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
-            if len(_SOURCE_CANDIDATE_PROCESS_CACHE) > _SOURCE_CANDIDATE_CACHE_LIMIT:
-                _SOURCE_CANDIDATE_PROCESS_CACHE.popitem(last=False)
-            AdapterProfileLog.source_candidates(
-                SourceCandidateProfileEvent(
-                    label="source_candidates_parse",
-                    seconds=time.perf_counter() - started_at,
-                    count=len(candidates),
-                )
-            )
-        return candidates
-
-
-MeasurementQueryCacheInvalidationFamily.bind_adapter_caches(CellProfilerRuntimeAdapter)
-
-
-class RuntimeArtifactCacheInvalidationPolicy(
-    RuntimeArtifactKindPolicyMixin,
-    EnumKeyedStrategyMixin[ArtifactKind],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Nominal cache invalidation policy for one runtime artifact domain."""
-
-    __registry_family__ = RegistryFamily(
-        RegistryKeyAttribute.STRATEGY_LABEL,
-        registry_name="runtime_artifact_cache_invalidation_policy",
-    )
-
-    @abstractmethod
-    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
-        """Invalidate adapter caches affected by this artifact kind."""
-
-
-class FullRuntimeArtifactCacheInvalidationPolicy(RuntimeArtifactCacheInvalidationPolicy):
-    """Conservative invalidation for artifact kinds without narrower semantics."""
-
-    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
-        adapter.clear_runtime_query_caches()
-
-
-RuntimeArtifactCacheInvalidationPolicy.default_policy_type = (
-    FullRuntimeArtifactCacheInvalidationPolicy
-)
-
-
-class ImageRuntimeArtifactCacheInvalidationPolicy(FullRuntimeArtifactCacheInvalidationPolicy):
-    """Image writes may affect image reads and image-derived measurement alignment."""
-
-    kind = ArtifactKind.IMAGE
-
-    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
-        adapter._image_cache.clear()
-        adapter._artifact_availability_cache.clear()
-
-
-class ObjectLabelRuntimeArtifactCacheInvalidationPolicy(
-    FullRuntimeArtifactCacheInvalidationPolicy
-):
-    """Object writes may affect label reads, label domains, and measurement alignment."""
-
-    kind = ArtifactKind.OBJECT_LABELS
-
-    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
-        adapter._object_cache.clear()
-        adapter._label_domain_cache.clear()
-        adapter.object_feature_value_cache().clear()
-        adapter.object_label_measurement_values_cache().clear()
-        adapter.object_feature_axis_measurement_table_cache().clear()
-        adapter._measurement_cache.clear()
-        adapter._artifact_availability_cache.clear()
-
-
-class MeasurementRuntimeArtifactCacheInvalidationPolicy(
-    RuntimeArtifactCacheInvalidationPolicy
-):
-    """Measurement writes invalidate measurement queries without discarding labels/images."""
-
-    kind = ArtifactKind.MEASUREMENTS
-
-    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
-        adapter.clear_measurement_query_cache()
-
-
-class RelationshipRuntimeArtifactCacheInvalidationPolicy(
-    RuntimeArtifactCacheInvalidationPolicy
-):
-    """Relationship writes are independent of image/object/measurement read caches."""
-
-    kind = ArtifactKind.RELATIONSHIPS
-
-    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingAxisAliasResolution:
-    """Resolve aliases that identify a source-binding plane request."""
-
-    requested_aliases: tuple[str, ...]
-    group_bindings: tuple[NamedSourceBinding, ...]
-
-    def aliases(self) -> tuple[str, ...]:
-        requested = tuple(str(alias) for alias in self.requested_aliases)
-        if requested:
-            return requested
-        binding_aliases = tuple(
-            str(binding.alias)
-            for binding in self.group_bindings
-            if binding.alias
-        )
-        unique_aliases = tuple(dict.fromkeys(binding_aliases))
-        if len(unique_aliases) == 1:
-            return unique_aliases
-        return ()
-
-
-@dataclass(frozen=True, slots=True)
-class MatchedSourceBindingPlaneResolutionBase:
-    """Shared path-identity selection for matched source-binding candidates."""
-
-    axis_candidates: tuple["ParsedSourceCandidate", ...]
-    matched_indexes: tuple[int, ...]
-
-    def plane_index_for_identity(
-        self,
-        path_identity: ParsedSourceCandidatePathIdentity,
-    ) -> int | None:
-        if path_identity.is_empty:
-            return None
-        candidate_indexes = tuple(
-            index
-            for index in self.matched_indexes
-            if index < len(self.axis_candidates)
-            and self.axis_candidates[index].path_identity.intersects(path_identity)
-        )
-        unique_indexes = tuple(dict.fromkeys(candidate_indexes))
-        if len(unique_indexes) == 1:
-            return unique_indexes[0]
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentStepInputSourceBindingPlaneResolution(
-    MatchedSourceBindingPlaneResolutionBase
-):
-    """Resolve a source-binding plane from the current step input file identity."""
-
-    current_step_input_files: tuple[str, ...]
-
-    def plane_index(self) -> int | None:
-        return self.plane_index_for_identity(
-            ParsedSourceCandidatePathIdentity.from_paths(self.current_step_input_files)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeSourceProvenanceSourceBindingPlaneResolution(
-    MatchedSourceBindingPlaneResolutionBase
-):
-    """Resolve a source-binding plane from runtime virtual source provenance."""
-
-    step_input_source_paths: Mapping[str, str]
-
-    def plane_index(self) -> int | None:
-        return self.plane_index_for_identity(
-            ParsedSourceCandidatePathIdentity.from_paths(
-                tuple(self.step_input_source_paths.keys())
-                + tuple(self.step_input_source_paths.values())
-            )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeSourceProvenancePayloadPlaneResolution:
-    """Resolve a payload plane from runtime virtual source provenance."""
-
-    step_input_source_paths: Mapping[str, str]
-    channel_source_paths: tuple[str | None, ...]
-
-    def plane_index(self) -> int | None:
-        runtime_identity = ParsedSourceCandidatePathIdentity.from_paths(
-            tuple(self.step_input_source_paths.keys())
-            + tuple(self.step_input_source_paths.values())
-        )
-        if runtime_identity.is_empty:
-            return None
-        candidate_indexes = tuple(
-            index
-            for index, source_path in enumerate(self.channel_source_paths)
-            if ParsedSourceCandidatePathIdentity.from_paths(
-                (source_path,)
-            ).intersects(runtime_identity)
-        )
-        unique_indexes = tuple(dict.fromkeys(candidate_indexes))
-        if len(unique_indexes) == 1:
-            return unique_indexes[0]
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingMatchedPlaneResolution:
-    """Resolve matched source planes without confusing runtime site stacks for source axes."""
-
-    alias: str
-    axis_id: str
-    matched_indexes: tuple[int, ...]
-    source_binding_axis_size: int | None
-
-    @property
-    def value(self) -> int | None:
-        if len(self.matched_indexes) == 1:
-            return self.matched_indexes[0]
-        if SourceBindingAxisCardinality(
-            self.source_binding_axis_size
-        ).is_single_source_axis:
-            return None
-        raise RuntimeError(
-            f"Source binding alias {self.alias!r} matched multiple source planes "
-            f"for axis {self.axis_id!r}: {self.matched_indexes!r}."
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingAxisPlaneResolution:
-    """Single-plane resolution for source-binding axis projection requests."""
-
-    source_aliases: tuple[str, ...]
-    indexes: tuple[int, ...]
-
-    def plane_index(self) -> int | None:
-        unique_indexes = tuple(dict.fromkeys(self.indexes))
-        if not unique_indexes:
-            return None
-        if len(unique_indexes) == 1:
-            return unique_indexes[0]
-        if self.is_composed_axis_request():
-            return None
-        raise RuntimeError(
-            "Source-binding plane resolution produced conflicting indexes: "
-            f"{unique_indexes} for aliases {self.source_aliases!r}."
-        )
-
-    def is_composed_axis_request(self) -> bool:
-        """Return whether aliases name the full composed source-binding axis."""
-        return len(tuple(dict.fromkeys(self.source_aliases))) > 1
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingRequestBase(ABC):
-    """Shared nominal fields for source-binding request records."""
-
-    alias: str
-    binding: NamedSourceBinding
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingResolutionRequest(SourceBindingRequestBase):
-    """Source-binding resolution inputs for one external image alias."""
-
-    adapter: CellProfilerRuntimeAdapter
-    current_image: CellProfilerCurrentImage
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingMatchPlanRequest:
-    """Typed request for deriving target metadata from an image-set match plan."""
-
-    alias: str
-    plan: SourceBindingMatchPlan
-    step_input_candidates: tuple["ParsedSourceCandidate", ...]
-    target_candidates: tuple["ParsedSourceCandidate", ...]
-    full_pipeline_candidates: tuple["ParsedSourceCandidate", ...]
-    source_binding_plan: CompiledSourceBindingPlan
-    group_key: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class AxisScopeComponentsRequest:
-    """Source candidates used to derive the current runtime axis scope."""
-
-    axis_id: str
-    step_input_candidates: tuple["ParsedSourceCandidate", ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SourceAliasOrderIndexRequest:
-    """Source candidate and match-plan context for source-order alignment."""
-
-    candidate: "ParsedSourceCandidate"
-    match_plan_request: SourceBindingMatchPlanRequest
-
-
-class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
-    """Nominal family for resolving typed source bindings."""
-
-    __registry_key__ = "origin_key"
-    __skip_if_no_key__ = True
-    origin: ClassVar[SourceBindingOrigin | None] = None
-    origin_key: ClassVar[str | None] = None
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_origin(cls, origin: SourceBindingOrigin) -> "SourceBindingResolver":
-        return cls.__registry__[origin.value]()
-
-    @abstractmethod
-    def resolve_image(self, request: SourceBindingResolutionRequest) -> ImagePayloadValue:
-        """Resolve one named source image binding."""
-
-    def require_matched_candidates(
-        self,
-        request: MatchedSourceCandidatesRequest,
-    ) -> tuple["ParsedSourceCandidate", ...]:
-        """Return matched source candidates or raise with resolver context."""
-
-        if request.matched:
-            return request.matched
-        candidate_summary = _source_candidate_summary(request.candidates)
-        raise RuntimeError(
-            f"CellProfiler source alias '{request.alias}' with selector "
-            f"{request.binding.selector!r} matched no files in the "
-            f"{request.source_description} source universe. "
-            f"Candidate sample: {candidate_summary!r}."
-        )
-
-
-class StepInputSourceBindingResolver(SourceBindingResolver):
-    """Resolve named images directly from the current FunctionStep input."""
-
-    origin = SourceBindingOrigin.STEP_INPUT
-    origin_key = SourceBindingOrigin.STEP_INPUT.value
-
-    def resolve_image(self, request: SourceBindingResolutionRequest) -> ImagePayloadValue:
-        if not request.binding.requires_selector_resolution:
-            return self.natural_step_input_payload(request.current_image)
-        step_input_files = request.adapter.source_binding_context.step_input_files
-        if not step_input_files:
-            raise NotImplementedError(
-                f"CellProfiler source alias '{request.alias}' needs step-input "
-                "selector resolution, but no step input file universe was "
-                "provided to the runtime adapter."
-            )
-        parsed_candidates = request.adapter.source_candidates(step_input_files)
-        current_candidates = request.adapter.source_candidates(
-            request.adapter.source_binding_context.current_step_input_files
-        )
-        match_started_at = time.perf_counter()
-        matched = SourceCandidateMatcher.match_candidates(
-            candidates=parsed_candidates,
-            binding=request.binding,
-            inherit_components=SourceCandidateMatcher.inherited_scope_components(
-                current_candidates
-            ),
-        )
-        AdapterProfileLog.source_candidates(
-            SourceCandidateProfileEvent(
-                label="source_candidates_match",
-                seconds=time.perf_counter() - match_started_at,
-                alias=request.alias,
-                source=SourceBindingOrigin.STEP_INPUT,
-                count=len(matched),
-            )
-        )
-        selected_files = self.require_matched_candidates(
-            MatchedSourceCandidatesRequest.from_resolution(
-                request,
-                matched=matched,
-                candidates=parsed_candidates,
-                source_description="step input",
-            )
-        )
-        return _select_step_input_stack(
-            request=request,
-            selected_sources=selected_files,
-        )
-
-    @staticmethod
-    def natural_step_input_payload(
-        current_image: CellProfilerCurrentImage,
-    ) -> ImagePayloadValue:
-        if not isinstance(current_image, (RuntimeArrayPayload, np.ndarray)):
-            return current_image
-        if current_image.ndim == 2:
-            return current_image
-        return RestackLikePayloadAuthority.restack(
-            _unstack_payload(current_image),
-            current_image,
-        )
-
-
-class PipelineStartSourceBindingResolver(SourceBindingResolver):
-    """Resolve named images from the original pipeline-start source universe."""
-
-    origin = SourceBindingOrigin.PIPELINE_START
-    origin_key = SourceBindingOrigin.PIPELINE_START.value
-
-    def resolve_image(self, request: SourceBindingResolutionRequest) -> ImagePayloadValue:
-        pipeline_input_files = request.adapter.source_binding_context.pipeline_input_files
-        if not pipeline_input_files:
-            raise NotImplementedError(
-                f"CellProfiler source alias '{request.alias}' needs pipeline-start "
-                "selector resolution, but no pipeline-start file universe was "
-                "provided to the runtime adapter."
-            )
-        step_input_candidates = request.adapter.source_candidates(
-            request.adapter.source_binding_context.current_step_input_files
-        )
-        inherit_components = SourceCandidateMatcher.pipeline_start_inherited_components(
-            request.adapter.source_binding_plan,
-            step_input_candidates,
-        )
-        parsed_candidates = request.adapter.source_candidates(pipeline_input_files)
-        match_started_at = time.perf_counter()
-        initially_matched = SourceCandidateMatcher.match_candidates(
-            candidates=parsed_candidates,
-            binding=request.binding,
-            inherit_components=inherit_components,
-        )
-        matched = SourceCandidateMatcher.match_image_set_candidates(
-            request.alias,
-            request.adapter.source_binding_plan.match_plan,
-            step_input_candidates,
-            initially_matched,
-            parsed_candidates,
-            source_binding_plan=request.adapter.source_binding_plan,
-            group_key=request.adapter.group_key,
-        )
-        AdapterProfileLog.source_candidates(
-            SourceCandidateProfileEvent(
-                label="source_candidates_match",
-                seconds=time.perf_counter() - match_started_at,
-                alias=request.alias,
-                source=SourceBindingOrigin.PIPELINE_START,
-                count=len(matched),
-            )
-        )
-        selected_files = self.require_matched_candidates(
-            MatchedSourceCandidatesRequest.from_resolution(
-                request,
-                matched=matched,
-                candidates=parsed_candidates,
-                source_description="pipeline start",
-            )
-        )
-        load_started_at = time.perf_counter()
-        payload = _load_pipeline_start_stack(
-            adapter=request.adapter,
-            selected_sources=selected_files,
-            current_image=request.current_image,
-        )
-        AdapterProfileLog.source_candidates(
-            SourceCandidateProfileEvent(
-                label="source_candidates_load",
-                seconds=time.perf_counter() - load_started_at,
-                alias=request.alias,
-                count=len(selected_files),
-            )
-        )
-        return payload
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerImageNumberCandidateContext:
-    """Candidate universe for resolving one source path to a CP image number."""
-
-    source_path: str
-    candidates: tuple["ParsedSourceCandidate", ...]
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerImageNumberMatchedContext:
-    """Matched source candidate with its image-set candidate universe."""
-
-    matched_candidate: "ParsedSourceCandidate"
-    candidates: tuple["ParsedSourceCandidate", ...]
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerImageNumberResolution:
-    """CellProfiler ImageNumber lookup result with explicit absence."""
-
-    value: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerImageNumberResolver:
-    """Resolve source paths to CellProfiler image numbers with explicit absence flow."""
-
-    adapter: CellProfilerRuntimeAdapter
-
-    @classmethod
-    def for_adapter(
-        cls,
-        adapter: CellProfilerRuntimeAdapter,
-    ) -> "CellProfilerImageNumberResolver":
-        return cls(adapter)
-
-    def image_number_for_paths(self, source_paths: tuple[str, ...]) -> int | None:
-        source_path = None
-        if source_paths:
-            source_path = source_paths[0]
-        return self.image_number_for_path(source_path)
-
-    def image_number_start_for_paths(
-        self,
-        source_paths: tuple[str, ...],
-    ) -> int | None:
-        """Return the first CP ImageNumber represented by a source-path group."""
-        image_numbers = self.image_numbers_for_paths(source_paths)
-        if not image_numbers:
-            return None
-        return min(image_numbers)
-
-    def image_numbers_for_paths(self, source_paths: tuple[str, ...]) -> tuple[int, ...]:
-        """Return ordered CP ImageNumbers represented by source paths."""
-        numbers: list[int] = []
-        seen: set[int] = set()
-        for source_path in source_paths:
-            image_number = self.image_number_for_path(source_path)
-            if image_number is None or image_number in seen:
-                continue
-            numbers.append(image_number)
-            seen.add(image_number)
-        return tuple(numbers)
-
-    def image_number_for_path(self, source_path: str | None) -> int | None:
-        return self.image_number_resolution(source_path).value
-
-    def image_number_resolution(
-        self,
-        source_path: str | None,
-    ) -> CellProfilerImageNumberResolution:
-        if source_path is None:
-            return CellProfilerImageNumberResolution()
-        candidate_context = self.candidate_context(source_path)
-        if candidate_context is None:
-            return CellProfilerImageNumberResolution()
-        matched_context = self.matched_context(candidate_context)
-        if matched_context is None:
-            return CellProfilerImageNumberResolution()
-        return CellProfilerImageNumberResolution(self.image_number(matched_context))
-
-    def candidate_context(
-        self,
-        source_path: str,
-    ) -> CellProfilerImageNumberCandidateContext | None:
-        pipeline_paths = self.pipeline_paths()
-        if not pipeline_paths:
-            return None
-        return CellProfilerImageNumberCandidateContext(
-            source_path=source_path,
-            candidates=self.adapter.source_candidates(pipeline_paths),
-        )
-
-    def matched_context(
-        self,
-        context: CellProfilerImageNumberCandidateContext,
-    ) -> CellProfilerImageNumberMatchedContext | None:
-        matched_candidate = self.matched_source_candidate(
-            context.source_path,
-            context.candidates,
-        )
-        if matched_candidate is None:
-            return None
-        return CellProfilerImageNumberMatchedContext(
-            matched_candidate=matched_candidate,
-            candidates=context.candidates,
-        )
-
-    def image_number(
-        self,
-        context: CellProfilerImageNumberMatchedContext,
-    ) -> int | None:
-        return self.image_numbers_by_set(context.candidates).get(
-            SourceImageSetIdentity.from_metadata(
-                context.matched_candidate.metadata,
-                fallback_source_path=context.matched_candidate.resolved_path,
-            )
-        )
-
-    def pipeline_paths(self) -> tuple[str, ...]:
-        return tuple(
-            path
-            for path in self.adapter.source_binding_context.pipeline_input_files
-            if is_image_path(path)
-        )
-
-    def matched_source_candidate(
-        self,
-        source_path: str,
-        candidates: tuple["ParsedSourceCandidate", ...],
-    ) -> "ParsedSourceCandidate | None":
-        first_source_path = self.adapter.cellprofiler_source_order_path(source_path)
-        for candidate in candidates:
-            candidate_paths = {
-                self.adapter.cellprofiler_source_order_path(candidate.path),
-                self.adapter.cellprofiler_source_order_path(candidate.resolved_path),
-            }
-            if first_source_path in candidate_paths:
-                return candidate
-        return None
-
-    @staticmethod
-    def image_numbers_by_set(
-        candidates: tuple["ParsedSourceCandidate", ...],
-    ) -> Mapping[SourceImageSetIdentity, int]:
-        image_numbers: dict[SourceImageSetIdentity, int] = {}
-        for candidate in SourceCandidateMatcher.ordered_source_candidates(candidates):
-            image_set_key = SourceImageSetIdentity.from_metadata(
-                candidate.metadata,
-                fallback_source_path=candidate.resolved_path,
-            )
-            if image_set_key not in image_numbers:
-                image_numbers[image_set_key] = len(image_numbers) + 1
-        return MappingProxyType(image_numbers)
-
-
-@dataclass(frozen=True)
-class SourceBindingPlaneCandidateAxes:
-    """Source candidate axes shared by plane resolution request records."""
-
-    axis_candidates: tuple["ParsedSourceCandidate", ...]
-    step_candidates: tuple["ParsedSourceCandidate", ...]
-    target_candidates: tuple["ParsedSourceCandidate", ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingPlaneCandidateContext(SourceBindingPlaneCandidateAxes):
-    """Candidate universe for resolving an alias to a current source plane."""
-
-    request: SourceBindingRequestBase
-    pipeline_candidates: tuple["ParsedSourceCandidate", ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingMatchedAxisRequest(
-    SourceBindingRequestBase,
-    SourceBindingPlaneCandidateAxes,
-):
-    """Source-binding candidate axes needed to resolve matched source planes."""
-
-    full_pipeline_candidates: tuple["ParsedSourceCandidate", ...]
-
-    @classmethod
-    def from_context(
-        cls,
-        context: SourceBindingPlaneCandidateContext,
-    ) -> "SourceBindingMatchedAxisRequest":
-        return cls(
-            alias=context.request.alias,
-            binding=context.request.binding,
-            axis_candidates=context.axis_candidates,
-            step_candidates=context.step_candidates,
-            target_candidates=context.target_candidates,
-            full_pipeline_candidates=context.pipeline_candidates,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingPlaneCandidateResolution:
-    """Resolved source-binding plane candidate context, or explicit absence."""
-
-    context: SourceBindingPlaneCandidateContext | None = None
-
-    @classmethod
-    def from_adapter(
-        cls,
-        adapter: CellProfilerRuntimeAdapter,
-        alias: str,
-    ) -> "SourceBindingPlaneCandidateResolution":
-        binding = adapter.source_binding_plan.binding_for_alias(
-            alias,
-            adapter.group_key,
-        )
-        if binding is None:
-            return cls()
-        source_context = adapter.source_binding_context
-        if not source_context.step_input_files:
-            return cls()
-
-        step_candidates = adapter.source_candidates(source_context.step_input_files)
-        pipeline_candidates = adapter.source_candidates(
-            source_context.pipeline_input_files or source_context.step_input_files
-        )
-        candidate_universe = SourceBindingPlaneCandidateUniverse.from_binding(
-            binding=binding,
-            adapter=adapter,
-            step_candidates=step_candidates,
-            pipeline_candidates=pipeline_candidates,
-        )
-        axis_candidates = candidate_universe.axis_candidates
-        if not axis_candidates:
-            return cls()
-        return cls(
-            SourceBindingPlaneCandidateContext(
-                request=SourceBindingRequestBase(alias=alias, binding=binding),
-                axis_candidates=axis_candidates,
-                step_candidates=step_candidates,
-                target_candidates=candidate_universe.target_candidates,
-                pipeline_candidates=pipeline_candidates,
-            )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingPlaneCandidateUniverse:
-    """Origin-aware source universe for resolving alias-to-plane indexes."""
-
-    axis_candidates: tuple["ParsedSourceCandidate", ...]
-    target_candidates: tuple["ParsedSourceCandidate", ...]
-
-    @classmethod
-    def from_binding(
-        cls,
-        *,
-        binding: NamedSourceBinding,
-        adapter: CellProfilerRuntimeAdapter,
-        step_candidates: tuple["ParsedSourceCandidate", ...],
-        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
-    ) -> "SourceBindingPlaneCandidateUniverse":
-        candidate_source = (
-            pipeline_candidates
-            if binding.origin is SourceBindingOrigin.PIPELINE_START
-            else step_candidates
-        )
-        ordered_candidates = SourceCandidateMatcher.ordered_binding_candidates(
-            binding=binding,
-            candidates=candidate_source,
-        )
-        return cls(
-            axis_candidates=SourceCandidateMatcher.axis_scoped_candidates(
-                ordered_candidates,
-                AxisScopeComponentsRequest(
-                    axis_id=adapter.axis_id,
-                    step_input_candidates=step_candidates,
-                ),
-            ),
-            target_candidates=candidate_source,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingPlaneMatchedContext:
-    """Matched axis indexes for one source-binding alias."""
-
-    alias: str
-    matched_indexes: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class CollectionAttributeProjection:
-    """Descriptor projecting one member attribute from a tuple collection."""
-
-    collection_attr: str
-    member_attr: str
-
-    def __get__(
-        self,
-        instance: "PipelineStartSourceLoadRequest | None",
-        owner: type["PipelineStartSourceLoadRequest"] | None = None,
-    ) -> tuple[str, ...]:
-        del owner
-        if instance is None:
-            return ()
-        collection = attrgetter(self.collection_attr)(instance)
-        member = attrgetter(self.member_attr)
-        return tuple(member(item) for item in collection)
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineStartSourceLoadRequest:
-    """Typed request for loading pipeline-start source payloads."""
-
-    adapter: CellProfilerRuntimeAdapter
-    selected_sources: tuple["ParsedSourceCandidate", ...]
-    backend: str
-    identity_paths = CollectionAttributeProjection("selected_sources", "path")
-    storage_paths = CollectionAttributeProjection("selected_sources", "resolved_path")
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineStartSourcePayloadRequest:
-    """One loaded source payload with its source and storage identity."""
-
-    payload: ImagePayloadValue
-    source_path: str
-    storage_path: str | None
-    load_request: PipelineStartSourceLoadRequest
-
-    @classmethod
-    def from_candidate(
-        cls,
-        *,
-        payload: ImagePayloadValue,
-        source: "ParsedSourceCandidate",
-        load_request: PipelineStartSourceLoadRequest,
-    ) -> "PipelineStartSourcePayloadRequest":
-        return cls(
-            payload=payload,
-            source_path=source.path,
-            storage_path=source.resolved_path,
-            load_request=load_request,
-        )
-
-    @property
-    def metadata_source_path(self) -> str:
-        if self.storage_path is not None:
-            return self.storage_path
-        return self.source_path
-
-    @property
-    def context(self) -> CellProfilerProcessingContext:
-        return RequireProcessingContextBoundaryPolicy(self.load_request.adapter).context
-
-    def with_payload(
-        self,
-        payload: ImagePayloadValue,
-    ) -> "PipelineStartSourcePayloadRequest":
-        return replace(self, payload=payload)
-
-    def source_metadata_request(self) -> ImagePayloadSourceMetadataRequest:
-        return ImagePayloadSourceMetadataRequest(
-            image=self.payload,
-            source_path=self.metadata_source_path,
-            read_backend=self.load_request.backend,
-            filemanager=self.context.filemanager,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineStartCurrentStepPayloadResolution:
-    """Typed result for matching selected sources against the current payload."""
-
-    payload: ImagePayloadValue | None = None
-
-    @property
-    def is_matched(self) -> bool:
-        return self.payload is not None
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineStartCurrentStepPayloadMatcher:
-    """Nominal matcher for reusing the current payload at pipeline start."""
-
-    current_files: tuple[str, ...]
-    current_source_paths: tuple[str, ...]
-    current_image_paths: tuple[str, ...]
-
-    @classmethod
-    def from_runtime(
-        cls,
-        *,
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: CellProfilerCurrentImage,
-    ) -> "PipelineStartCurrentStepPayloadMatcher":
-        current_files = adapter.source_binding_context.current_step_input_files
-        metadata = image_payload_metadata(current_image)
-        current_image_paths = tuple(
-            str(path)
-            for path in (*metadata.channel_source_paths, metadata.source_path)
-            if path is not None and str(path)
-        )
-        current_source_path_values: list[str] = []
-        step_input_source_paths = adapter.source_binding_context.step_input_source_paths
-        for path in current_files:
-            if path in step_input_source_paths:
-                current_source_path_values.append(step_input_source_paths[path])
-                continue
-            current_source_path_values.append(path)
-        current_source_paths = tuple(current_source_path_values)
-        return cls(
-            current_files=current_files,
-            current_source_paths=current_source_paths,
-            current_image_paths=current_image_paths,
-        )
-
-    def resolve(
-        self,
-        *,
-        selected_paths: tuple[str, ...],
-        current_image: CellProfilerCurrentImage,
-    ) -> PipelineStartCurrentStepPayloadResolution:
-        if not (self.current_files and self.current_image_paths):
-            return PipelineStartCurrentStepPayloadResolution()
-        if (
-            selected_paths == self.current_files
-            or selected_paths == self.current_source_paths
-        ):
-            return PipelineStartCurrentStepPayloadResolution(payload=current_image)
-        current_indexes = {
-            path: index for index, path in enumerate(self.current_files)
-        }
-        current_indexes.update(
-            {path: index for index, path in enumerate(self.current_source_paths)}
-        )
-        if any(path not in current_indexes for path in selected_paths):
-            return PipelineStartCurrentStepPayloadResolution()
-        slices = _unstack_payload(current_image)
-        selected_slices = [slices[current_indexes[path]] for path in selected_paths]
-        return PipelineStartCurrentStepPayloadResolution(
-            payload=RestackLikePayloadAuthority.restack(selected_slices, current_image)
-        )
-
-
-class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
-    """Nominal family for loading selected pipeline-start source files."""
-
-    __registry_key__ = "loader_key"
-    __skip_if_no_key__ = True
-    loader_key: ClassVar[str | None] = None
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_paths(
-        cls,
-        selected_paths: tuple[str, ...],
-    ) -> "PipelineStartSourceFileLoader":
-        matching_loaders = tuple(
-            loader
-            for loader in (
-                loader_type() for loader_type in cls.__registry__.values()
-            )
-            if loader.accepts_all(selected_paths)
-        )
-        if len(matching_loaders) == 1:
-            return matching_loaders[0]
-        suffixes = sorted({Path(path).suffix.lower() for path in selected_paths})
-        if not matching_loaders:
-            raise RuntimeError(
-                "Pipeline-start source resolution has no registered loader for "
-                f"selected source suffixes {suffixes!r}."
-            )
-        raise RuntimeError(
-            "Pipeline-start source resolution has ambiguous registered loaders for "
-            f"selected source suffixes {suffixes!r}."
-        )
-
-    def accepts_all(self, selected_paths: tuple[str, ...]) -> bool:
-        return bool(selected_paths) and all(
-            self.accepts_path(path) for path in selected_paths
-        )
-
-    @abstractmethod
-    def accepts_path(self, path: str) -> bool:
-        """Return whether this loader owns one source file path."""
-
-    @abstractmethod
-    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[ImagePayloadValue]:
-        """Load selected source files as stackable image-like payloads."""
-
-    def source_payload_with_metadata(
-        self,
-        request: PipelineStartSourcePayloadRequest,
-    ) -> ImagePayloadValue:
-        """Attach loader-owned source metadata to an image-like payload."""
-
-        metadata = image_payload_metadata(request.payload)
-        if not metadata.has_values:
-            metadata = request.source_metadata_request().metadata()
-        return ImagePayloadContextRequest(
-            data=cast(ImagePayloadValue, image_payload_data(request.payload)),
-            mask=cast(ImagePayloadMaskValue, image_payload_mask(request.payload)),
-            metadata=metadata,
-        ).payload()
-
-
-def _label_stack_repeats_first_plane(label_array: np.ndarray) -> bool:
-    if label_array.ndim <= 2:
-        return False
-    first_plane = label_array[0]
-    return all(np.array_equal(first_plane, label_array[index]) for index in range(1, label_array.shape[0]))
-
-
-class RuntimeRecordStackAuthority:
-    """Stack grouped runtime image/object-label records with payload semantics."""
-
-    @classmethod
-    def stack_image_records(cls, records: tuple[StoredRuntimeValue, ...]) -> ImagePayloadValue:
-        payloads = tuple(record.value.data for record in records)
-        arrays = tuple(
-            cls.grouped_image_array(image_payload_data(payload))
-            for payload in payloads
-        )
-        data = cls.stack_grouped_planes(arrays)
-        masks = tuple(image_payload_mask(payload) for payload in payloads)
-        mask = cls.stack_grouped_masks(masks)
-        return ImagePayloadContextRequest(
-            data=cast(ImagePayloadValue, data),
-            mask=cast(ImagePayloadMaskValue, mask),
-            metadata=ImagePayloadMetadataCompositionRequest(payloads).metadata(),
-        ).payload()
-
-    @classmethod
-    def stack_grouped_planes(cls, values: tuple[ImagePayloadValue, ...]) -> ImagePayloadValue:
-        """Stack grouped values as image planes when they are homogeneous slices."""
-        if not values:
-            raise ValueError("Cannot stack an empty grouped runtime value set.")
-        memory_type = detect_memory_type(values[0])
-        if cls.all_values_are_2d_arrays(values):
-            return stack_slices(list(values), memory_type, 0)
-        return np.stack(
-            tuple(np.asarray(value) for value in values),
-            axis=0,
-        )
-
-    @classmethod
-    def stack_grouped_masks(cls, masks: tuple[ImagePayloadMaskValue, ...]) -> ImagePayloadMaskValue:
-        """Stack grouped masks while rejecting partially masked image groups."""
-        present_masks = tuple(mask for mask in masks if mask is not None)
-        if present_masks and len(present_masks) != len(masks):
-            raise ValueError("Cannot stack mixed masked and unmasked grouped image inputs.")
-        if not present_masks:
-            return None
-        return cls.stack_grouped_planes(present_masks)
-
-    @staticmethod
-    def grouped_image_array(array: ImagePayloadValue) -> ImagePayloadValue:
-        array_view = np.asarray(array)
-        if (
-            array_view.ndim == 3
-            and not is_color_image_slice(array_view)
-            and array_view.shape[0] == 1
-        ):
-            return array_view[0]
-        return array
-
-    @staticmethod
-    def all_values_are_2d_arrays(values: tuple[ImagePayloadValue, ...]) -> bool:
-        """Return whether every grouped value is a two-dimensional array-like plane."""
-        return all(np.asarray(value).ndim == 2 for value in values)
-
-    @staticmethod
-    def stack_object_label_records(
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> ObjectLabelSet:
-        values = tuple(
-            ObjectLabelSet.from_runtime_value(record.value)
-            for record in records
-        )
-        first = values[0]
-        representations = {value.representation for value in values}
-        if len(representations) != 1:
-            raise ValueError("Cannot stack grouped object labels with mixed representations.")
-        return ObjectLabelPure2DSliceAggregator.aggregate(
-            values,
-            detect_memory_type(first.labels),
-            force_plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        )
-
-    @classmethod
-    def normalize_dense_object_label_payload(cls, labels: DenseLabelPayload) -> DenseLabelPayload:
-        """Return dense object labels as one array payload, not slice lists."""
-        if labels is None or isinstance(labels, SparseIJVLabelRows):
-            return labels
-        if not _is_sequence_payload(labels):
-            return labels
-        if not labels:
-            return np.asarray(labels, dtype=np.int32)
-        memory_type = detect_memory_type(labels[0])
-        label_tuple = tuple(labels)
-        DenseLabelSequenceMemoryBudget(label_tuple).validate()
-        return ImageStackLayout.stack_slices_or_single_stack(
-            labels,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
-
-    @staticmethod
-    def stack_dense_label_sequence(
-        labels: Sequence[DenseLabelPayload],
-        memory_type: str,
-    ) -> DenseLabelPayload:
-        """Stack a homogeneous dense-label sequence without image-slice assumptions."""
-        label_list = list(labels)
-        arrays = tuple(np.asarray(label) for label in label_list)
-        shapes = {tuple(array.shape) for array in arrays}
-        if len(shapes) == 1:
-            _raise_if_dense_label_stack_too_large(arrays)
-            return np.stack(arrays, axis=0)
-        return stack_slices(label_list, memory_type, 0)
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourcePlaneProjectionBase(metaclass=AutoRegisterMeta):
-    """Current-source plane identity authority for stack-like runtime payloads."""
-
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key: ClassVar[str | None] = None
-
-    adapter: "CellProfilerRuntimeAdapter"
-    current_image: CellProfilerCurrentImage
-
-    @classmethod
-    def registered_types(cls) -> tuple[type["CurrentSourcePlaneProjectionBase"], ...]:
-        return tuple(cls.__registry__.values())
-
-    def matching_plane_index(self, payload: SourceScopedPayload) -> int | None:
-        plane_selection = self.select_matching_plane(payload)
-        if not plane_selection.is_matched:
-            return None
-        return plane_selection.plane_index
-
-    def payload_plane_identities(
-        self,
-        payload: SourceScopedPayload,
-    ) -> SourcePlaneIdentitySequence:
-        return self._payload_identities(payload, policy=_SOURCE_PLANE_IDENTITY_POLICY)
-
-    def payload_image_set_identities(
-        self,
-        payload: SourceScopedPayload,
-    ) -> SourcePlaneIdentitySequence:
-        """Return plane identities reduced to the source image-set axes."""
-        return self._payload_identities(payload, policy=SourceImageSetIdentity.DEFAULT_POLICY)
-
-    def _payload_identities(
-        self,
-        payload: SourceScopedPayload,
-        *,
-        policy: SourceImageSetIdentityPolicy,
-    ) -> SourcePlaneIdentitySequence:
-        metadata = image_payload_metadata(payload)
-        return tuple(
-            self._plane_identity(metadata, index, policy=policy)
-            for index in range(len(metadata.channel_source_paths))
-        )
-
-    def payload_has_plane_identity(self, payload: SourceScopedPayload) -> bool:
-        return any(self.payload_plane_identities(payload))
-
-    def select_matching_plane(
-        self,
-        payload: SourceScopedPayload,
-    ) -> "CurrentSourcePayloadPlaneSelection":
-        current_selector = RuntimeRecordSourceImageSetSelector(
-            self.adapter,
-            self.current_image,
-        )
-        if current_selector.has_template_current_source_scope():
-            return CurrentSourcePayloadPlaneSelection()
-        current_identities = current_selector.current_source_plane_identities()
-        if not current_identities:
-            return CurrentSourcePayloadPlaneSelection()
-        if len(current_identities) > 1:
-            return CurrentSourcePayloadPlaneSelection()
-
-        plane_identities = self.payload_plane_identities(payload)
-        if not any(plane_identities):
-            return CurrentSourcePayloadPlaneSelection()
-        candidate_indexes = tuple(
-            index
-            for index, identity in enumerate(plane_identities)
-            if identity & current_identities
-        )
-        if not candidate_indexes:
-            return CurrentSourcePayloadPlaneSelection()
-        if len(candidate_indexes) != 1:
-            raise RuntimeError(
-                "Current source image projection requires exactly one matching "
-                f"runtime image plane, got {candidate_indexes}."
-            )
-        return CurrentSourcePayloadPlaneSelection(candidate_indexes[0])
-
-    @staticmethod
-    def _plane_identity(
-        metadata: ImagePayloadMetadata,
-        plane_index: int,
-        *,
-        policy: SourceImageSetIdentityPolicy,
-    ) -> frozenset[SourceImageSetIdentity]:
-        plane_metadata = metadata.for_channel(plane_index)
-        if not plane_metadata.has_values:
-            return frozenset()
-        source_component_metadata = plane_metadata.source_component_metadata
-        if source_component_metadata is None:
-            source_component_metadata = {}
-        fallback_source_path = plane_metadata.source_path
-        if fallback_source_path is None:
-            fallback_source_path = ""
-        return frozenset(
-            (
-                SourceImageSetIdentity.from_metadata(
-                    source_component_metadata,
-                    fallback_source_path=fallback_source_path,
-                    policy=policy,
-                ),
-            )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourcePayloadPlaneSelector(CurrentSourcePlaneProjectionBase):
-    """Select the stacked payload plane matching the current source image."""
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourcePayloadPlaneSelection:
-    """Typed result for current-source payload plane selection."""
-
-    plane_index: int | None = None
-
-    @property
-    def is_matched(self) -> bool:
-        return self.plane_index is not None
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadProjection:
-    """Project source-bound image stacks to the adapter's selected runtime plane."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    current_image: ImagePayloadMetadataInput | None = None
-
-    def project(
-        self,
-        payload: ImagePayloadMetadataInput,
-    ) -> ImagePayloadMetadataInput:
-        if self.adapter.runtime_slice_plane_index() is None:
-            return payload
-        plane_stack = RuntimePlaneImagePayloadStack(payload)
-        if not plane_stack.is_projectable:
-            return payload
-        selection = RuntimePlaneImagePayloadPlaneSelection(
-            adapter=self.adapter,
-            payload=payload,
-            current_image=self.current_image,
-            plane_count=plane_stack.plane_count,
-        ).select()
-        plane_index = selection.plane_index
-        if plane_index is None:
-            return payload
-        if plane_index >= plane_stack.plane_count:
-            raise RuntimeError(
-                "Runtime image plane projection produced an out-of-range plane "
-                f"index {plane_index} for payload shape {plane_stack.shape!r}."
-            )
-        return RuntimePlaneImagePayloadSliceContext(
-            payload=payload,
-            current_image=self.current_image,
-            plane=plane_stack.plane(plane_index),
-            plane_index=plane_index,
-            source_context=selection.source_context,
-        ).project()
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadStack:
-    """Array-domain view used for runtime-plane image projection."""
-
-    payload: ImagePayloadMetadataInput
-
-    @property
-    def array(self) -> np.ndarray:
-        return np.asarray(image_payload_data(self.payload))
-
-    @property
-    def shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.array.shape)
-
-    @property
-    def is_projectable(self) -> bool:
-        return self.array.ndim >= 3 and self.plane_count > 1
-
-    @property
-    def plane_count(self) -> int:
-        if self.array.ndim < 1:
-            return 0
-        return int(self.array.shape[0])
-
-    def plane(self, plane_index: int) -> np.ndarray:
-        return self.array[plane_index]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneProjectionRequest:
-    """Shared runtime-plane projection request coordinates."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    plane_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlanePayloadProjectionRequest(RuntimePlaneProjectionRequest):
-    """Runtime-plane projection request coordinates for one image payload."""
-
-    payload: ImagePayloadMetadataInput
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadPlaneSelection(RuntimePlanePayloadProjectionRequest):
-    """Resolve a projection plane from source provenance or current image context."""
-
-    current_image: ImagePayloadMetadataInput | None
-
-    def select(self) -> "RuntimePlaneImagePayloadPlaneSelectionResult":
-        axis = SourceImagePlaneAxisPolicy.for_request(
-            SourceImagePlaneAxisRequest(self.payload)
-        ).axis()
-        if axis is not None:
-            if (
-                axis is RuntimePlaneAxis.SOURCE_BINDING
-                and self.current_image is not None
-                and not RuntimePlaneCurrentImagePayloadPlaneIndex(
-                    adapter=self.adapter,
-                    current_image=self.current_image,
-                    plane_count=self.plane_count,
-                    ).current_image_is_planar()
-            ):
-                return RuntimePlaneImagePayloadPlaneSelectionResult(
-                    plane_index=None,
-                    source_context=RuntimePlaneImagePayloadSourceContext.PAYLOAD_PLANE,
-                )
-            return RuntimePlaneImagePayloadPlaneSelectionResult(
-                plane_index=RuntimePlaneImagePayloadPlaneIndex(
-                    adapter=self.adapter,
-                    payload=self.payload,
-                    plane_count=self.plane_count,
-                    axis=axis,
-                ).value(),
-                source_context=RuntimePlaneImagePayloadSourceContext.PAYLOAD_PLANE,
-            )
-        return RuntimePlaneImagePayloadPlaneSelectionResult(
-            plane_index=RuntimePlaneCurrentImagePayloadPlaneIndex(
-                adapter=self.adapter,
-                current_image=self.current_image,
-                plane_count=self.plane_count,
-            ).value(),
-            source_context=RuntimePlaneImagePayloadSourceContext.CURRENT_IMAGE,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadPlaneSelectionResult:
-    """Plane selection plus the authority for the projected plane source context."""
-
-    plane_index: int | None
-    source_context: "RuntimePlaneImagePayloadSourceContext"
-
-
-class RuntimePlaneImagePayloadSourceContext(Enum):
-    """Source-context authority for a projected runtime image plane."""
-
-    PAYLOAD_PLANE = "payload_plane"
-    CURRENT_IMAGE = "current_image"
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneCurrentImagePayloadPlaneIndex(RuntimePlaneProjectionRequest):
-    """Fallback plane selection for stacks that lost per-plane source metadata."""
-
-    current_image: ImagePayloadMetadataInput | None
-
-    def value(self) -> int | None:
-        if self.current_image is None:
-            return None
-        if not self.current_image_is_planar():
-            return None
-        return RuntimePlaneIndexBounds(
-            plane_count=self.plane_count,
-            plane_index=self.adapter.runtime_slice_plane_index(),
-        ).bounded_value()
-
-    def current_image_is_planar(self) -> bool:
-        current_data = image_payload_data(self.current_image)
-        if is_color_image_slice(current_data):
-            return True
-        current_array = np.asarray(current_data)
-        return current_array.ndim == 2
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadSliceContext:
-    """Attach the best source context to a projected runtime image plane."""
-
-    payload: ImagePayloadMetadataInput
-    current_image: ImagePayloadMetadataInput | None
-    plane: np.ndarray
-    plane_index: int
-    source_context: RuntimePlaneImagePayloadSourceContext
-
-    def project(self) -> ImagePayloadMetadataInput:
-        projected = image_payload_slice_context(
-            self.payload,
-            self.plane,
-            self.plane_index,
-        )
-        if self.current_image is None:
-            return projected
-        metadata = RuntimePlaneImagePayloadProjectedMetadata(
-            projected=projected,
-            current_image=self.current_image,
-            source_context=self.source_context,
-        ).metadata()
-        return metadata.payload_with(
-            image_payload_data(projected),
-            mask=image_payload_mask(projected),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadProjectedMetadata:
-    """Resolve metadata for a runtime-image plane after projection."""
-
-    projected: ImagePayloadMetadataInput
-    current_image: ImagePayloadMetadataInput
-    source_context: RuntimePlaneImagePayloadSourceContext
-
-    def metadata(self) -> ImagePayloadMetadata:
-        projected_metadata = image_payload_metadata(self.projected)
-        current_metadata = image_payload_metadata(self.current_image)
-        if self.source_context is RuntimePlaneImagePayloadSourceContext.CURRENT_IMAGE:
-            metadata = replace(projected_metadata)
-            metadata.source_path = current_metadata.source_path
-            metadata.source_component_metadata = current_metadata.source_component_metadata
-            metadata.channel_source_paths = current_metadata.channel_source_paths
-            metadata.channel_source_component_metadata = (
-                current_metadata.channel_source_component_metadata
-            )
-            metadata.source_image_names = (
-                current_metadata.source_image_names
-                or projected_metadata.source_image_names
-            )
-            metadata.spatial_origin_yx = current_metadata.spatial_origin_yx
-            metadata.source_spatial_shape_yx = current_metadata.source_spatial_shape_yx
-            metadata.physical_border_edges_yx = current_metadata.physical_border_edges_yx
-            metadata.mask_defines_border = current_metadata.mask_defines_border
-            return metadata
-        return projected_metadata.with_source_context_from(current_metadata)
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadPlaneIndex(RuntimePlanePayloadProjectionRequest):
-    """Resolve the selected plane for an image payload's semantic plane axis."""
-
-    axis: RuntimePlaneAxis
-
-    def value(self) -> int | None:
-        if self.axis is RuntimePlaneAxis.RUNTIME_SLICE:
-            return RuntimePlaneIndexBounds(
-                plane_count=self.plane_count,
-                plane_index=self.adapter.runtime_slice_plane_index(),
-            ).bounded_value()
-        alias_plane_index = self.source_binding_alias_plane_index()
-        if alias_plane_index is not None:
-            return alias_plane_index
-        return self.grouped_component_plane_index()
-
-    def source_binding_alias_plane_index(self) -> int | None:
-        alias_set = RuntimePlaneImagePayloadAliasSet.from_payload(self.payload)
-        if alias_set.is_empty:
-            return None
-        return RuntimePlaneIndexBounds(
-            plane_count=self.plane_count,
-            plane_index=self.adapter.source_binding_axis_plane_index(
-                alias_set.aliases
-            ),
-        ).bounded_value()
-
-    def grouped_component_plane_index(self) -> int | None:
-        axis_component = self.adapter.axis_component
-        axis_component_value = self.adapter.axis_component_value
-        if axis_component is None or axis_component_value is None:
-            return None
-        values = self.channel_component_values(axis_component)
-        if len(values) != self.plane_count:
-            return None
-        present_values = tuple(value for value in values if value is not None)
-        if len(set(present_values)) <= 1:
-            return None
-        matching_indexes = tuple(
-            index
-            for index, value in enumerate(values)
-            if value is not None
-            and source_metadata_values_equal(value, axis_component_value)
-        )
-        if len(matching_indexes) != 1:
-            return None
-        return matching_indexes[0]
-
-    def channel_component_values(
-        self,
-        axis_component: str,
-    ) -> tuple[str | None, ...]:
-        metadata = image_payload_metadata(self.payload)
-        if metadata.channel_source_component_metadata:
-            return RuntimePlaneImagePayloadComponentMetadata(
-                metadata.channel_source_component_metadata
-            ).component_values(axis_component)
-        return tuple(
-            self.component_value_for_source_path(path, axis_component)
-            for path in metadata.channel_source_paths
-        )
-
-    def component_value_for_source_path(
-        self,
-        source_path: str | None,
-        axis_component: str,
-    ) -> str | None:
-        if source_path is None:
-            return None
-        return SourcePathMetadataLookup(
-            adapter=self.adapter,
-            source_path=source_path,
-        ).component_value(axis_component)
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneIndexBounds:
-    """Validate a selected plane index against a payload plane count."""
-
-    plane_count: int
-    plane_index: int | None
-
-    def bounded_value(self) -> int | None:
-        if self.plane_index is None:
-            return None
-        if self.plane_index >= self.plane_count:
-            return None
-        return self.plane_index
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadAliasSet:
-    """Source-binding aliases declared by an image payload."""
-
-    aliases: tuple[str, ...]
-
-    @classmethod
-    def from_payload(
-        cls,
-        payload: ImagePayloadMetadataInput,
-    ) -> "RuntimePlaneImagePayloadAliasSet":
-        return cls(
-            tuple(
-                alias
-                for alias in image_payload_metadata(payload).source_image_names
-                if alias
-            )
-        )
-
-    @property
-    def is_empty(self) -> bool:
-        return not self.aliases
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimePlaneImagePayloadComponentMetadata:
-    """Per-plane component metadata carried by an image payload."""
-
-    channel_metadata: ChannelSourceComponentMetadata
-
-    def component_values(self, axis_component: str) -> tuple[str | None, ...]:
-        return tuple(
-            self.component_value(channel_metadata, axis_component)
-            for channel_metadata in self.channel_metadata
-        )
-
-    @staticmethod
-    def component_value(
-        channel_metadata: SourceComponentMetadata | None,
-        axis_component: str,
-    ) -> str | None:
-        if channel_metadata is None:
-            return None
-        return semantic_source_metadata_value(channel_metadata, axis_component)
-
-
-@dataclass(frozen=True, slots=True)
-class SourcePathMetadataLookup:
-    """Resolve source metadata for one path through the adapter source context."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    source_path: str
-
-    def component_value(self, axis_component: str) -> str | None:
-        metadata = self.metadata()
-        if metadata is None:
-            return None
-        return semantic_source_metadata_value(metadata, axis_component)
-
-    def metadata(self) -> SourceComponentMetadata | None:
-        metadata_by_path = self.adapter.source_binding_context.source_metadata_by_path
-        for candidate_path in self.candidate_paths():
-            metadata = metadata_by_path.get(candidate_path)
-            if metadata is not None:
-                return metadata
-        return None
-
-    def candidate_paths(self) -> tuple[str, ...]:
-        return (
-            self.source_path,
-            str(Path(self.source_path).resolve(strict=False)),
-            self.adapter.cellprofiler_source_order_path(self.source_path),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourceImagePayloadProjection(CurrentSourcePlaneProjectionBase):
-    """Project a stacked runtime image payload to the plane matching current source."""
-
-    registry_key: ClassVar[str] = "image_payload"
-
-    def project(self, payload: ImagePayloadMetadataInput) -> ImagePayloadValue:
-        data = self._projectable_data(payload)
-        if not self.is_projectable_stack(data):
-            return payload
-
-        plane_index = self.matching_plane_index(payload)
-        if plane_index is None:
-            return payload
-        mask = image_payload_mask(payload)
-        mask_plane = self.project_mask_plane(
-            mask,
-            data=data,
-            plane_index=plane_index,
-        )
-        return ImagePayloadContextRequest(
-            data=cast(ImagePayloadValue, data[plane_index]),
-            mask=cast(ImagePayloadMaskValue, mask_plane),
-            metadata=image_payload_metadata(payload).for_channel(plane_index),
-        ).payload()
-
-    def _projectable_data(self, payload: ImagePayloadMetadataInput) -> ImagePayloadValue:
-        return image_payload_data(payload)
-
-    def is_projectable_stack(self, data: ImagePayloadValue) -> bool:
-        return (
-            isinstance(data, np.ndarray)
-            and data.ndim >= 3
-            and not is_color_image_slice(data)
-            and data.shape[0] > 1
-        )
-
-    @staticmethod
-    def project_mask_plane(
-        mask: ImagePayloadMaskValue,
-        *,
-        data: np.ndarray,
-        plane_index: int,
-    ) -> ImagePayloadMaskValue:
-        """Project a stack-aligned mask plane when the mask carries that axis."""
-        if mask is None:
-            return None
-        mask_array = np.asarray(mask)
-        if mask_array.ndim >= 3 and mask_array.shape[0] == data.shape[0]:
-            return mask_array[plane_index]
-        return mask
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourceObjectLabelPayloadProjection(CurrentSourcePlaneProjectionBase):
-    """Project stacked object labels to the plane matching current source."""
-
-    registry_key: ClassVar[str] = "object_label_payload"
-
-    def project(self, labels: ObjectLabelSet) -> ObjectLabelSet:
-        data = self._projectable_data(labels)
-        if not self.is_projectable_stack(data):
-            return labels
-
-        runtime_payload = labels.runtime_payload()
-        plane_index: int | None = None
-        if self.payload_has_plane_identity(runtime_payload):
-            plane_selection = self.select_matching_plane(runtime_payload)
-            if plane_selection.is_matched:
-                plane_index = cast(int, plane_selection.plane_index)
-        if plane_index is None:
-            plane_index = RuntimeSourceProvenancePayloadPlaneResolution(
-                step_input_source_paths=(
-                    self.adapter.source_binding_context.step_input_source_paths
-                ),
-                channel_source_paths=labels.channel_source_paths,
-            ).plane_index()
-        if plane_index is None:
-            plane_index = CurrentSourceObjectLabelAxisProjection(
-                adapter=self.adapter,
-                labels=labels,
-            ).plane_index()
-        plane_index = RuntimePlaneIndexBounds(
-            plane_count=int(data.shape[0]),
-            plane_index=plane_index,
-        ).bounded_value()
-        if plane_index is None:
-            return labels
-        return self.project_plane(labels, data, plane_index)
-
-    def _projectable_data(self, payload: ObjectLabelSet) -> np.ndarray:
-        return object_label_dense_array(payload)
-
-    def project_plane(
-        self,
-        labels: ObjectLabelSet,
-        data: np.ndarray,
-        plane_index: int,
-    ) -> ObjectLabelSet:
-        return labels.with_projected_plane(
-            data[plane_index],
-            plane_index,
-            unedited_labels=self._project_variant(labels.unedited_labels, plane_index),
-            small_removed_labels=self._project_variant(
-                labels.small_removed_labels,
-                plane_index,
-            ),
-        )
-
-    def is_projectable_stack(self, data: ImagePayloadValue) -> bool:
-        return (
-            isinstance(data, np.ndarray)
-            and data.ndim >= 3
-            and data.shape[0] > 1
-        )
-
-    @staticmethod
-    def _project_variant(
-        value: DenseLabelPayload | None,
-        plane_index: int,
-    ) -> DenseLabelPayload | None:
-        if value is None:
-            return None
-        array = np.asarray(value)
-        if array.ndim >= 3 and plane_index < array.shape[0]:
-            return array[plane_index]
-        return value
-
-
-@dataclass(frozen=True, slots=True)
-class CurrentSourceObjectLabelAxisProjection:
-    """Resolve current object-label plane from a declared source-binding axis."""
-
-    adapter: "CellProfilerRuntimeAdapter"
-    labels: ObjectLabelSet
-
-    def plane_index(self) -> int | None:
-        if self.labels.plane_axis is not RuntimePlaneAxis.SOURCE_BINDING:
-            return None
-        return self.adapter.source_binding_axis_plane_index(
-            self.labels.source_image_names,
-        )
-
-
-def _raise_if_dense_label_stack_too_large(arrays: tuple[np.ndarray, ...]) -> None:
-    total_bytes = sum(array.nbytes for array in arrays)
-    if total_bytes > _MAX_DENSE_LABEL_STACK_BYTES:
-        raise MemoryError(
-            "Refusing to materialize dense object-label stack larger than "
-            f"{_MAX_DENSE_LABEL_STACK_BYTES} bytes; requested {total_bytes} bytes."
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class DenseLabelSequenceMemoryBudget:
-    """Fail before dense label list normalization can bypass stack limits."""
-
-    labels: tuple[DenseLabelPayload, ...]
-
-    def validate(self) -> None:
-        arrays = tuple(np.asarray(label) for label in self.labels)
-        if DenseLabelShapeSet(arrays).is_uniform:
-            _raise_if_dense_label_stack_too_large(arrays)
-
-
-def _is_sequence_payload(labels: DenseLabelPayload) -> bool:
-    return isinstance(labels, Sequence) and not isinstance(
-        labels,
-        (str, bytes, bytearray, Mapping),
-    )
-
-
-def _is_global_grouped_input_request(
-    input_plan: ArtifactInputPlan,
-    group_key: str | None,
-) -> bool:
-    input_group_keys = input_plan.group_keys
-    if input_group_keys is None:
-        group_keys = ()
-    else:
-        group_keys = tuple(input_group_keys)
-    if len(group_keys) <= 1:
-        return False
-    paths_by_group = input_plan.paths_by_group
-    if paths_by_group is None:
-        paths_by_group = {}
-    return _is_default_runtime_group_key(group_key) and group_key not in paths_by_group
-
-
-class SpatialGridValueAuthority:
-    """Normalize, compare, and collapse grouped spatial-grid runtime values."""
-
-    @staticmethod
-    def native_value(name: str, value: SpatialGridInputValue) -> SpatialGrid:
-        if isinstance(value, SpatialGrid):
-            return value.with_name(name)
-        if isinstance(value, Mapping):
-            return SpatialGrid.from_mapping(name, value)
-        raise TypeError(
-            f"Spatial grid slice '{name}' must be SpatialGrid or mapping-backed, "
-            f"got {type(value).__name__}."
-        )
-
-    @classmethod
-    def input_value(
-        cls,
-        name: str,
-        value: SpatialGridInput,
-    ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
-        if isinstance(value, RuntimeSliceAlignedValues):
-            return RuntimeSliceAlignedValues(
-                slices=tuple(cls.native_value(name, item) for item in value.slices)
-            )
-        return cls.native_value(name, value)
-
-    @staticmethod
-    def record_value(
-        name: str,
-        record: StoredRuntimeValue,
-    ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
-        data = record.value.data
-        if isinstance(data, tuple | list) and all(
-            isinstance(value, Mapping) for value in data
-        ):
-            return RuntimeSliceAlignedValues(
-                slices=tuple(
-                    SpatialGrid.from_mapping(name, value) for value in data
-                )
-            )
-        return SpatialGrid.from_runtime_value(record.value)
-
-    @classmethod
-    def single_spatial_grid(
-        cls,
-        name: str,
-        grids: SpatialGridGroupValues,
-    ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
-        if not grids:
-            raise RuntimeError(f"Missing spatial grid artifact {name!r}.")
-        if any(isinstance(grid, RuntimeSliceAlignedValues) for grid in grids):
-            return cls.single_slice_aligned_spatial_grid(name, grids)
-        first = grids[0]
-        first_payload = cls.equivalence_payload(first)
-        if all(cls.equivalence_payload(grid) == first_payload for grid in grids):
-            return first.with_name(name)
-        raise RuntimeError(
-            f"Spatial grid artifact {name!r} resolved to non-identical grouped grids."
-        )
-
-    @classmethod
-    def single_slice_aligned_spatial_grid(
-        cls,
-        name: str,
-        grids: SpatialGridGroupValues,
-    ) -> RuntimeSliceAlignedValues[SpatialGrid]:
-        slice_count = max(SpatialGridSliceCount(grid).value for grid in grids)
-        aligned_slices: list[SpatialGrid] = []
-        for slice_index in range(slice_count):
-            candidates = tuple(
-                cls.for_aligned_slice(grid, slice_index, slice_count)
-                for grid in grids
-            )
-            first = candidates[0]
-            first_payload = cls.equivalence_payload(first)
-            if not all(
-                cls.equivalence_payload(candidate) == first_payload
-                for candidate in candidates
-            ):
-                raise RuntimeError(
-                    f"Spatial grid artifact {name!r} resolved to non-identical "
-                    "slice-aligned grouped grids."
-                )
-            aligned_slices.append(first.with_name(name))
-        return RuntimeSliceAlignedValues(slices=tuple(aligned_slices))
-
-    @staticmethod
-    def for_aligned_slice(
-        grid: SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
-        slice_index: int,
-        slice_count: int,
-    ) -> SpatialGrid:
-        if isinstance(grid, RuntimeSliceAlignedValues):
-            if grid.slice_count == slice_count:
-                return grid.value_for_slice(slice_index)
-            if grid.slice_count == 1:
-                return grid.value_for_slice(0)
-            raise RuntimeError(
-                "Spatial grid artifact resolved to incompatible slice-aligned "
-                f"counts {grid.slice_count} and {slice_count}."
-            )
-        return grid
-
-    @staticmethod
-    def equivalence_payload(grid: SpatialGrid) -> dict[str, SpatialGridEquivalenceValue]:
-        return {**grid.as_mapping(), "slice_index": 0}
-
-
-def _input_plan_path_for_group(
-    input_plan: ArtifactInputPlan,
-    group_key: str | None,
-) -> str:
-    paths_by_group = input_plan.paths_by_group
-    if paths_by_group is None:
-        paths_by_group = {}
-    if group_key in paths_by_group:
-        return paths_by_group[group_key]
-    if None in paths_by_group:
-        return paths_by_group[None]
-    return input_plan.path
-
-
-def _single_input_plan_group_key(input_plan: ArtifactInputPlan) -> str | None:
-    group_keys = input_plan.group_keys or (None,)
-    if len(group_keys) == 1:
-        return group_keys[0]
-    raise RuntimeError(
-        f"Artifact input '{input_plan.name}' uses self-location with multiple "
-        f"producer groups: {group_keys!r}."
-    )
-
-
-class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
-    """Load normal image sources through the OpenHCS VFS filemanager."""
-
-    loader_key = "openhcs_image"
-
-    def accepts_path(self, path: str) -> bool:
-        return is_image_path(path)
-
-    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[ImagePayloadValue]:
-        context = RequireProcessingContextBoundaryPolicy(request.adapter).context
-        load_kwargs: dict[str, Any] = {}
-        if request.backend == Backend.ZARR.value:
-            load_kwargs["zarr_config"] = context.global_config.zarr_config
-        loaded_images = context.filemanager.load_batch(
-            list(request.storage_paths),
-            request.backend,
-            **load_kwargs,
-        )
-        return [
-            self.source_payload_with_metadata(
-                _source_payload_for_declared_image_type(
-                    PipelineStartSourcePayloadRequest.from_candidate(
-                        payload=payload,
-                        source=source,
-                        load_request=request,
-                    )
-                )
-            )
-            for payload, source in zip(loaded_images, request.selected_sources)
-        ]
-
-
-class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
-    """Load CellProfiler MATLAB matrix image sources such as illumination files."""
-
-    loader_key = "matlab_matrix"
-
-    def accepts_path(self, path: str) -> bool:
-        return Path(path).suffix.lower() == ".mat"
-
-    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[ImagePayloadValue]:
-        return [
-            self.source_payload_with_metadata(
-                PipelineStartSourcePayloadRequest.from_candidate(
-                    payload=cast(ImagePayloadValue, self._load_matrix(source.resolved_path)),
-                    source=source,
-                    load_request=request,
-                )
-            )
-            for source in request.selected_sources
-        ]
-
-    def _load_matrix(self, path: str) -> ImagePayloadValue:
-        from scipy.io import loadmat
-
-        payloads = _matlab_numeric_arrays(loadmat(path))
-        if not payloads:
-            raise RuntimeError(
-                f"MATLAB source file {path!r} contains no numeric image arrays."
-            )
-        if len(payloads) == 1:
-            return payloads[0][1]
-        image_payloads = tuple(
-            payload for name, payload in payloads if name.strip().lower() == "image"
-        )
-        if len(image_payloads) == 1:
-            return image_payloads[0]
-        names = tuple(name for name, _payload in payloads)
-        raise RuntimeError(
-            f"MATLAB source file {path!r} contains multiple numeric arrays "
-            f"{names!r}; expected exactly one payload or one 'Image' payload."
-        )
-
-
-class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
-    """Load NumPy array image sources such as saved illumination functions."""
-
-    loader_key = "numpy_array"
-
-    def accepts_path(self, path: str) -> bool:
-        return Path(path).suffix.lower() in FileFormat.NUMPY.value
-
-    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[ImagePayloadValue]:
-        return [
-            _numpy_array_source_payload_with_metadata(
-                PipelineStartSourcePayloadRequest.from_candidate(
-                    payload=cast(
-                        ImagePayloadValue,
-                        self._load_array(source.resolved_path, request),
-                    ),
-                    source=source,
-                    load_request=request,
-                )
-            )
-            for source in request.selected_sources
-        ]
-
-    def _load_array(
-        self,
-        path: str,
-        request: PipelineStartSourceLoadRequest,
-    ) -> ImagePayloadValue:
-        payload = source_schema_auxiliary_payload(path)
-        if payload is None:
-            if request.backend == Backend.DISK.value:
-                payload = np.load(path)
-            else:
-                payload = RequireProcessingContextBoundaryPolicy(
-                    request.adapter
-                ).context.filemanager.load_batch(
-                    [path],
-                    request.backend,
-                )[0]
-        if not _is_numeric_array_payload(payload):
-            raise RuntimeError(
-                f"NumPy source file {path!r} does not contain a numeric image array."
-            )
-        return payload
-
-
-def _numpy_array_source_payload_with_metadata(
-    request: PipelineStartSourcePayloadRequest,
-) -> ImagePayloadValue:
-    """Attach array payload metadata without image-file probing."""
-    metadata = image_payload_metadata(request.payload)
-    if not metadata.has_values:
-        metadata = type(metadata).for_array_payload(
-            image_payload_data(request.payload),
-            source_path=request.source_path,
-        )
-    return ImagePayloadContextRequest(
-        data=cast(ImagePayloadValue, image_payload_data(request.payload)),
-        mask=cast(ImagePayloadMaskValue, image_payload_mask(request.payload)),
-        metadata=metadata,
-    ).payload()
-
-
-def _source_payload_for_declared_image_type(
-    request: PipelineStartSourcePayloadRequest,
-) -> PipelineStartSourcePayloadRequest:
-    """Apply setup-declared source image semantics before module execution."""
-
-    payload = ContextSourceMetadataAuthority.apply_loading_semantics(
-        request.payload,
-        source_path=request.source_path,
-        storage_path=request.metadata_source_path,
-        request=request.load_request,
-    )
-    return request.with_payload(cast(ImagePayloadValue, payload))
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedSourceCandidate:
-    """One parsed file candidate used for source-binding selector resolution."""
-
-    path: str
-    resolved_path: str
-    filename: str
-    metadata: ParsedSourceMetadata
-
-    @property
-    def source_identity(self) -> SourceImageSetIdentity:
-        """Return the semantic source identity represented by this candidate."""
-        return SourceImageSetIdentity.from_metadata(
-            self.metadata,
-            fallback_source_path=self.resolved_path,
-        )
-
-    @property
-    def candidate_identity(self) -> "ParsedSourceCandidateIdentity":
-        """Return the physical source candidate identity for deduplication."""
-        return ParsedSourceCandidateIdentity.from_candidate(self)
-
-    @property
-    def path_identity(self) -> "ParsedSourceCandidatePathIdentity":
-        """Return path identities by which runtime context may reference this candidate."""
-        return ParsedSourceCandidatePathIdentity.from_candidate(self)
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedSourceCandidatePathIdentity:
-    """Path identities for matching runtime virtual paths to source candidates."""
-
-    values: frozenset[str]
-
-    @classmethod
-    def from_candidate(
-        cls,
-        candidate: ParsedSourceCandidate,
-    ) -> "ParsedSourceCandidatePathIdentity":
-        return cls.from_paths((candidate.path, candidate.resolved_path))
-
-    @classmethod
-    def from_paths(
-        cls,
-        paths: Sequence[str | None],
-    ) -> "ParsedSourceCandidatePathIdentity":
-        return cls(
-            frozenset(
-                source_path_identity_key(str(path))
-                for path in paths
-                if path is not None and str(path)
-            )
-        )
-
-    @property
-    def is_empty(self) -> bool:
-        return not self.values
-
-    def intersects(self, other: "ParsedSourceCandidatePathIdentity") -> bool:
-        return not self.values.isdisjoint(other.values)
-
-
-@dataclass(slots=True)
-class SourceMetadataMatchConstraint:
-    """Allowed metadata values for one image-set matching field."""
-
-    field_name: str
-    values: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        self.field_name = str(self.field_name)
-        values = tuple(dict.fromkeys(str(value) for value in self.values))
-        if not values:
-            raise ValueError("SourceMetadataMatchConstraint.values cannot be empty.")
-        self.values = values
-
-    def intersect(
-        self,
-        values: tuple[str, ...],
-    ) -> "SourceMetadataMatchConstraint":
-        """Return this constraint restricted to another allowed-value set."""
-        allowed = frozenset(values)
-        intersection = tuple(value for value in self.values if value in allowed)
-        if not intersection:
-            raise RuntimeError(
-                f"Conflicting image-set match values for field {self.field_name!r}: "
-                f"{self.values!r} versus {values!r}."
-            )
-        return SourceMetadataMatchConstraint(self.field_name, intersection)
-
-    def matches(self, candidate: "ParsedSourceCandidate") -> bool:
-        """Return whether the candidate metadata satisfies this constraint."""
-        metadata_value = semantic_source_metadata_value(
-            candidate.metadata,
-            self.field_name,
-        )
-        return metadata_value is not None and any(
-            source_metadata_values_equal(metadata_value, value)
-            for value in self.values
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedSourceCandidateIdentity:
-    """Identity for collapsing aliases without collapsing distinct source files."""
-
-    source_identity: SourceImageSetIdentity
-    resolved_path_identity: str
-
-    @classmethod
-    def from_candidate(
-        cls,
-        candidate: ParsedSourceCandidate,
-    ) -> "ParsedSourceCandidateIdentity":
-        return cls(
-            source_identity=candidate.source_identity,
-            resolved_path_identity=source_path_identity_key(candidate.resolved_path),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedSourceCandidateCollection:
-    """Ordered set semantics for parsed source-binding candidates."""
-
-    candidates: tuple[ParsedSourceCandidate, ...]
-
-    def deduplicated(self) -> tuple[ParsedSourceCandidate, ...]:
-        deduplicated: list[ParsedSourceCandidate] = []
-        seen: set[ParsedSourceCandidateIdentity] = set()
-        for candidate in self.candidates:
-            identity = candidate.candidate_identity
-            if identity in seen:
-                continue
-            deduplicated.append(candidate)
-            seen.add(identity)
-        return tuple(deduplicated)
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeRecordSourceImageSetSelector:
-    """Select ambiguous runtime records for the active source image set."""
-
-    adapter: CellProfilerRuntimeAdapter
-    current_image: CellProfilerCurrentImage | None
-
-    def has_current_source_scope(self) -> bool:
-        """Return whether the current payload identifies one source scope."""
-        return bool(
-            self.current_source_plane_identities()
-            or self.current_source_identities()
-        )
-
-    def has_template_current_source_scope(self) -> bool:
-        """Return whether the current scope is a grouped source-path template."""
-        return SourcePathTemplateScope.from_paths(
-            self.current_source_paths()
-        ).is_template
-
-    def records_have_metadata_source_scope(
-        self,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> bool:
-        """Return whether records carry source metadata beyond output paths."""
-        return any(
-            SourceImageSetIdentityQuality.from_identities(
-                self.record_source_identities(record)
-            ).has_metadata_scope
-            for record in records
-        )
-
-    def current_source_paths(self) -> tuple[str, ...]:
-        paths: list[str] = []
-        paths.extend(self.adapter.source_binding_context.current_step_input_files)
-        if self.current_image is not None:
-            metadata = image_payload_metadata(self.current_image)
-            paths.extend(
-                str(path)
-                for path in (*metadata.channel_source_paths, metadata.source_path)
-                if path is not None and str(path)
-            )
-        return tuple(dict.fromkeys(paths))
-
-    def select(
-        self,
-        records: tuple[StoredRuntimeValue, ...],
-    ) -> tuple[StoredRuntimeValue, ...]:
-        current_plane_identities = self.current_source_plane_identities()
-        plane_selected = tuple(
-            record
-            for record in records
-            if SourceImageSetIdentityCompatibility.any_match(
-                self.record_source_plane_identities(record),
-                current_plane_identities,
-            )
-        )
-        if plane_selected:
-            return plane_selected
-        current_identities = self.current_source_identities()
-        if not current_identities:
-            return ()
-        return tuple(
-            record
-            for record in records
-            if SourceImageSetIdentityCompatibility.any_match(
-                self.record_source_identities(record),
-                current_identities,
-            )
-        )
-
-    def current_source_plane_identities(self) -> frozenset[SourceImageSetIdentity]:
-        return self.current_source_identities(policy=_SOURCE_PLANE_IDENTITY_POLICY)
-
-    def current_source_identities(
-        self,
-        *,
-        policy: SourceImageSetIdentityPolicy = SourceImageSetIdentity.DEFAULT_POLICY,
-    ) -> frozenset[SourceImageSetIdentity]:
-        if self.current_image is not None:
-            payload_identities = self.payload_source_identities(
-                self.current_image,
-                policy=policy,
-            )
-            if payload_identities:
-                return payload_identities
-        file_identities = self.source_identities_for_paths(
-            self.adapter.source_binding_context.current_step_input_files,
-            policy=policy,
-        )
-        if file_identities:
-            return file_identities
-        return frozenset()
-
-    def record_source_plane_identities(
-        self,
-        record: StoredRuntimeValue,
-    ) -> frozenset[SourceImageSetIdentity]:
-        return self.record_source_identities(
-            record,
-            policy=_SOURCE_PLANE_IDENTITY_POLICY,
-        )
-
-    def record_source_identities(
-        self,
-        record: StoredRuntimeValue,
-        *,
-        policy: SourceImageSetIdentityPolicy = SourceImageSetIdentity.DEFAULT_POLICY,
-    ) -> frozenset[SourceImageSetIdentity]:
-        identities = set(self.payload_source_identities(record.value.data, policy=policy))
-        identities.update(
-            self.source_identities_for_paths(
-                self.record_source_candidate_paths(record),
-                policy=policy,
-            )
-        )
-        if record.value.kind is ArtifactKind.RELATIONSHIPS:
-            identities.update(
-                self.relationship_source_identities(
-                    ObjectRelationship.from_runtime_value(record.value),
-                    policy=policy,
-                )
-            )
-        return frozenset(identities)
-
-    def record_source_candidate_paths(
-        self,
-        record: StoredRuntimeValue,
-    ) -> tuple[str, ...]:
-        """Return parser-facing source path projections for an artifact record."""
-        path = Path(record.path)
-        name = path.name
-        stem = path.stem
-        delimiter = f"_{record.key.name}_"
-        prefixes = [record.path, name, stem]
-        if delimiter in name:
-            prefixes.append(name.split(delimiter, 1)[0])
-        if delimiter in stem:
-            prefixes.append(stem.split(delimiter, 1)[0])
-        current_inputs = tuple(self.adapter.source_binding_context.current_step_input_files)
-        current_by_stem = {Path(input_path).stem: input_path for input_path in current_inputs}
-        prefixes.extend(
-            current_by_stem[prefix]
-            for prefix in tuple(prefixes)
-            if prefix in current_by_stem
-        )
-        return tuple(dict.fromkeys(prefixes))
-
-    def relationship_source_identities(
-        self,
-        relationship: ObjectRelationship,
-        *,
-        policy: SourceImageSetIdentityPolicy,
-    ) -> frozenset[SourceImageSetIdentity]:
-        identities: set[SourceImageSetIdentity] = set()
-        identities.update(
-            self.metadata_identities(
-                (relationship.source_component_metadata,),
-                fallback_source_path=relationship.source_path,
-                policy=policy,
-            )
-        )
-        identities.update(
-            self.metadata_identities(
-                relationship.channel_source_component_metadata,
-                fallback_source_path=None,
-                policy=policy,
-            )
-        )
-        source_paths = tuple(
-            str(path)
-            for path in (*relationship.channel_source_paths, relationship.source_path)
-            if path is not None and str(path)
-        )
-        identities.update(self.source_identities_for_paths(source_paths, policy=policy))
-        return frozenset(identities)
-
-    def payload_source_identities(
-        self,
-        payload: SourceScopedPayload,
-        *,
-        policy: SourceImageSetIdentityPolicy = SourceImageSetIdentity.DEFAULT_POLICY,
-    ) -> frozenset[SourceImageSetIdentity]:
-        metadata = image_payload_metadata(payload)
-        identities: set[SourceImageSetIdentity] = set()
-        identities.update(
-            self.metadata_identities(
-                (metadata.source_component_metadata,),
-                fallback_source_path=metadata.source_path,
-                policy=policy,
-            )
-        )
-        identities.update(
-            self.metadata_identities(
-                metadata.channel_source_component_metadata,
-                fallback_source_path=None,
-                policy=policy,
-            )
-        )
-        source_paths = tuple(
-            str(path)
-            for path in (*metadata.channel_source_paths, metadata.source_path)
-            if path is not None and str(path)
-        )
-        identities.update(self.source_identities_for_paths(source_paths, policy=policy))
-        return frozenset(identities)
-
-    def metadata_identities(
-        self,
-        metadata_values: tuple[ParsedSourceMetadata | None, ...],
-        *,
-        fallback_source_path: str | None,
-        policy: SourceImageSetIdentityPolicy,
-    ) -> frozenset[SourceImageSetIdentity]:
-        identity_fallback_source_path = fallback_source_path
-        if identity_fallback_source_path is None:
-            identity_fallback_source_path = ""
-        identities = {
-            SourceImageSetIdentity.from_metadata(
-                metadata,
-                fallback_source_path=identity_fallback_source_path,
-                policy=policy,
-            )
-            for metadata in metadata_values
-            if metadata is not None and metadata
-        }
-        return frozenset(
-            identity
-            for identity in identities
-            if identity.components != (("source_path", ""),)
-        )
-
-    def source_identities_for_paths(
-        self,
-        source_paths: tuple[str, ...],
-        *,
-        policy: SourceImageSetIdentityPolicy,
-    ) -> frozenset[SourceImageSetIdentity]:
-        if not source_paths or not self.adapter.can_resolve_source_candidates:
-            return frozenset()
-        return frozenset(
-            SourceImageSetIdentity.from_metadata(
-                candidate.metadata,
-                fallback_source_path=candidate.resolved_path,
-                policy=policy,
-            )
-            for candidate in self.adapter.source_candidates(source_paths)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourcePathTemplateScope:
-    """Source-path scope represented by OpenHCS grouped placeholder syntax."""
-
-    paths: tuple[str, ...]
-    placeholder_token: ClassVar[str] = "{iii}"
-
-    @classmethod
-    def from_paths(cls, paths: Sequence[str]) -> "SourcePathTemplateScope":
-        return cls(tuple(str(path) for path in paths if str(path)))
-
-    @property
-    def is_template(self) -> bool:
-        return any(self.placeholder_token in path for path in self.paths)
-
-
-@dataclass(frozen=True, slots=True)
-class SourceImageSetIdentityQuality:
-    """Classify whether identities contain semantic source metadata."""
-
-    identities: frozenset[SourceImageSetIdentity]
-
-    @classmethod
-    def from_identities(
-        cls,
-        identities: frozenset[SourceImageSetIdentity],
-    ) -> "SourceImageSetIdentityQuality":
-        return cls(identities)
-
-    @property
-    def has_metadata_scope(self) -> bool:
-        return any(
-            key != "source_path"
-            for identity in self.identities
-            for key, _value in identity.components
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceImageSetIdentityCompatibility:
-    """Compatibility predicate for full and partially scoped source identities."""
-
-    record_identity: SourceImageSetIdentity
-    current_identity: SourceImageSetIdentity
-
-    @classmethod
-    def any_match(
-        cls,
-        record_identities: frozenset[SourceImageSetIdentity],
-        current_identities: frozenset[SourceImageSetIdentity],
-    ) -> bool:
-        return any(
-            cls(record_identity, current_identity).matches()
-            for record_identity in record_identities
-            for current_identity in current_identities
-        )
-
-    def matches(self) -> bool:
-        record_components = dict(self.record_identity.components)
-        current_components = dict(self.current_identity.components)
-        if "source_path" in record_components or "source_path" in current_components:
-            return record_components == current_components
-        shared_keys = set(record_components) & set(current_components)
-        return bool(shared_keys) and all(
-            record_components[key] == current_components[key] for key in shared_keys
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class MatchedSourceCandidatesRequest(SourceBindingRequestBase):
-    """Typed request for fail-loud source-candidate selection."""
-
-    matched: tuple[ParsedSourceCandidate, ...]
-    candidates: tuple[ParsedSourceCandidate, ...]
-    source_description: str
-
-    @classmethod
-    def from_resolution(
-        cls,
-        request: SourceBindingResolutionRequest,
-        *,
-        matched: tuple[ParsedSourceCandidate, ...],
-        candidates: tuple[ParsedSourceCandidate, ...],
-        source_description: str,
-    ) -> "MatchedSourceCandidatesRequest":
-        return cls(
-            alias=request.alias,
-            binding=request.binding,
-            matched=matched,
-            candidates=candidates,
-            source_description=source_description,
-        )
-
-
-def _parse_source_candidates(
-    file_paths: tuple[str, ...],
-    adapter: CellProfilerRuntimeAdapter,
-) -> tuple[ParsedSourceCandidate, ...]:
-    parser = RequireProcessingContextBoundaryPolicy(
-        adapter
-    ).context.microscope_handler.parser
-    metadata_resolver = SourceCandidateMetadataResolver(
-        SourceCandidateMetadataRequest(adapter, parser)
-    )
-    candidates: list[ParsedSourceCandidate] = []
-    for file_path in file_paths:
-        for candidate_path, resolved_path in SourceCandidatePathProjection(
-            file_path,
-            adapter,
-        ).paths():
-            metadata = metadata_resolver.metadata(
-                candidate_path,
-                resolved_path,
-            )
-            candidates.append(
-                ParsedSourceCandidate(
-                    path=str(candidate_path),
-                    resolved_path=str(resolved_path),
-                    filename=Path(resolved_path).name,
-                    metadata=MappingProxyType(dict(metadata)),
-                )
-            )
-    return ParsedSourceCandidateCollection(tuple(candidates)).deduplicated()
-
-
-@dataclass(frozen=True, slots=True)
-class SourceCandidatePathProjection:
-    """Project physical source paths into candidate identity paths.
-
-    Synthetic well expansion can map many virtual OpenHCS filenames onto the
-    same immutable source image. Candidate identity must stay virtual so source
-    binding inheritance sees the correct well/site/channel metadata.
-    """
-
-    file_path: str
-    adapter: CellProfilerRuntimeAdapter
-
-    def paths(self) -> tuple[tuple[str, str], ...]:
-        context = self.adapter.source_binding_context
-        resolved_path = str(_resolved_source_path(self.file_path, self.adapter))
-        explicit_virtual_paths = self.explicit_virtual_paths()
-        if explicit_virtual_paths:
-            return tuple(
-                (virtual_path, str(context.step_input_source_paths[virtual_path]))
-                for virtual_path in explicit_virtual_paths
-            )
-
-        virtual_paths = self.virtual_paths_for_resolved_path(resolved_path)
-        if virtual_paths:
-            return tuple((virtual_path, resolved_path) for virtual_path in virtual_paths)
-        return ((str(self.file_path), resolved_path),)
-
-    def explicit_virtual_paths(self) -> tuple[str, ...]:
-        context = self.adapter.source_binding_context
-        return tuple(
-            key
-            for key in SourceRuntimePathLookup(
-                self.file_path,
-                context.step_input_dir,
-            ).keys()
-            if key in context.step_input_source_paths
-        )
-
-    def virtual_paths_for_resolved_path(self, resolved_path: str) -> tuple[str, ...]:
-        context = self.adapter.source_binding_context
-        resolved_key = source_path_identity_key(resolved_path)
-        return tuple(
-            virtual_path
-            for virtual_path, source_path in context.step_input_source_paths.items()
-            if source_path_identity_key(source_path) == resolved_key
-        )
-
-
-def _source_candidate_cache_key(
-    file_paths: tuple[str, ...],
-    adapter: CellProfilerRuntimeAdapter,
-) -> tuple[Hashable, ...]:
-    context = adapter.source_binding_context
-    parser = RequireProcessingContextBoundaryPolicy(
-        adapter
-    ).context.microscope_handler.parser
-    return (
-        tuple(file_paths),
-        context.step_input_dir,
-        tuple(sorted(context.step_input_source_paths.items())),
-        context.source_metadata_identity,
-        context.pipeline_input_backend,
-        tuple(context.pipeline_input_files),
-        adapter.source_binding_plan.metadata_rules,
-        type(parser).__module__,
-        type(parser).__qualname__,
-        repr(parser),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceCandidateMetadataRequest:
-    """Runtime dependencies for source-candidate metadata resolution."""
-
-    adapter: CellProfilerRuntimeAdapter
-    parser: CellProfilerFilenameParser
-
-
-@dataclass(frozen=True, slots=True)
-class SourceCandidateMetadataResolver:
-    """Resolve metadata precedence for parsed source-binding candidates."""
-
-    request: SourceCandidateMetadataRequest
-
-    def metadata(
-        self,
-        file_path: str,
-        resolved_path: str,
-    ) -> MutableParsedSourceMetadata:
-        metadata: MutableParsedSourceMetadata = {}
-        context = self.request.adapter.source_binding_context
-        virtual_path = _candidate_virtual_workspace_path(
-            file_path,
-            resolved_path,
-            context,
-        )
-        context_paths = SourceCandidateMetadataPathSet(
-            file_path=file_path,
-            resolved_path=resolved_path,
-            virtual_path=virtual_path,
-            context=context,
-        ).paths()
-        if ContextSourceMetadataAuthority.has_metadata_for_any(context_paths, context):
-            return self.metadata_from_context(
-                metadata,
-                file_path=file_path,
-                resolved_path=resolved_path,
-                virtual_path=virtual_path,
-                context=context,
-                context_paths=context_paths,
-            )
-        return self.metadata_from_paths(
-            metadata,
-            file_path=file_path,
-            resolved_path=resolved_path,
-            virtual_path=virtual_path,
-            context=context,
-            context_paths=context_paths,
-        )
-
-    def metadata_from_context(
-        self,
-        metadata: MutableParsedSourceMetadata,
-        *,
-        file_path: str,
-        resolved_path: str,
-        virtual_path: str | None,
-        context: SourceBindingRuntimeContext,
-        context_paths: tuple[str, ...],
-    ) -> MutableParsedSourceMetadata:
-        ContextSourceMetadataAuthority.merge_into(metadata, context_paths, context)
-        self.merge_path_metadata(metadata, resolved_path, strict=False)
-        if not source_paths_equal(file_path, resolved_path):
-            self.merge_path_metadata(metadata, file_path, strict=False)
-        if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
-            self.merge_path_metadata(metadata, virtual_path, strict=False)
-        return metadata
-
-    def metadata_from_paths(
-        self,
-        metadata: MutableParsedSourceMetadata,
-        *,
-        file_path: str,
-        resolved_path: str,
-        virtual_path: str | None,
-        context: SourceBindingRuntimeContext,
-        context_paths: tuple[str, ...],
-    ) -> MutableParsedSourceMetadata:
-        self.merge_path_metadata(metadata, resolved_path, strict=True)
-        if not source_paths_equal(file_path, resolved_path):
-            self.merge_path_metadata(
-                metadata,
-                file_path,
-                strict=SourceRuntimePathLookup(
-                    file_path,
-                    context.step_input_dir,
-                ).first_value(context.step_input_source_paths) is None,
-            )
-        if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
-            self.merge_path_metadata(metadata, virtual_path, strict=False)
-        ContextSourceMetadataAuthority.merge_into(metadata, context_paths, context)
-        return metadata
-
-    def merge_path_metadata(
-        self,
-        metadata: MutableParsedSourceMetadata,
-        metadata_path: str,
-        *,
-        strict: bool,
-    ) -> None:
-        _merge_candidate_path_metadata(
-            metadata,
-            metadata_path,
-            self.request.adapter,
-            self.request.parser,
-            strict=strict,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceCandidateMetadataPathSet:
-    """Path identities that may carry metadata for one runtime source candidate."""
-
-    file_path: str
-    resolved_path: str
-    virtual_path: str | None
-    context: SourceBindingRuntimeContext
-
-    def paths(self) -> tuple[str, ...]:
-        paths = [self.file_path, self.resolved_path]
-        if self.context.step_input_dir is not None and not Path(self.file_path).is_absolute():
-            paths.append(str(Path(self.context.step_input_dir) / self.file_path))
-        if self.virtual_path is not None:
-            paths.append(self.virtual_path)
-        return tuple(dict.fromkeys(paths))
-
-
-class ContextSourceMetadataAuthority:
-    """Lookup authority for runtime source metadata attached to source paths."""
-
-    @classmethod
-    def apply_loading_semantics(
-        cls,
-        payload: ImagePayloadValue,
-        *,
-        source_path: str,
-        storage_path: str,
-        request: PipelineStartSourceLoadRequest,
-    ) -> ImagePayloadValue:
-        source_metadata = SourceRuntimePathLookup(
-            source_path,
-            request.adapter.source_binding_context.step_input_dir,
-        ).first_value(
-            request.adapter.source_binding_context.source_metadata_by_path,
-            include_native_path_fallback=True,
-        )
-        return SourceImagePayloadSemantics.from_source_metadata(
-            source_metadata,
-            storage_path,
-            request.backend,
-            RequireProcessingContextBoundaryPolicy(request.adapter).context.filemanager,
-        ).apply(payload)
-
-    @classmethod
-    def has_metadata_for_any(
-        cls,
-        paths: tuple[str, ...],
-        context: SourceBindingRuntimeContext,
-    ) -> bool:
-        return any(
-            SourceRuntimePathLookup(path, context.step_input_dir).first_value(
-                context.source_metadata_by_path,
-                include_native_path_fallback=True,
-            )
-            is not None
-            for path in paths
-        )
-
-    @classmethod
-    def merge_into(
-        cls,
-        metadata: MutableParsedSourceMetadata,
-        paths: tuple[str, ...],
-        context: SourceBindingRuntimeContext,
-    ) -> None:
-        for path in dict.fromkeys(paths):
-            context_metadata = SourceRuntimePathLookup(
-                path,
-                context.step_input_dir,
-            ).first_value(
-                context.source_metadata_by_path,
-                include_native_path_fallback=True,
-            )
-            if context_metadata is not None:
-                merge_source_metadata(metadata, context_metadata, path=path)
-
-
-def _merge_candidate_path_metadata(
-    metadata: MutableParsedSourceMetadata,
-    metadata_path: str,
-    adapter: CellProfilerRuntimeAdapter,
-    parser: CellProfilerFilenameParser,
-    *,
-    strict: bool,
-) -> None:
-    parsed_metadata = parser.parse_filename(Path(metadata_path).name)
-    if parsed_metadata is None:
-        parsed_metadata = {}
-    extracted_metadata = metadata_from_rules(
-        metadata_path,
-        adapter.source_binding_plan.metadata_rules,
-    )
-    if strict:
-        merge_source_metadata(metadata, parsed_metadata, path=metadata_path)
-        merge_source_metadata(metadata, extracted_metadata, path=metadata_path)
-        return
-    _merge_missing_source_metadata(metadata, parsed_metadata)
-    _merge_missing_source_metadata(metadata, extracted_metadata)
-
-
-def _merge_missing_source_metadata(
-    metadata: MutableParsedSourceMetadata,
-    additions: ParsedSourceMetadata,
-) -> None:
-    for key, value in additions.items():
-        if key not in metadata:
-            metadata[key] = str(value)
-
-
-def _candidate_virtual_workspace_path(
-    file_path: str,
-    resolved_path: str,
-    context: SourceBindingRuntimeContext,
-) -> str | None:
-    for key in SourceRuntimePathLookup(file_path, context.step_input_dir).keys():
-        if key in context.step_input_source_paths:
-            return key
-    return _virtual_workspace_path_for_source(resolved_path, context)
-
-
-def _virtual_workspace_path_for_source(
-    resolved_path: str,
-    context: SourceBindingRuntimeContext,
-) -> str | None:
-    resolved_key = source_path_identity_key(resolved_path)
-    for virtual_path, source_path in context.step_input_source_paths.items():
-        if source_path_identity_key(source_path) == resolved_key:
-            return virtual_path
-    return None
-
-
-class SourceCandidateMatcher:
-    """Nominal owner for source-binding candidate selection semantics."""
-
-    @classmethod
-    def match_candidates(
-        cls,
-        *,
-        candidates: tuple[ParsedSourceCandidate, ...],
-        binding: NamedSourceBinding,
-        inherit_components: Mapping[str, str],
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        cls.validate_metadata_selectors(candidates, binding)
-        component_selectors = {
-            selector.component.value: selector.value
-            for selector in binding.selector.components
-        }
-        explicit_metadata_fields = {
-            selector.field for selector in binding.selector.metadata
-        }
-        explicit_selector_components = {
-            component
-            for field_name in (
-                *component_selectors,
-                *explicit_metadata_fields,
-            )
-            for component in (source_metadata_component(field_name),)
-            if component is not None
-        }
-        effective_components = (
-            {
-                **{
-                    name: value
-                    for name, value in inherit_components.items()
-                    if name not in component_selectors
-                    and name not in explicit_metadata_fields
-                    and source_metadata_component(name)
-                    not in explicit_selector_components
-                },
-                **component_selectors,
-            }
-            if binding.selector.inherit_current_scope
-            else component_selectors
-        )
-        inherited_component_items = tuple(
-            (name, value)
-            for name, value in effective_components.items()
-            if name not in component_selectors
-        )
-
-        return tuple(
-            candidate
-            for candidate in candidates
-            if cls.matches_explicit_components(candidate, component_selectors)
-            and cls.matches_inherited_scope(
-                candidate,
-                inherited_component_items,
-            )
-            and cls.matches_metadata(candidate, binding.selector.metadata)
-            and source_filters_match(candidate.resolved_path, binding.selector.filters)
-        )
-
-    @staticmethod
-    def validate_metadata_selectors(
-        candidates: tuple[ParsedSourceCandidate, ...],
-        binding: NamedSourceBinding,
-    ) -> None:
-        metadata_fields = {selector.field for selector in binding.selector.metadata}
-        if not metadata_fields:
-            return
-        unsupported = tuple(
-            field
-            for field in sorted(metadata_fields)
-            if not any(
-                source_metadata_value(candidate.metadata, field) is not None
-                for candidate in candidates
-            )
-        )
-        if unsupported:
-            raise NotImplementedError(
-                "Source-binding metadata selectors are only supported when the "
-                "native OpenHCS filename parser exposes those fields. Missing "
-                f"fields: {list(unsupported)}."
-            )
-
-    @classmethod
-    def matches_explicit_components(
-        cls,
-        candidate: ParsedSourceCandidate,
-        expected_components: Mapping[str, str],
-    ) -> bool:
-        return all(
-            cls.matches_explicit_component(candidate, component_name, value)
-            for component_name, value in expected_components.items()
-        )
-
-    @staticmethod
-    def matches_explicit_component(
-        candidate: ParsedSourceCandidate,
-        component_name: str,
-        expected_value: str,
-    ) -> bool:
-        component = source_metadata_component(component_name)
-        if component is None:
-            metadata_value = source_metadata_value(candidate.metadata, component_name)
-            return metadata_value is not None and source_metadata_values_equal(
-                metadata_value,
-                expected_value,
-            )
-        return any(
-            source_metadata_values_equal(metadata_value, expected_value)
-            for metadata_value in source_component_metadata_values(
-                candidate.metadata,
-                component,
-            )
-        )
-
-    @staticmethod
-    def matches_inherited_scope(
-        candidate: ParsedSourceCandidate,
-        inherited_scope: tuple[tuple[str, str], ...],
-    ) -> bool:
-        return all(
-            (
-                metadata_value := semantic_source_metadata_value(
-                    candidate.metadata,
-                    field_name,
-                )
-            )
-            is None
-            or source_metadata_values_equal(metadata_value, value)
-            for field_name, value in inherited_scope
-        )
-
-    @staticmethod
-    def matches_metadata(
-        candidate: ParsedSourceCandidate,
-        metadata_selectors: tuple[MetadataSelector, ...],
-    ) -> bool:
-        return all(
-            (metadata_value := source_metadata_value(candidate.metadata, selector.field))
-            is not None
-            and source_metadata_values_equal(metadata_value, selector.value)
-            for selector in metadata_selectors
-        )
-
-    @staticmethod
-    def matches_image_set_metadata(
-        candidate: ParsedSourceCandidate,
-        image_set_metadata: Mapping[str, SourceMetadataMatchConstraint],
-    ) -> bool:
-        return all(
-            constraint.matches(candidate)
-            for constraint in image_set_metadata.values()
-        )
-
-    @staticmethod
-    def ordered_source_candidates(
-        candidates: tuple[ParsedSourceCandidate, ...],
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
-
-    @classmethod
-    def inherited_scope_components(
-        cls,
-        candidates: tuple[ParsedSourceCandidate, ...],
-    ) -> Mapping[str, str]:
-        if not candidates:
-            return {}
-        shared: dict[str, str] = {}
-        first_metadata = candidates[0].metadata
-        for field_name, value in first_metadata.items():
-            if value is None:
-                continue
-            normalized_value = str(value)
-            if all(
-                (
-                    candidate_value := semantic_source_metadata_value(
-                        candidate.metadata,
-                        field_name,
-                    )
-                )
-                is not None
-                and source_metadata_values_equal(candidate_value, normalized_value)
-                for candidate in candidates[1:]
-            ):
-                shared[field_name] = normalized_value
-        return MappingProxyType(shared)
-
-    @classmethod
-    def pipeline_start_inherited_components(
-        cls,
-        source_binding_plan: CompiledSourceBindingPlan,
-        step_input_candidates: tuple[ParsedSourceCandidate, ...],
-    ) -> Mapping[str, str]:
-        if source_binding_plan.match_plan is not None:
-            return MappingProxyType({})
-        return cls.inherited_scope_components(step_input_candidates)
-
-    @classmethod
-    def match_image_set_candidates(
-        cls,
-        alias: str,
-        match_plan: SourceBindingMatchPlan | None,
-        step_input_candidates: tuple[ParsedSourceCandidate, ...],
-        target_candidates: tuple[ParsedSourceCandidate, ...],
-        full_pipeline_candidates: tuple[ParsedSourceCandidate, ...],
-        *,
-        source_binding_plan: CompiledSourceBindingPlan,
-        group_key: str | None,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        if match_plan is None or not step_input_candidates or not target_candidates:
-            return target_candidates
-        request = SourceBindingMatchPlanRequest(
-            alias=alias,
-            plan=match_plan,
-            step_input_candidates=step_input_candidates,
-            target_candidates=target_candidates,
-            full_pipeline_candidates=full_pipeline_candidates,
-            source_binding_plan=source_binding_plan,
-            group_key=group_key,
-        )
-        return cls.match_plan_candidates(request)
-
-    @classmethod
-    def match_plan_candidates(
-        cls,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        matchers = {
-            SourceBindingMatchMethod.METADATA: cls.match_metadata_image_set_candidates,
-            SourceBindingMatchMethod.ORDER: cls.match_order_image_set_candidates,
-        }
-        return matchers[request.plan.method](request)
-
-    @classmethod
-    def match_metadata_image_set_candidates(
-        cls,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        constraints: dict[str, SourceMetadataMatchConstraint] = {}
-        for dimension in request.plan.dimensions:
-            target_field = dimension.field_for_alias(request.alias)
-            if target_field is None:
-                continue
-            match_values = cls.dimension_match_values(
-                dimension=dimension,
-                request=request,
-            )
-            if not match_values:
-                continue
-            constraint = SourceMetadataMatchConstraint(
-                target_field,
-                match_values,
-            )
-            existing = constraints.get(target_field)
-            if existing is not None:
-                constraint = existing.intersect(
-                    constraint.values,
-                )
-            constraints[target_field] = constraint
-        metadata_constraints = MappingProxyType(constraints)
-        return tuple(
-            candidate
-            for candidate in request.target_candidates
-            if cls.matches_image_set_metadata(
-                candidate,
-                metadata_constraints,
-            )
-        )
-
-    @classmethod
-    def match_order_image_set_candidates(
-        cls,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        current_indexes = cls.order_match_indexes(request)
-        if not current_indexes:
-            scoped_candidates = cls.target_candidates_in_current_scope(
-                request.step_input_candidates,
-                request.target_candidates,
-            )
-            return scoped_candidates or request.target_candidates
-        ordered_target_candidates = cls.ordered_source_candidates(
-            request.target_candidates
-        )
-        return tuple(
-            ordered_target_candidates[index]
-            for index in current_indexes
-            if index < len(ordered_target_candidates)
-        )
-
-    @classmethod
-    def axis_scoped_candidates(
-        cls,
-        candidates: tuple[ParsedSourceCandidate, ...],
-        request: AxisScopeComponentsRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        axis_scope = cls.axis_scope_components(request)
-        if not axis_scope:
-            return candidates
-        axis_scope_items = tuple(axis_scope.items())
-        return tuple(
-            candidate
-            for candidate in candidates
-            if cls.matches_inherited_scope(candidate, axis_scope_items)
-        )
-
-    @staticmethod
-    def axis_scope_components(
-        request: AxisScopeComponentsRequest,
-    ) -> Mapping[str, str]:
-        constraints: dict[str, str] = {}
-        for candidate in request.step_input_candidates:
-            for field_name, value in candidate.metadata.items():
-                if value is None:
-                    continue
-                normalized_value = str(value)
-                if not source_metadata_values_equal(normalized_value, request.axis_id):
-                    continue
-                existing = constraints.get(field_name)
-                if existing is not None and existing != normalized_value:
-                    raise RuntimeError(
-                        f"Conflicting axis scope values for field {field_name!r}: "
-                        f"{existing!r} != {normalized_value!r}."
-                    )
-                constraints[field_name] = normalized_value
-        return MappingProxyType(constraints)
-
-    @classmethod
-    def target_candidates_in_current_scope(
-        cls,
-        step_input_candidates: tuple[ParsedSourceCandidate, ...],
-        target_candidates: tuple[ParsedSourceCandidate, ...],
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        current_scope = cls.inherited_scope_components(step_input_candidates)
-        if not current_scope:
-            return ()
-        current_scope_items = tuple(current_scope.items())
-        return tuple(
-            candidate
-            for candidate in target_candidates
-            if cls.matches_inherited_scope(candidate, current_scope_items)
-        )
-
-    @classmethod
-    def order_match_indexes(
-        cls,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[int, ...]:
-        indexes = {
-            index
-            for candidate in request.step_input_candidates
-            for index in (
-                cls.source_alias_order_index(
-                    SourceAliasOrderIndexRequest(candidate, request)
-                ),
-            )
-            if index is not None
-        }
-        return tuple(sorted(indexes))
-
-    @classmethod
-    def source_alias_order_index(
-        cls,
-        request: SourceAliasOrderIndexRequest,
-    ) -> int | None:
-        match_plan_request = request.match_plan_request
-        matched_indexes: set[int] = set()
-        for binding in match_plan_request.source_binding_plan.bindings_for_group(
-            match_plan_request.group_key
-        ):
-            if binding.alias == match_plan_request.alias:
-                continue
-            for index, ordered_candidate in enumerate(
-                cls.ordered_binding_candidates(
-                    binding=binding,
-                    candidates=match_plan_request.full_pipeline_candidates,
-                )
-            ):
-                if ordered_candidate.resolved_path == request.candidate.resolved_path:
-                    matched_indexes.add(index)
-                    break
-        if not matched_indexes:
-            return None
-        if len(matched_indexes) != 1:
-            raise RuntimeError(
-                f"Order-based image-set matching could not uniquely assign source file "
-                f"{request.candidate.resolved_path!r} to one alias order index."
-            )
-        return next(iter(matched_indexes))
-
-    @classmethod
-    def ordered_binding_candidates(
-        cls,
-        *,
-        binding: NamedSourceBinding,
-        candidates: tuple[ParsedSourceCandidate, ...],
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        return cls.ordered_source_candidates(
-            cls.match_candidates(
-                candidates=candidates,
-                binding=binding,
-                inherit_components={},
-            )
-        )
-
-    @classmethod
-    def dimension_match_values(
-        cls,
-        *,
-        dimension: SourceBindingMatchDimension,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[str, ...]:
-        target_alias = request.alias
-        candidate_values = tuple(
-            value
-            for field in dimension.fields
-            if field.alias != target_alias
-            for value in cls.source_match_field_values(field, request)
-        )
-        return tuple(dict.fromkeys(candidate_values))
-
-    @classmethod
-    def source_match_field_values(
-        cls,
-        field: SourceBindingMatchField,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[str, ...]:
-        binding = request.source_binding_plan.binding_for_alias(
-            field.alias,
-            request.group_key,
-        )
-        if binding is None:
-            return cls.shared_candidate_values(field, request.step_input_candidates)
-        alias_candidates = cls.alias_scoped_step_input_candidates(field.alias, request)
-        if alias_candidates:
-            return cls.shared_candidate_values(field, alias_candidates)
-        return cls.shared_candidate_values(field, request.step_input_candidates)
-
-    @classmethod
-    def alias_scoped_step_input_candidates(
-        cls,
-        alias: str,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        binding = request.source_binding_plan.binding_for_alias(alias, request.group_key)
-        if binding is None:
-            return ()
-        matched = cls.match_candidates(
-            candidates=request.step_input_candidates,
-            binding=binding,
-            inherit_components={},
-        )
-        if matched == request.step_input_candidates:
-            return ()
-        return matched
-
-    @staticmethod
-    def shared_candidate_values(
-        field: SourceBindingMatchField,
-        step_input_candidates: tuple[ParsedSourceCandidate, ...],
-    ) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                metadata_value
-                for candidate in step_input_candidates
-                for metadata_value in (
-                    semantic_source_metadata_value(candidate.metadata, field.metadata_field),
-                )
-                if metadata_value is not None
-            )
-        )
-
-
-def _source_candidate_summary(
-    candidates: tuple[ParsedSourceCandidate, ...],
-) -> tuple[Mapping[str, ParsedSourceMetadata | str], ...]:
-    return tuple(
-        {
-            "path": candidate.path,
-            "metadata": dict(candidate.metadata),
-        }
-        for candidate in candidates[:5]
-    )
-
-
-def _select_step_input_stack(
-    *,
-    request: SourceBindingResolutionRequest,
-    selected_sources: tuple[ParsedSourceCandidate, ...],
-) -> ImagePayloadValue:
-    context = request.adapter.source_binding_context
-    selected_paths = tuple(candidate.path for candidate in selected_sources)
-    current_step_input_files = context.current_step_input_files
-    indexed_paths = {
-        path: index for index, path in enumerate(current_step_input_files)
-    }
-    selected_indexes = tuple(
-        indexed_paths[path]
-        for path in current_step_input_files
-        if path in selected_paths
-    )
-    current_image = request.current_image
-    if len(selected_indexes) != len(selected_paths):
-        return _load_step_input_stack(
-            request=request,
-            selected_sources=selected_sources,
-        )
-    if not selected_indexes:
-        raise RuntimeError(
-            f"CellProfiler source alias '{request.alias}' selected no step-input "
-            "stack indexes after filename matching."
-        )
-    if len(current_step_input_files) == 1:
-            return StepInputSourceBindingResolver.natural_step_input_payload(current_image)
-    slices = _unstack_payload(current_image)
-    selected_slices = [slices[index] for index in selected_indexes]
-    return RestackLikePayloadAuthority.restack(selected_slices, current_image)
-
-
-def _load_step_input_stack(
-    *,
-    request: SourceBindingResolutionRequest,
-    selected_sources: tuple[ParsedSourceCandidate, ...],
-) -> ImagePayloadValue:
-    context = request.adapter.source_binding_context
-    if context.step_input_dir is None or context.step_input_backend is None:
-        raise RuntimeError(
-            "Step-input selector resolution needs step_input_dir and "
-            "step_input_backend when selected files are outside the current stack."
-        )
-    storage_paths = tuple(candidate.path for candidate in selected_sources)
-    processing_context = RequireProcessingContextBoundaryPolicy(request.adapter).context
-    loaded = processing_context.filemanager.load_batch(
-        list(storage_paths),
-        context.step_input_backend,
-    )
-    if not loaded:
-        raise RuntimeError(
-            f"Step-input source resolution loaded no payloads from {list(storage_paths)}."
-        )
-    if len(loaded) != len(selected_sources):
-        raise RuntimeError(
-            "Step-input source resolution loaded a different number of payloads "
-            f"than selected candidates: {len(loaded)} loaded for "
-            f"{len(selected_sources)} selected."
-        )
-    contextualized = [
-        SourceImagePayloadSemantics.from_source_metadata(
-            candidate.metadata,
-            candidate.resolved_path,
-            context.step_input_backend,
-            processing_context.filemanager,
-        ).apply(payload)
-        for candidate, payload in zip(selected_sources, loaded, strict=True)
-    ]
-    return RestackLikePayloadAuthority.restack(contextualized, request.current_image)
-
-
-def _load_pipeline_start_stack(
-    *,
-    adapter: CellProfilerRuntimeAdapter,
-    selected_sources: tuple[ParsedSourceCandidate, ...],
-    current_image: CellProfilerCurrentImage,
-) -> ImagePayloadValue:
-    selected_paths = tuple(source.path for source in selected_sources)
-    storage_paths = tuple(source.resolved_path for source in selected_sources)
-    if not selected_paths:
-        raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
-    current_payload_resolution = (
-        PipelineStartCurrentStepPayloadMatcher.from_runtime(
-            adapter=adapter,
-            current_image=current_image,
-        ).resolve(
-            selected_paths=selected_paths,
-            current_image=current_image,
-        )
-    )
-    if current_payload_resolution.is_matched:
-        return current_payload_resolution.payload
-    backend = adapter.source_binding_context.pipeline_input_backend
-    if backend is None:
-        raise RuntimeError(
-            "Pipeline-start source resolution requires pipeline_input_backend."
-        )
-    cache_key = _pipeline_start_payload_cache_key(
-        adapter,
-        backend,
-        selected_paths,
-        storage_paths,
-    )
-    loaded_payloads = adapter._pipeline_start_payload_cache.get(cache_key)
-    if loaded_payloads is None:
-        loaded_payloads = _PIPELINE_START_PAYLOAD_PROCESS_CACHE.get(cache_key)
-        if loaded_payloads is not None:
-            _PIPELINE_START_PAYLOAD_PROCESS_CACHE.move_to_end(cache_key)
-            adapter._pipeline_start_payload_cache[cache_key] = loaded_payloads
-    if loaded_payloads is None:
-        loaded_payloads = tuple(
-            PipelineStartSourceFileLoader.for_paths(storage_paths).load_slices(
-                PipelineStartSourceLoadRequest(
-                    adapter=adapter,
-                    selected_sources=selected_sources,
-                    backend=backend,
-                )
-            )
-        )
-        adapter._pipeline_start_payload_cache[cache_key] = loaded_payloads
-        _PIPELINE_START_PAYLOAD_PROCESS_CACHE[cache_key] = loaded_payloads
-        _PIPELINE_START_PAYLOAD_PROCESS_CACHE.move_to_end(cache_key)
-        if len(_PIPELINE_START_PAYLOAD_PROCESS_CACHE) > _PIPELINE_START_PAYLOAD_CACHE_LIMIT:
-            _PIPELINE_START_PAYLOAD_PROCESS_CACHE.popitem(last=False)
-    if not loaded_payloads:
-        raise RuntimeError(
-            "Pipeline-start source resolution loaded no payloads from "
-            f"{list(selected_paths)}."
-        )
-    return RestackLikePayloadAuthority.restack(list(loaded_payloads), current_image)
-
-
-def _pipeline_start_payload_cache_key(
-    adapter: CellProfilerRuntimeAdapter,
-    backend: str,
-    selected_paths: tuple[str, ...],
-    storage_paths: tuple[str, ...],
-) -> tuple[Hashable, ...]:
-    context = adapter.source_binding_context
-    return (
-        backend,
-        RequireProcessingContextBoundaryPolicy(adapter).context.filemanager,
-        selected_paths,
-        storage_paths,
-        context.metadata_identity_for_paths(selected_paths),
-    )
-
-
-def _matlab_numeric_arrays(
-    mat_payload: Mapping[str, ImagePayloadValue],
-) -> tuple[tuple[str, ImagePayloadValue], ...]:
-    return tuple(
-        (name, payload)
-        for name, payload in mat_payload.items()
-        if not MatlabPayloadEntryName(name).is_private_metadata
-        and _is_numeric_array_payload(payload)
-    )
-
-
-def _is_numeric_array_payload(payload: ImagePayloadValue) -> bool:
-    if not isinstance(payload, (RuntimeArrayPayload, np.ndarray)):
-        return False
-    return payload.dtype.kind in {"b", "u", "i", "f", "c"} and payload.ndim >= 2
-
-
-def _unstack_payload(payload: ImagePayloadValue) -> list[ImagePayloadValue]:
-    return list(payload_slices_for_alignment(payload))
-
-
-class RestackLikePayloadAuthority:
-    """Restack selected image payload slices while preserving payload context."""
-
-    @classmethod
-    def restack(
-        cls,
-        slices: list[ImagePayloadValue],
-        reference_payload: ImagePayloadValue,
-    ) -> ImagePayloadValue:
-        if not slices:
-            raise ValueError("Cannot restack an empty slice list.")
-        if len(slices) == 1:
-            return slices[0]
-        slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
-        memory_type = detect_memory_type(image_payload_data(reference_payload))
-        stacked = ImageStackLayout.stack_slices_or_single_stack(
-            slice_data,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
-        return ImagePayloadContextRequest(
-            data=cast(ImagePayloadValue, stacked),
-            mask=cast(ImagePayloadMaskValue, cls.stack_masks(slices, memory_type)),
-            metadata=ImagePayloadMetadataCompositionRequest(slices).metadata(),
-        ).payload()
-
-    @staticmethod
-    def stack_masks(
-        slices: list[ImagePayloadValue],
-        memory_type: str,
-    ) -> ImagePayloadMaskValue:
-        masks = tuple(image_payload_mask(slice_payload) for slice_payload in slices)
-        if not any(mask is not None for mask in masks):
-            return None
-        slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
-        resolved_masks = [
-            np.ones(np.asarray(data).shape[:2], dtype=bool)
-            if mask is None
-            else np.asarray(mask, dtype=bool)
-            for data, mask in zip(slice_data, masks)
-        ]
-        return ImageStackLayout.stack_slices_or_single_stack(
-            resolved_masks,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
-
-def _resolved_source_path(
-    file_path: str,
-    adapter: CellProfilerRuntimeAdapter,
-) -> str:
-    source_path = SourceRuntimePathLookup(
-        file_path,
-        adapter.source_binding_context.step_input_dir,
-    ).first_value(adapter.source_binding_context.step_input_source_paths)
-    if source_path is not None:
-        return source_path
-    path = Path(file_path)
-    if path.is_absolute():
-        return str(path)
-    step_input_dir = adapter.source_binding_context.step_input_dir
-    if step_input_dir is None:
-        return str(path)
-    return str(Path(step_input_dir) / path)
+        return SourceCandidateRuntimeCache(self, file_paths).candidates()
+
+    def prepare_source_resolution(self) -> None:
+        """Prepare source-resolution caches owned by this adapter's source context."""
+        for file_paths in self.source_binding_context.source_candidate_file_universes():
+            self.source_candidates(file_paths)
+        self.cellprofiler_ordered_pipeline_image_paths()
+        self.cellprofiler_axis_image_number_start()
+        if self.can_resolve_source_candidates:
+            CellProfilerImageNumberResolver.for_adapter(self).image_number_map()

@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_OBJECT_NAME_FIELD,
     MEASUREMENT_OBJECT_NUMBER_FIELD,
 )

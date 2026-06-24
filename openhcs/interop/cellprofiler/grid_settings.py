@@ -270,7 +270,7 @@ def _grid_ordering(value: str) -> str:
     ).literal
 
 
-def _grid_cycle_scope(value: str) -> str:
+def _grid_cycle_scope(value: str) -> CellProfilerGridCycleScope:
     return CellProfilerGridCycleScope(
         FragmentMatchedLiteral(
             value=value,
@@ -279,7 +279,7 @@ def _grid_cycle_scope(value: str) -> str:
                 ("each",): "each_cycle",
             },
         ).literal
-    ).value
+    )
 
 
 def _shape_choice(value: str) -> str:

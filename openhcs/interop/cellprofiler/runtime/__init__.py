@@ -7,7 +7,6 @@ from openhcs.core.runtime_semantics import (
 from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerRuntimeAdapter,
 )
-from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CELLPROFILER_GRID_CYCLE_SCOPE_KWARG,
     CellProfilerGridCycleScope,

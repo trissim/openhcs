@@ -72,6 +72,7 @@ from openhcs.interop.cellprofiler.gray_to_color_settings import (
 from openhcs.interop.cellprofiler.illumination_settings import (
     CORRECT_ILLUMINATION_APPLY_SETTINGS,
     CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
+    IlluminationCalculationScope,
     IlluminationCorrectionMethod,
 )
 from openhcs.interop.cellprofiler.intensity_distribution_settings import (
@@ -228,6 +229,15 @@ class BoundModuleSettings:
                 "BoundModuleSettings.invocation_options must inherit "
                 "RuntimeInvocationOptions."
             )
+
+    def with_kwargs(self, kwargs: Mapping[str, Any]) -> "BoundModuleSettings":
+        """Return this binding with additional generated function kwargs."""
+        return BoundModuleSettings(
+            {**self.kwargs, **kwargs},
+            self.unmapped_kwargs,
+            self.invocation_options,
+            self.setting_coverage,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -623,12 +633,7 @@ class _ModuleSettingsBindingStrategy(
         bound = self._bind(module, binder=binder, param_mapping=param_mapping)
         runtime_semantics = ModuleRuntimeSemanticsBinding.for_module(module.name)
         if runtime_semantics is not None:
-            bound = BoundModuleSettings(
-                {**bound.kwargs, **runtime_semantics.kwargs(module)},
-                bound.unmapped_kwargs,
-                bound.invocation_options,
-                bound.setting_coverage,
-            )
+            bound = bound.with_kwargs(runtime_semantics.kwargs(module))
         artifact_setting_names = self._artifact_setting_names(module)
         typed_ignore_setting_names = (
             ModuleUnmappedSettingIgnore.ignored_setting_names_for_module(module)
@@ -2800,6 +2805,23 @@ class CorrectIlluminationCalculateModuleSettingsBindingStrategy(
 
     module_name = "CorrectIlluminationCalculate"
     setting_bindings = CORRECT_ILLUMINATION_CALCULATE_SETTINGS
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        raw_scope = bound.kwargs.get(
+            "calculation_scope",
+            IlluminationCalculationScope.EACH,
+        )
+        scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
+        return bound.with_kwargs(
+            {"slice_by_slice": scope is IlluminationCalculationScope.EACH}
+        )
 
 
 class SmoothModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):

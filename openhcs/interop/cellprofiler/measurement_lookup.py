@@ -10,10 +10,7 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.public_api import declared_public_names
-from openhcs.core.runtime_artifact_queries import (
-    measurement_values_for_feature,
-    measurement_values_for_label_slices,
-)
+from openhcs.core.measurement_feature_queries import measurement_values_for_feature
 
 
 class CellProfilerMeasurementFeatureKind(Enum):
@@ -242,6 +239,5 @@ __all__ = declared_public_names(
     globals(),
     extra_names=(
         "measurement_values_for_feature",
-        "measurement_values_for_label_slices",
     ),
 )

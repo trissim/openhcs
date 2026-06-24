@@ -56,6 +56,8 @@ def test_prepare_cellprofiler_source_schema_workspace_materializes_openhcs_metad
     assert result.execution_plate_path == result.materialization.workspace_root
     assert result.source_workspace_path == result.materialization.workspace_root
     assert result.prepared_pipeline.import_result.source_schema.is_empty is False
+    assert result.runtime_pipeline is result.prepared_pipeline.runtime_pipeline
+    assert result.runtime_pipeline_steps is result.runtime_pipeline.steps
     assert result.materialization.metadata_path.exists()
     assert set(result.materialization.primary_mappings) == {
         "A01_s001_w1_z001_t001.TIF",
@@ -165,7 +167,7 @@ def test_cellprofiler_source_root_resolver_ignores_nested_pipeline_copies(
         ),
     ).source_root()
 
-    assert resolved == input_dir
+    assert resolved.root == input_dir
 
 
 def test_cellprofiler_source_root_resolver_uses_single_child_with_folder_metadata(
@@ -196,7 +198,7 @@ def test_cellprofiler_source_root_resolver_uses_single_child_with_folder_metadat
         ),
     ).source_root()
 
-    assert resolved == image_dir
+    assert resolved.root == image_dir
 
 
 def test_cellprofiler_source_root_resolver_prefers_complete_image_set_child(
@@ -285,7 +287,99 @@ def test_cellprofiler_source_root_resolver_prefers_complete_image_set_child(
         ),
     ).source_root()
 
-    assert resolved == image_dir
+    assert resolved.root == image_dir
+
+
+def test_cellprofiler_source_root_resolver_uses_parent_when_nested_root_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "BeginnerSegmentation"
+    nested_root = source_root / "bonus_materials"
+    image_dir = source_root / "images_Illum-corrected"
+    mask_dir = nested_root / "cellpose_masks_nuclei"
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    (source_root / "bonus_1_import_masks.cppipe").write_text("", encoding="utf-8")
+    (nested_root / "bonus_1_import_masks.cppipe").write_text("", encoding="utf-8")
+    tifffile.imwrite(
+        image_dir / "plate1_A14_site1_Ch1.tif",
+        np.full((4, 4), 1, dtype=np.uint16),
+    )
+    tifffile.imwrite(
+        image_dir / "plate1_A14_site1_Ch2.tif",
+        np.full((4, 4), 2, dtype=np.uint16),
+    )
+    (mask_dir / "plate1_A14_site1_Ch1_cp_masks.png").write_bytes(b"")
+
+    resolved = CellProfilerSourceRootResolver(
+        nested_root,
+        PipelineImageSchema(
+            images_rule=ImagesRule(
+                filters=(
+                    SourceFilterClause(
+                        SourceFilterSubject.EXTENSION,
+                        SourceFilterMatchType.IS_IMAGE,
+                    ),
+                ),
+            ),
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=(
+                        r"plate1_(?P<Well>[A-Z][0-9]{2})_site"
+                        r"(?P<Site>[0-9])_Ch(?P<ChannelNumber>[0-9])"
+                    ),
+                ),
+            ),
+            assignments_by_alias={
+                "OrigDNA": ImageAssignment(
+                    alias="OrigDNA",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch1",
+                            ),
+                        ),
+                    ),
+                ),
+                "OrigER": ImageAssignment(
+                    alias="OrigER",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch2",
+                            ),
+                        ),
+                    ),
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(
+                method=SourceBindingMatchMethod.METADATA,
+                dimensions=(
+                    SourceBindingMatchDimension(
+                        fields=(
+                            SourceBindingMatchField("OrigDNA", "Well"),
+                            SourceBindingMatchField("OrigER", "Well"),
+                        ),
+                    ),
+                    SourceBindingMatchDimension(
+                        fields=(
+                            SourceBindingMatchField("OrigDNA", "Site"),
+                            SourceBindingMatchField("OrigER", "Site"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ).source_root()
+
+    assert resolved.root == image_dir
 
 
 @dataclass(frozen=True, slots=True)

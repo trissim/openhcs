@@ -6,7 +6,7 @@ import ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Mapping
 
@@ -23,10 +23,12 @@ from openhcs.core.pipeline_image_schema import (
     ImagesRule,
     PipelineImageSchema,
     PipelineImageSchemaBuilder,
+    SourceImageStackPlan,
     SourceArtifactAssignment,
     image_type_artifact_kind,
     image_type_participates_in_image_stack,
 )
+from openhcs.core.component_set import ComponentSet
 from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
@@ -511,6 +513,47 @@ def cellprofiler_source_binding_origin_policy() -> SourceBindingOriginPolicy:
     return SourceBindingOriginPolicy.for_key(CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY)
 
 
+class SourceImageStackPlanDeclaration(ABC, metaclass=AutoRegisterMeta):
+    """Nominal declaration of setup-module source-stack components."""
+
+    __registry_key__ = "declaration_key"
+    __skip_if_no_key__ = True
+    declaration_key: ClassVar[str | None] = None
+
+    @classmethod
+    def plans_for_module(cls, module: ModuleBlock) -> tuple[SourceImageStackPlan, ...]:
+        return tuple(
+            declaration.stack_plan(module)
+            for declaration_type in cls.__registry__.values()
+            for declaration in (declaration_type(),)
+            if declaration.matches(module)
+        )
+
+    @abstractmethod
+    def matches(self, module: ModuleBlock) -> bool:
+        """Return whether this setup module declares a source-stack plan."""
+
+    @abstractmethod
+    def stack_plan(self, module: ModuleBlock) -> SourceImageStackPlan:
+        """Return the source-stack plan declared by the setup module."""
+
+
+class NamesAndTypesProcessAs3DStackPlanDeclaration(SourceImageStackPlanDeclaration):
+    """CellProfiler NamesAndTypes 3D mode stacks source images over Z."""
+
+    declaration_key = "names_and_types_process_as_3d"
+
+    def matches(self, module: ModuleBlock) -> bool:
+        return (
+            module.name == "NamesAndTypes"
+            and module.get_setting("Process as 3D?", "No").strip().casefold() == "yes"
+        )
+
+    def stack_plan(self, module: ModuleBlock) -> SourceImageStackPlan:
+        del module
+        return SourceImageStackPlan((AllComponents.Z_INDEX,))
+
+
 _LOAD_IMAGES_ALIAS_SETTING = (
     "What do you want to call this image in CellProfiler?"
 )
@@ -668,6 +711,8 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: PipelineImageSchemaBuilder,
     ) -> None:
+        for stack_plan in SourceImageStackPlanDeclaration.plans_for_module(module):
+            state.declare_source_image_stack(stack_plan)
         assignment_blocks = NamesAndTypesAssignmentBlockStrategy.blocks_for(
             module.iter_settings()
         )
@@ -1061,7 +1106,7 @@ def _compile_metadata_block(
     require_enabled: bool,
 ) -> None:
     method = block_setting_value(block, "Metadata extraction method")
-    if _is_imported_metadata_method(method):
+    if is_imported_metadata_method(method):
         if not require_enabled:
             return
         state.add_imported_metadata_table(_imported_metadata_table(block))
@@ -1153,7 +1198,10 @@ class DisabledPathMetadataRulePolicy:
         components = tuple(source_metadata_component(field) for field in fields)
         return (
             any(component is None for component in components)
-            and all(component is not AllComponents.CHANNEL for component in components)
+            and not any(
+                DisabledMetadataAxisComponents().contains(component)
+                for component in components
+            )
         )
 
     @property
@@ -1162,6 +1210,16 @@ class DisabledPathMetadataRulePolicy:
             return tuple(re.compile(self.pattern).groupindex)
         except re.error:
             return ()
+
+
+@dataclass(frozen=True, slots=True)
+class DisabledMetadataAxisComponents:
+    """Components whose disabled metadata rules should not be resurrected."""
+
+    components: ComponentSet = field(default_factory=ComponentSet.default_group_by)
+
+    def contains(self, component: AllComponents | None) -> bool:
+        return component in self.components
 
 
 def _is_path_metadata_extraction_method(value: str) -> bool:
@@ -1173,7 +1231,8 @@ def _is_path_metadata_extraction_method(value: str) -> bool:
     )
 
 
-def _is_imported_metadata_method(value: str) -> bool:
+def is_imported_metadata_method(value: str) -> bool:
+    """Return whether a CellProfiler Metadata method imports an external table."""
     normalized = value.strip().lower()
     return "import" in normalized and "file" in normalized
 

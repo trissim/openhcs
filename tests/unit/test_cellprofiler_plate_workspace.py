@@ -10,7 +10,6 @@ import tifffile
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.interop.cellprofiler.plate_workspace import (
     CellProfilerPlateWorkspacePreparer,
-    CellProfilerPlateWorkspaceRequest,
 )
 
 
@@ -21,9 +20,7 @@ def test_prepare_cellprofiler_plate_workspace_materializes_metadata(
     fixture.create_source_file("A01_s1_D.TIF")
     fixture.write_names_and_types_cppipe("ExampleFly")
 
-    result = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(fixture.plate_root)
-    ).prepare()
+    result = CellProfilerPlateWorkspacePreparer(fixture.plate_root).prepare()
 
     assert result.materialized is True
     assert result.cppipe_path == fixture.plate_root / "ExampleFly.cppipe"
@@ -34,7 +31,7 @@ def test_prepare_cellprofiler_plate_workspace_materializes_metadata(
     assert generated_pipeline.exists()
 
 
-def test_prepare_cellprofiler_plate_workspace_prepares_pipeline_when_metadata_exists(
+def test_prepare_cellprofiler_plate_workspace_refreshes_metadata_when_metadata_exists(
     tmp_path: Path,
 ) -> None:
     fixture = CellProfilerPlateWorkspaceFixture(tmp_path / "ExampleFly")
@@ -42,14 +39,15 @@ def test_prepare_cellprofiler_plate_workspace_prepares_pipeline_when_metadata_ex
     fixture.write_names_and_types_cppipe("ExampleFly")
     (fixture.plate_root / "openhcs_metadata.json").write_text("{}", encoding="utf-8")
 
-    result = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(fixture.plate_root)
-    ).prepare()
+    result = CellProfilerPlateWorkspacePreparer(fixture.plate_root).prepare()
 
-    assert result.materialized is False
+    assert result.materialized is True
     assert result.ingestion is not None
-    assert result.ingestion.source_workspace_path is None
-    assert result.ingestion.prepared_pipeline.pipeline.steps
+    assert result.ingestion.source_workspace_path == fixture.plate_root
+    assert result.ingestion.runtime_pipeline_steps
+    assert set(result.ingestion.materialization.primary_mappings) == {
+        "A01_s001_w1_z001_t001.TIF",
+    }
 
 
 def test_prepare_cellprofiler_plate_workspace_ignores_non_cellprofiler_plate(
@@ -58,9 +56,7 @@ def test_prepare_cellprofiler_plate_workspace_ignores_non_cellprofiler_plate(
     plate_root = tmp_path / "native"
     plate_root.mkdir()
 
-    result = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(plate_root)
-    ).prepare()
+    result = CellProfilerPlateWorkspacePreparer(plate_root).prepare()
 
     assert result.cppipe_path is None
     assert result.ingestion is None
@@ -78,9 +74,7 @@ def test_prepare_cellprofiler_plate_workspace_requires_unambiguous_cppipe(
         ValueError,
         match="contains multiple \\.cppipe files",
     ):
-        CellProfilerPlateWorkspacePreparer(
-            CellProfilerPlateWorkspaceRequest(plate_root)
-        ).prepare()
+        CellProfilerPlateWorkspacePreparer(plate_root).prepare()
 
 
 def test_cellprofiler_plate_workspace_orders_tutorial_start_before_final(
@@ -93,9 +87,7 @@ def test_cellprofiler_plate_workspace_orders_tutorial_start_before_final(
     final_cppipe.write_text("Version:5", encoding="utf-8")
     start_cppipe.write_text("Version:5", encoding="utf-8")
 
-    paths = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(plate_root)
-    ).cppipe_paths()
+    paths = CellProfilerPlateWorkspacePreparer(plate_root).cppipe_paths()
 
     assert paths == (start_cppipe, final_cppipe)
 
@@ -110,9 +102,7 @@ def test_cellprofiler_plate_workspace_ignores_appledouble_cppipe_sidecars(
     sidecar.write_text("not a CellProfiler pipeline", encoding="utf-8")
     start_cppipe.write_text("Version:5", encoding="utf-8")
 
-    paths = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(plate_root)
-    ).cppipe_paths()
+    paths = CellProfilerPlateWorkspacePreparer(plate_root).cppipe_paths()
 
     assert paths == (start_cppipe,)
 
@@ -126,10 +116,8 @@ def test_prepare_cellprofiler_plate_workspace_accepts_explicit_cppipe(
     selected_cppipe = fixture.write_names_and_types_cppipe("second")
 
     result = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(
-            fixture.plate_root,
-            cppipe_path=selected_cppipe,
-        )
+        fixture.plate_root,
+        cppipe_path=selected_cppipe,
     ).prepare()
 
     assert result.cppipe_path == selected_cppipe
@@ -146,7 +134,7 @@ def test_prepare_cellprofiler_input_workspace_preserves_external_object_inputs(
     fixture.write_incomplete_processing_cppipe("ExampleFly")
 
     result = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest(fixture.plate_root)
+        fixture.plate_root
     ).prepare_input_workspace()
 
     assert result.execution_plate_path == fixture.plate_root
@@ -157,7 +145,7 @@ def test_prepare_cellprofiler_input_workspace_preserves_external_object_inputs(
 
     bindings = tuple(
         binding
-        for step in result.prepared_pipeline.pipeline.steps
+        for step in result.prepared_pipeline.runtime_pipeline_steps
         for group in step.source_bindings.groups
         for binding in group.bindings
     )
@@ -181,8 +169,8 @@ def test_prepare_cellprofiler_input_workspace_refreshes_stale_root_metadata(
     fixture.write_names_and_types_cppipe("BBBC022_Analysis_Final")
     (fixture.plate_root / "openhcs_metadata.json").write_text("{}", encoding="utf-8")
 
-    result = CellProfilerPlateWorkspacePreparer(
-        CellProfilerPlateWorkspaceRequest.from_paths(fixture.plate_root)
+    result = CellProfilerPlateWorkspacePreparer.from_paths(
+        fixture.plate_root
     ).prepare_input_workspace()
 
     assert result.original_source_root == image_dir
