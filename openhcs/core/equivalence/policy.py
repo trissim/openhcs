@@ -258,8 +258,8 @@ class RuntimeMeasurementRowQualifierSequence:
 class RuntimeMeasurementRowIdentityContract:
     """Declarative identity-field precedence for measurement table rows."""
 
-    primary_image_fields: frozenset[str] = frozenset({"image_number", "image_id"})
-    fallback_image_fields: frozenset[str] = frozenset({"slice_index"})
+    primary_image_fields: frozenset[str] = frozenset({"slice_index"})
+    fallback_image_fields: frozenset[str] = frozenset({"image_number", "image_id"})
 
     def __post_init__(self) -> None:
         primary_image_fields = frozenset(

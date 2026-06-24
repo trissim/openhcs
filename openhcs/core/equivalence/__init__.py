@@ -54,11 +54,19 @@ from openhcs.core.equivalence.measurement_rows import (
 )
 from openhcs.core.equivalence.measurement_facts import (
     RuntimeMeasurementFact,
-    RuntimeMeasurementFactCounters,
     RuntimeMeasurementFacts,
     RuntimeRequiredMeasurementKeys,
     record_measurement_facts,
+    runtime_measurement_fact_counter,
     spatial_grid_measurement_facts,
+)
+from openhcs.core.equivalence.measurement_requirements import (
+    RequiredRuntimeMeasurementProjection,
+)
+from openhcs.core.equivalence.relationships import (
+    ObjectInstanceKeyPlaneAlignmentStrategy,
+    RelationshipAggregateFeatureSemantics,
+    RelationshipMeasurementSemantics,
 )
 from openhcs.core.equivalence.comparison import (
     runtime_image_differences,

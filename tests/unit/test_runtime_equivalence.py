@@ -18,12 +18,17 @@ from openhcs.core.runtime_equivalence import (
     RuntimeMeasurementSnapshot,
     RuntimeMeasurementSubjectKey,
     RuntimeOutputSnapshot,
-    ObjectInstanceKeyPlaneAlignmentStrategy,
     runtime_artifact_execution_equivalence,
     runtime_measurement_equivalence,
-    _dedupe_runtime_measurement_table_aggregate_rows,
     runtime_output_equivalence as _runtime_output_equivalence,
     runtime_reference_artifact_equivalence as _runtime_reference_artifact_equivalence,
+)
+from openhcs.core.equivalence.relationships import (
+    ObjectInstanceKeyPlaneAlignmentStrategy,
+)
+from openhcs.core.equivalence.cells import runtime_cell_signature
+from openhcs.core.equivalence.object_label_measurements import (
+    ObjectLabelMeasurementCompletion,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_DIALECT,
@@ -32,11 +37,15 @@ from openhcs.interop.cellprofiler.measurement_dialect import (
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionObservation,
 )
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
+)
+from openhcs.core.equivalence.measurement_rows import (
+    measurement_row_image_identity_key,
 )
 from openhcs.core.equivalence.tables import (
     RuntimeMeasurementRowFingerprint,
+    dedupe_runtime_measurement_table_aggregate_rows,
     exact_measurement_table_key,
 )
 from openhcs.core.runtime_exports import (
@@ -52,6 +61,7 @@ from openhcs.core.runtime_semantics import (
     ObjectCoreMeasurementFeature,
     MeasurementObjectRowIdentity,
     ObjectMeasurementFeatureRole,
+    ObjectLabelDomain,
     ObjectLabelDomainScope,
     RelationshipSemantics,
     RuntimePlaneAxis,
@@ -91,6 +101,19 @@ def runtime_reference_artifact_equivalence(*args, policy=None, **kwargs):
     if policy is None:
         policy = RuntimeEquivalencePolicy()
     return _runtime_reference_artifact_equivalence(*args, policy=policy, **kwargs)
+
+
+def test_measurement_row_identity_prefers_runtime_slice_index_over_image_number() -> None:
+    identity = measurement_row_image_identity_key(
+        {
+            "slice_index": 1,
+            "image_number": 1,
+            "object_label": 7,
+        },
+        CELLPROFILER_MEASUREMENT_DIALECT,
+    )
+
+    assert identity == (("slice_index", ("int", 1)),)
 
 
 def test_runtime_output_equivalence_ignores_table_paths_and_column_order(
@@ -232,16 +255,16 @@ def test_runtime_measurement_snapshot_skips_contextual_padding_rows(
     )
     nan = RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "nan")
 
-    assert snapshot.values_by_feature[cells_area] == {
+    assert snapshot.measurement_fact_counts[cells_area] == {
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "10.0"): 1,
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "20.0"): 1,
     }
-    assert snapshot.values_by_feature[nuclei_entropy] == {
+    assert snapshot.measurement_fact_counts[nuclei_entropy] == {
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.7"): 1,
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.8"): 1,
     }
-    assert nan not in snapshot.values_by_feature[cells_area]
-    assert nan not in snapshot.values_by_feature[nuclei_entropy]
+    assert nan not in snapshot.measurement_fact_counts[cells_area]
+    assert nan not in snapshot.measurement_fact_counts[nuclei_entropy]
 
 
 def test_runtime_measurement_snapshot_skips_contextual_feature_family_padding(
@@ -268,15 +291,70 @@ def test_runtime_measurement_snapshot_skips_contextual_feature_family_padding(
     cells_mean_intensity = RuntimeMeasurementFeatureKey(subject, "mean_intensity")
     nan = RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "nan")
 
-    assert snapshot.values_by_feature[cells_area] == {
+    assert snapshot.measurement_fact_counts[cells_area] == {
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "10.0"): 1,
     }
-    assert snapshot.values_by_feature[cells_mean_intensity] == {
+    assert snapshot.measurement_fact_counts[cells_mean_intensity] == {
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.7"): 1,
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.8"): 1,
     }
-    assert nan not in snapshot.values_by_feature[cells_area]
-    assert nan not in snapshot.values_by_feature[cells_mean_intensity]
+    assert nan not in snapshot.measurement_fact_counts[cells_area]
+    assert nan not in snapshot.measurement_fact_counts[cells_mean_intensity]
+
+
+def test_runtime_measurement_snapshot_skips_absent_runtime_cells(
+    tmp_path: Path,
+) -> None:
+    store = RuntimeValueStore()
+    table = MeasurementTable(
+        name="MeasureColocalization",
+        rows=(
+            {
+                "object_label": 1,
+                "object_name": "Cells",
+                "correlation": 0.25,
+            },
+            {
+                "object_label": 2,
+                "object_name": "Cells",
+                "correlation": None,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureColocalization",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path="/memory/MeasureColocalization.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
+        tmp_path,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+    )
+
+    correlation = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells"),
+        "correlation",
+    )
+    assert snapshot.measurement_fact_counts[correlation] == {
+        RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.25"): 1,
+    }
+    assert RuntimeCellSignature(RuntimeCellValueKind.TEXT, "None") not in (
+        snapshot.measurement_fact_counts[correlation]
+    )
 
 
 def test_runtime_reference_artifact_equivalence_skips_runtime_table_padding_rows(
@@ -326,7 +404,7 @@ def test_runtime_reference_artifact_equivalence_skips_runtime_table_padding_rows
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -387,7 +465,7 @@ def test_runtime_reference_artifact_equivalence_skips_runtime_shape_padding_defa
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -453,7 +531,7 @@ def test_runtime_reference_artifact_equivalence_skips_runtime_category_padding_g
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -538,7 +616,7 @@ def test_runtime_reference_artifact_equivalence_projects_spatial_grid_measuremen
     store = RuntimeValueStore()
     store.record(value, path="/memory/Grid.pkl", backend="memory")
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -600,7 +678,7 @@ def test_runtime_reference_artifact_equivalence_projects_slice_aligned_spatial_g
     store = RuntimeValueStore()
     store.record(value, path="/memory/Grid.pkl", backend="memory")
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -637,9 +715,9 @@ def test_runtime_reference_artifact_equivalence_projects_object_numbers_per_plan
     label_set = ObjectLabelSet(
         name="Cells",
         labels=labels,
-        declared_object_count=2,
-        domain_scope=ObjectLabelDomainScope.PAYLOAD,
-    )
+        domain=ObjectLabelDomain(declared_object_count=2,
+        scope=ObjectLabelDomainScope.PAYLOAD,
+    ))
     payload = label_set.runtime_payload()
     value = RuntimeValue(
         key=ArtifactKey(
@@ -653,7 +731,7 @@ def test_runtime_reference_artifact_equivalence_projects_object_numbers_per_plan
     store = RuntimeValueStore()
     store.record(value, path="/memory/Cells.pkl", backend="memory")
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -688,8 +766,8 @@ def test_runtime_reference_artifact_equivalence_projects_payload_object_numbers_
     label_set = ObjectLabelSet(
         name="StraightenedWorms",
         labels=labels,
-        domain_scope=ObjectLabelDomainScope.PAYLOAD,
-    )
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PAYLOAD,
+    ))
     payload = label_set.runtime_payload()
     value = RuntimeValue(
         key=ArtifactKey(
@@ -703,7 +781,7 @@ def test_runtime_reference_artifact_equivalence_projects_payload_object_numbers_
     store = RuntimeValueStore()
     store.record(value, path="/memory/StraightenedWorms.pkl", backend="memory")
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -713,6 +791,41 @@ def test_runtime_reference_artifact_equivalence_projects_payload_object_numbers_
     )
 
     assert report.is_equivalent
+
+
+def test_object_label_completion_does_not_duplicate_explicit_object_numbers() -> None:
+    policy = RuntimeEquivalencePolicy()
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells")
+    object_number_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+    )
+    completion = ObjectLabelMeasurementCompletion.from_feature_state(
+        policy=policy,
+        measurement_fact_counts={
+            object_number_key: Counter((runtime_cell_signature("1", policy),))
+        },
+        required_keys=frozenset((object_number_key,)),
+    )
+    label_set = ObjectLabelSet(
+        name="Cells",
+        labels=np.asarray(((1, 2), (2, 0)), dtype=np.int32),
+        domain=ObjectLabelDomain(declared_object_count=2),
+    )
+    payload = label_set.runtime_payload()
+    value = RuntimeValue(
+        key=ArtifactKey(
+            name="Cells",
+            kind=ArtifactKind.OBJECT_LABELS,
+            scope=ArtifactScope(axis_id="A01"),
+        ),
+        data=payload,
+        schema=label_set.runtime_schema(payload),
+    )
+    store = RuntimeValueStore()
+    record = store.record(value, path="/memory/Cells.pkl", backend="memory")
+
+    assert completion.facts_for_records((record,)) == ()
 
 
 def test_runtime_output_equivalence_detects_table_value_mismatch(
@@ -1006,7 +1119,7 @@ def test_runtime_reference_artifact_equivalence_uses_declared_image_artifacts(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1048,7 +1161,7 @@ def test_runtime_reference_artifact_equivalence_can_use_exported_image_files(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1122,7 +1235,7 @@ def test_runtime_reference_artifact_equivalence_matches_long_form_aggregate_rows
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1179,7 +1292,7 @@ def test_runtime_reference_artifact_equivalence_skips_candidate_images_without_r
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1224,7 +1337,7 @@ def test_runtime_reference_artifact_equivalence_ignores_internal_tables_without_
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1263,7 +1376,7 @@ def test_runtime_reference_artifact_equivalence_applies_image_export_encoding(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1307,7 +1420,7 @@ def test_runtime_reference_artifact_equivalence_collapses_singleton_image_stack(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1344,11 +1457,11 @@ def test_runtime_execution_equivalence_detects_artifact_count_mismatch(
         backend="memory",
     )
     reference = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=reference_store)},
+        {"A01": SimpleNamespace(runtime_value_store=reference_store, step_plans={})},
         tmp_path / "reference",
     )
     candidate = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=RuntimeValueStore())},
+        {"A01": SimpleNamespace(runtime_value_store=RuntimeValueStore(), step_plans={})},
         tmp_path / "candidate",
     )
 
@@ -1391,7 +1504,7 @@ def test_runtime_output_snapshot_from_artifact_execution_ignores_auxiliary_table
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         output_root,
     )
 
@@ -1424,7 +1537,7 @@ def test_runtime_output_snapshot_from_artifact_execution_ignores_undeclared_imag
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         output_root,
     )
 
@@ -1465,7 +1578,7 @@ def test_runtime_reference_artifact_equivalence_uses_measurement_facts(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -1509,7 +1622,7 @@ def test_runtime_reference_artifact_equivalence_uses_numeric_tolerance(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2090,7 +2203,7 @@ def test_runtime_reference_artifact_equivalence_allows_max_location_ties(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2206,7 +2319,7 @@ def test_runtime_reference_artifact_equivalence_uses_object_table_source_image(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2270,7 +2383,7 @@ def test_runtime_reference_artifact_equivalence_allows_stable_geometry_zernike_d
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2347,7 +2460,7 @@ def test_runtime_reference_artifact_equivalence_matches_sparse_zernike_after_sta
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2434,7 +2547,7 @@ def test_runtime_measurement_equivalence_tolerates_intensity_zernike_boundary_dr
     )
     unstable_geometry_candidate = RuntimeMeasurementSnapshot(
         {
-            **candidate.values_by_feature,
+            **candidate.measurement_fact_counts,
             center_y_feature: Counter(
                 {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "357.16666667"): 1}
             ),
@@ -2505,7 +2618,7 @@ def test_runtime_reference_artifact_equivalence_rejects_zernike_drift_when_geome
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2569,7 +2682,7 @@ def test_runtime_reference_artifact_equivalence_allows_stable_geometry_orientati
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2632,7 +2745,7 @@ def test_runtime_reference_artifact_equivalence_allows_relationship_mean_orienta
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2687,7 +2800,7 @@ def test_runtime_reference_artifact_equivalence_matches_mean_aggregates(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2735,7 +2848,7 @@ def test_runtime_reference_artifact_equivalence_mean_aggregates_ignore_nonfinite
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2779,7 +2892,7 @@ def test_runtime_reference_artifact_equivalence_allows_threshold_entropy_jitter(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2831,7 +2944,7 @@ def test_cellprofiler_runtime_policy_allows_threshold_entropy_roundoff(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2886,7 +2999,7 @@ def test_cellprofiler_runtime_policy_allows_max_location_ties(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -2954,7 +3067,7 @@ def test_runtime_reference_artifact_equivalence_allows_sparse_object_boundary_ji
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3027,7 +3140,7 @@ def test_runtime_reference_artifact_equivalence_allows_boundary_jitter_without_c
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3088,7 +3201,7 @@ def test_runtime_reference_artifact_equivalence_matches_qualified_features(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3142,7 +3255,7 @@ def test_runtime_reference_artifact_equivalence_matches_binned_row_qualifiers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3210,7 +3323,7 @@ def test_cellprofiler_runtime_policy_allows_source_qualified_intensity_boundary_
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3274,7 +3387,7 @@ def test_cellprofiler_runtime_policy_allows_calculated_object_boundary_jitter(
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3359,7 +3472,7 @@ def test_runtime_reference_artifact_equivalence_ignores_missing_row_qualifiers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3411,7 +3524,7 @@ def test_runtime_reference_artifact_equivalence_matches_numbered_feature_aliases
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3439,7 +3552,7 @@ def test_runtime_measurement_snapshot_normalizes_exported_numeric_qualifiers(
         policy=RuntimeEquivalencePolicy(),
     )
 
-    feature_names = {key.feature_name for key in snapshot.values_by_feature}
+    feature_names = {key.feature_name for key in snapshot.measurement_fact_counts}
     assert "angular_second_moment_crop_blue_3_00_256" in feature_names
 
 
@@ -3487,7 +3600,7 @@ def test_runtime_reference_artifact_equivalence_matches_relationship_features(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3557,7 +3670,7 @@ def test_runtime_reference_artifact_equivalence_pads_relationship_counts_from_la
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3641,7 +3754,7 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_means
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3727,7 +3840,7 @@ def test_runtime_reference_artifact_equivalence_derives_parent_qualified_relatio
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3804,7 +3917,7 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_means
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3887,7 +4000,7 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_locat
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -3961,7 +4074,7 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_locat
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4004,8 +4117,8 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_locat
             ),
             dtype=np.uint16,
         ),
-        domain_scope=ObjectLabelDomainScope.PLANE,
-    )
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+    ))
     store.record(
         RuntimeValue(
             key=ArtifactKey(
@@ -4042,7 +4155,7 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_locat
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4170,7 +4283,7 @@ def test_runtime_reference_artifact_equivalence_uses_sparse_object_identity_doma
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4248,7 +4361,7 @@ def test_runtime_reference_artifact_equivalence_uses_represented_relationship_so
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4351,7 +4464,7 @@ def test_runtime_reference_artifact_equivalence_omits_missing_relationship_child
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4433,7 +4546,7 @@ def test_runtime_reference_artifact_equivalence_aligns_image_numbered_child_rows
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4509,7 +4622,7 @@ def test_runtime_reference_artifact_equivalence_aligns_scoped_child_rows_to_rela
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4583,7 +4696,7 @@ def test_runtime_reference_artifact_equivalence_aligns_scoped_relationships_to_c
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4665,7 +4778,7 @@ def test_runtime_reference_artifact_equivalence_keys_relationship_child_means_by
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4744,7 +4857,7 @@ def test_runtime_reference_artifact_equivalence_aligns_unsliced_relationship_to_
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4816,7 +4929,7 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_label
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4930,7 +5043,7 @@ def test_runtime_reference_artifact_equivalence_does_not_duplicate_explicit_rela
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -4982,7 +5095,7 @@ def test_runtime_reference_artifact_equivalence_matches_source_image_features(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5027,7 +5140,7 @@ def test_runtime_reference_artifact_equivalence_does_not_parse_object_mean_field
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5071,7 +5184,7 @@ def test_runtime_reference_artifact_equivalence_matches_neighbor_distance_qualif
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5121,7 +5234,7 @@ def test_runtime_reference_artifact_equivalence_matches_named_math_results(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5141,7 +5254,7 @@ def test_runtime_reference_artifact_equivalence_matches_multi_source_image_measu
     reference_root.mkdir()
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
-        "ImageNumber,Correlation_Correlation_Stain2_Stain1\n"
+        "ImageNumber,Correlation_Correlation_Stain1_Stain2\n"
         "1,0.5\n",
         encoding="utf-8",
     )
@@ -5165,7 +5278,7 @@ def test_runtime_reference_artifact_equivalence_matches_multi_source_image_measu
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5209,7 +5322,7 @@ def test_runtime_reference_artifact_equivalence_matches_reversed_pair_features(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5229,8 +5342,8 @@ def test_runtime_reference_artifact_equivalence_matches_colocalization_correlati
     reference_root.mkdir()
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
-        "ImageNumber,Correlation_Correlation_Stain2_Stain1,"
-        "Correlation_Overlap_Stain2_Stain1\n"
+        "ImageNumber,Correlation_Correlation_Stain1_Stain2,"
+        "Correlation_Overlap_Stain1_Stain2\n"
         "1,0.5,0.9\n",
         encoding="utf-8",
     )
@@ -5254,7 +5367,7 @@ def test_runtime_reference_artifact_equivalence_matches_colocalization_correlati
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5305,7 +5418,7 @@ def test_runtime_reference_artifact_equivalence_matches_area_occupied_owner_suff
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5357,7 +5470,7 @@ def test_runtime_reference_artifact_equivalence_scopes_aggregate_math_to_image(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5401,7 +5514,7 @@ def test_runtime_reference_artifact_equivalence_matches_image_source_features(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5456,7 +5569,7 @@ def test_runtime_reference_artifact_equivalence_preserves_row_source_qualified_i
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5506,7 +5619,7 @@ def test_runtime_reference_artifact_equivalence_matches_qualified_neighbor_featu
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5558,7 +5671,7 @@ def test_runtime_reference_artifact_equivalence_preserves_qualified_correlation_
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5603,7 +5716,7 @@ def test_runtime_reference_artifact_equivalence_ignores_image_provenance_fields(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5648,7 +5761,7 @@ def test_runtime_reference_artifact_equivalence_matches_crop_feature_aliases(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5709,7 +5822,7 @@ def test_runtime_reference_artifact_equivalence_keeps_crop_original_area_semanti
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5761,7 +5874,7 @@ def test_runtime_reference_artifact_equivalence_matches_image_quality_qualifiers
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5806,7 +5919,7 @@ def test_runtime_reference_artifact_equivalence_detects_unmatched_scale_counts(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5870,7 +5983,7 @@ def test_runtime_reference_artifact_equivalence_matches_directional_pair_feature
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5890,8 +6003,8 @@ def test_runtime_reference_artifact_equivalence_matches_undirected_pair_features
     reference_root.mkdir()
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
-        "ImageNumber,Correlation_Correlation_Stain2_Stain1,"
-        "Correlation_Overlap_Stain2_Stain1\n"
+        "ImageNumber,Correlation_Correlation_Stain1_Stain2,"
+        "Correlation_Overlap_Stain1_Stain2\n"
         "1,0.1,0.2\n",
         encoding="utf-8",
     )
@@ -5920,7 +6033,7 @@ def test_runtime_reference_artifact_equivalence_matches_undirected_pair_features
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -5940,7 +6053,7 @@ def test_runtime_reference_artifact_equivalence_derives_reversed_regression_slop
     reference_root.mkdir()
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
-        "ImageNumber,Correlation_Correlation_Stain2_Stain1,"
+        "ImageNumber,Correlation_Correlation_Stain1_Stain2,"
         "Correlation_Slope_Stain2_Stain1\n"
         "1,0.5,0.125\n",
         encoding="utf-8",
@@ -5970,7 +6083,7 @@ def test_runtime_reference_artifact_equivalence_derives_reversed_regression_slop
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6069,7 +6182,7 @@ def test_runtime_reference_artifact_equivalence_allows_threshold_sensitive_pair_
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6128,7 +6241,7 @@ def test_runtime_reference_artifact_equivalence_matches_object_label_counts(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6163,7 +6276,7 @@ def test_runtime_measurement_snapshot_derives_required_object_numbers_from_label
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "PH3")
@@ -6180,7 +6293,7 @@ def test_runtime_measurement_snapshot_derives_required_object_numbers_from_label
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[required_key].items()
+        for signature, count in snapshot.measurement_fact_counts[required_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
@@ -6212,9 +6325,9 @@ def test_runtime_measurement_snapshot_completes_repeated_declared_object_domains
                 ),
                 data=ObjectLabelPayload(
                     labels=np.array([[0, 1], [0, 3]], dtype=np.uint16),
-                    declared_object_count=4,
-                    domain_scope=ObjectLabelDomainScope.PLANE,
-                ),
+                    domain=ObjectLabelDomain(declared_object_count=4,
+                    scope=ObjectLabelDomainScope.PLANE,
+                )),
                 schema=RuntimeValueSchema(
                     kind=ArtifactKind.OBJECT_LABELS,
                 ),
@@ -6223,7 +6336,7 @@ def test_runtime_measurement_snapshot_completes_repeated_declared_object_domains
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6235,7 +6348,7 @@ def test_runtime_measurement_snapshot_completes_repeated_declared_object_domains
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[required_key].items()
+        for signature, count in snapshot.measurement_fact_counts[required_key].items()
     } == {
         ("number", "1.0", 2),
         ("number", "2.0", 2),
@@ -6274,9 +6387,9 @@ def test_runtime_measurement_snapshot_uses_declared_plane_object_domains(
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
-                domain_scope=ObjectLabelDomainScope.PLANE,
-            ),
+                domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+                scope=ObjectLabelDomainScope.PLANE,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -6286,7 +6399,7 @@ def test_runtime_measurement_snapshot_uses_declared_plane_object_domains(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6298,7 +6411,7 @@ def test_runtime_measurement_snapshot_uses_declared_plane_object_domains(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[required_key].items()
+        for signature, count in snapshot.measurement_fact_counts[required_key].items()
     } == {
         ("number", "1.0", 2),
         ("number", "2.0", 2),
@@ -6307,7 +6420,7 @@ def test_runtime_measurement_snapshot_uses_declared_plane_object_domains(
     }
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[center_x_key].items()
+        for signature, count in snapshot.measurement_fact_counts[center_x_key].items()
     } == {
         ("number", "0.0", 3),
         ("number", "1.0", 2),
@@ -6342,9 +6455,9 @@ def test_runtime_measurement_snapshot_collapses_repeated_diagonal_plane_domains(
             ),
             data=ObjectLabelPayload(
                 labels=labels,
-                declared_object_id_domains=((1, 2), (1, 2)),
-                domain_scope=ObjectLabelDomainScope.PLANE,
-            ),
+                domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (1, 2)),
+                scope=ObjectLabelDomainScope.PLANE,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="SSC",
@@ -6354,7 +6467,7 @@ def test_runtime_measurement_snapshot_collapses_repeated_diagonal_plane_domains(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6366,14 +6479,14 @@ def test_runtime_measurement_snapshot_collapses_repeated_diagonal_plane_domains(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_number_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_number_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
     }
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[center_x_key].items()
+        for signature, count in snapshot.measurement_fact_counts[center_x_key].items()
     } == {
         ("number", "0.0", 1),
         ("number", "1.0", 1),
@@ -6403,11 +6516,11 @@ def test_runtime_measurement_snapshot_skips_multi_source_measurement_domain_obje
             ),
             data=ObjectLabelPayload(
                 labels=labels,
-                declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
-                domain_scope=ObjectLabelDomainScope.PLANE,
                 plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
                 source_image_names=("BF_image", "MorphBf"),
-            ),
+            domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+                scope=ObjectLabelDomainScope.PLANE,
+                )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="SSC",
@@ -6417,7 +6530,7 @@ def test_runtime_measurement_snapshot_skips_multi_source_measurement_domain_obje
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6427,7 +6540,7 @@ def test_runtime_measurement_snapshot_skips_multi_source_measurement_domain_obje
         required_measurement_keys=frozenset({object_number_key}),
     )
 
-    assert object_number_key not in snapshot.values_by_feature
+    assert object_number_key not in snapshot.measurement_fact_counts
 
 
 def test_runtime_measurement_snapshot_skips_row_sequence_object_numbers(
@@ -6472,7 +6585,7 @@ def test_runtime_measurement_snapshot_skips_row_sequence_object_numbers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6482,7 +6595,7 @@ def test_runtime_measurement_snapshot_skips_row_sequence_object_numbers(
         required_measurement_keys=frozenset({object_number_key}),
     )
 
-    assert object_number_key not in snapshot.values_by_feature
+    assert object_number_key not in snapshot.measurement_fact_counts
 
 
 def test_runtime_measurement_snapshot_collapses_repeated_homogeneous_plane_domains(
@@ -6511,9 +6624,9 @@ def test_runtime_measurement_snapshot_collapses_repeated_homogeneous_plane_domai
             ),
             data=ObjectLabelPayload(
                 labels=labels,
-                declared_object_id_domains=((1, 2), (1, 2)),
-                domain_scope=ObjectLabelDomainScope.PLANE,
-            ),
+                domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (1, 2)),
+                scope=ObjectLabelDomainScope.PLANE,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="SSC",
@@ -6523,7 +6636,7 @@ def test_runtime_measurement_snapshot_collapses_repeated_homogeneous_plane_domai
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6535,14 +6648,14 @@ def test_runtime_measurement_snapshot_collapses_repeated_homogeneous_plane_domai
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_number_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_number_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
     }
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[center_x_key].items()
+        for signature, count in snapshot.measurement_fact_counts[center_x_key].items()
     } == {
         ("number", "0.0", 1),
         ("number", "1.0", 1),
@@ -6601,8 +6714,8 @@ def test_runtime_measurement_snapshot_suppresses_label_geometry_mean_when_locati
             ),
             data=ObjectLabelPayload(
                 labels=np.array([[1, 2], [0, 0]], dtype=np.uint16),
-                domain_scope=ObjectLabelDomainScope.PLANE,
-            ),
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -6612,7 +6725,7 @@ def test_runtime_measurement_snapshot_suppresses_label_geometry_mean_when_locati
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -6624,7 +6737,7 @@ def test_runtime_measurement_snapshot_suppresses_label_geometry_mean_when_locati
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[mean_center_x_key].items()
+        for signature, count in snapshot.measurement_fact_counts[mean_center_x_key].items()
     } == {("number", "4.0", 1)}
 
 
@@ -6650,7 +6763,7 @@ def test_runtime_measurement_snapshot_projects_identity_only_object_exports(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[key].items()
+        for signature, count in snapshot.measurement_fact_counts[key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
@@ -6698,7 +6811,7 @@ def test_runtime_measurement_snapshot_deduplicates_aggregate_group_tables(
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Nuclei")
@@ -6711,7 +6824,7 @@ def test_runtime_measurement_snapshot_deduplicates_aggregate_group_tables(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[area_key].items()
+        for signature, count in snapshot.measurement_fact_counts[area_key].items()
     } == {
         ("number", "10.0", 1),
         ("number", "20.0", 1),
@@ -6757,7 +6870,7 @@ def test_runtime_measurement_snapshot_preserves_long_form_aggregate_row_axes(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     phase_key = RuntimeMeasurementFeatureKey(
@@ -6770,7 +6883,7 @@ def test_runtime_measurement_snapshot_preserves_long_form_aggregate_row_axes(
         policy=RuntimeEquivalencePolicy(),
     )
 
-    assert snapshot.values_by_feature[phase_key] == {
+    assert snapshot.measurement_fact_counts[phase_key] == {
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "1.5707963268"): 2,
     }
 
@@ -6797,7 +6910,7 @@ def test_runtime_measurement_table_aggregate_row_dedupe_preserves_wide_row_axes(
         subject=MeasurementSubject(MeasurementScope.OBJECT, "SSC"),
     )
 
-    deduped = _dedupe_runtime_measurement_table_aggregate_rows(table)
+    deduped = dedupe_runtime_measurement_table_aggregate_rows(table)
 
     assert tuple(deduped.rows) == table.rows
 
@@ -6826,9 +6939,36 @@ def test_runtime_measurement_table_aggregate_row_dedupe_preserves_object_row_cou
         subject=MeasurementSubject(MeasurementScope.OBJECT, "SSC"),
     )
 
-    deduped = _dedupe_runtime_measurement_table_aggregate_rows(table)
+    deduped = dedupe_runtime_measurement_table_aggregate_rows(table)
 
     assert tuple(deduped.rows) == table.rows
+
+
+def test_runtime_measurement_table_aggregate_row_dedupe_accepts_mapping_cells() -> None:
+    table = MeasurementTable(
+        name="MeasureImageQuality",
+        rows=(
+            {
+                "image_number": 1,
+                "quality_focus_score": 0.5,
+                "source_axes": {"well": "A01", "site": "1"},
+            },
+            {
+                "image_number": 2,
+                "quality_focus_score": 0.5,
+                "source_axes": {"well": "A01", "site": "1"},
+            },
+            {
+                "image_number": 3,
+                "quality_focus_score": 0.75,
+                "source_axes": {"well": "A01", "site": "2"},
+            },
+        ),
+    )
+
+    deduped = dedupe_runtime_measurement_table_aggregate_rows(table)
+
+    assert tuple(deduped.rows) == (table.rows[0], table.rows[2])
 
 
 def test_runtime_measurement_table_dedupe_identity_uses_row_fingerprint() -> None:
@@ -6901,7 +7041,7 @@ def test_runtime_measurement_equivalence_normalizes_long_form_image_number_featu
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"Sequence2": SimpleNamespace(runtime_value_store=store)},
+        {"Sequence2": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     policy = RuntimeEquivalencePolicy()
@@ -6912,7 +7052,7 @@ def test_runtime_measurement_equivalence_normalizes_long_form_image_number_featu
     candidate = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
         observation,
         policy=policy,
-        required_measurement_keys=frozenset(reference.values_by_feature),
+        required_measurement_keys=frozenset(reference.measurement_fact_counts),
     )
 
     report = runtime_measurement_equivalence(reference, candidate, policy=policy)
@@ -6953,7 +7093,7 @@ def test_runtime_measurement_snapshot_preserves_group_local_duplicate_rows(
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Nuclei")
@@ -6966,9 +7106,120 @@ def test_runtime_measurement_snapshot_preserves_group_local_duplicate_rows(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[area_key].items()
+        for signature, count in snapshot.measurement_fact_counts[area_key].items()
     } == {
         ("number", "10.0", 2),
+    }
+
+
+def test_runtime_measurement_snapshot_preserves_plane_local_single_row_aggregate_tables(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    table = MeasurementTable(
+        name="Crop",
+        rows=(
+            {
+                "image_number": 1,
+                "slice_index": 0,
+                "area_retained": 39601,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "CropBlue"),
+    )
+    records_by_axis = {}
+    for site in (1, 2, 3):
+        axis_id = f"A01_s00{site}"
+        records_by_axis[axis_id] = (
+            StoredRuntimeValue(
+                RuntimeValue(
+                    key=ArtifactKey(
+                        name="Crop",
+                        kind=ArtifactKind.MEASUREMENTS,
+                        scope=ArtifactScope(axis_id=axis_id),
+                    ),
+                    data=table.rows,
+                    schema=table.runtime_schema(table.rows),
+                ),
+                RuntimeArtifactLocation(
+                    path=f"/memory/Crop_site{site}.pkl",
+                    backend="memory",
+                ),
+            ),
+        )
+    observation = RuntimeArtifactExecutionObservation(
+        records_by_axis,
+        RuntimeExportObservation.from_output_root(candidate_root),
+    )
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
+    area_key = RuntimeMeasurementFeatureKey(
+        subject,
+        "crop_area_retained_after_cropping_crop_blue",
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+    )
+
+    assert snapshot.measurement_fact_counts[area_key] == {
+        RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "39601.0"): 3
+    }
+
+
+def test_runtime_measurement_snapshot_preserves_group_local_location_rows(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    for group_key, center_x in (("1", 10.0), ("2", 100.0)):
+        table = MeasurementTable(
+            name="MeasureObjectSizeShape",
+            rows=(
+                {
+                    "object_name": "Cells",
+                    "object_label": 1,
+                    "center_x": center_x,
+                },
+            ),
+            subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+        )
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name="MeasureObjectSizeShape",
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01", group_key=group_key),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            path=f"/memory/MeasureObjectSizeShape_{group_key}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
+        candidate_root,
+    )
+    center_x_key = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells"),
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset({center_x_key}),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.measurement_fact_counts[center_x_key].items()
+    } == {
+        ("number", "10.0", 1),
+        ("number", "100.0", 1),
     }
 
 
@@ -7003,7 +7254,7 @@ def test_runtime_measurement_snapshot_encodes_object_source_as_feature_suffix(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     required_key = RuntimeMeasurementFeatureKey(
@@ -7018,7 +7269,7 @@ def test_runtime_measurement_snapshot_encodes_object_source_as_feature_suffix(
     )
 
     assert (
-        snapshot.values_by_feature[required_key][
+        snapshot.measurement_fact_counts[required_key][
             RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.25")
         ]
         == 1
@@ -7078,7 +7329,7 @@ def test_runtime_measurement_snapshot_derives_means_per_row_image_identity(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Nuclei")
@@ -7091,7 +7342,7 @@ def test_runtime_measurement_snapshot_derives_means_per_row_image_identity(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[mean_area_key].items()
+        for signature, count in snapshot.measurement_fact_counts[mean_area_key].items()
     } == {
         ("number", "15.0", 1),
         ("number", "200.0", 1),
@@ -7147,7 +7398,7 @@ def test_runtime_measurement_snapshot_derives_wide_means_per_row_image_identity(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Nuclei")
@@ -7160,7 +7411,7 @@ def test_runtime_measurement_snapshot_derives_wide_means_per_row_image_identity(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[mean_area_key].items()
+        for signature, count in snapshot.measurement_fact_counts[mean_area_key].items()
     } == {
         ("number", "15.0", 1),
         ("number", "200.0", 1),
@@ -7207,7 +7458,7 @@ def test_runtime_measurement_snapshot_derives_means_per_axis_local_image_identit
             path="/memory/ObjectMeasurements.pkl",
             backend="memory",
         )
-        return SimpleNamespace(runtime_value_store=store)
+        return SimpleNamespace(runtime_value_store=store, step_plans={})
 
     observation = RuntimeArtifactExecutionObservation.from_contexts(
         {
@@ -7224,7 +7475,7 @@ def test_runtime_measurement_snapshot_derives_means_per_axis_local_image_identit
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[mean_area_key].items()
+        for signature, count in snapshot.measurement_fact_counts[mean_area_key].items()
     } == {
         ("number", "15.0", 1),
         ("number", "200.0", 1),
@@ -7261,7 +7512,7 @@ def test_runtime_reference_artifact_equivalence_preserves_count_object_digits(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -7312,7 +7563,7 @@ def test_runtime_reference_artifact_equivalence_derives_object_label_centers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -7362,7 +7613,7 @@ def test_runtime_reference_artifact_equivalence_derives_label_center_means(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -7407,8 +7658,8 @@ def test_runtime_reference_artifact_equivalence_derives_declared_label_centers(
                         ],
                         dtype=np.uint16,
                     ),
-                    declared_object_count=4,
-                ),
+                    domain=ObjectLabelDomain(declared_object_count=4,
+                )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -7418,7 +7669,7 @@ def test_runtime_reference_artifact_equivalence_derives_declared_label_centers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -7459,8 +7710,8 @@ def test_runtime_reference_artifact_equivalence_uses_declared_label_count(
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_count=4,
-            ),
+                domain=ObjectLabelDomain(declared_object_count=4,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -7470,7 +7721,7 @@ def test_runtime_reference_artifact_equivalence_uses_declared_label_count(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -7524,8 +7775,8 @@ def test_runtime_measurement_snapshot_declared_object_domain_owns_count_before_r
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_count=4,
-            ),
+                domain=ObjectLabelDomain(declared_object_count=4,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -7535,7 +7786,7 @@ def test_runtime_measurement_snapshot_declared_object_domain_owns_count_before_r
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
@@ -7552,7 +7803,7 @@ def test_runtime_measurement_snapshot_declared_object_domain_owns_count_before_r
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_count_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_count_key].items()
     } == {("number", "4.0", 1)}
 
 
@@ -7586,7 +7837,7 @@ def test_runtime_measurement_snapshot_row_source_identity_does_not_qualify_image
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     key = RuntimeMeasurementFeatureKey(
@@ -7601,7 +7852,7 @@ def test_runtime_measurement_snapshot_row_source_identity_does_not_qualify_image
         required_measurement_keys=frozenset({key}),
     )
 
-    assert snapshot.values_by_feature[key] == {
+    assert snapshot.measurement_fact_counts[key] == {
         RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "4.0"): 1
     }
 
@@ -7632,34 +7883,8 @@ def test_runtime_measurement_snapshot_completes_object_numbers_from_primary_rows
         path="/memory/Cells_measurements.pkl",
         backend="memory",
     )
-    store.record(
-        RuntimeValue(
-            key=ArtifactKey(
-                name="Cells",
-                kind=ArtifactKind.OBJECT_LABELS,
-                scope=ArtifactScope(axis_id="A01"),
-            ),
-            data=ObjectLabelPayload(
-                labels=np.array(
-                    [
-                        [1, 1, 0],
-                        [0, 0, 0],
-                        [4, 4, 0],
-                    ],
-                    dtype=np.uint16,
-                ),
-                declared_object_ids=(1, 2, 4),
-            ),
-            schema=RuntimeValueSchema(
-                kind=ArtifactKind.OBJECT_LABELS,
-                object_name="Cells",
-            ),
-        ),
-        path="/memory/Cells.pkl",
-        backend="memory",
-    )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
@@ -7680,7 +7905,7 @@ def test_runtime_measurement_snapshot_completes_object_numbers_from_primary_rows
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_number_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_number_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
@@ -7738,8 +7963,8 @@ def test_runtime_measurement_snapshot_does_not_complete_explicit_object_numbers(
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_count=2,
-            ),
+                domain=ObjectLabelDomain(declared_object_count=2,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -7749,7 +7974,7 @@ def test_runtime_measurement_snapshot_does_not_complete_explicit_object_numbers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
@@ -7770,7 +7995,7 @@ def test_runtime_measurement_snapshot_does_not_complete_explicit_object_numbers(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_number_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_number_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
@@ -7822,8 +8047,8 @@ def test_runtime_measurement_snapshot_completes_partial_explicit_object_numbers(
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_count=2,
-            ),
+                domain=ObjectLabelDomain(declared_object_count=2,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -7833,7 +8058,7 @@ def test_runtime_measurement_snapshot_completes_partial_explicit_object_numbers(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
@@ -7854,7 +8079,7 @@ def test_runtime_measurement_snapshot_completes_partial_explicit_object_numbers(
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_number_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_number_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
@@ -7902,8 +8127,8 @@ def test_runtime_measurement_snapshot_rejects_axis_only_rows_as_identifier_domai
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_count=2,
-            ),
+                domain=ObjectLabelDomain(declared_object_count=2,
+            )),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -7913,7 +8138,7 @@ def test_runtime_measurement_snapshot_rejects_axis_only_rows_as_identifier_domai
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
@@ -7934,7 +8159,7 @@ def test_runtime_measurement_snapshot_rejects_axis_only_rows_as_identifier_domai
 
     assert {
         (signature.kind.value, signature.value, count)
-        for signature, count in snapshot.values_by_feature[object_number_key].items()
+        for signature, count in snapshot.measurement_fact_counts[object_number_key].items()
     } == {
         ("number", "1.0", 1),
         ("number", "2.0", 1),
@@ -7998,7 +8223,7 @@ def test_runtime_reference_artifact_equivalence_does_not_duplicate_explicit_cent
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -8081,7 +8306,7 @@ def test_runtime_reference_artifact_equivalence_derives_label_center_means_with_
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -8131,7 +8356,7 @@ def test_runtime_reference_artifact_equivalence_collapses_same_row_cp_aliases(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -8181,7 +8406,7 @@ def test_runtime_reference_artifact_equivalence_prefers_primary_same_row_alias(
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -8260,7 +8485,7 @@ def test_runtime_reference_artifact_equivalence_merges_object_location_alias_row
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -8340,7 +8565,7 @@ def test_runtime_reference_artifact_equivalence_uses_nominal_image_identity_domi
             backend="memory",
         )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
-        {"A01": SimpleNamespace(runtime_value_store=store)},
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
         candidate_root,
     )
 
@@ -8400,6 +8625,177 @@ def test_runtime_reference_artifact_equivalence_ignores_duplicate_measurement_ar
     )
     observation = RuntimeArtifactExecutionObservation(
         {"A01": records},
+        RuntimeExportObservation.from_output_root(candidate_root),
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_ignores_duplicate_image_feature_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Threshold_FinalThreshold_Nuclei\n"
+        "1,0.25\n",
+        encoding="utf-8",
+    )
+    table_rows = (
+        {
+            "slice_index": 0,
+            "feature_name": "FinalThreshold_Nuclei",
+            "result_value": 0.25,
+        },
+    )
+    table = MeasurementTable(
+        name="IdentifyPrimaryObjects_6_measurements",
+        rows=table_rows,
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+    )
+    records = tuple(
+        StoredRuntimeValue(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            RuntimeArtifactLocation(
+                path=f"/memory/{table.name}_{index}.pkl",
+                backend="memory",
+            ),
+        )
+        for index in (1, 2)
+    )
+    observation = RuntimeArtifactExecutionObservation(
+        {"A01": records},
+        RuntimeExportObservation.from_output_root(candidate_root),
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_preserves_same_table_image_feature_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Threshold_FinalThreshold_Embryos\n"
+        "1,0.25\n"
+        "2,0.25\n",
+        encoding="utf-8",
+    )
+    table = MeasurementTable(
+        name="IdentifyPrimaryObjects_6_measurements",
+        rows=(
+            {
+                "slice_index": 0,
+                "feature_name": "FinalThreshold_Embryos",
+                "result_value": 0.25,
+            },
+            {
+                "slice_index": 0,
+                "feature_name": "FinalThreshold_Embryos",
+                "result_value": 0.25,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+    )
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path=f"/memory/{table.name}.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_preserves_distinct_source_image_feature_records(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,AreaRetainedAfterCropping_CropBlue\n"
+        "1,39601\n"
+        "2,39601\n",
+        encoding="utf-8",
+    )
+    observation_records: list[StoredRuntimeValue] = []
+    for image_number, source_path in (
+        (1, "/source/fly-blue-1.tif"),
+        (2, "/source/fly-blue-2.tif"),
+    ):
+        table = MeasurementTable(
+            name="Crop_5_measurements",
+            rows=(
+                {
+                    "image_number": image_number,
+                    "feature_name": "AreaRetainedAfterCropping_CropBlue",
+                    "result_value": 39601.0,
+                },
+            ),
+            source_path=source_path,
+            subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+        )
+        observation_records.append(
+            StoredRuntimeValue(
+                RuntimeValue(
+                    key=ArtifactKey(
+                        name=table.name,
+                        kind=ArtifactKind.MEASUREMENTS,
+                        scope=ArtifactScope(axis_id="A01"),
+                    ),
+                    data=table.rows,
+                    schema=table.runtime_schema(table.rows),
+                ),
+                RuntimeArtifactLocation(
+                    path=f"/memory/{Path(source_path).stem}.pkl",
+                    backend="memory",
+                ),
+            )
+        )
+    observation = RuntimeArtifactExecutionObservation(
+        {"A01": tuple(observation_records)},
         RuntimeExportObservation.from_output_root(candidate_root),
     )
 

@@ -13,7 +13,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.policy import normalize_runtime_identifier
 from openhcs.core.equivalence.tables import RuntimeTableSnapshot
-from openhcs.core.runtime_artifact_queries import MEASUREMENT_OBJECT_ID_FIELDS
+from openhcs.core.measurement_row_materialization import MEASUREMENT_OBJECT_ID_FIELDS
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionObservation,
 )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import math
 import pickle
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -12,22 +11,32 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from nominal_refactor_advisor.collection_algebra import sorted_tuple
-
-from openhcs.core.equivalence.arrays import canonical_scalar, semantic_array_payload
-from openhcs.core.equivalence.cells import runtime_cell_signature
+from openhcs.core.equivalence.cells import (
+    measurement_table_cell_payload,
+    runtime_cell_signature,
+    update_measurement_table_cell_hash,
+)
 from openhcs.core.equivalence.policy import (
     RuntimeEquivalencePolicy,
     normalize_runtime_identifier,
 )
-from openhcs.core.runtime_artifact_queries import (
+from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_FEATURE_NAME_FIELDS,
     MEASUREMENT_OBJECT_ID_FIELDS,
-    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
     MEASUREMENT_OBJECT_NAME_FIELD,
+    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     MEASUREMENT_VALUE_FIELDS,
     iter_measurement_rows,
+    measurement_row_has_long_form_measurement_fields,
+    measurement_row_has_object_identity,
+    measurement_row_identity_role,
+)
+from openhcs.core.runtime_artifact_queries import measurement_table_axis_values
+from openhcs.core.runtime_semantics import (
+    FieldSpec,
+    MeasurementObjectRowIdentity,
+    MeasurementRowAxisField,
     measurement_row_mapping,
 )
 from openhcs.core.runtime_values import MeasurementTable
@@ -57,6 +66,15 @@ CSV_HEADER_CONTEXT_STOPWORDS = frozenset(
 RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS = frozenset(
     {"image_id", "image_number", "slice_index"}
 )
+DEFAULT_MEASUREMENT_TABLE_PADDING_GROUP = "measurements"
+
+
+def measurement_table_padding_group(table_name: str) -> str:
+    """Return the semantic padding group for one measurement table name."""
+    normalized_name = normalize_runtime_identifier(table_name)
+    if normalized_name:
+        return normalized_name
+    return DEFAULT_MEASUREMENT_TABLE_PADDING_GROUP
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +133,7 @@ class RuntimeMeasurementTableIdentity:
     object_name: str | None
     object_id_field: str | None
     source_image_name: str | None
-    fields: tuple[tuple[str, object, bool], ...]
+    fields: tuple[FieldSpec, ...]
     rows: RuntimeMeasurementRowFingerprint
 
     @classmethod
@@ -141,15 +159,12 @@ class RuntimeMeasurementTableIdentity:
             table.object_name,
             table.object_id_field,
             table.source_image_name,
-            tuple(
-                (field.name, field.dtype, field.required)
-                for field in table.fields
-            ),
+            tuple(table.fields),
             rows,
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RuntimeTableSnapshot:
     """Semantic snapshot of one exported runtime table."""
 
@@ -201,15 +216,15 @@ class RuntimeTableSnapshot:
                 f"Runtime table {path} rows do not match header width at "
                 f"data rows {malformed_rows!r}."
             )
-        object.__setattr__(self, "path", path)
-        object.__setattr__(self, "header", header)
-        object.__setattr__(self, "rows", rows)
-        object.__setattr__(self, "column_context", column_context)
+        self.path = path
+        self.header = header
+        self.rows = rows
+        self.column_context = column_context
 
     @property
     def schema_key(self) -> tuple[str, ...]:
         """File-order-independent schema identity for this table."""
-        return sorted_tuple(self.header)
+        return tuple(sorted(self.header))
 
     def content_key(
         self,
@@ -218,13 +233,13 @@ class RuntimeTableSnapshot:
         """File-order-independent row identity for this table."""
         columns = self.schema_key
         indexes = {column: self.header.index(column) for column in self.header}
-        return sorted_tuple(
+        return tuple(sorted(
             tuple(
                 runtime_cell_signature(row[indexes[column]], policy).sort_key
                 for column in columns
             )
             for row in self.rows
-        )
+        ))
 
 
 def aggregate_measurement_table_key(
@@ -235,8 +250,9 @@ def aggregate_measurement_table_key(
     Grouped execution can materialize an already-aggregated measurement table
     once per group key. Row-local image identity fields carry the actual
     measurement scope, so repeated materializations of the same semantic table
-    should only contribute once. Group-local tables remain count-preserving
-    when they do not carry multiple row-local image identities.
+    should only contribute once when one table spans multiple row identities.
+    Plane-local aggregate rows remain count-preserving when each runtime record
+    carries only one row identity.
     """
     normalized_field_cache: dict[str, str] = {}
 
@@ -247,24 +263,23 @@ def aggregate_measurement_table_key(
             normalized_field_cache[field_name] = cached
         return cached
 
-    row_identity_values: set[tuple[str, object]] = set()
-    row_count = 0
+    row_identities: set[tuple[tuple[str, object], ...]] = set()
     for row in iter_measurement_rows((table,)):
-        row_count += 1
         row_mapping = measurement_row_mapping(row)
+        row_identity_values: list[tuple[str, object]] = []
         for field_name, value in row_mapping.items():
             normalized_field_name = normalized_field(str(field_name))
             if normalized_field_name in RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS:
-                row_identity_values.add(
+                row_identity_values.append(
                     (
                         normalized_field_name,
                         measurement_table_cell_payload(value),
                     )
                 )
-    if row_count == 0:
-        return None
+        if row_identity_values:
+            row_identities.add(tuple(sorted(row_identity_values)))
 
-    if len(row_identity_values) <= 1:
+    if len(row_identities) <= 1:
         return None
     return RuntimeMeasurementTableIdentity.from_table_rows(
         table,
@@ -282,118 +297,209 @@ def exact_measurement_table_key(
     )
 
 
-def measurement_table_cell_payload(value: object) -> object:
-    """Return a hashable exact payload for measurement-table dedupe."""
-    value = canonical_scalar(value)
-    if value is None:
+RuntimeMeasurementObjectSubtableSet = set[RuntimeMeasurementTableIdentity]
+
+
+def dedupe_runtime_measurement_table_object_subtable(
+    table: MeasurementTable,
+    seen_object_subtables: RuntimeMeasurementObjectSubtableSet,
+) -> MeasurementTable:
+    """Drop duplicate object-identity subtable rows while preserving non-object rows."""
+    non_object_rows: list[object] = []
+    object_row_fingerprint = RuntimeMeasurementRowFingerprintBuilder()
+    object_row_count = 0
+    total_row_count = 0
+    for row in iter_measurement_rows((table,)):
+        total_row_count += 1
+        row_mapping = measurement_row_mapping(row)
+        if measurement_row_has_object_identity(row_mapping):
+            object_row_fingerprint.add_row_mapping(row_mapping)
+            object_row_count += 1
+        else:
+            non_object_rows.append(row)
+    if total_row_count == 0 or object_row_count == 0:
+        return table
+
+    subtable_key = RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
+        table,
+        object_row_fingerprint.finish(),
+    )
+    if subtable_key not in seen_object_subtables:
+        seen_object_subtables.add(subtable_key)
+        return table
+    if not non_object_rows:
+        return MeasurementTable(
+            name=table.name,
+            rows=(),
+            object_name=table.object_name,
+            fields=table.fields,
+            object_id_field=table.object_id_field,
+            source_image_name=table.source_image_name,
+            subject=table.subject,
+            source_provenance=table.source_provenance,
+        )
+    return MeasurementTable(
+        name=table.name,
+        rows=tuple(non_object_rows),
+        object_name=table.object_name,
+        fields=table.fields,
+        object_id_field=table.object_id_field,
+        source_image_name=table.source_image_name,
+        subject=table.subject,
+        source_provenance=table.source_provenance,
+    )
+
+
+def aggregate_measurement_table_semantic_key(
+    table: MeasurementTable,
+) -> RuntimeMeasurementTableIdentity | None:
+    """Return duplicate identity after removing aggregate-table transport fields."""
+    if aggregate_measurement_table_key(table) is None:
         return None
-    if isinstance(value, str):
-        return ("str", value)
-    if isinstance(value, bool):
-        return ("bool", value)
-    if isinstance(value, int):
-        return ("int", value)
-    if isinstance(value, float) and math.isnan(value):
-        return ("float", "nan")
-    if isinstance(value, float):
-        return ("float", repr(value))
-    if isinstance(value, Mapping):
-        return (
-            "mapping",
-            tuple(
-                (
-                    measurement_table_cell_payload(key),
-                    measurement_table_cell_payload(nested_value),
-                )
-                for key, nested_value in value.items()
-            ),
+    builder = RuntimeMeasurementRowFingerprintBuilder()
+    for row in iter_measurement_rows((table,)):
+        builder.add_row_mapping(
+            runtime_aggregate_measurement_row_semantic_mapping(
+                measurement_row_mapping(row)
+            )
         )
-    if isinstance(value, (tuple, list)):
-        return (
-            type(value).__name__,
-            tuple(measurement_table_cell_payload(item) for item in value),
-        )
-    array_payload = semantic_array_payload(value)
-    if array_payload is not None:
-        return array_payload
-    return (type(value).__name__, repr(value))
-
-
-def update_measurement_table_cell_hash(digest: Any, value: object) -> None:
-    """Update an exact cell digest without materializing nested payload trees."""
-    value = canonical_scalar(value)
-    if value is None:
-        digest.update(pickle.dumps(("none",), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, str):
-        digest.update(pickle.dumps(("str", value), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, bool):
-        digest.update(pickle.dumps(("bool", value), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, int):
-        digest.update(pickle.dumps(("int", value), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, float) and math.isnan(value):
-        digest.update(pickle.dumps(("float", "nan"), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, float):
-        digest.update(
-            pickle.dumps(("float", repr(value)), protocol=pickle.HIGHEST_PROTOCOL)
-        )
-        return
-    array_payload = semantic_array_payload(value)
-    if array_payload is not None:
-        digest.update(pickle.dumps(array_payload, protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, Mapping):
-        digest.update(
-            pickle.dumps(("mapping", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
-        )
-        for key, nested_value in value.items():
-            update_measurement_table_cell_hash(digest, key)
-            update_measurement_table_cell_hash(digest, nested_value)
-        digest.update(
-            pickle.dumps(("mapping_end",), protocol=pickle.HIGHEST_PROTOCOL)
-        )
-        return
-    if isinstance(value, tuple):
-        digest.update(
-            pickle.dumps(("tuple", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
-        )
-        for item in value:
-            update_measurement_table_cell_hash(digest, item)
-        digest.update(pickle.dumps(("tuple_end",), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    if isinstance(value, list):
-        digest.update(
-            pickle.dumps(("list", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
-        )
-        for item in value:
-            update_measurement_table_cell_hash(digest, item)
-        digest.update(pickle.dumps(("list_end",), protocol=pickle.HIGHEST_PROTOCOL))
-        return
-    digest.update(
-        pickle.dumps((type(value).__name__, repr(value)), protocol=pickle.HIGHEST_PROTOCOL)
+    return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
+        table,
+        builder.finish(),
     )
 
 
-def is_static_wide_measurement_table(
-    row: Mapping[str, object],
-    qualifier_field_names: frozenset[str],
-) -> bool:
-    """Return whether a wide table has only static feature columns."""
-    normalized_fields = {normalize_runtime_identifier(field_name) for field_name in row}
-    if normalized_fields & frozenset(MEASUREMENT_FEATURE_NAME_FIELDS):
-        return False
-    if normalized_fields & frozenset(MEASUREMENT_VALUE_FIELDS):
-        return False
-    if normalized_fields & qualifier_field_names:
-        return False
-    return (
-        MEASUREMENT_OBJECT_NAME_FIELD not in normalized_fields
-        and MEASUREMENT_SOURCE_IMAGE_NAME_FIELD not in normalized_fields
+def dedupe_runtime_measurement_table_aggregate_rows(
+    table: MeasurementTable,
+) -> MeasurementTable:
+    """Remove duplicate aggregate rows after transport identity fields are ignored."""
+    if aggregate_measurement_table_key(table) is None:
+        return table
+    rows = tuple(iter_measurement_rows((table,)))
+    seen_rows: set[tuple[tuple[str, object], ...]] = set()
+    deduped_rows: list[object] = []
+    semantic_rows: list[tuple[tuple[str, object], ...]] = []
+    for row in rows:
+        row_mapping = measurement_row_mapping(row)
+        if measurement_row_has_object_identity(row_mapping):
+            deduped_rows.append(row)
+            continue
+        semantic_row = aggregate_measurement_row_semantic_key(
+            runtime_aggregate_measurement_row_semantic_mapping(
+                row_mapping,
+                table=table,
+                preserve_multi_value_axes=True,
+            )
+        )
+        semantic_rows.append(semantic_row)
+        if semantic_row in seen_rows:
+            continue
+        seen_rows.add(semantic_row)
+        deduped_rows.append(row)
+    if len(set(semantic_rows)) <= 1:
+        return table
+    if len(deduped_rows) == len(rows):
+        return table
+    return MeasurementTable(
+        name=table.name,
+        rows=tuple(deduped_rows),
+        object_name=table.object_name,
+        fields=table.fields,
+        object_id_field=table.object_id_field,
+        source_image_name=table.source_image_name,
+        subject=table.subject,
+        source_provenance=table.source_provenance,
     )
+
+
+def aggregate_measurement_row_semantic_key(
+    row_mapping: Mapping[str, object],
+) -> tuple[tuple[str, object], ...]:
+    """Return a hashable aggregate-row key using table cell semantics."""
+    return tuple(
+        sorted(
+            (
+                field_name,
+                measurement_table_cell_payload(value),
+            )
+            for field_name, value in row_mapping.items()
+        )
+    )
+
+
+def runtime_aggregate_measurement_row_semantic_mapping(
+    row_mapping: Mapping[str, object],
+    *,
+    table: MeasurementTable | None = None,
+    preserve_multi_value_axes: bool = False,
+) -> dict[str, object]:
+    """Return aggregate-row identity after removing transport-only fields."""
+    excluded_fields = RuntimeAggregateMeasurementRowIdentityFields(
+        row_mapping,
+        table=table,
+        preserve_multi_value_axes=preserve_multi_value_axes,
+    ).transport_identity_fields()
+    return {
+        field_name: value
+        for field_name, value in row_mapping.items()
+        if normalize_runtime_identifier(str(field_name)) not in excluded_fields
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAggregateMeasurementRowIdentityFields:
+    """Fields excluded from duplicate aggregate-table row identity."""
+
+    row: Mapping[str, object]
+    table: MeasurementTable | None = None
+    preserve_multi_value_axes: bool = False
+
+    def transport_identity_fields(self) -> frozenset[str]:
+        if measurement_row_has_long_form_measurement_fields(self.row):
+            return frozenset()
+        if measurement_row_identity_role(self.row) is MeasurementObjectRowIdentity.ROW_SEQUENCE:
+            return self.row_sequence_transport_identity_fields()
+        if self.preserve_multi_value_axes and self.table is not None:
+            return self.table_transport_identity_fields()
+        return RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
+
+    def table_transport_identity_fields(self) -> frozenset[str]:
+        if self.table is None:
+            return RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
+        row_axes = RuntimeAggregateMeasurementTableRowAxes(
+            self.table,
+            self.row,
+        ).multi_value_axis_fields()
+        return RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS - row_axes
+
+    @staticmethod
+    def row_sequence_transport_identity_fields() -> frozenset[str]:
+        return {
+            field_name
+            for field_name in RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
+            if field_name != MeasurementRowAxisField.SLICE_INDEX.value
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAggregateMeasurementTableRowAxes:
+    """Row-axis fields that identify distinct rows within one aggregate table."""
+
+    table: MeasurementTable
+    row: Mapping[str, object]
+
+    def multi_value_axis_fields(self) -> frozenset[str]:
+        if not measurement_row_has_object_identity(self.row):
+            return frozenset()
+        return frozenset(
+            axis.value
+            for axis in (
+                MeasurementRowAxisField.IMAGE_NUMBER,
+                MeasurementRowAxisField.SLICE_INDEX,
+            )
+            if axis.value in self.row
+            and len(measurement_table_axis_values(self.table, axis)) > 1
+        )
 
 
 def is_wide_measurement_table(row: Mapping[str, object]) -> bool:

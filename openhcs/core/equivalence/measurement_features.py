@@ -71,7 +71,7 @@ class ObjectMeasurementFeatureRoleStrategy(
 
     def subjects(
         self,
-        values_by_feature: Mapping[RuntimeMeasurementFeatureKey, object],
+        measurement_feature_map: Mapping[RuntimeMeasurementFeatureKey, object],
         measurement_dialect: RuntimeMeasurementDialect = (
             DEFAULT_RUNTIME_MEASUREMENT_DIALECT
         ),
@@ -80,7 +80,7 @@ class ObjectMeasurementFeatureRoleStrategy(
 
         return frozenset(
             key.subject
-            for key in values_by_feature
+            for key in measurement_feature_map
             if self.matches(key, measurement_dialect)
         )
 
@@ -357,7 +357,7 @@ def object_measurement_feature_requires_sparse_boundary_object_count_stability(
 
 
 def object_measurement_subjects_with_role(
-    values_by_feature: Mapping[RuntimeMeasurementFeatureKey, object],
+    measurement_feature_map: Mapping[RuntimeMeasurementFeatureKey, object],
     role: ObjectMeasurementFeatureRole,
     measurement_dialect: RuntimeMeasurementDialect = (
         DEFAULT_RUNTIME_MEASUREMENT_DIALECT
@@ -366,7 +366,7 @@ def object_measurement_subjects_with_role(
     """Return measurement subjects that have at least one feature with ``role``."""
 
     return ObjectMeasurementFeatureRoleStrategy.for_enum_member(role).subjects(
-        values_by_feature,
+        measurement_feature_map,
         measurement_dialect,
     )
 

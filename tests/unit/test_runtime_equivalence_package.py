@@ -27,7 +27,7 @@ from openhcs.core.equivalence import (
     runtime_cell_signature_counters_equivalent,
 )
 from openhcs.core.equivalence.arrays import semantic_array_payload
-from openhcs.core.equivalence.tables import measurement_table_cell_payload
+from openhcs.core.equivalence.cells import measurement_table_cell_payload
 from openhcs.core.runtime_semantics import MeasurementScope
 
 

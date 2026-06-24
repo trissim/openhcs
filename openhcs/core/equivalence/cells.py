@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+import pickle
+import re
 from abc import ABC, abstractmethod
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from types import MappingProxyType
+from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.equivalence.arrays import canonical_scalar, semantic_array_payload
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
 
 
@@ -180,6 +187,238 @@ def runtime_cell_signature(
         rounded = round(numeric, policy.numeric_decimal_places)
         canonical = repr(0.0 if rounded == 0 else rounded)
     return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, canonical)
+
+
+def measurement_table_cell_payload(value: object) -> object:
+    """Return a hashable exact payload for measurement-table cells."""
+    value = canonical_scalar(value)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return ("str", value)
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float) and math.isnan(value):
+        return ("float", "nan")
+    if isinstance(value, float):
+        return ("float", repr(value))
+    if isinstance(value, Mapping):
+        return (
+            "mapping",
+            tuple(
+                (
+                    measurement_table_cell_payload(key),
+                    measurement_table_cell_payload(nested_value),
+                )
+                for key, nested_value in value.items()
+            ),
+        )
+    if isinstance(value, (tuple, list)):
+        return (
+            type(value).__name__,
+            tuple(measurement_table_cell_payload(item) for item in value),
+        )
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        return array_payload
+    return (type(value).__name__, repr(value))
+
+
+def update_measurement_table_cell_hash(digest: Any, value: object) -> None:
+    """Update an exact cell digest without materializing nested payload trees."""
+    value = canonical_scalar(value)
+    if value is None:
+        digest.update(pickle.dumps(("none",), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, str):
+        digest.update(pickle.dumps(("str", value), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, bool):
+        digest.update(pickle.dumps(("bool", value), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, int):
+        digest.update(pickle.dumps(("int", value), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, float) and math.isnan(value):
+        digest.update(pickle.dumps(("float", "nan"), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, float):
+        digest.update(
+            pickle.dumps(("float", repr(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        return
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        digest.update(pickle.dumps(array_payload, protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, Mapping):
+        digest.update(
+            pickle.dumps(("mapping", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        for key, nested_value in value.items():
+            update_measurement_table_cell_hash(digest, key)
+            update_measurement_table_cell_hash(digest, nested_value)
+        digest.update(
+            pickle.dumps(("mapping_end",), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        return
+    if isinstance(value, tuple):
+        digest.update(
+            pickle.dumps(("tuple", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        for item in value:
+            update_measurement_table_cell_hash(digest, item)
+        digest.update(pickle.dumps(("tuple_end",), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, list):
+        digest.update(
+            pickle.dumps(("list", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        for item in value:
+            update_measurement_table_cell_hash(digest, item)
+        digest.update(pickle.dumps(("list_end",), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    digest.update(
+        pickle.dumps((type(value).__name__, repr(value)), protocol=pickle.HIGHEST_PROTOCOL)
+    )
+
+
+@lru_cache(maxsize=256)
+def _runtime_value_type_is_mapping(value_type: type[object]) -> bool:
+    return issubclass(value_type, Mapping)
+
+
+def runtime_value_is_mapping(value: object) -> bool:
+    return _runtime_value_type_is_mapping(type(value))
+
+
+_RUNTIME_NUMERIC_TEXT_RE = re.compile(
+    r"^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|inf(?:inity)?|nan)$",
+    re.IGNORECASE,
+)
+
+
+def runtime_numeric_text_value(text: str) -> float | None:
+    stripped = text.strip()
+    if not stripped or _RUNTIME_NUMERIC_TEXT_RE.fullmatch(stripped) is None:
+        return None
+    return float(stripped)
+
+
+@lru_cache(maxsize=131072)
+def _cached_runtime_cell_signature(
+    text: str,
+    numeric_decimal_places: int,
+) -> RuntimeCellSignature:
+    stripped = text.strip()
+    if not stripped:
+        return RuntimeCellSignature(RuntimeCellValueKind.EMPTY, "")
+    numeric = runtime_numeric_text_value(stripped)
+    if numeric is None:
+        return RuntimeCellSignature(RuntimeCellValueKind.TEXT, stripped)
+    if math.isnan(numeric):
+        canonical = "nan"
+    elif math.isinf(numeric):
+        canonical = "inf" if numeric > 0 else "-inf"
+    else:
+        rounded = round(numeric, numeric_decimal_places)
+        canonical = repr(0.0 if rounded == 0 else rounded)
+    return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, canonical)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellSignatureProjection:
+    """Project runtime measurement payloads into comparison cell signatures."""
+
+    value: object
+    policy: RuntimeEquivalencePolicy
+
+    def signature(self) -> RuntimeCellSignature:
+        value = canonical_scalar(self.value)
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return _cached_runtime_cell_signature(
+                str(value),
+                self.policy.numeric_decimal_places,
+            )
+        array_payload = semantic_array_payload(value)
+        if array_payload is not None:
+            dtype, shape, digest = array_payload[1:]
+            return RuntimeCellSignature(
+                RuntimeCellValueKind.TEXT,
+                f"array:{dtype}:{'x'.join(str(axis) for axis in shape)}:{digest}",
+            )
+        if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+            value_digest = hashlib.blake2b(digest_size=32)
+            update_measurement_table_cell_hash(value_digest, value)
+            return RuntimeCellSignature(
+                RuntimeCellValueKind.TEXT,
+                f"{type(value).__name__}:{value_digest.hexdigest()}",
+            )
+        return runtime_cell_signature(str(value), self.policy)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellPresence:
+    """Presence semantics for runtime measurement cell payloads."""
+
+    value: object
+
+    def is_present(self) -> bool:
+        value = canonical_scalar(self.value)
+        if value is None:
+            return False
+        array_payload = semantic_array_payload(value)
+        if array_payload is not None:
+            return any(axis > 0 for axis in array_payload[2])
+        if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+            return bool(value)
+        text = str(value).strip()
+        if not text:
+            return False
+        numeric = runtime_numeric_text_value(text)
+        if numeric is None:
+            return True
+        return not math.isnan(numeric)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementValuePresence:
+    """Presence semantics for scalar or nested runtime measurement values."""
+
+    value: object
+
+    def is_present(self) -> bool:
+        if runtime_value_is_mapping(self.value):
+            return any(
+                RuntimeMeasurementValuePresence(nested).is_present()
+                for nested in self.value.values()
+            )
+        return RuntimeMeasurementCellPresence(self.value).is_present()
+
+
+def measurement_numeric_runtime_value(
+    value: object,
+    policy: RuntimeEquivalencePolicy,
+) -> float | None:
+    numeric_value = runtime_numeric_text_value(str(value))
+    if numeric_value is None:
+        return None
+    if math.isnan(numeric_value):
+        return None
+    if math.isfinite(numeric_value):
+        return float(round(numeric_value, policy.numeric_decimal_places))
+    return numeric_value
+
+
+def cell_signature_numeric_value(value: RuntimeCellSignature) -> float | None:
+    if value.kind is not RuntimeCellValueKind.NUMBER:
+        return None
+    numeric_value = float(value.value)
+    if math.isnan(numeric_value):
+        return None
+    return numeric_value
 
 
 def runtime_cell_signature_counters_equivalent(

@@ -21,7 +21,11 @@ from openhcs.core.runtime_table_projection import (
     RuntimeProjectedColumnRole,
     RuntimeTableProjectionDialect,
 )
-from openhcs.core.runtime_values import ColumnarRows, MeasurementTable, ObjectRelationship
+from openhcs.core.runtime_values import (
+    ColumnarRows,
+    MeasurementTable,
+    ObjectRelationship,
+)
 
 from .database_column_dialect import CellProfilerDatabaseColumnDialect
 
