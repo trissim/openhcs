@@ -6,6 +6,9 @@ import logging
 import threading
 
 from openhcs.constants.constants import OrchestratorState
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ServerKillPlan,
     ServerKillService,
@@ -15,7 +18,6 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     STOP_PENDING_MANAGER_STATES,
     TerminalExecutionStatus,
 )
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +29,12 @@ class ExecutionControlService:
         self,
         *,
         host,
-        client_service: ZMQClientService,
+        context: BatchWorkflowContext,
         port: int,
         server_kill_service: ServerKillService,
     ) -> None:
         self._host = host
-        self._client_service = client_service
+        self._context = context
         self._port = port
         self._server_kill_service = server_kill_service
 
@@ -41,12 +43,12 @@ class ExecutionControlService:
         cls,
         *,
         host,
-        client_service: ZMQClientService,
+        context: BatchWorkflowContext,
         port: int,
     ) -> "ExecutionControlService":
         return cls(
             host=host,
-            client_service=client_service,
+            context=context,
             port=port,
             server_kill_service=ServerKillService.openhcs_default(),
         )
@@ -57,16 +59,16 @@ class ExecutionControlService:
             *STOP_PENDING_MANAGER_STATES,
         ):
             return
-        if not self._host.execution_runtime.all_batch_terminal():
+        if not self._host.plate_terminal_activity_status.all_batch_terminal():
             return
-        completed, failed = self._host.execution_runtime.terminal_counts()
+        completed, failed = self._host.plate_terminal_activity_status.terminal_counts()
         self._host.notify_all_plates_completed(completed, failed)
 
     async def handle_execution_failure(self, loop) -> None:
         from objectstate import ObjectStateRegistry
 
-        for plate_path in tuple(self._host.execution_runtime.active_plates):
-            self._host.execution_runtime.mark_terminal(
+        for plate_path in tuple(self._host.plate_terminal_activity_status.active_plates):
+            self._host.plate_terminal_activity_status.mark_terminal(
                 plate_path, TerminalExecutionStatus.FAILED
             )
             orchestrator = ObjectStateRegistry.get_object(plate_path)
@@ -82,10 +84,10 @@ class ExecutionControlService:
         self.refresh_host_execution_ui()
 
     async def disconnect_client(self, loop) -> None:
-        if self._client_service.zmq_client is None:
+        if not self._context.zmq.has_client():
             return
         try:
-            await self._client_service.disconnect()
+            await self._context.zmq.disconnect()
         except Exception as error:
             logger.warning("Error disconnecting old client: %s", error)
 
@@ -129,16 +131,16 @@ class ExecutionControlService:
             self.disconnect_async()
 
     def emit_cancelled_for_all_plates(self) -> None:
-        for plate_path in self._host.execution_runtime.cancellable_plates():
+        for plate_path in self._host.plate_terminal_activity_status.cancellable_plates():
             self._host.emit_execution_complete(
                 {"status": TerminalExecutionStatus.CANCELLED.value}, plate_path
             )
 
     def disconnect(self) -> None:
-        if self._client_service.zmq_client is None:
+        if not self._context.zmq.has_client():
             return
         try:
-            self._client_service.disconnect_sync()
+            self._context.zmq.disconnect_sync()
         except Exception as error:
             logger.warning("Error disconnecting ZMQ client: %s", error)
 
@@ -149,15 +151,10 @@ class ExecutionControlService:
         threading.Thread(target=_disconnect, daemon=True).start()
 
     def refresh_host_execution_ui(self) -> None:
-        refresh_fn = getattr(self._host, "refresh_execution_ui", None)
-        if callable(refresh_fn):
-            refresh_fn()
-            return
-        self._host.update_item_list()
-        self._host.update_button_states()
+        self._host.refresh_execution_ui()
 
 
-def is_execution_control_service_export(name: str, value: object) -> bool:
+def is_execution_control_service_export(name: str, value) -> bool:
     return (
         isinstance(value, type)
         and value.__module__ == __name__

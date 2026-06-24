@@ -8,6 +8,7 @@ from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 from openhcs.pyqt_gui.windows.dual_editor_session import DualEditorSession
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.widgets.shared.base_form_dialog import BaseFormDialog
+from pyqt_reactive.widgets.shared.dirty_window_presenter import DirtyWindowStateTracker
 
 
 @dataclass
@@ -119,8 +120,12 @@ def test_dual_editor_title_prefixes_current_step_number() -> None:
     window.editing_step = FunctionStep(name="Fallback")
     window.is_new = False
     window._step_index = 2
+    window._dirty_window_state = DirtyWindowStateTracker(
+        state_provider=lambda: None,
+        change_emitter=lambda _: None,
+    )
 
-    presentation = window._dirty_window_presentation()
+    presentation = window.dirty_window_presentation()
 
     assert presentation.window_title == "Edit Step: 3. Measure"
     assert presentation.header_text == "Edit Step: 3. Measure"
@@ -194,7 +199,7 @@ def test_form_parameter_change_accepts_non_dataclass_step_objects() -> None:
     assert sync_calls == [True]
 
 
-def test_form_parameter_change_updates_prefixed_top_level_paths() -> None:
+def test_form_parameter_change_syncs_prefixed_top_level_paths() -> None:
     window = DualEditorWindow.__new__(DualEditorWindow)
     window.editing_step = EditableStep()
     sync_calls = []
@@ -202,7 +207,7 @@ def test_form_parameter_change_updates_prefixed_top_level_paths() -> None:
 
     window.on_form_parameter_changed("FunctionStep.name", "new")
 
-    assert window.editing_step.name == "new"
+    assert window.editing_step.name == "old"
     assert sync_calls == [True]
 
 

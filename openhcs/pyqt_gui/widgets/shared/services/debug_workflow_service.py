@@ -6,7 +6,7 @@ from asyncio import AbstractEventLoop
 from collections.abc import Awaitable
 import logging
 from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import Callable
 
 from openhcs.core.debug import (
     DebugArtifactExportResponse,
@@ -16,8 +16,13 @@ from openhcs.core.debug import (
     DebugPausedWorkerStatus,
     DebugReplayMode,
 )
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
+    PlateExecutionIdentity,
+    PlatePipelineRequest,
 )
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
     CompileConfigParamsByPlate,
@@ -32,27 +37,30 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service impor
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     RunSpec,
 )
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
-from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
-from zmqruntime.messages import MessageFields, ResponseType
+from zmqruntime.execution import ExecutionSubmissionResponse
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
+
+
+@dataclass(frozen=True, kw_only=True)
+class DebugCompileArtifactScope:
+    """Debug settings that determine compile artifact reuse."""
+
+    selected_source_group: str | None
+    replay_mode: DebugReplayMode = DebugReplayMode.WARM_ARTIFACT
 
 
 @dataclass(frozen=True)
-class DebugPlateRunRequest:
+class DebugPlateRunRequest(DebugCompileArtifactScope):
     """Debug execution identity threaded through compile and run submission."""
 
     debug_session_id: str
     snapshot_store_ref: str
     snapshot_store_backend: str | None
     command_type: DebugCommandType
-    selected_source_group: str | None
     pause_step_indices: tuple[int, ...]
     start_step_index: int = 0
     start_after_invocation_key: str | None = None
-    replay_mode: DebugReplayMode = DebugReplayMode.WARM_ARTIFACT
 
     @property
     def execution_config(self) -> DebugExecutionConfig:
@@ -69,52 +77,34 @@ class DebugPlateRunRequest:
         )
 
     @property
-    def config_params(self) -> dict:
-        return self.execution_config.to_config_params()
-
-    @property
     def compile_config_params(self) -> dict:
         return self.execution_config.compile_cache_config_params()
 
 
 @dataclass(frozen=True)
-class DebugCompileArtifactCacheKey:
+class DebugCompileArtifactCacheKey(DebugCompileArtifactScope):
     """Stable identity for reusable debug compile artifacts."""
 
-    plate_path: str
+    plate_identity: PlateExecutionIdentity
     pipeline_fingerprint: str
-    selected_source_group: str | None
-    replay_mode: DebugReplayMode
-
-
-@dataclass(frozen=True, slots=True)
-class DebugSubmissionResponse:
-    """Typed response from a debug execution submission."""
-
-    status: ResponseType
-    execution_id: str | None
-    message: str | None
 
     @classmethod
-    def from_wire(cls, response: dict) -> "DebugSubmissionResponse":
+    def from_requests(
+        cls,
+        *,
+        plate_request: PlatePipelineRequest,
+        debug_request: DebugPlateRunRequest,
+    ) -> "DebugCompileArtifactCacheKey":
         return cls(
-            status=ResponseType(response[MessageFields.STATUS]),
-            execution_id=response.get(MessageFields.EXECUTION_ID),
-            message=response.get(MessageFields.MESSAGE),
+            plate_identity=PlateExecutionIdentity.from_request(plate_request),
+            pipeline_fingerprint=CompileWorkflowService.pipeline_fingerprint(
+                plate_request.definition_pipeline
+            ),
+            selected_source_group=debug_request.selected_source_group,
+            replay_mode=debug_request.replay_mode,
         )
 
-    @property
-    def accepted(self) -> bool:
-        return self.status is ResponseType.ACCEPTED
 
-    @property
-    def failure_message(self) -> str:
-        if self.message is not None:
-            return self.message
-        return f"Debug submission returned status {self.status.value!r}."
-
-
-RunBlockingCallable = Callable[[AbstractEventLoop, Callable[[], T]], Awaitable[T]]
 CompileBeforeExecutionCallable = Callable[
     [list[RunSpec], AbstractEventLoop, CompileConfigParamsByPlate],
     Awaitable[dict[str, str]],
@@ -128,14 +118,12 @@ class DebugWorkflowService:
         self,
         *,
         host,
-        client_service: ZMQClientService,
-        run_blocking: RunBlockingCallable,
+        context: BatchWorkflowContext,
         compile_before_execution: CompileBeforeExecutionCallable,
         execution_submission: ExecutionSubmissionService,
     ) -> None:
         self._host = host
-        self._client_service = client_service
-        self._run_blocking = run_blocking
+        self._context = context
         self._compile_before_execution = compile_before_execution
         self._execution_submission = execution_submission
         self._debug_compile_artifacts: dict[DebugCompileArtifactCacheKey, str] = {}
@@ -147,13 +135,9 @@ class DebugWorkflowService:
         debug_request: DebugPlateRunRequest,
         loop,
     ) -> str:
-        cache_key = DebugCompileArtifactCacheKey(
-            plate_path=run_spec.plate_path,
-            pipeline_fingerprint=CompileWorkflowService.pipeline_fingerprint(
-                run_spec.definition_pipeline
-            ),
-            selected_source_group=debug_request.selected_source_group,
-            replay_mode=debug_request.replay_mode,
+        cache_key = DebugCompileArtifactCacheKey.from_requests(
+            plate_request=run_spec,
+            debug_request=debug_request,
         )
         if debug_request.replay_mode.retains_compile_artifact:
             cached_artifact_id = self._debug_compile_artifacts.get(cache_key)
@@ -185,8 +169,7 @@ class DebugWorkflowService:
         debug_request: DebugPlateRunRequest,
         loop,
     ) -> None:
-        if self._client_service.zmq_client is None:
-            raise RuntimeError("ZMQ client is not connected")
+        zmq_client = self._context.zmq.require_client()
         plate_path = run_spec.plate_path
         execution_plate_path = run_spec.execution_plate_path
         definition_pipeline = run_spec.definition_pipeline
@@ -200,49 +183,33 @@ class DebugWorkflowService:
         )
 
         def submit_debug() -> dict:
-            return self._client_service.zmq_client.submit_debug_pipeline(
-                OpenHCSExecutionSubmission(
-                    plate_id=plate_path,
-                    execution_plate_id=execution_plate_path,
-                    selected_pipeline_path=run_spec.selected_pipeline_path,
-                    pipeline_steps=definition_pipeline,
+            return zmq_client.submit_debug_pipeline(
+                run_spec.submission(
                     global_config=run_spec.global_config,
-                    pipeline_config=run_spec.pipeline_config,
                     compile_artifact_id=compile_artifact_id,
-                    config_params=debug_request.config_params,
                 ),
-                debug_session_id=debug_request.debug_session_id,
-                snapshot_store_ref=debug_request.snapshot_store_ref,
-                snapshot_store_backend=debug_request.snapshot_store_backend,
-                command_type=debug_request.command_type,
-                selected_source_group=debug_request.selected_source_group,
-                pause_step_indices=debug_request.pause_step_indices,
-                start_step_index=debug_request.start_step_index,
-                start_after_invocation_key=debug_request.start_after_invocation_key,
-                replay_mode=debug_request.replay_mode,
+                debug_config=debug_request.execution_config,
             )
 
-        response = DebugSubmissionResponse.from_wire(
-            await self._run_blocking(loop, submit_debug)
+        response = ExecutionSubmissionResponse.from_wire(
+            await self._context.run_blocking(loop, submit_debug)
         )
-        execution_id = response.execution_id
-        if execution_id:
-            self._host.plate_execution_ids[plate_path] = execution_id
-            self._host.current_execution_id = execution_id
 
         if response.accepted:
+            execution_id = response.require_execution_id("Debug submission")
+            self._host.plate_execution_ids[plate_path] = execution_id
+            self._host.current_execution_id = execution_id
             self._host.emit_status(f"Submitted debug run for {plate_path}")
-            if execution_id:
-                self._execution_submission.start_completion_poller(
-                    str(execution_id),
-                    plate_path,
+            self._execution_submission.start_completion_poller(
+                execution_id,
+                plate_path,
             )
             return
 
-        error_msg = response.failure_message
+        error_msg = response.require_failure_text("Debug submission")
         logger.error("Debug run %s submission failed: %s", plate_path, error_msg)
         self._host.emit_error(f"Debug submission failed for {plate_path}: {error_msg}")
-        self._host.execution_runtime.mark_terminal(
+        self._host.plate_terminal_activity_status.mark_terminal(
             plate_path,
             TerminalExecutionStatus.FAILED,
         )
@@ -255,14 +222,12 @@ class DebugWorkflowService:
         loop,
     ) -> DebugPausedWorkerStatus:
         def send_command() -> DebugPausedWorkerStatus:
-            if self._client_service.zmq_client is None:
-                raise RuntimeError("ZMQ client is not connected")
-            return self._client_service.zmq_client.send_debug_worker_command(
+            return self._context.zmq.require_client().send_debug_worker_command(
                 debug_session_id=debug_session_id,
                 command_type=command_type,
             ).status
 
-        status = await self._run_blocking(loop, send_command)
+        status = await self._context.run_blocking(loop, send_command)
         self._host.emit_status(
             f"Debug worker {status.state.value} for session {debug_session_id[:8]}"
         )
@@ -279,9 +244,7 @@ class DebugWorkflowService:
         loop,
     ) -> DebugArtifactExportResponse:
         def export_artifact() -> DebugArtifactExportResponse:
-            if self._client_service.zmq_client is None:
-                raise RuntimeError("ZMQ client is not connected")
-            return self._client_service.zmq_client.export_debug_artifact(
+            return self._context.zmq.require_client().export_debug_artifact(
                 debug_session_id=debug_session_id,
                 artifact_ref=artifact_ref,
                 export_root=export_root,
@@ -289,7 +252,7 @@ class DebugWorkflowService:
                 snapshot_store_backend=snapshot_store_backend,
             )
 
-        response = await self._run_blocking(loop, export_artifact)
+        response = await self._context.run_blocking(loop, export_artifact)
         self._host.emit_status(f"Exported debug artifact to {response.exported_ref}")
         return response
 

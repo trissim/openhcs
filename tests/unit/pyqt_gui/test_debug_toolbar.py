@@ -21,7 +21,12 @@ from openhcs.core.debug import (
 from openhcs.pyqt_gui.windows.debug_inspector_window import (
     DebugArtifactMaterializeRequest,
 )
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
@@ -306,10 +311,12 @@ def debug_snapshot_notification(
     )
     return DebugSnapshotAvailableNotification(
         progress_event=ProgressEvent(
-            execution_id="exec-1",
-            plate_id="plate",
-            axis_id="A01",
-            step_name="step",
+            identity=ProgressIdentity(
+                execution_id="exec-1",
+                plate_id="plate",
+                axis_id="A01",
+                step_name="step",
+            ),
             phase=ProgressPhase.PATTERN_GROUP,
             status=ProgressStatus.SUCCESS,
             percent=100,

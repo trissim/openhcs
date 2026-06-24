@@ -9,10 +9,11 @@ import logging
 import time
 import re
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field, make_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional, List, Dict, Set, Any
+from typing import Callable, Optional, List, Dict, Set
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -35,28 +36,30 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
 
-from openhcs.constants.constants import Backend, FileFormat
+from openhcs.constants.constants import AllComponents, Backend, FileFormat
 from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared.column_filter_widget import MultiColumnFilterPanel
-from pyqt_reactive.widgets.shared.image_table_browser import ImageTableBrowser
+from pyqt_reactive.widgets.shared.image_table_browser import (
+    ImageTableBrowser,
+    ImageTableValue,
+)
 from pyqt_reactive.widgets.shared import TabbedFormWidget, TabConfig, TabbedFormConfig
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import StreamingConfig
-from objectstate.lazy_factory import get_base_type_for_lazy
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 
 logger = logging.getLogger(__name__)
 
 
-STREAMING_CONFIG_FIELD_NAMES = tuple(StreamingConfig.__registry__.keys())
+ALL_COMPONENT_VALUES = frozenset(component.value for component in AllComponents)
 
 
 def _streaming_config_field_names() -> tuple[str, ...]:
     """Registered streaming-config field names used by image-browser controls."""
-    return STREAMING_CONFIG_FIELD_NAMES
+    return StreamingConfig.supported_config_keys()
 
 
 class ResultFileType(str, Enum):
@@ -86,6 +89,38 @@ class ResultFileAction:
 
     def run(self, browser: "ImageBrowserWidget", file_path: Path) -> None:
         self.handle(browser, file_path)
+
+
+@dataclass(slots=True)
+class ImageBrowserItem(Mapping[str, ImageTableValue]):
+    """One image/result row plus optional result-file action metadata."""
+
+    key: str
+    metadata: dict[str, ImageTableValue]
+    result_file_type: ResultFileType | None = None
+    full_path: Path | None = None
+
+    @property
+    def is_result(self) -> bool:
+        return self.result_file_type is not None
+
+    @property
+    def filename(self) -> str:
+        return str(self.metadata["filename"])
+
+    def result_path(self) -> Path:
+        if self.full_path is None:
+            raise RuntimeError(f"Image browser item {self.key!r} is not a result file.")
+        return self.full_path
+
+    def __getitem__(self, key: str) -> ImageTableValue:
+        return self.metadata[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.metadata)
+
+    def __len__(self) -> int:
+        return len(self.metadata)
 
 
 def _stream_roi_result(browser: "ImageBrowserWidget", file_path: Path) -> None:
@@ -123,41 +158,30 @@ class StreamingViewerField:
 
     @property
     def display_name(self) -> str:
-        from openhcs.ui.shared.streaming_service import StreamingService
-
-        return StreamingService.display_name_for_viewer_type(self.field_name)
-
-
-STREAMING_VIEWER_FIELDS = tuple(
-    StreamingViewerField(field_name)
-    for field_name in _streaming_config_field_names()
-)
+        return StreamingConfig.display_name_for_config_key(self.field_name)
 
 
 def streaming_viewer_fields() -> tuple[StreamingViewerField, ...]:
     """Registered streaming-viewer fields with display metadata."""
-    return STREAMING_VIEWER_FIELDS
+    return tuple(
+        StreamingViewerField(field_name)
+        for field_name in _streaming_config_field_names()
+    )
 
 
-def _create_image_browser_config():
-    """Create ImageBrowser config container with LAZY streaming configs.
-
-    Uses SimpleNamespace with dynamically injected LAZY streaming configs.
-    Lazy configs resolve values from parent_state (plate) through the
-    ObjectState hierarchy, enabling live context updates.
-    """
-    from types import SimpleNamespace
-
-    config = SimpleNamespace()
-
-    # Auto-discover streaming configs from registry
-    # Registry keys are now snake_case field names (e.g., 'napari_streaming_config')
-    for field_name in _streaming_config_field_names():
-        lazy_class = StreamingConfig.__registry__[field_name]
-        instance = lazy_class()  # Lazy config resolves from plate via parent_state
-        setattr(config, field_name, instance)
-
-    return config
+ImageBrowserConfig = make_dataclass(
+    "ImageBrowserConfig",
+    tuple(
+        (
+            field_name,
+            StreamingConfig.config_type_for_key(field_name),
+            field(default_factory=StreamingConfig.config_type_for_key(field_name)),
+        )
+        for field_name in _streaming_config_field_names()
+    ),
+    frozen=False,
+    slots=True,
+)
 
 
 class ImageBrowserViewerControls:
@@ -187,8 +211,8 @@ class ImageBrowserViewerControls:
             buttons.append(button)
         return buttons
 
-    def is_enabled(self, viewer_type: str) -> bool:
-        enabled_path = f"{viewer_type}.enabled"
+    def is_enabled(self, config_key: str) -> bool:
+        enabled_path = f"{config_key}.enabled"
         return self.state.get_resolved_value(enabled_path) is True
 
     def enabled_viewers(self) -> list[str]:
@@ -198,29 +222,21 @@ class ImageBrowserViewerControls:
             if self.is_enabled(field.field_name)
         ]
 
-    def update_button_state(self, viewer_type: str, has_selection: bool) -> None:
-        button = self.buttons.get(viewer_type)
+    def update_button_state(self, config_key: str, has_selection: bool) -> None:
+        button = self.buttons.get(config_key)
         if button is None:
-            logger.warning("viewer_type %s not in view buttons", viewer_type)
+            logger.warning("Streaming config key %s not in view buttons", config_key)
             return
-        button.setEnabled(has_selection and self.is_enabled(viewer_type))
+        button.setEnabled(has_selection and self.is_enabled(config_key))
 
     def update_all_button_states(self, selected_keys: list) -> None:
         has_selection = len(selected_keys) > 0
-        for viewer_type in self.buttons:
-            self.update_button_state(viewer_type, has_selection)
+        for config_key in self.buttons:
+            self.update_button_state(config_key, has_selection)
 
 
 class ImageBrowserMetadataDisplayResolver:
     """Resolve and cache display values for metadata table/filter cells."""
-
-    COMPONENT_KEY_MAP = {
-        "channel": "CHANNEL",
-        "site": "SITE",
-        "z_index": "Z_INDEX",
-        "timepoint": "TIMEPOINT",
-        "well": "WELL",
-    }
 
     def __init__(self, orchestrator_getter: Callable[[], object | None]):
         self.orchestrator_getter = orchestrator_getter
@@ -229,7 +245,7 @@ class ImageBrowserMetadataDisplayResolver:
     def clear(self) -> None:
         self._cache.clear()
 
-    def display_value(self, metadata_key: str, raw_value: Any) -> str:
+    def display_value(self, metadata_key: str, raw_value: ImageTableValue) -> str:
         if raw_value is None:
             return "N/A"
 
@@ -249,12 +265,9 @@ class ImageBrowserMetadataDisplayResolver:
             return value_str
 
         try:
-            from openhcs.constants import AllComponents
-
-            component_name = self.COMPONENT_KEY_MAP.get(metadata_key)
-            component = getattr(AllComponents, component_name) if component_name else None
-            if component is None:
+            if metadata_key not in ALL_COMPONENT_VALUES:
                 return value_str
+            component = AllComponents(metadata_key)
 
             metadata_name = (
                 orchestrator._metadata_cache_service.get_component_metadata(
@@ -277,53 +290,11 @@ class ImageBrowserMetadataDisplayResolver:
             return value_str
 
 
-class ImageBrowserResultCatalog:
-    """Own result-file metadata and full-path lookup as one catalog."""
-
-    def __init__(self):
-        self.metadata_by_key: dict[str, dict] = {}
-        self.path_by_key: dict[str, Path] = {}
-
-    def clear(self) -> None:
-        self.metadata_by_key.clear()
-        self.path_by_key.clear()
-
-    def add(self, key: str, metadata: dict, full_path: Path) -> None:
-        self.metadata_by_key[key] = metadata
-        self.path_by_key[key] = full_path
-
-    def __len__(self) -> int:
-        return len(self.metadata_by_key)
-
-    def is_result(self, key: str) -> bool:
-        return key in self.path_by_key
-
-    def path_for(self, key: str) -> Path:
-        return self.path_by_key[key]
-
-
-class ImageBrowserImageCatalog:
-    """Own loaded image metadata before image/result merge."""
-
-    def __init__(self):
-        self.metadata_by_key: dict[str, dict] = {}
-
-    def clear(self) -> None:
-        self.metadata_by_key.clear()
-
-    def add(self, key: str, metadata: dict) -> None:
-        self.metadata_by_key[key] = metadata
-
-    def __len__(self) -> int:
-        return len(self.metadata_by_key)
-
-
 class ImageBrowserFilterController:
     """Own search, folder, well, and column filtering for ImageBrowserWidget."""
 
     def __init__(self, browser: "ImageBrowserWidget"):
         self.browser = browser
-        self._search_service = None
 
     def apply_combined_filters(self) -> None:
         """Apply search, folder, well, and column filters in one pass."""
@@ -338,9 +309,15 @@ class ImageBrowserFilterController:
 
         active_filters = self._active_column_filters()
 
+        if not browser.file_items:
+            browser._set_visible_files({}, rebuild_index=False)
+            return
+
+        search_items = browser.image_table_browser.search_items(browser.search_input.text())
         result = {}
-        for filename, metadata in browser.filtered_files.items():
+        for filename, item in search_items.items():
             include = True
+            metadata = item.metadata
 
             if folder_path and include:
                 include = (
@@ -357,29 +334,31 @@ class ImageBrowserFilterController:
                 include = self._matches_column_filters(metadata, active_filters)
 
             if include:
-                result[filename] = metadata
+                result[filename] = item
 
-        browser._update_table_with_filtered_items(result)
+        browser._set_visible_files(result, rebuild_index=False)
         logger.debug("Combined filters: %s images shown", len(result))
 
     def precompute_display_values(self) -> None:
         """Pre-compute display values for all metadata keys in all files."""
         browser = self.browser
-        for metadata in browser.all_files.values():
+        for item in browser.file_items.values():
             for metadata_key in browser.metadata_keys:
-                raw_value = metadata.get(metadata_key)
+                if metadata_key not in item.metadata:
+                    continue
+                raw_value = item.metadata[metadata_key]
                 if raw_value is not None:
                     display_value = (
                         browser.metadata_display_resolver.display_value(
                             metadata_key, raw_value
                         )
                     )
-                    metadata[f"_display_{metadata_key}"] = display_value
+                    item.metadata[f"_display_{metadata_key}"] = display_value
 
     def build_column_filters(self) -> None:
         """Build column filter widgets from loaded file metadata."""
         browser = self.browser
-        if not browser.all_files or not browser.metadata_keys:
+        if not browser.file_items or not browser.metadata_keys:
             return
 
         browser.column_filter_panel.clear_all_filters()
@@ -387,8 +366,10 @@ class ImageBrowserFilterController:
         for metadata_key in browser.metadata_keys:
             unique_values = {
                 browser.metadata_display_resolver.display_value(metadata_key, value)
-                for metadata in browser.all_files.values()
-                if (value := metadata.get(metadata_key)) is not None
+                for item in browser.file_items.values()
+                if metadata_key in item.metadata
+                for value in (item.metadata[metadata_key],)
+                if value is not None
             }
 
             if unique_values:
@@ -413,20 +394,8 @@ class ImageBrowserFilterController:
             len(browser.column_filter_panel.column_filters),
         )
 
-    def filter_images(self, search_term: str) -> None:
-        """Filter files using shared search service."""
-        from openhcs.ui.shared.search_service import SearchService
-
-        browser = self.browser
-        if self._search_service is None:
-            self._search_service = SearchService(
-                all_items=browser.all_files,
-                searchable_text_extractor=self._searchable_text,
-            )
-        else:
-            self._search_service.update_items(browser.all_files)
-
-        browser.filtered_files = self._search_service.filter(search_term)
+    def filter_images(self, _search_term: str) -> None:
+        """Compose text search with folder, well, and column filters."""
         self.apply_combined_filters()
 
     def on_well_filter_changed(self) -> None:
@@ -467,21 +436,13 @@ class ImageBrowserFilterController:
     def _matches_column_filters(metadata: dict, active_filters: dict[str, set]) -> bool:
         for column_name, selected_values in active_filters.items():
             metadata_key = column_name.lower().replace(" ", "_")
-            item_value = metadata.get(f"_display_{metadata_key}", "")
+            display_key = f"_display_{metadata_key}"
+            if display_key not in metadata:
+                return False
+            item_value = metadata[display_key]
             if item_value not in selected_values:
                 return False
         return True
-
-    @staticmethod
-    def _searchable_text(metadata: dict) -> str:
-        searchable_fields = [metadata["filename"]]
-        searchable_fields.extend(
-            str(value)
-            for key, value in metadata.items()
-            if key != "filename" and value is not None
-        )
-        return " ".join(str(field) for field in searchable_fields)
-
 
 class ImageBrowserFileFocusController:
     """Own semantic file focusing for ImageBrowserWidget."""
@@ -491,11 +452,11 @@ class ImageBrowserFileFocusController:
 
     def focus_path(self, file_path: str | Path) -> bool:
         browser = self.browser
-        if not browser.all_files and browser.orchestrator:
+        if not browser.file_items and browser.orchestrator:
             browser.load_images()
 
         for key in self._candidate_keys(file_path):
-            if key in browser.all_files:
+            if key in browser.file_items:
                 return self._focus_key(key)
         unique_basename_key = self._unique_basename_key(file_path)
         if unique_basename_key is not None:
@@ -516,9 +477,8 @@ class ImageBrowserFileFocusController:
 
     def _focus_key(self, key: str) -> bool:
         browser = self.browser
-        if key not in browser.filtered_files:
-            browser.filtered_files = {key: browser.all_files[key]}
-            browser._update_table_with_filtered_items(browser.filtered_files)
+        if key not in browser.image_table_browser.filtered_items:
+            browser._set_visible_files({key: browser.file_items[key]}, rebuild_index=False)
         return browser.image_table_browser.select_key(key)
 
     def _unique_basename_key(self, file_path: str | Path) -> str | None:
@@ -526,7 +486,7 @@ class ImageBrowserFileFocusController:
         if not basename:
             return None
         matches = [
-            key for key in self.browser.all_files
+            key for key in self.browser.file_items
             if Path(key).name == basename
         ]
         if len(matches) == 1:
@@ -568,7 +528,7 @@ class ImageBrowserWidget(QWidget):
 
         # Create root ObjectState from dynamically generated config container
         # This gives us a single registered state with nested configs via dotted paths
-        self.config = _create_image_browser_config()
+        self.config = ImageBrowserConfig()
         parent_state = (
             ObjectStateRegistry.get_by_scope(self.scope_id) if self.scope_id else None
         )
@@ -595,10 +555,7 @@ class ImageBrowserWidget(QWidget):
         self.view_buttons: Dict[str, QPushButton] = self.viewer_controls.buttons
 
         # File data tracking (images + results)
-        self.all_files = {}  # filename -> metadata dict (merged images + results)
-        self.image_catalog = ImageBrowserImageCatalog()
-        self.result_catalog = ImageBrowserResultCatalog()
-        self.filtered_files = {}  # filename -> metadata dict (after search/filter)
+        self.file_items: dict[str, ImageBrowserItem] = {}
         self.selected_wells = set()  # Selected wells for filtering
         self.metadata_keys = []  # Column names from parser metadata (union of all keys)
         self.metadata_display_resolver = ImageBrowserMetadataDisplayResolver(
@@ -790,15 +747,13 @@ class ImageBrowserWidget(QWidget):
         self.image_table_browser = ImageTableBrowser(
             color_scheme=self.color_scheme, parent=self
         )
+        self.image_table_browser.search_input.setVisible(False)
 
         # Connect signals
         self.image_table_browser.item_double_clicked.connect(
             self._on_file_double_clicked
         )
         self.image_table_browser.items_selected.connect(self._on_files_selected)
-
-        # Alias for backward compatibility during transition
-        self.file_table = self.image_table_browser.table_widget
 
         return self.image_table_browser
 
@@ -929,10 +884,9 @@ class ImageBrowserWidget(QWidget):
         """Load image files from the orchestrator's metadata."""
         if not self.orchestrator:
             self.info_label.setText("No plate loaded")
-            # Still try to load results even if no orchestrator
-            self.load_results()
             return
 
+        image_items: dict[str, ImageBrowserItem] = {}
         try:
             self.metadata_display_resolver.clear()
             logger.info("IMAGE BROWSER: Starting load_images()")
@@ -950,77 +904,48 @@ class ImageBrowserWidget(QWidget):
             )
             image_files = metadata_handler.get_image_files(plate_path, all_subdirs=True)
             logger.info(
-                f"IMAGE BROWSER: get_image_files returned {len(image_files) if image_files else 0} files"
+                f"IMAGE BROWSER: get_image_files returned {len(image_files)} files"
             )
 
-            if not image_files:
-                self.info_label.setText("No images found")
-                # Still load results even if no images
-                self.load_results()
-                return
-
-            self.image_catalog.clear()
             for filename in image_files:
                 parsed = handler.parser.parse_filename(filename)
 
-                # Get file size
                 file_path = plate_path / filename
-                if file_path.exists():
-                    size_bytes = file_path.stat().st_size
-                    if size_bytes < 1024:
-                        size_str = f"{size_bytes} B"
-                    elif size_bytes < 1024 * 1024:
-                        size_str = f"{size_bytes / 1024:.1f} KB"
-                    else:
-                        size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
-                else:
-                    size_str = "N/A"
-
-                metadata = {"filename": filename, "type": "Image", "size": size_str}
+                metadata = {
+                    "filename": filename,
+                    "type": "Image",
+                    "size": self._file_size_label(file_path),
+                }
                 if parsed:
                     metadata.update(parsed)
-                self.image_catalog.add(filename, metadata)
+                image_items[filename] = ImageBrowserItem(
+                    key=filename,
+                    metadata=metadata,
+                )
 
             logger.info(
-                f"IMAGE BROWSER: Built image catalog with {len(self.image_catalog)} entries"
+                f"IMAGE BROWSER: Built image item set with {len(image_items)} entries"
             )
 
         except Exception as e:
             logger.error(f"Failed to load images: {e}", exc_info=True)
             QMessageBox.warning(self, "Error", f"Failed to load images: {e}")
             self.info_label.setText("Error loading images")
-            self.image_catalog.clear()
+            image_items.clear()
 
-        # Load results and merge with images
-        self.load_results()
+        result_items = self.load_results()
+        self.file_items = {**image_items, **result_items}
 
-        # Merge images and results into unified all_files dictionary
-        self.all_files = {
-            **self.image_catalog.metadata_by_key,
-            **self.result_catalog.metadata_by_key,
-        }
-
-        # Determine metadata keys from all files (union of all keys)
         all_keys = set()
-        for file_metadata in self.all_files.values():
-            all_keys.update(file_metadata.keys())
+        for item in self.file_items.values():
+            all_keys.update(item.metadata.keys())
 
-        # Remove 'filename' from keys (it's always the first column)
         all_keys.discard("filename")
-
-        # Sort keys for consistent column order (extension first, then alphabetical)
         self.metadata_keys = sorted(all_keys, key=lambda k: (k != "extension", k))
 
-        # Configure ImageTableBrowser with dynamic columns
         self.image_table_browser.set_metadata_keys(self.metadata_keys)
-
-        # Pre-compute display values for fast filtering
         self.filter_controller.precompute_display_values()
 
-        # Initialize filtered files to all files
-        self.filtered_files = self.all_files.copy()
-
-        # Build folder tree from file paths
         folder_start = time.perf_counter()
         self._build_folder_tree()
         logger.info(
@@ -1028,9 +953,8 @@ class ImageBrowserWidget(QWidget):
             time.perf_counter() - folder_start,
         )
 
-        # Populate table first to keep UI responsive
         populate_start = time.perf_counter()
-        self._populate_table(self.filtered_files)
+        self._set_visible_files(self.file_items, rebuild_index=True)
         logger.info(
             "IMAGE BROWSER: Populated table in %.3fs",
             time.perf_counter() - populate_start,
@@ -1047,10 +971,9 @@ class ImageBrowserWidget(QWidget):
 
         QTimer.singleShot(0, _build_filters_later)
 
-        # Update info label
-        total_files = len(self.all_files)
-        num_images = len(self.image_catalog)
-        num_results = len(self.result_catalog)
+        total_files = len(self.file_items)
+        num_images = sum(1 for item in self.file_items.values() if not item.is_result)
+        num_results = sum(1 for item in self.file_items.values() if item.is_result)
         self.info_label.setText(
             f"{total_files} files loaded ({num_images} images, {num_results} results)"
         )
@@ -1059,73 +982,49 @@ class ImageBrowserWidget(QWidget):
         if self.plate_view_widget and self.plate_view_widget.isVisible():
             self._update_plate_view()
 
-    def load_results(self):
-        """Load result files (ROI JSON, CSV) from the results directory."""
-        self.result_catalog.clear()
+    @staticmethod
+    def _file_size_label(file_path: Path) -> str:
+        if not file_path.exists():
+            return "N/A"
+        size_bytes = file_path.stat().st_size
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        if size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
 
+    def load_results(self) -> dict[str, ImageBrowserItem]:
+        """Load result files (ROI JSON, CSV) from the results directory."""
         if not self.orchestrator:
             logger.warning("IMAGE BROWSER RESULTS: No orchestrator available")
-            return
+            return {}
 
+        result_items: dict[str, ImageBrowserItem] = {}
         try:
-            # Get results directory from metadata (single source of truth)
-            # The metadata contains the results_dir field that was calculated during compilation
             handler = self.orchestrator.microscope_handler
+            metadata_handler = handler.metadata_handler
             plate_path = self.orchestrator.plate_path
+            result_directories = metadata_handler.analysis_result_directories(plate_path)
 
-            # Load metadata JSON directly
-            from openhcs.microscopes.openhcs import get_metadata_path
-            import json
-
-            metadata_path = get_metadata_path(plate_path)
-            if not metadata_path.exists():
+            if not result_directories:
                 logger.warning(
-                    f"IMAGE BROWSER RESULTS: Metadata file not found: {metadata_path}"
+                    "IMAGE BROWSER RESULTS: No declared analysis result directories"
                 )
-                self.result_catalog.clear()
-                return
-
-            with open(metadata_path) as f:
-                metadata = json.load(f)
-
-            # Collect ALL results directories from ALL subdirectories
-            results_dirs = []
-            if metadata and "subdirectories" in metadata:
-                for subdir_name, subdir_metadata in metadata["subdirectories"].items():
-                    if (
-                        "results_dir" in subdir_metadata
-                        and subdir_metadata["results_dir"]
-                    ):
-                        results_dir_path = plate_path / subdir_metadata["results_dir"]
-                        results_dirs.append((subdir_name, results_dir_path))
-                        logger.info(
-                            f"IMAGE BROWSER RESULTS: Found results_dir for subdirectory '{subdir_name}': {subdir_metadata['results_dir']}"
-                        )
-
-            if not results_dirs:
-                logger.warning(
-                    "IMAGE BROWSER RESULTS: No results_dir found in any subdirectory"
-                )
-                return
+                return {}
 
             logger.info(
-                f"IMAGE BROWSER RESULTS: Scanning {len(results_dirs)} results directories"
+                "IMAGE BROWSER RESULTS: Scanning "
+                f"{len(result_directories)} results directories"
             )
-
-            # Get parser from orchestrator for filename parsing
-            handler = self.orchestrator.microscope_handler
 
             # Scan all results directories
             file_count = 0
-            for subdir_name, results_dir in results_dirs:
-                if not results_dir.exists():
-                    logger.warning(
-                        f"IMAGE BROWSER RESULTS: Results directory does not exist: {results_dir}"
-                    )
-                    continue
+            for result_directory in result_directories:
+                results_dir = result_directory.path
 
                 logger.info(
-                    f"IMAGE BROWSER RESULTS: Scanning results directory for '{subdir_name}': {results_dir}"
+                    "IMAGE BROWSER RESULTS: Scanning results directory for "
+                    f"'{result_directory.subdirectory_name}': {results_dir}"
                 )
 
                 # Scan for ROI JSON files and CSV files
@@ -1152,26 +1051,14 @@ class ImageBrowserWidget(QWidget):
                             # Get relative path from plate_path (not results_dir) to include subdirectory
                             rel_path = file_path.relative_to(plate_path)
 
-                            # Get file size
-                            size_bytes = file_path.stat().st_size
-                            if size_bytes < 1024:
-                                size_str = f"{size_bytes} B"
-                            elif size_bytes < 1024 * 1024:
-                                size_str = f"{size_bytes / 1024:.1f} KB"
-                            else:
-                                size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
-
-                            # Parse ONLY the filename (not the full path) to extract metadata
                             parsed = handler.parser.parse_filename(file_path.name)
 
-                            # Build file info with parsed metadata (no full_path in metadata dict)
                             file_info = {
                                 "filename": str(rel_path),
                                 "type": result_file_type.value,
-                                "size": size_str,
+                                "size": self._file_size_label(file_path),
                             }
 
-                            # Add parsed metadata components if parsing succeeded
                             if parsed:
                                 file_info.update(parsed)
                                 logger.info(
@@ -1185,19 +1072,25 @@ class ImageBrowserWidget(QWidget):
                                     f"IMAGE BROWSER RESULTS: ✗ Could not parse filename: {file_path.name}"
                                 )
 
-                            # Store file info and full path separately
-                            self.result_catalog.add(str(rel_path), file_info, file_path)
+                            key = str(rel_path)
+                            result_items[key] = ImageBrowserItem(
+                                key=key,
+                                metadata=file_info,
+                                result_file_type=result_file_type,
+                                full_path=file_path,
+                            )
 
             logger.info(
-                f"IMAGE BROWSER RESULTS: Scanned {file_count} total files, matched {len(self.result_catalog)} result files"
+                f"IMAGE BROWSER RESULTS: Scanned {file_count} total files, matched {len(result_items)} result files"
             )
 
         except Exception as e:
             logger.error(
                 f"IMAGE BROWSER RESULTS: Failed to load results: {e}", exc_info=True
             )
+        return result_items
 
-    # Removed _populate_results_table - now using unified _populate_table
+    # Removed _populate_results_table - now using unified file table
     # Removed on_result_double_clicked - now using unified on_file_double_clicked
 
     def _stream_roi_file(self, roi_zip_path: Path):
@@ -1228,8 +1121,7 @@ class ImageBrowserWidget(QWidget):
             for viewer_field_name in enabled_viewers:
                 def _stream_to_viewer(field_name=viewer_field_name):
                     try:
-                        plate_path = Path(self.orchestrator.plate_path)
-                        self._stream_rois_to_viewer([str(roi_zip_path)], plate_path, field_name)
+                        self._stream_rois_to_viewer([str(roi_zip_path)], field_name)
                     except Exception as e:
                         logger.error(
                             f"Failed to start ROI streaming to {field_name}: {e}",
@@ -1255,25 +1147,19 @@ class ImageBrowserWidget(QWidget):
             logger.error(f"Failed to start ROI streaming: {e}")
             QMessageBox.warning(self, "Error", f"Failed to stream ROI file: {e}")
 
-    def _populate_table(self, files_dict: Dict[str, Dict]):
-        """Populate table with files (images + results) using ImageTableBrowser."""
-        self.image_table_browser.set_items(files_dict)
+    def _set_visible_files(
+        self,
+        files_dict: dict[str, ImageBrowserItem],
+        *,
+        rebuild_index: bool,
+    ):
+        """Project visible file rows into ImageTableBrowser and status text."""
+        if rebuild_index:
+            self.image_table_browser.set_items(files_dict)
+        else:
+            self.image_table_browser.set_filtered_items(files_dict)
 
-        # Update status label with file counts
-        total = len(self.all_files)
-        filtered = len(files_dict)
-        self.image_table_browser.status_label.setText(f"Files: {filtered}/{total}")
-
-    def _update_table_with_filtered_items(self, files_dict: Dict[str, Dict]):
-        """Update table with filtered items without rebuilding SearchService.
-
-        Use this when all_files has not changed, only filter criteria changed.
-        Much faster than _populate_table() for checkbox filter updates.
-        """
-        self.image_table_browser.set_filtered_items(files_dict)
-
-        # Update status label with file counts
-        total = len(self.all_files)
+        total = len(self.file_items)
         filtered = len(files_dict)
         self.image_table_browser.status_label.setText(f"Files: {filtered}/{total}")
 
@@ -1289,7 +1175,7 @@ class ImageBrowserWidget(QWidget):
 
         # Extract unique folder paths (exclude *_results folders since they're auto-included)
         folders: Set[str] = set()
-        for filename in self.all_files.keys():
+        for filename in self.file_items:
             path = Path(filename)
             # Add all parent directories
             for parent in path.parents:
@@ -1359,33 +1245,12 @@ class ImageBrowserWidget(QWidget):
         """Handle selection change from ImageTableBrowser."""
         self.viewer_controls.update_all_button_states(keys)
 
-    # Backward compatibility alias
-    def on_selection_changed(self):
-        """Handle selection change in the table (legacy)."""
-        selected_keys = self.image_table_browser.get_selected_keys()
-        self._on_files_selected(selected_keys)
-
-    def _on_file_double_clicked(self, key: str, item: dict):
+    def _on_file_double_clicked(self, key: str, item: ImageBrowserItem):
         """Handle double-click from ImageTableBrowser."""
-        file_info = self.all_files[key]
-
-        # Check if this is a result file (ROI, CSV, JSON) or an image
-        # Result files are stored in result_catalog, images are not
-        filename = file_info["filename"]
-        if self.result_catalog.is_result(filename):
-            # This is a result file (ROI, CSV, JSON)
-            self._handle_result_double_click(file_info)
+        if item.is_result:
+            self._handle_result_double_click(item)
         else:
-            # This is an image file
             self._handle_image_double_click()
-
-    # Backward compatibility alias
-    def on_file_double_clicked(self, row: int, column: int):
-        """Handle double-click on a file row (legacy)."""
-        filename_item = self.file_table.item(row, 0)
-        filename = filename_item.data(Qt.ItemDataRole.UserRole)
-        file_info = self.all_files[filename]
-        self._on_file_double_clicked(filename, file_info)
 
     def _handle_image_double_click(self):
         """Handle double-click on an image - stream to enabled viewer(s)."""
@@ -1394,8 +1259,8 @@ class ImageBrowserWidget(QWidget):
 
         # Stream to whichever viewer(s) are enabled
         if enabled_viewers:
-            for viewer_type in enabled_viewers:
-                self._view_selected_in_viewer(viewer_type)
+            for config_key in enabled_viewers:
+                self._view_selected_in_viewer(config_key)
         else:
             # No viewers enabled - show message
             QMessageBox.information(
@@ -1404,25 +1269,30 @@ class ImageBrowserWidget(QWidget):
                 "Please enable at least one viewer streaming to view images.",
             )
 
-    def _handle_result_double_click(self, file_info: dict):
+    def _handle_result_double_click(self, item: ImageBrowserItem):
         """Handle double-click on a result file - stream ROIs or display CSV."""
-        filename = file_info["filename"]
-        file_path = self.result_catalog.path_for(filename)
-        result_file_type = ResultFileType(file_info["type"])
-        RESULT_FILE_ACTIONS[result_file_type].run(self, file_path)
+        if item.result_file_type is None:
+            raise RuntimeError(f"Image browser item {item.key!r} has no result type.")
+        RESULT_FILE_ACTIONS[item.result_file_type].run(self, item.result_path())
 
-    def _view_selected_in_viewer(self, viewer_type: str):
+    def _view_selected_in_viewer(self, config_key: str):
         """View all selected images in the specified viewer as a batch (builds hyperstack)."""
         selected_keys = self.image_table_browser.get_selected_keys()
         if not selected_keys:
             return
 
-        # Separate ROI files from images
-        image_filenames = [k for k in selected_keys if not k.endswith(".roi.zip")]
-        roi_filenames = [k for k in selected_keys if k.endswith(".roi.zip")]
+        selected_items = tuple(self.file_items[key] for key in selected_keys)
+        image_filenames = [
+            item.key for item in selected_items
+            if not item.is_result
+        ]
+        roi_filenames = [
+            item.key for item in selected_items
+            if item.result_file_type is ResultFileType.ROI
+        ]
 
         logger.info(
-            f"🎯 IMAGE BROWSER: User selected {len(image_filenames)} images and {len(roi_filenames)} ROI files to view in {viewer_type}"
+            f"🎯 IMAGE BROWSER: User selected {len(image_filenames)} images and {len(roi_filenames)} ROI files to view in {config_key}"
         )
         if image_filenames:
             logger.info(
@@ -1436,19 +1306,18 @@ class ImageBrowserWidget(QWidget):
         def _view_async():
             # Stream ROI files in a batch (get viewer once, stream all ROIs)
             if roi_filenames:
-                plate_path = Path(self.orchestrator.plate_path)
-                self._stream_rois_to_viewer(roi_filenames, plate_path, viewer_type)
+                self._stream_rois_to_viewer(roi_filenames, config_key)
 
             # Stream image files as a batch
             if image_filenames:
-                self._stream_images_to_viewer(image_filenames, viewer_type)
+                self._stream_images_to_viewer(image_filenames, config_key)
 
-        spawn_thread_with_context(_view_async, name=f"view_{viewer_type}")
+        spawn_thread_with_context(_view_async, name=f"view_{config_key}")
 
-    def _prepare_streaming(self, viewer_type: str) -> tuple:
+    def _prepare_streaming(self, config_key: str) -> tuple:
         """Prepare for streaming: resolve config, get viewer, get read backend.
 
-        Returns: (viewer, plate_path, read_backend, config)
+        Returns: (viewer, read_backend, config)
         """
         if not self.orchestrator:
             raise RuntimeError("No orchestrator set")
@@ -1462,18 +1331,16 @@ class ImageBrowserWidget(QWidget):
 
         # Get fully resolved streaming config from ObjectState (includes inheritance)
         # get_resolved_value now returns reconstructed dataclass with all sub-fields populated
-        config = self.state.get_resolved_value(viewer_type)
+        config = self.state.get_resolved_value(config_key)
 
         viewer = self.orchestrator.get_or_create_visualizer(config)
-        return viewer, plate_path, read_backend, config
+        return viewer, read_backend, config
 
-    def _stream_images_to_viewer(self, filenames: list, viewer_type: str):
+    def _stream_images_to_viewer(self, filenames: list, config_key: str):
         """Load and stream images to specified viewer type."""
-        viewer, plate_path, read_backend, config = self._prepare_streaming(viewer_type)
+        viewer, read_backend, config = self._prepare_streaming(config_key)
         from openhcs.ui.shared.streaming_service import (
             ImageStreamingRequest,
-            StreamingService,
-            ViewerStreamingContext,
         )
 
         streaming_service = self.streaming_service
@@ -1482,45 +1349,32 @@ class ImageBrowserWidget(QWidget):
 
         streaming_service.stream_images_async(
             ImageStreamingRequest(
-                context=ViewerStreamingContext(
-                    viewer=viewer,
-                    plate_path=plate_path,
-                    config=config,
-                    viewer_type=config.viewer_type,
-                    status_callback=self._status_update_signal.emit,
-                    error_callback=lambda e: self._show_streaming_error(e)
-                    if StreamingService.is_napari_viewer_type(config.viewer_type)
-                    else self._show_fiji_streaming_error(e),
+                viewer=viewer,
+                config=config,
+                status_callback=self._status_update_signal.emit,
+                error_callback=lambda e: self._show_streaming_error(
+                    config.display_name,
+                    e,
                 ),
                 filenames=tuple(filenames),
                 read_backend=read_backend,
             )
         )
-        logger.info(f"Streaming {len(filenames)} images to {viewer_type}...")
+        logger.info(f"Streaming {len(filenames)} images to {config.display_name}...")
 
-    @pyqtSlot(str)
-    def _show_streaming_error(self, error_msg: str):
-        """Show streaming error in UI thread (called via QMetaObject.invokeMethod)."""
+    def _show_streaming_error(self, viewer_name: str, error_msg: str):
+        """Show streaming error in UI thread."""
         QMessageBox.warning(
-            self, "Streaming Error", f"Failed to stream images to Napari: {error_msg}"
+            self,
+            "Streaming Error",
+            f"Failed to stream images to {viewer_name}: {error_msg}",
         )
 
-    @pyqtSlot(str)
-    def _show_fiji_streaming_error(self, error_msg: str):
-        """Show Fiji streaming error in UI thread."""
-        QMessageBox.warning(
-            self, "Streaming Error", f"Failed to stream images to Fiji: {error_msg}"
-        )
-
-    def _stream_rois_to_viewer(
-        self, roi_filenames: list, plate_path: Path, viewer_type: str
-    ):
+    def _stream_rois_to_viewer(self, roi_filenames: list, config_key: str):
         """Stream ROI files to specified viewer type."""
-        viewer, _, _, config = self._prepare_streaming(viewer_type)
+        viewer, _, config = self._prepare_streaming(config_key)
         from openhcs.ui.shared.streaming_service import (
             RoiStreamingRequest,
-            StreamingService,
-            ViewerStreamingContext,
         )
 
         streaming_service = self.streaming_service
@@ -1529,20 +1383,17 @@ class ImageBrowserWidget(QWidget):
 
         streaming_service.stream_rois_async(
             RoiStreamingRequest(
-                context=ViewerStreamingContext(
-                    viewer=viewer,
-                    plate_path=plate_path,
-                    config=config,
-                    viewer_type=config.viewer_type,
-                    status_callback=self._status_update_signal.emit,
-                    error_callback=lambda e: self._show_streaming_error(e)
-                    if StreamingService.is_napari_viewer_type(config.viewer_type)
-                    else self._show_fiji_streaming_error(e),
+                viewer=viewer,
+                config=config,
+                status_callback=self._status_update_signal.emit,
+                error_callback=lambda e: self._show_streaming_error(
+                    config.display_name,
+                    e,
                 ),
                 roi_filenames=tuple(roi_filenames),
             )
         )
-        logger.info(f"Streaming {len(roi_filenames)} ROI files to {viewer_type}...")
+        logger.info(f"Streaming {len(roi_filenames)} ROI files to {config.display_name}...")
 
     def cleanup(self):
         """Clean up resources before widget destruction."""
@@ -1662,9 +1513,9 @@ class ImageBrowserWidget(QWidget):
         """Update plate view with current file data (images + results)."""
         # Extract all well IDs from current files (filter out failures)
         well_ids = set()
-        for filename, metadata in self.all_files.items():
+        for filename, item in self.file_items.items():
             try:
-                well_id = self._extract_well_id(metadata)
+                well_id = self._extract_well_id(item.metadata)
                 well_ids.add(well_id)
             except (KeyError, ValueError):
                 # Skip files without well metadata (e.g., plate-level files)
@@ -1733,7 +1584,7 @@ class ImageBrowserWidget(QWidget):
         # Find immediate subdirectories that contain well files
         subdirs_with_wells = set()
 
-        for filename in self.all_files.keys():
+        for filename, item in self.file_items.items():
             file_path = Path(filename)
 
             # Check if file is in a subdirectory of base_path
@@ -1746,9 +1597,8 @@ class ImageBrowserWidget(QWidget):
                     subdir_name = parts[0]
 
                     # Check if this file has well metadata
-                    metadata = self.all_files[filename]
                     try:
-                        self._extract_well_id(metadata)
+                        self._extract_well_id(item.metadata)
                         # Has well metadata, add subdir
                         subdirs_with_wells.add(subdir_name)
                     except (KeyError, ValueError):

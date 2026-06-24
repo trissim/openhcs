@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from asyncio import AbstractEventLoop
-from collections.abc import Awaitable
 from dataclasses import dataclass
 import logging
-from typing import Callable, ClassVar, TypeVar
+from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
-from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileJobCallback,
@@ -29,17 +28,12 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
     PlatePipelineRequestBuilder,
     RunSpec,
 )
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 from zmqruntime.execution import (
     BatchSubmitWaitEngine,
     CallbackBatchSubmitWaitPolicy,
 )
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
-
-RunBlockingCallable = Callable[[AbstractEventLoop, Callable[[], T]], Awaitable[T]]
-ProgressClientConnector = Callable[[], Awaitable[ZMQExecutionClient]]
 
 
 class CompileConfigParamsByPlate(ABC, metaclass=AutoRegisterMeta):
@@ -87,23 +81,18 @@ class CompileBatchWorkflowService:
         self,
         *,
         host,
-        client_service: ZMQClientService,
-        global_config_provider: Callable[[], GlobalPipelineConfig],
-        run_blocking: RunBlockingCallable,
-        connect_progress_client: ProgressClientConnector,
+        context: BatchWorkflowContext,
         compile_workflow: CompileWorkflowService | None = None,
         plate_request_builder: PlatePipelineRequestBuilder | None = None,
         compile_batch_engine: BatchSubmitWaitEngine[CompileJob] | None = None,
     ) -> None:
         self.host = host
-        self.client_service = client_service
-        self._connect_progress_client = connect_progress_client
+        self._context = context
         self._compile_batch_engine = (
             compile_batch_engine or BatchSubmitWaitEngine[CompileJob]()
         )
         self._compile_workflow = compile_workflow or CompileWorkflowService(
-            global_config_provider=global_config_provider,
-            run_blocking=run_blocking,
+            context=context,
         )
         self._plate_request_builder = plate_request_builder or PlatePipelineRequestBuilder(
             host
@@ -117,7 +106,7 @@ class CompileBatchWorkflowService:
         loop = asyncio.get_event_loop()
 
         try:
-            zmq_client = await self._connect_progress_client()
+            zmq_client = await self._context.connect_progress_client()
             plate_paths = [row.scope_id for row in selected_items]
             for plate_path in plate_paths:
                 self.host.clear_plate_execution_tracking(plate_path)
@@ -195,7 +184,7 @@ class CompileBatchWorkflowService:
             await self._compile_batch_engine.run(compile_jobs, compile_policy)
         finally:
             if self.host.execution_state != ManagerExecutionState.RUNNING:
-                await self.client_service.disconnect()
+                await self._context.zmq.disconnect()
 
         self.host.emit_progress_finished()
         self.host.emit_status(
@@ -212,10 +201,7 @@ class CompileBatchWorkflowService:
         ),
     ) -> dict[str, str]:
         """Compile all selected plates before submitting execution jobs."""
-        if self.client_service.zmq_client is None:
-            raise RuntimeError("ZMQ client is not connected")
-
-        zmq_client = self.client_service.zmq_client
+        zmq_client = self._context.zmq.require_client()
         compile_jobs = [
             PlatePipelineRequestBuilder.compile_job_from_run_spec(
                 run_spec,
@@ -298,11 +284,13 @@ class CompileBatchWorkflowService:
         )
 
     async def _submit_compile_job(self, *, job: CompileJob, zmq_client, loop) -> str:
-        return await self._compile_workflow.submit_compile_job(
+        execution_id = await self._compile_workflow.submit_compile_job(
             job=job,
             zmq_client=zmq_client,
             loop=loop,
         )
+        self.host.plate_execution_ids[job.plate_path] = execution_id
+        return execution_id
 
     async def _wait_compile_job(
         self, *, submission_id: str, job: CompileJob, zmq_client, loop
@@ -321,7 +309,7 @@ class CompileBatchWorkflowService:
             error,
             exc_info=True,
         )
-        self.host.execution_runtime.mark_terminal(
+        self.host.plate_terminal_activity_status.mark_terminal(
             plate_path, TerminalExecutionStatus.FAILED
         )
         self.host.emit_error(f"Compile failed for {plate_path}: {error}")

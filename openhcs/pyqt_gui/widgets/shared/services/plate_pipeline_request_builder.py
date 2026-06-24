@@ -9,6 +9,7 @@ from openhcs.core.config import GlobalPipelineConfig
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
+from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileWorkflowService,
@@ -54,7 +55,7 @@ class PlatePipelineRequestBuilder:
             CompileWorkflowService.pipeline_step_names(definition_pipeline),
         )
         return CompileJob(
-            plate_path=plate_path,
+            plate_scope=row.identity,
             execution_plate_path=execution_plate_path,
             selected_pipeline_path=selected_pipeline_path,
             plate_name=row.name,
@@ -79,7 +80,7 @@ class PlatePipelineRequestBuilder:
             resolved_plate_path,
         )
         return RunSpec(
-            plate_path=resolved_plate_path,
+            plate_scope=PlateScopeIdentity.from_scope_id(resolved_plate_path),
             execution_plate_path=execution_plate_path,
             selected_pipeline_path=selected_pipeline_path,
             definition_pipeline=definition_pipeline,
@@ -103,7 +104,7 @@ class PlatePipelineRequestBuilder:
             CompileWorkflowService.pipeline_step_names(definition_pipeline),
         )
         return CompileJob(
-            plate_path=plate_path,
+            plate_scope=run_spec.plate_scope,
             execution_plate_path=run_spec.execution_plate_path,
             selected_pipeline_path=run_spec.selected_pipeline_path,
             plate_name=plate_path,

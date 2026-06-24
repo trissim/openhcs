@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Dict, TypeVar
+from typing import Callable
 
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
 )
@@ -20,18 +23,15 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
 from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
     TerminalExecutionResultBuilder,
 )
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
-from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 from zmqruntime.execution import (
     CallbackExecutionStatusPollPolicy,
+    ExecutionSubmissionResponse,
     ExecutionStatusPoller,
 )
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
-RunBlockingCallable = Callable[[object, Callable[[], T]], Any]
 CompletionCallback = Callable[[], None]
 
 
@@ -42,15 +42,13 @@ class ExecutionSubmissionService:
         self,
         *,
         host,
-        client_service: ZMQClientService,
-        run_blocking: RunBlockingCallable,
+        context: BatchWorkflowContext,
         completion_poller: ExecutionStatusPoller,
         terminal_result_builder: TerminalExecutionResultBuilder,
         on_completion_update: CompletionCallback,
     ) -> None:
         self._host = host
-        self._client_service = client_service
-        self._run_blocking = run_blocking
+        self._context = context
         self._completion_poller = completion_poller
         self._terminal_result_builder = terminal_result_builder
         self._on_completion_update = on_completion_update
@@ -62,8 +60,7 @@ class ExecutionSubmissionService:
         compile_artifact_id: str,
         loop,
     ) -> None:
-        if self._client_service.zmq_client is None:
-            raise RuntimeError("ZMQ client is not connected")
+        zmq_client = self._context.zmq.require_client()
         plate_path = run_spec.plate_path
         execution_plate_path = run_spec.execution_plate_path
         definition_pipeline = run_spec.definition_pipeline
@@ -77,35 +74,30 @@ class ExecutionSubmissionService:
             CompileWorkflowService.pipeline_fingerprint(definition_pipeline),
         )
 
-        def submit() -> Dict[str, Any]:
-            return self._client_service.zmq_client.submit_pipeline(
-                OpenHCSExecutionSubmission(
-                    plate_id=plate_path,
-                    execution_plate_id=execution_plate_path,
-                    selected_pipeline_path=run_spec.selected_pipeline_path,
-                    pipeline_steps=definition_pipeline,
+        def submit() -> dict:
+            return zmq_client.submit_pipeline(
+                run_spec.submission(
                     global_config=run_spec.global_config,
-                    pipeline_config=run_spec.pipeline_config,
                     compile_artifact_id=compile_artifact_id,
                 )
             )
 
-        response = await self._run_blocking(loop, submit)
-        execution_id = response.get("execution_id")
-        if execution_id:
+        response = ExecutionSubmissionResponse.from_wire(
+            await self._context.run_blocking(loop, submit)
+        )
+
+        if response.accepted:
+            execution_id = response.require_execution_id("Execution submission")
             self._host.plate_execution_ids[plate_path] = execution_id
             self._host.current_execution_id = execution_id
-
-        if response.get("status") == "accepted":
             self._host.emit_status(f"Submitted {plate_path} (queued on server)")
-            if execution_id:
-                self.start_completion_poller(str(execution_id), plate_path)
+            self.start_completion_poller(execution_id, plate_path)
             return
 
-        error_msg = response.get("message", "Unknown error")
+        error_msg = response.require_failure_text("Execution submission")
         logger.error("Plate %s submission failed: %s", plate_path, error_msg)
         self._host.emit_error(f"Submission failed for {plate_path}: {error_msg}")
-        self._host.execution_runtime.mark_terminal(
+        self._host.plate_terminal_activity_status.mark_terminal(
             plate_path,
             TerminalExecutionStatus.FAILED,
         )
@@ -117,21 +109,22 @@ class ExecutionSubmissionService:
         class _ClientDisconnected(RuntimeError):
             pass
 
-        def poll_status(polled_execution_id: str) -> Dict[str, Any]:
-            if self._client_service.zmq_client is None:
+        def poll_status(polled_execution_id: str) -> dict:
+            zmq_client = self._context.zmq.current_client
+            if zmq_client is None:
                 raise _ClientDisconnected("ZMQ client disconnected")
-            return self._client_service.zmq_client.get_status(polled_execution_id)
+            return zmq_client.get_status(polled_execution_id)
 
-        def on_running(_execution_id: str, _execution_payload: Dict[str, Any]) -> None:
+        def on_running(_execution_id: str, _execution_payload: dict) -> None:
             self._host.update_item_list()
             self._host.emit_status(f"▶️ Running {plate_path}")
 
         def on_terminal(
             terminal_execution_id: str,
             terminal_status: str,
-            execution_payload: Dict[str, Any],
+            execution_payload: dict,
         ) -> None:
-            current_execution_id = self._host.plate_execution_ids.get(plate_path)
+            current_execution_id = self._current_execution_id_for_plate(plate_path)
             if current_execution_id != terminal_execution_id:
                 logger.info(
                     "Ignoring stale terminal status for %s: execution_id=%s current=%s",
@@ -142,7 +135,7 @@ class ExecutionSubmissionService:
                 return
             parsed_terminal_status = parse_terminal_status(terminal_status)
 
-            self._host.execution_runtime.mark_terminal(
+            self._host.plate_terminal_activity_status.mark_terminal(
                 plate_path,
                 parsed_terminal_status,
             )
@@ -159,7 +152,7 @@ class ExecutionSubmissionService:
             self._on_completion_update()
 
         def on_status_error(execution_id_with_error: str, message: str) -> None:
-            current_execution_id = self._host.plate_execution_ids.get(plate_path)
+            current_execution_id = self._current_execution_id_for_plate(plate_path)
             if current_execution_id != execution_id_with_error:
                 logger.info(
                     "Ignoring stale status error for %s: execution_id=%s current=%s",
@@ -168,7 +161,7 @@ class ExecutionSubmissionService:
                     current_execution_id,
                 )
                 return
-            self._host.execution_runtime.mark_terminal(
+            self._host.plate_terminal_activity_status.mark_terminal(
                 plate_path,
                 TerminalExecutionStatus.FAILED,
             )
@@ -224,8 +217,13 @@ class ExecutionSubmissionService:
             OrchestratorState.EXEC_FAILED.value,
         )
 
+    def _current_execution_id_for_plate(self, plate_path: str) -> str | None:
+        if plate_path not in self._host.plate_execution_ids:
+            return None
+        return self._host.plate_execution_ids[plate_path]
 
-def is_execution_submission_service_export(name: str, value: object) -> bool:
+
+def is_execution_submission_service_export(name: str, value) -> bool:
     return (
         isinstance(value, type)
         and value.__module__ == __name__

@@ -7,8 +7,12 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from pyqt_reactive.theming import ColorScheme
 
+import openhcs.processing.backends.cellprofiler as cellprofiler_backend
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.steps.function_step import FunctionStep
@@ -19,6 +23,9 @@ from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerCodeWorkflow,
+)
 
 
 class QtApplicationHarness:
@@ -246,6 +253,53 @@ class TestPlateManagerWidget:
             close_widget(widget)
             ObjectStateRegistry.clear()
 
+    def test_plate_manager_code_mode_rebinds_cellprofiler_runtime_callables(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        plate_root = tmp_path / "BeginnerSegmentation"
+        plate_root.mkdir()
+        cppipe_path = plate_root / "segmentation_final.cppipe"
+        cppipe_path.write_text("Version:5", encoding="utf-8")
+        plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            cppipe_path,
+        ).scope_id
+        crop_metadata = cellprofiler_backend.cellprofiler_function_runtime_metadata(
+            cellprofiler_backend.crop,
+        )
+        contract = ModuleArtifactContract(
+            module_name=crop_metadata.module_name,
+            outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+        )
+        import_result = SimpleNamespace(
+            generated_module_name="generated_cellprofiler_pipeline",
+            provenance=SimpleNamespace(
+                processing_modules=(SimpleNamespace(module_num=1),),
+            ),
+            artifact_contracts=(contract,),
+        )
+        editor = PlatePipelineEditorRecorder()
+        editor.current_plate = plate_scope
+        editor.cellprofiler_import_result = import_result
+        editor.cellprofiler_import_results_by_plate[plate_scope] = import_result
+        manager = PlateManagerCodeWorkflowHarness(editor)
+        raw_step = FunctionStep(
+            func=(cellprofiler_backend.crop, {"crop_shape": "Rectangle"}),
+            name="Crop",
+        )
+
+        PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [raw_step]})
+
+        updated_scope, updated_steps = editor.updated_pipeline
+        rebound_func = updated_steps[0].func[0]
+        rebound_contract = CallableContract.from_callable(
+            rebound_func,
+        ).module_artifact_contract
+        assert updated_scope == plate_scope
+        assert rebound_func.__name__ == "crop"
+        assert rebound_contract == contract
+
 
 class PlatePipelineChangedSignalRecorder:
     """Signal-like recorder for pipeline_changed emissions."""
@@ -302,6 +356,36 @@ class PlatePipelineEditorRecorder:
 
     def update_item_list(self) -> None:
         return None
+
+
+class PlateManagerCodeWorkflowHarness:
+    """Minimal plate-manager surface consumed by PlateManagerCodeWorkflow."""
+
+    def __init__(self, editor: PlatePipelineEditorRecorder) -> None:
+        self.plate_pipeline_editor = editor
+        self.pipeline_data_changed = PlatePipelineDataChangedSignalRecorder()
+        self.event_bus = PlateManagerEventBusRecorder()
+        self.plate_compiled_data = {}
+
+
+class PlatePipelineDataChangedSignalRecorder:
+    """Signal-like recorder for plate-manager pipeline data changes."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def emit(self) -> None:
+        self.count += 1
+
+
+class PlateManagerEventBusRecorder:
+    """Event-bus recorder for workflow pipeline-changed broadcasts."""
+
+    def __init__(self) -> None:
+        self.pipeline_steps = None
+
+    def emit_pipeline_changed(self, pipeline_steps: list) -> None:
+        self.pipeline_steps = pipeline_steps
 
 
 @dataclass(frozen=True, slots=True)

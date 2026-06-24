@@ -26,10 +26,7 @@ from openhcs.core.config import GlobalPipelineConfig
 from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 
-from openhcs.pyqt_gui.config import (
-    AgentUiBridgeConnectionAuthority,
-    PyQtGuiRuntimeContext,
-)
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.config_framework.object_state import ObjectState
 from pyqt_reactive.animation.flash_overlay_opengl import prewarm_opengl
@@ -225,14 +222,11 @@ class OpenHCSMainWindow(QMainWindow):
             from openhcs.pyqt_gui.services.ui_bridge_composition import (
                 OpenHCSUiBridgeCompositionRoot,
             )
-            from openhcs.pyqt_gui.services.ui_bridge_server import (
-                UiBridgeControlServer,
-                UiBridgeServerConfig,
-            )
+            from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
 
             server = UiBridgeControlServer(
                 OpenHCSUiBridgeCompositionRoot.for_main_window(self).build_service(),
-                UiBridgeServerConfig.from_agent_config(bridge_config),
+                bridge_config,
             )
             binding = server.start()
             self.ui_bridge_lifecycle.set_server(server)
@@ -370,9 +364,7 @@ class OpenHCSMainWindow(QMainWindow):
         from openhcs.core.config import get_all_streaming_ports
 
         ports_to_scan = list(get_all_streaming_ports(num_ports_per_type=10))
-        bridge_port = AgentUiBridgeConnectionAuthority.require_port(
-            self.bridge_config.connection
-        )
+        bridge_port = self.bridge_config.port
         if bridge_port not in ports_to_scan:
             ports_to_scan.append(bridge_port)
         return ports_to_scan

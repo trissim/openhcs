@@ -27,9 +27,9 @@ from openhcs.core.debug import (
     DebugSnapshotStore,
     LocalDebugSnapshotStore,
 )
+from openhcs.core.config import StreamingConfig
 from openhcs.core.debug_views import DebugViewModel, DebugViewSection, DebugViewTable
 from openhcs.interop.cellprofiler.debug_views import CellProfilerDebugView
-from openhcs.ui.shared.streaming_service import StreamingService
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +62,7 @@ class DebugArtifactActionsModel:
                 + snapshot.preview_refs
                 + snapshot.input_artifact_refs
             ),
-            viewer_types=tuple(StreamingService.supported_viewer_types()),
+            viewer_types=StreamingConfig.supported_config_keys(),
         )
 
     @property
@@ -208,7 +208,7 @@ class DebugInspectorWindow(QDialog):
             row.addWidget(export_button)
             for viewer_type in actions_model.viewer_types:
                 button = QPushButton(
-                    StreamingService.display_name_for_viewer_type(viewer_type)
+                    StreamingConfig.display_name_for_config_key(viewer_type)
                 )
                 button.clicked.connect(
                     lambda _=False, ref=artifact_ref, target=viewer_type: (

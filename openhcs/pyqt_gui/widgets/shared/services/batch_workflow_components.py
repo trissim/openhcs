@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
-
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
     CompileBatchWorkflowService,
 )
@@ -37,13 +38,8 @@ from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
     TerminalExecutionResultBuilder,
 )
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 from pyqt_reactive.services.zmq_server_info_parser import ServerInfoParserABC
 from zmqruntime.execution import ExecutionStatusPoller
-
-T = TypeVar("T")
-RunBlockingCallable = Callable[[object, Callable[[], T]], Any]
-ProgressClientConnector = Callable[[], Any]
 
 
 class BatchWorkflowComponents:
@@ -53,18 +49,14 @@ class BatchWorkflowComponents:
         self,
         *,
         host,
-        client_service: ZMQClientService,
+        context: BatchWorkflowContext,
         port: int,
         server_info_parser: ServerInfoParserABC,
-        run_blocking: RunBlockingCallable,
-        connect_progress_client: ProgressClientConnector,
     ) -> None:
         self.host = host
-        self.client_service = client_service
+        self.context = context
         self.port = port
         self.server_info_parser = server_info_parser
-        self.run_blocking = run_blocking
-        self.connect_progress_client = connect_progress_client
         self.server_status_presenter = ExecutionServerStatusPresenter()
         self.execution_status_poller = ExecutionStatusPoller()
 
@@ -83,8 +75,7 @@ class BatchWorkflowComponents:
     def compile_workflow(self) -> CompileWorkflowService:
         if self._compile_workflow is None:
             self._compile_workflow = CompileWorkflowService(
-                global_config_provider=lambda: self.host.global_config,
-                run_blocking=self.run_blocking,
+                context=self.context,
             )
         return self._compile_workflow
 
@@ -93,10 +84,7 @@ class BatchWorkflowComponents:
         if self._compile_batch is None:
             self._compile_batch = CompileBatchWorkflowService(
                 host=self.host,
-                client_service=self.client_service,
-                global_config_provider=lambda: self.host.global_config,
-                run_blocking=self.run_blocking,
-                connect_progress_client=self.connect_progress_client,
+                context=self.context,
                 compile_workflow=self.compile_workflow,
                 plate_request_builder=self.plate_request_builder,
             )
@@ -131,7 +119,7 @@ class BatchWorkflowComponents:
         if self._execution_control is None:
             self._execution_control = ExecutionControlService.openhcs_default(
                 host=self.host,
-                client_service=self.client_service,
+                context=self.context,
                 port=self.port,
             )
         return self._execution_control
@@ -141,8 +129,7 @@ class BatchWorkflowComponents:
         if self._execution_submission is None:
             self._execution_submission = ExecutionSubmissionService(
                 host=self.host,
-                client_service=self.client_service,
-                run_blocking=self.run_blocking,
+                context=self.context,
                 completion_poller=self.execution_status_poller,
                 terminal_result_builder=self.terminal_result_builder,
                 on_completion_update=self.execution_control.check_all_completed,
@@ -154,8 +141,7 @@ class BatchWorkflowComponents:
         if self._debug_workflow is None:
             self._debug_workflow = DebugWorkflowService(
                 host=self.host,
-                client_service=self.client_service,
-                run_blocking=self.run_blocking,
+                context=self.context,
                 compile_before_execution=self.compile_batch.compile_before_execution,
                 execution_submission=self.execution_submission,
             )
@@ -166,7 +152,7 @@ class BatchWorkflowComponents:
         if self._progress_workflow is None:
             self._progress_workflow = ProgressWorkflowService(
                 host=self.host,
-                client_service=self.client_service,
+                context=self.context,
                 server_info_parser=self.server_info_parser,
                 debug_notifications=self.debug_notifications,
                 live_measurements=self.live_measurements,

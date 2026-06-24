@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Callable, TypeVar
 
-from PyQt6.QtCore import QEventLoop
-from PyQt6.QtWidgets import QApplication
+import asyncio
 
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.debug import (
@@ -19,6 +17,9 @@ from openhcs.core.debug import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_components import (
     BatchWorkflowComponents,
+)
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
 )
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugSnapshotAvailableNotification,
@@ -33,7 +34,9 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ManagerExecutionState,
 )
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
+from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
+    ZMQExecutionClientBoundary,
+)
 from pyqt_reactive.services.zmq_server_info_parser import (
     DefaultServerInfoParser,
     ServerInfoParserABC,
@@ -49,13 +52,20 @@ class PlateManagerBatchWorkflow:
     def __init__(
         self,
         host,
+        *,
+        zmq: ZMQExecutionClientBoundary,
         port: int = 7777,
-        client_service: ZMQClientService | None = None,
         server_info_parser: ServerInfoParserABC | None = None,
     ) -> None:
         self.host = host
         self.port = port
-        self.client_service = client_service or ZMQClientService(port=port)
+        self._execution_zmq = zmq
+        self._context = BatchWorkflowContext(
+            zmq=self._execution_zmq,
+            global_config_provider=lambda: self.host.global_config,
+            run_blocking=self._run_blocking,
+            connect_progress_client=self._connect_progress_client,
+        )
         server_info_parser_impl = (
             server_info_parser
             if server_info_parser is not None
@@ -65,11 +75,9 @@ class PlateManagerBatchWorkflow:
         self._server_info_parser = server_info_parser_impl
         self.components = BatchWorkflowComponents(
             host=self.host,
-            client_service=self.client_service,
+            context=self._context,
             port=self.port,
             server_info_parser=self._server_info_parser,
-            run_blocking=self._run_blocking,
-            connect_progress_client=self._connect_progress_client,
         )
         self._registry_listener = self.components.progress_workflow.mark_dirty
         self.host._progress_tracker.add_listener(self._registry_listener)
@@ -94,9 +102,12 @@ class PlateManagerBatchWorkflow:
 
         self.components.progress_workflow.cleanup()
 
+    def clear_progress_execution(self, execution_id: str) -> None:
+        """Clear one ZMQ execution from the shared progress projection."""
+        self.components.progress_workflow.clear_execution(execution_id)
+
     async def compile_plates(self, selected_items: list[PlateManagerRow]) -> None:
         """Compile pipelines for selected plates."""
-        self._flush_pending_ui_edits()
         self.components.progress_workflow.reset_for_new_batch()
         await self.components.compile_batch.compile_plates(selected_items)
 
@@ -118,7 +129,6 @@ class PlateManagerBatchWorkflow:
 
     async def run_plates(self, ready_items: list[PlateManagerRow]) -> None:
         """Run selected plates using compile-all then execute-all workflow."""
-        self._flush_pending_ui_edits()
         loop = asyncio.get_event_loop()
         try:
             plate_paths = [row.scope_id for row in ready_items]
@@ -131,7 +141,7 @@ class PlateManagerBatchWorkflow:
             await self._connect_progress_client()
 
             self.host.plate_execution_ids.clear()
-            self.host.execution_runtime.begin_batch(plate_paths)
+            self.host.plate_terminal_activity_status.begin_batch(plate_paths)
             self.host.plate_progress.clear()
 
             from objectstate import ObjectStateRegistry
@@ -191,12 +201,11 @@ class PlateManagerBatchWorkflow:
     ) -> None:
         """Compile one plate and submit a bounded debug execution."""
 
-        self._flush_pending_ui_edits()
         loop = asyncio.get_event_loop()
         try:
             await self._connect_progress_client()
             self.components.progress_workflow.reset_for_new_batch()
-            self.host.execution_runtime.begin_batch([plate_path])
+            self.host.plate_terminal_activity_status.begin_batch([plate_path])
             self.host.execution_state = ManagerExecutionState.RUNNING
             self.host.emit_status(f"Compiling debug run for {plate_path}...")
             self.host.update_button_states()
@@ -272,7 +281,7 @@ class PlateManagerBatchWorkflow:
     async def _connect_progress_client(self):
         """Connect the shared ZMQ client with the standard progress callback."""
 
-        return await self.client_service.connect(
+        return await self._execution_zmq.connect(
             progress_callback=self.components.progress_workflow.on_progress,
             persistent=True,
             timeout=15,
@@ -281,17 +290,6 @@ class PlateManagerBatchWorkflow:
     @staticmethod
     async def _run_blocking(loop, func: Callable[[], T]) -> T:
         return await loop.run_in_executor(None, func)
-
-    @staticmethod
-    def _flush_pending_ui_edits() -> None:
-        """Commit pending editor widget state before reading pipeline definitions."""
-        app = QApplication.instance()
-        if app is None:
-            return
-        focus_widget = app.focusWidget()
-        if focus_widget is not None:
-            focus_widget.clearFocus()
-        app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
 
     def stop_execution(self, force: bool = False) -> None:
         self.components.execution_control.stop_execution(force=force)

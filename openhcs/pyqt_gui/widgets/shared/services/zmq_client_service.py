@@ -6,6 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeAlias
+
+if TYPE_CHECKING:
+    from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+
+ProgressCallback: TypeAlias = Callable[[dict], None]
 
 logger = logging.getLogger(__name__)
 
@@ -73,3 +81,45 @@ class ZMQClientService:
         finally:
             self.zmq_client = None
             self._generation += 1
+
+
+@dataclass(frozen=True, slots=True)
+class ZMQExecutionClientBoundary:
+    """Nominal UI workflow boundary for the shared ZMQ execution client."""
+
+    client: ZMQClientService
+
+    @property
+    def port(self) -> int:
+        return self.client.port
+
+    @property
+    def current_client(self) -> "ZMQExecutionClient | None":
+        return self.client.zmq_client
+
+    def has_client(self) -> bool:
+        return self.client.zmq_client is not None
+
+    def require_client(self) -> "ZMQExecutionClient":
+        if self.client.zmq_client is None:
+            raise RuntimeError("ZMQ client is not connected")
+        return self.client.zmq_client
+
+    async def connect(
+        self,
+        *,
+        progress_callback: ProgressCallback | None = None,
+        persistent: bool = True,
+        timeout: float = 15,
+    ) -> "ZMQExecutionClient":
+        return await self.client.connect(
+            progress_callback=progress_callback,
+            persistent=persistent,
+            timeout=timeout,
+        )
+
+    async def disconnect(self) -> None:
+        await self.client.disconnect()
+
+    def disconnect_sync(self) -> None:
+        self.client.disconnect_sync()

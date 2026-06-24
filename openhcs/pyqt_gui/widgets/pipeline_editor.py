@@ -101,6 +101,9 @@ from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
     dispatch_widget_action,
 )
+from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
+    commit_focused_widget_edits,
+)
 from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
     OpenHCSSingleRowActionManagerMixin,
 )
@@ -704,6 +707,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             action_enum=PipelineEditorAction,
             routes=self.ACTION_ROUTES,
             async_runner=self.service_adapter.execute_async_operation,
+            before_dispatch=commit_focused_widget_edits,
         )
 
     def setup_ui(self):

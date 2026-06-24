@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QPushButton
 
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.config import StreamingConfig
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugCursor,
@@ -16,8 +17,6 @@ from openhcs.pyqt_gui.windows.debug_inspector_window import (
     DebugArtifactOpenRequest,
     DebugInspectorWindow,
 )
-from openhcs.ui.shared.streaming_service import StreamingService
-
 IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
 DEBUG_GROUP_KEY = "default"
 DEBUG_INVOCATION_KEY = "default:0:segment"
@@ -109,8 +108,8 @@ def test_debug_inspector_emits_typed_artifact_open_request() -> None:
     window.artifact_open_requested.connect(requests.append)
     napari_viewer_type = next(
         viewer_type
-        for viewer_type in StreamingService.supported_viewer_types()
-        if StreamingService.display_name_for_viewer_type(viewer_type) == "Napari"
+        for viewer_type in StreamingConfig.supported_config_keys()
+        if StreamingConfig.display_name_for_config_key(viewer_type) == "Napari"
     )
 
     window.set_snapshot(snapshot)

@@ -99,9 +99,16 @@ class PlateManagerStateProjectionService:
             execution_id=execution_id,
         )
         terminal_status = manager.plate_terminal_activity_status.terminal_status(plate_key)
+        status_runtime_projection = self._status_runtime_projection(
+            runtime_projection,
+            terminal_status,
+        )
         execution_active = (
-            manager.plate_terminal_activity_status.is_active(plate_key)
-            or runtime_projection is not None
+            terminal_status is None
+            and (
+                manager.plate_terminal_activity_status.is_active(plate_key)
+                or self._is_active_runtime_projection(runtime_projection)
+            )
         )
         queue_position = self._queued_execution_position_for_plate(manager, plate_key)
         status_prefix = PlateStatusPresenter.build_status_prefix(
@@ -111,7 +118,7 @@ class PlateManagerStateProjectionService:
             is_execution_active=execution_active,
             terminal_status=terminal_status,
             queue_position=queue_position,
-            runtime_projection=runtime_projection,
+            runtime_projection=status_runtime_projection,
         )
 
         return UiPlateManagerRowState(
@@ -129,10 +136,27 @@ class PlateManagerStateProjectionService:
             orchestrator_state=self._orchestrator_state_value(orchestrator_state),
             execution_id=execution_id,
             terminal_status=self._terminal_status_value(terminal_status),
-            runtime_state=self._runtime_state_value(runtime_projection),
-            runtime_percent=self._runtime_percent(runtime_projection),
+            runtime_state=self._runtime_state_value(status_runtime_projection),
+            runtime_percent=self._runtime_percent(status_runtime_projection),
             queue_position=queue_position,
         )
+
+    @staticmethod
+    def _status_runtime_projection(
+        runtime_projection: PlateRuntimeProjection | None,
+        terminal_status: TerminalExecutionStatus | None,
+    ) -> PlateRuntimeProjection | None:
+        if terminal_status is not None:
+            return None
+        return runtime_projection
+
+    @staticmethod
+    def _is_active_runtime_projection(
+        runtime_projection: PlateRuntimeProjection | None,
+    ) -> bool:
+        if runtime_projection is None:
+            return False
+        return not runtime_projection.state.is_terminal
 
     @staticmethod
     def _queued_execution_position_for_plate(

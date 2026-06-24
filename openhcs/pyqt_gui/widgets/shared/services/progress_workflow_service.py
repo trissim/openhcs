@@ -26,7 +26,9 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter 
 from openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset import (
     reset_progress_views_for_new_batch,
 )
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
 from pyqt_reactive.services.interval_snapshot_poller import (
     CallbackIntervalSnapshotPollerPolicy,
     IntervalSnapshotPoller,
@@ -46,7 +48,7 @@ class ProgressWorkflowService:
         self,
         *,
         host,
-        client_service: ZMQClientService,
+        context: BatchWorkflowContext,
         server_info_parser: ServerInfoParserABC,
         debug_notifications: DebugProgressNotificationService,
         status_presenter: ExecutionServerStatusPresenter,
@@ -55,7 +57,7 @@ class ProgressWorkflowService:
         start_timer: bool = True,
     ) -> None:
         self._host = host
-        self._client_service = client_service
+        self._context = context
         self._server_info_parser = server_info_parser
         self._debug_notifications = debug_notifications
         self._live_measurements = (
@@ -98,11 +100,20 @@ class ProgressWorkflowService:
         self.mark_dirty()
 
     def coalesced_update(self) -> None:
-        if self._client_service.zmq_client is not None:
+        if self._context.zmq.has_client():
             self._server_info_poller.tick()
         if not self._progress_dirty:
             return
         self._progress_dirty = False
+        self.rebuild_runtime_projection()
+
+    def clear_execution(self, execution_id: str) -> None:
+        """Remove one execution's progress and immediately refresh projections."""
+        self._host._progress_tracker.clear_execution(execution_id)
+        self.rebuild_runtime_projection()
+
+    def rebuild_runtime_projection(self) -> None:
+        """Rebuild the host-facing runtime projection from tracked events."""
         progress_tracker = self._host._progress_tracker
         events_by_execution = {
             execution_id: progress_tracker.get_events(execution_id)
@@ -122,7 +133,7 @@ class ProgressWorkflowService:
             self._host._progress_tracker.register_event(event.execution_id, event)
             self._debug_notifications.notify_from_progress_event(
                 event,
-                zmq_client=self._client_service.zmq_client,
+                zmq_client=self._context.zmq.current_client,
             )
             try:
                 self._live_measurements.notify_from_progress_event(event)
@@ -140,7 +151,7 @@ class ProgressWorkflowService:
         finally:
             self.mark_dirty()
 
-    def mark_dirty(self, *_listener_event: object) -> None:
+    def mark_dirty(self, *_listener_event: str | ProgressEvent) -> None:
         self._progress_dirty = True
         if self._on_dirty is not None:
             self._on_dirty()
@@ -156,9 +167,10 @@ class ProgressWorkflowService:
         self._host.emit_status(status_view.text)
 
     def _fetch_server_info_snapshot(self) -> ExecutionServerInfo:
-        if self._client_service.zmq_client is None:
-            raise RuntimeError("ZMQ client is not connected")
-        pong = self._client_service.zmq_client.get_server_info_snapshot()
+        pong = (
+            self._context.zmq.require_client()
+            .get_server_info_snapshot()
+        )
         parsed = self._server_info_parser.parse(pong.to_dict())
         if not isinstance(parsed, ExecutionServerInfo):
             raise ValueError(
@@ -167,7 +179,7 @@ class ProgressWorkflowService:
         return parsed
 
 
-def is_progress_workflow_service_export(name: str, value: object) -> bool:
+def is_progress_workflow_service_export(name: str, value) -> bool:
     return (
         isinstance(value, type)
         and value.__module__ == __name__

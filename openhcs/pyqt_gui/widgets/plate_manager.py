@@ -33,6 +33,10 @@ from openhcs.core.orchestrator.orchestrator import (
     OrchestratorState,
 )
 from openhcs.core.path_cache import PathCacheKey
+from openhcs.core.selection import (
+    SelectedAllSelectionMode as PlateManagerCodeSelectionMode,
+    SelectedScopeIdsCarrier,
+)
 from polystore.filemanager import FileManager
 from polystore.base import _create_storage_registry
 from openhcs.config_framework import LiveContextResolver
@@ -81,8 +85,8 @@ from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
 )
-from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
-    PlateStatusPresenter,
+from openhcs.pyqt_gui.services.plate_manager_state_projection import (
+    PlateManagerStateProjectionService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     BUSY_MANAGER_STATES,
@@ -95,6 +99,7 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     terminal_ui_policy,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
+    ZMQExecutionClientBoundary,
     ZMQClientService,
 )
 from pyqt_reactive.widgets.shared.manager_item_hooks import (
@@ -103,6 +108,7 @@ from pyqt_reactive.widgets.shared.manager_item_hooks import (
 )
 from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerOrchestratorCodePayload,
     PlateManagerCodeWorkflow,
     PlateManagerDeletionWorkflow,
 )
@@ -114,6 +120,9 @@ from openhcs.pyqt_gui.services.plate_manager_root_state import (
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
     dispatch_widget_action,
+)
+from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
+    commit_focused_widget_edits,
 )
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 from openhcs.core.progress import registry
@@ -363,6 +372,81 @@ class OrchestratorCodeSource:
         )
 
 
+class EmptyPlateSelectionPolicy(str, Enum):
+    """How code document rendering handles an empty selected-plate set."""
+
+    ALLOW_EMPTY = "allow_empty"
+    ERROR = "error"
+    FALL_BACK_TO_ALL = "fall_back_to_all"
+
+
+@dataclass(frozen=True, slots=True)
+class PlateManagerCodeDocumentContext(SelectedScopeIdsCarrier):
+    """Rendered orchestrator code plus the semantic payload that produced it."""
+
+    source: str
+    payload: PlateManagerOrchestratorCodePayload
+    clean_mode: bool = True
+
+    def editor_code_data(self) -> "PlateManagerEditorCodeData":
+        return PlateManagerEditorCodeData(
+            clean_mode=self.clean_mode,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlateManagerEditorCodeData:
+    """Nominal code-editor metadata for regenerating plate-manager source."""
+
+    clean_mode: bool
+
+    def as_editor_payload(self) -> dict:
+        return {"clean_mode": self.clean_mode}
+
+
+class EmptyPlateSelectionPolicyRunner(ABC, metaclass=AutoRegisterMeta):
+    """Strategy for resolving an empty code-document plate selection."""
+
+    __registry_key__ = "policy"
+    __skip_if_no_key__ = True
+
+    policy: ClassVar[EmptyPlateSelectionPolicy | None] = None
+
+    @classmethod
+    def for_policy(
+        cls,
+        policy: EmptyPlateSelectionPolicy,
+    ) -> "EmptyPlateSelectionPolicyRunner":
+        return cls.__registry__[policy]()
+
+    @abstractmethod
+    def selected_items(self, manager: "PlateManagerWidget") -> list[PlateManagerRow]:
+        raise NotImplementedError
+
+
+class AllowEmptyPlateSelectionPolicyRunner(EmptyPlateSelectionPolicyRunner):
+    policy = EmptyPlateSelectionPolicy.ALLOW_EMPTY
+
+    def selected_items(self, manager: "PlateManagerWidget") -> list[PlateManagerRow]:
+        del manager
+        return []
+
+
+class ErrorEmptyPlateSelectionPolicyRunner(EmptyPlateSelectionPolicyRunner):
+    policy = EmptyPlateSelectionPolicy.ERROR
+
+    def selected_items(self, manager: "PlateManagerWidget") -> list[PlateManagerRow]:
+        del manager
+        raise ValueError("No plates selected.")
+
+
+class FallBackToAllEmptyPlateSelectionPolicyRunner(EmptyPlateSelectionPolicyRunner):
+    policy = EmptyPlateSelectionPolicy.FALL_BACK_TO_ALL
+
+    def selected_items(self, manager: "PlateManagerWidget") -> list[PlateManagerRow]:
+        return manager._fallback_code_document_items()
+
+
 class PlateOperationValidator(ABC, metaclass=AutoRegisterMeta):
     """Registered validation strategy for one PlateOperation."""
 
@@ -601,7 +685,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         """
         # Plate-specific state (BEFORE super().__init__)
         self.global_config = service_adapter.get_global_config()
-        self.pipeline_editor: "PipelineEditorWidget | None" = None
+        self._plate_pipeline_editor: "PipelineEditorWidget | None" = None
 
         # Business logic state (extracted from Textual version)
         # NOTE: self.plates is now a @property that derives from Root ObjectState
@@ -620,7 +704,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         # Track per-plate execution state
         self.plate_execution_ids: Dict[str, str] = {}  # plate_path -> execution_id
-        self.execution_runtime = ExecutionBatchRuntime()
+        self.plate_terminal_activity_status = ExecutionBatchRuntime()
 
         # Use shared ExecutionProgressTracker singleton (same instance as ZMQ server browser)
         # This ensures both UI components show the same progress data
@@ -630,12 +714,13 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         self.plate_compile_pending = set()
         self.runtime_progress_projection = ExecutionRuntimeProjection()
         self.execution_server_info: ExecutionServerInfo | None = None
-        self._plate_status_presenter = PlateStatusPresenter()
+        self._state_projection_service = PlateManagerStateProjectionService()
 
         # Unified PlateManager batch workflow
         self._zmq_client_service = ZMQClientService(port=7777)
         self._batch_workflow_service = PlateManagerBatchWorkflow(
-            self, client_service=self._zmq_client_service
+            self,
+            zmq=ZMQExecutionClientBoundary(self._zmq_client_service),
         )
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
@@ -679,6 +764,18 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         logger.debug("Plate manager widget initialized")
 
+    @property
+    def plate_pipeline_editor(self) -> "PipelineEditorWidget | None":
+        return self._plate_pipeline_editor
+
+    @property
+    def pipeline_editor(self) -> "PipelineEditorWidget | None":
+        return self._plate_pipeline_editor
+
+    @pipeline_editor.setter
+    def pipeline_editor(self, editor: "PipelineEditorWidget | None") -> None:
+        self._plate_pipeline_editor = editor
+
     def handle_button_action(self, action: str) -> None:
         dispatch_widget_action(
             widget=self,
@@ -686,6 +783,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             action_enum=PlateManagerAction,
             routes=self.ACTION_ROUTES,
             async_runner=self.service_adapter.execute_async_operation,
+            before_dispatch=commit_focused_widget_edits,
         )
 
     def cleanup(self):
@@ -801,9 +899,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         selected_path: Path,
     ) -> tuple[PlateOrchestratorRegistration, ...]:
         plate_root = Path(selected_path)
-        preparer = CellProfilerPlateWorkspacePreparer(
-            CellProfilerPlateWorkspaceRequest.from_paths(plate_root)
-        )
+        preparer = CellProfilerPlateWorkspacePreparer.from_paths(plate_root)
         cppipe_paths = preparer.cppipe_paths()
         if len(cppipe_paths) <= 1:
             if cppipe_paths:
@@ -822,14 +918,14 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 ),
             )
 
-        preferred_cppipe_path = preparer.preferred_cppipe_path()
+        default_cppipe_path = preparer.default_cppipe_path()
         return tuple(
             PlateOrchestratorRegistration(
                 identity=PlateScopeIdentity.from_cellprofiler_pipeline(
                     plate_root,
                     cppipe_path,
                 ),
-                select_by_default=cppipe_path == preferred_cppipe_path,
+                select_by_default=cppipe_path == default_cppipe_path,
             )
             for cppipe_path in cppipe_paths
         )
@@ -942,30 +1038,10 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         Uses declarative LIST_ITEM_FORMAT with orchestrator.pipeline_config as config source.
         """
-        status_prefix = ""
-        plate_key = row.scope_id
-        orchestrator = ObjectStateRegistry.get_object(row.scope_id)
-        terminal_status = self.execution_runtime.terminal_status(plate_key)
-        execution_id = self.plate_execution_ids.get(plate_key)
-        runtime_projection = self.runtime_progress_projection.get_plate(
-            plate_id=plate_key,
-            execution_id=execution_id,
-        )
-        runtime_marked_active = self.execution_runtime.is_active(plate_key)
-        progress_projection_active = runtime_projection is not None
-        is_active_execution = runtime_marked_active or progress_projection_active
-        orchestrator_state = None
-        if orchestrator is not None:
-            orchestrator_state = orchestrator.state
-
-        status_prefix = self._plate_status_presenter.build_status_prefix(
-            orchestrator_state=orchestrator_state,
-            is_init_pending=plate_key in self.plate_init_pending,
-            is_compile_pending=plate_key in self.plate_compile_pending,
-            is_execution_active=is_active_execution,
-            terminal_status=terminal_status,
-            queue_position=self._queued_execution_position_for_plate(plate_key),
-            runtime_projection=runtime_projection,
+        row_state = self._state_projection_service.project_row(
+            self,
+            row,
+            selected_scope_ids=set(),
         )
 
         # Preview resolution is keyed by the visible row scope. For CellProfiler
@@ -974,21 +1050,9 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         return self.build_item_display_from_format(
             item=row,
             item_name=row.name,
-            status_prefix=status_prefix,
+            status_prefix=row_state.status_prefix,
             detail_line=row.scope_id,
         )
-
-    def _queued_execution_position_for_plate(self, plate_id: str) -> Optional[int]:
-        """Return queue position from latest execution server snapshot for this plate."""
-        server_info = self.execution_server_info
-        if server_info is None:
-            return None
-
-        for queued in server_info.queued_execution_entries:
-            if queued.plate_id != plate_id:
-                continue
-            return queued.queue_position
-        return None
 
     def setup_connections(self):
         """Setup signal/slot connections (base class + plate-specific)."""
@@ -1664,7 +1728,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         self.plate_progress.pop(plate_path, None)
 
         policy = terminal_ui_policy(status)
-        self.execution_runtime.mark_terminal(plate_path, status)
+        self.plate_terminal_activity_status.mark_terminal(plate_path, status)
 
         TerminalCompletionUiPolicyAuthority(
             manager=self,
@@ -1699,7 +1763,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         if self.execution_state not in STOP_PENDING_MANAGER_STATES:
             return
 
-        if not self.execution_runtime.all_batch_terminal():
+        if not self.plate_terminal_activity_status.all_batch_terminal():
             return
 
         server_info = self.execution_server_info
@@ -1721,7 +1785,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         for (
             plate_path_str,
             terminal_status,
-        ) in self.execution_runtime.terminal_status_by_plate.items():
+        ) in self.plate_terminal_activity_status.terminal_status_by_plate.items():
             if terminal_status != TerminalExecutionStatus.COMPLETE:
                 continue
             plate_path = Path(plate_path_str)
@@ -1807,87 +1871,107 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         self._batch_workflow_service.stop_execution(force=is_force_kill)
 
+    def orchestrator_code_document_context(
+        self,
+        selection_mode: PlateManagerCodeSelectionMode = PlateManagerCodeSelectionMode.SELECTED,
+        empty_selection_policy: EmptyPlateSelectionPolicy = EmptyPlateSelectionPolicy.ERROR,
+    ) -> PlateManagerCodeDocumentContext:
+        """Build the code-mode document shown by the plate-manager Code action."""
+        selection_mode = PlateManagerCodeSelectionMode(selection_mode)
+        empty_selection_policy = EmptyPlateSelectionPolicy(empty_selection_policy)
+        selected_items = self.get_selected_items()
+        if selection_mode is PlateManagerCodeSelectionMode.ALL:
+            selected_items = list(self.plates)
+        elif selected_items:
+            selected_items = list(selected_items)
+        else:
+            selected_items = EmptyPlateSelectionPolicyRunner.for_policy(
+                empty_selection_policy
+            ).selected_items(self)
+
+        return self.orchestrator_code_document_context_for_rows(selected_items)
+
+    def orchestrator_code_document_context_for_rows(
+        self,
+        selected_items: list[PlateManagerRow],
+    ) -> PlateManagerCodeDocumentContext:
+        """Render orchestrator code for an explicit plate row collection."""
+        plate_paths: list[str] = []
+        pipeline_data: dict[str, list] = {}
+        per_plate_configs: dict[str, PipelineConfig] = {}
+
+        for row in selected_items:
+            plate_path = row.scope_id
+            plate_paths.append(plate_path)
+
+            definition_pipeline = self._get_current_pipeline_definition(plate_path)
+            if not definition_pipeline:
+                logger.warning("No pipeline defined for %s, using empty pipeline", row.name)
+                definition_pipeline = []
+
+            pipeline_data[plate_path] = definition_pipeline
+
+            orchestrator = ObjectStateRegistry.get_object(plate_path)
+            if orchestrator and orchestrator.pipeline_config is not None:
+                per_plate_configs[plate_path] = orchestrator.pipeline_config
+            elif plate_path in self.plate_configs:
+                per_plate_configs[plate_path] = self.plate_configs[plate_path]
+            else:
+                per_plate_configs[plate_path] = PipelineConfig()
+
+        code_items = [
+            Assignment("plate_paths", plate_paths),
+            BlankLine(),
+            Assignment("global_config", self.global_config),
+            BlankLine(),
+            Assignment("per_plate_configs", per_plate_configs),
+            BlankLine(),
+            Assignment("pipeline_data", pipeline_data),
+        ]
+
+        payload = PlateManagerOrchestratorCodePayload(
+            plate_paths=tuple(str(path) for path in plate_paths),
+            pipeline_data=pipeline_data,
+            global_pipeline_config=self.global_config,
+            per_plate_configs=per_plate_configs,
+        )
+
+        source = OrchestratorCodeSource(CodeBlock.from_items(code_items)).render()
+        return PlateManagerCodeDocumentContext(
+            source=source,
+            payload=payload,
+            selected_scope_ids=tuple(str(row.scope_id) for row in selected_items),
+        )
+
+    def _fallback_code_document_items(self) -> list[PlateManagerRow]:
+        if self.plates:
+            logger.info("Code button pressed with no selection, falling back to all plates.")
+            return list(self.plates)
+        logger.info("Code button pressed with no plates configured; generating empty template.")
+        return []
+
+    def code_document_execution_operations(self):
+        """Return the existing manager code-execution operation port."""
+        return self._action_operations()
+
     def action_code_plate(self):
         """Generate Python code for selected plates and their pipelines (Tier 3)."""
         logger.debug("Code button pressed - generating Python code for plates")
 
-        selected_items = self.get_selected_items()
-        if not selected_items:
-            if self.plates:
-                logger.info(
-                    "Code button pressed with no selection, falling back to all plates."
-                )
-                selected_items = list(self.plates)
-            else:
-                logger.info(
-                    "Code button pressed with no plates configured; generating empty template."
-                )
-                selected_items = []
-
         try:
-            # Collect plate paths, pipeline data, and per-plate pipeline configs
-            plate_paths = []
-            pipeline_data = {}
-            per_plate_configs = {}  # Store pipeline config for each plate
-
-            for row in selected_items:
-                plate_path = row.scope_id
-                plate_paths.append(plate_path)
-
-                # Get pipeline definition for this plate
-                definition_pipeline = self._get_current_pipeline_definition(plate_path)
-                if not definition_pipeline:
-                    logger.warning(
-                        f"No pipeline defined for {row.name}, using empty pipeline"
-                    )
-                    definition_pipeline = []
-
-                pipeline_data[plate_path] = definition_pipeline
-
-                # Get the actual pipeline config from this plate's orchestrator
-                orchestrator = ObjectStateRegistry.get_object(plate_path)
-                if orchestrator:
-                    per_plate_configs[plate_path] = orchestrator.pipeline_config
-
-            pipeline_config = None
-            code_items = [
-                Assignment("plate_paths", plate_paths),
-                BlankLine(),
-                Assignment("global_config", self.global_config),
-                BlankLine(),
-            ]
-
-            if per_plate_configs:
-                code_items.append(Assignment("per_plate_configs", per_plate_configs))
-                code_items.append(BlankLine())
-            else:
-                pipeline_config = PipelineConfig()
-                code_items.append(Assignment("pipeline_config", pipeline_config))
-                code_items.append(BlankLine())
-
-            code_items.append(Assignment("pipeline_data", pipeline_data))
-
-            python_code = OrchestratorCodeSource(
-                CodeBlock.from_items(code_items)
-            ).render()
+            context = self.orchestrator_code_document_context(
+                empty_selection_policy=EmptyPlateSelectionPolicy.FALL_BACK_TO_ALL,
+            )
 
             editor_service = SimpleCodeEditorService(self)
             use_external = external_editor_enabled()
-            code_data = {
-                "clean_mode": True,
-                "plate_paths": plate_paths,
-                "pipeline_data": pipeline_data,
-                "global_config": self.global_config,
-                "per_plate_configs": per_plate_configs,
-                "pipeline_config": pipeline_config,
-            }
             editor_service.edit_code(
-                initial_content=python_code,
+                initial_content=context.source,
                 title="Edit Orchestrator Configuration",
                 callback=self._handle_edited_code,
                 use_external=use_external,
                 code_type="orchestrator",
-                code_data=code_data,
+                code_data=context.editor_code_data().as_editor_payload(),
             )
 
         except Exception as e:
@@ -2066,9 +2150,12 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         to preserve a terminal outcome label until the next explicit operation.
         """
         execution_id = self.plate_execution_ids.pop(plate_path, None)
-        self.execution_runtime.clear_plate(plate_path, clear_terminal=clear_terminal)
+        self.plate_terminal_activity_status.clear_plate(
+            plate_path,
+            clear_terminal=clear_terminal,
+        )
         if execution_id:
-            self._progress_tracker.clear_execution(execution_id)
+            self._batch_workflow_service.clear_progress_execution(execution_id)
 
     def is_any_plate_running(self) -> bool:
         """
@@ -2137,10 +2224,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         Returns:
             List of pipeline steps or empty list if no pipeline
         """
-        if not self.pipeline_editor:
+        plate_pipeline_editor = self.plate_pipeline_editor
+        if not plate_pipeline_editor:
             logger.warning("No pipeline editor reference - using empty pipeline")
             return []
-        pipeline_steps = self.pipeline_editor.get_pipeline_for_plate(plate_path)
+        pipeline_steps = plate_pipeline_editor.get_pipeline_for_plate(plate_path)
         logger.debug(
             "Loaded pipeline for plate %s from ObjectState with %d steps",
             plate_path,
@@ -2155,11 +2243,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         Args:
             pipeline_editor: Pipeline editor widget instance
         """
-        if self.pipeline_editor is not None:
+        if self.plate_pipeline_editor is not None:
             self.debug_snapshot_available.disconnect(
-                self.pipeline_editor.show_debug_snapshot
+                self.plate_pipeline_editor.show_debug_snapshot
             )
-        self.pipeline_editor = pipeline_editor
+        self._plate_pipeline_editor = pipeline_editor
         self.debug_snapshot_available.connect(pipeline_editor.show_debug_snapshot)
         logger.debug("Pipeline editor reference set in plate manager")
         for row in self.plates:
@@ -2184,7 +2272,8 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         input_workspace: InputWorkspacePreparationResult | None,
     ) -> None:
         """Load the prepared CellProfiler pipeline into editor/ObjectState state."""
-        if self.pipeline_editor is None:
+        plate_pipeline_editor = self.plate_pipeline_editor
+        if plate_pipeline_editor is None:
             return
         if input_workspace is None:
             return
@@ -2198,7 +2287,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 f"{input_workspace.pipeline_import_error.message}"
             )
         if input_workspace.source_schema is not None:
-            self.pipeline_editor.set_source_binding_context_for_plate(
+            plate_pipeline_editor.set_source_binding_context_for_plate(
                 plate_path,
                 SourceBindingContext(
                     logical_plate_id=plate_path,
@@ -2219,11 +2308,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             raise RuntimeError(
                 f"CellProfiler pipeline import produced no steps for {plate_path}."
             )
-        self.pipeline_editor.cellprofiler_import_results_by_plate[plate_path] = (
+        plate_pipeline_editor.cellprofiler_import_results_by_plate[plate_path] = (
             import_result
         )
-        self.pipeline_editor.update_pipeline_for_plate(plate_path, pipeline_steps)
-        self.pipeline_editor.refresh_loaded_pipeline_for_plate(
+        plate_pipeline_editor.update_pipeline_for_plate(plate_path, pipeline_steps)
+        plate_pipeline_editor.refresh_loaded_pipeline_for_plate(
             plate_path,
             import_result,
             pipeline_steps,

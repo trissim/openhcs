@@ -35,7 +35,7 @@ def test_tree_state_adapter_restores_expansion_and_selection_by_key():
     server.setExpanded(True)
     worker.setSelected(True)
 
-    adapter = TreeStateAdapter()
+    adapter = TreeStateAdapter.default()
     expansion_state = adapter.capture_expansion_state(tree)
     selected_keys = adapter.capture_selected_keys(tree)
 

@@ -8,13 +8,17 @@ Configuration is intended to be immutable and provided as Python objects.
 
 import logging
 import os
+import secrets
+import uuid
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Optional, Dict, Callable
 from enum import Enum
 
 from zmqruntime.transport import get_default_transport_mode
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
+from openhcs.agent.services.ui_bridge_service import UiBridgeDescriptorDirectoryAuthority
 from openhcs.core.config import GlobalPipelineConfig
 
 logger = logging.getLogger(__name__)
@@ -331,40 +335,22 @@ class ProgressUIConfig:
         return max(1, int(1000.0 / self.update_fps))
 
 
-@dataclass(frozen=True)
-class AgentUiBridgeDescriptorPaths:
-    """Descriptor path inputs requested by GUI configuration/environment."""
-
-    directory_path: str | None = None
-    explicit_file_path: str | None = None
-
-
-class AgentUiBridgeConnectionAuthority:
-    """Validation and environment projection for UI bridge connection config."""
-
-    @staticmethod
-    def require_port(connection: ExecutionConnectionSpec) -> int:
-        if connection.port is None:
-            raise ValueError("Agent UI bridge connection config requires an explicit port.")
-        return connection.port
-
-
-@dataclass(frozen=True)
-class AgentUiBridgeConfig:
+@dataclass(frozen=True, slots=True)
+class AgentUiBridgeConfig(ExecutionConnectionSpec):
     """Configuration for the local agent/MCP bridge into the running PyQt UI."""
 
-    enabled: bool = False
-    connection: ExecutionConnectionSpec = field(
-        default_factory=lambda: ExecutionConnectionSpec(
-            host="127.0.0.1",
-            port=7888,
-            transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
-        )
-    )
+    host: str = "127.0.0.1"
+    port: int | None = 7888
+    transport_mode: str | None = DEFAULT_AGENT_UI_BRIDGE_TRANSPORT
+    persistent: bool = True
+    enabled: bool = True
     timeout_ms: int = 5000
-    descriptor_paths: AgentUiBridgeDescriptorPaths = field(
-        default_factory=AgentUiBridgeDescriptorPaths
-    )
+    descriptor_directory_path: str | Path | None = None
+    descriptor_file_path: str | Path | None = None
+    bridge_instance_id: str | None = None
+    auth_token: str | None = None
+    poll_timeout_ms: int = 100
+    shutdown_timeout_seconds: float = 2.0
     max_code_document_bytes: int = 2_000_000
     max_request_bytes: int = 4_000_000
     max_response_bytes: int = 4_000_000
@@ -379,39 +365,39 @@ class AgentUiBridgeConfig:
     ) -> "AgentUiBridgeConfig":
         base = base or cls()
         return cls(
+            host=EnvironmentValueAuthority.text(
+                "OPENHCS_UI_BRIDGE_HOST",
+                base.host,
+            ),
+            port=EnvironmentValueAuthority.integer(
+                "OPENHCS_UI_BRIDGE_PORT",
+                base.port,
+            ),
+            transport_mode=EnvironmentValueAuthority.text(
+                "OPENHCS_UI_BRIDGE_TRANSPORT_MODE",
+                base.transport_mode,
+            ),
+            persistent=base.persistent,
             enabled=EnvironmentValueAuthority.boolean(
                 "OPENHCS_ENABLE_UI_BRIDGE",
                 base.enabled,
-            ),
-            connection=ExecutionConnectionSpec(
-                host=EnvironmentValueAuthority.text(
-                    "OPENHCS_UI_BRIDGE_HOST",
-                    base.connection.host,
-                ),
-                port=EnvironmentValueAuthority.integer(
-                    "OPENHCS_UI_BRIDGE_PORT",
-                    AgentUiBridgeConnectionAuthority.require_port(base.connection),
-                ),
-                transport_mode=EnvironmentValueAuthority.text(
-                    "OPENHCS_UI_BRIDGE_TRANSPORT_MODE",
-                    base.connection.transport_mode,
-                ),
-                persistent=base.connection.persistent,
             ),
             timeout_ms=EnvironmentValueAuthority.integer(
                 "OPENHCS_UI_BRIDGE_TIMEOUT_MS",
                 base.timeout_ms,
             ),
-            descriptor_paths=AgentUiBridgeDescriptorPaths(
-                directory_path=EnvironmentValueAuthority.optional_text(
-                    "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
-                    base.descriptor_paths.directory_path,
-                ),
-                explicit_file_path=EnvironmentValueAuthority.optional_text(
-                    "OPENHCS_UI_BRIDGE_DESCRIPTOR",
-                    base.descriptor_paths.explicit_file_path,
-                ),
+            descriptor_directory_path=EnvironmentValueAuthority.optional_text(
+                "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
+                base.descriptor_directory_path,
             ),
+            descriptor_file_path=EnvironmentValueAuthority.optional_text(
+                "OPENHCS_UI_BRIDGE_DESCRIPTOR",
+                base.descriptor_file_path,
+            ),
+            bridge_instance_id=base.bridge_instance_id,
+            auth_token=base.auth_token,
+            poll_timeout_ms=base.poll_timeout_ms,
+            shutdown_timeout_seconds=base.shutdown_timeout_seconds,
             max_code_document_bytes=base.max_code_document_bytes,
             max_request_bytes=base.max_request_bytes,
             max_response_bytes=base.max_response_bytes,
@@ -419,6 +405,29 @@ class AgentUiBridgeConfig:
             require_confirmation_for_mutations=base.require_confirmation_for_mutations,
             allow_unsafe_code_documents=base.allow_unsafe_code_documents,
         )
+
+    def resolve_bridge_instance_id(self) -> str:
+        if self.bridge_instance_id is not None:
+            return self.bridge_instance_id
+        return f"ui-{uuid.uuid4()}"
+
+    def resolve_auth_token(self) -> str:
+        if self.auth_token is not None:
+            return self.auth_token
+        return secrets.token_urlsafe(32)
+
+    def descriptor_path_for(self, bridge_instance_id: str) -> Path:
+        if self.descriptor_file_path is not None:
+            return Path(self.descriptor_file_path).expanduser()
+        return (
+            self.descriptor_directory_or_default()
+            / f"ui_bridge_{bridge_instance_id}.json"
+        )
+
+    def descriptor_directory_or_default(self) -> Path:
+        if self.descriptor_directory_path is not None:
+            return Path(self.descriptor_directory_path).expanduser()
+        return UiBridgeDescriptorDirectoryAuthority.default_descriptor_dir()
 
 
 @dataclass(frozen=True)

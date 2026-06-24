@@ -7,13 +7,14 @@ from collections.abc import Coroutine
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from objectstate import patch_lazy_constructors, spawn_thread_with_context
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import DebugCommandType, DebugSession, FileManagerDebugSnapshotStore
 from openhcs.core.function_patterns import normalize_function_pattern
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     CellProfilerPipelineRuntimeRebinder,
 )
@@ -31,6 +32,24 @@ from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class WorkflowSignal(Protocol):
+    """Signal-like object used by workflow services."""
+
+    def emit(self, *values) -> None:
+        """Emit a workflow event."""
+
+
+class PipelineStepSaveEditor(Protocol):
+    """Editor surface required by PipelineStepSaveWorkflow."""
+
+    pipeline_steps: list[AbstractStep]
+    pipeline_changed: WorkflowSignal
+    status_message: WorkflowSignal
+
+    def update_item_list(self) -> None:
+        """Refresh the visible pipeline list."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,16 +540,16 @@ class PipelineEditorListWorkflow:
 class PipelineStepSaveWorkflow:
     """Updates one edited step while preserving scope-token continuity."""
 
-    editor: Any
-    step_to_edit: Any
+    editor: PipelineStepSaveEditor
+    step_to_edit: AbstractStep
     plate_scope: str
 
-    def save(self, edited_step: Any) -> None:
+    def save(self, edited_step: AbstractStep) -> None:
         for index, step in enumerate(self.editor.pipeline_steps):
-            if step is not self.step_to_edit:
+            if not self._matches_step_to_edit(step):
                 continue
-            prefix = ScopeTokenService._get_prefix(self.step_to_edit)
-            ScopeTokenService.get_generator(self.plate_scope, prefix).transfer(
+            ScopeTokenService.transfer_token(
+                self.plate_scope,
                 self.step_to_edit,
                 edited_step,
             )
@@ -540,3 +559,8 @@ class PipelineStepSaveWorkflow:
         self.editor.update_item_list()
         self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
         self.editor.status_message.emit(f"Updated step: {edited_step.name}")
+
+    def _matches_step_to_edit(self, step: AbstractStep) -> bool:
+        if step is self.step_to_edit:
+            return True
+        return ScopeTokenService.same_object_token(step, self.step_to_edit)

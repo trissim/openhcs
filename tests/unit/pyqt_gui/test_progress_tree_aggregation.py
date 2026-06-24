@@ -1,4 +1,9 @@
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import ZMQServerManagerWidget
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
@@ -21,10 +26,12 @@ def _event(
     total: int = 1,
 ) -> ProgressEvent:
     return ProgressEvent(
-        execution_id=execution_id,
-        plate_id=plate_id,
-        axis_id=axis_id,
-        step_name=step_name,
+        identity=ProgressIdentity(
+            execution_id=execution_id,
+            plate_id=plate_id,
+            axis_id=axis_id,
+            step_name=step_name,
+        ),
         phase=phase,
         status=status,
         percent=percent,

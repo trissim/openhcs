@@ -32,6 +32,7 @@ from openhcs.config_framework.global_config import set_current_global_config
 from openhcs.config_framework.lazy_factory import create_dataclass_for_editing
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Microscope
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_pyqt_gui_config
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
@@ -505,7 +506,13 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
 
     # Use test global config instead of cached config to ensure test values are available
     config = _create_test_global_config()
-    app = OpenHCSPyQtApp(sys.argv, config)
+    app = OpenHCSPyQtApp(
+        sys.argv,
+        runtime_context=PyQtGuiRuntimeContext(
+            get_default_pyqt_gui_config(),
+            pipeline_runtime=config,
+        ),
+    )
 
     # Verify global config context establishment
     current_context = get_current_global_config(GlobalPipelineConfig)

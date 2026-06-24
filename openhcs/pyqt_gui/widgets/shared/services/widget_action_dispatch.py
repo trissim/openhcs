@@ -15,6 +15,7 @@ WidgetActionSyncCallable = Callable[[], None]
 WidgetActionAsyncCallable = Callable[[], Awaitable[None]]
 WidgetActionCallable = WidgetActionSyncCallable | WidgetActionAsyncCallable
 AsyncActionRunner = Callable[[WidgetActionAsyncCallable], None]
+WidgetActionPreDispatch = Callable[[], None]
 
 
 class WidgetActionDispatchError(ValueError):
@@ -63,6 +64,7 @@ def dispatch_widget_action(
     action_enum: type[_ActionT],
     routes: Mapping[_ActionT, WidgetActionRoute[_ActionT, _WidgetT]],
     async_runner: AsyncActionRunner,
+    before_dispatch: WidgetActionPreDispatch | None = None,
 ) -> WidgetActionDispatchResult[_ActionT]:
     """Dispatch one string UI action through a nominal enum-keyed route map."""
 
@@ -78,5 +80,8 @@ def dispatch_widget_action(
         raise WidgetActionDispatchError(
             f"No {action_enum.__name__} route registered for {action.value!r}"
         )
+
+    if before_dispatch is not None:
+        before_dispatch()
 
     return route.dispatch(widget=widget, async_runner=async_runner)

@@ -7,6 +7,7 @@ from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowEmbeddedWidgets,
     MainWindowLifecycleWorkflow,
+    MainWindowUiBridgeLifecycle,
 )
 
 
@@ -46,8 +47,11 @@ def test_on_config_changed_propagates_to_embedded_widgets() -> None:
 
     main_like = type("MainLike", (), {})()
     main_like.global_config = GlobalPipelineConfig()
-    main_like.service_adapter = service_adapter
+    main_like.config_services = service_adapter
     main_like.lifecycle_workflow = lifecycle_workflow
+    main_like.set_pipeline_runtime_config = (
+        lambda config: setattr(main_like, "global_config", config)
+    )
 
     new_config = GlobalPipelineConfig(num_workers=2)
     OpenHCSMainWindow.on_config_changed(main_like, new_config)
@@ -73,6 +77,7 @@ def test_lifecycle_workflow_propagates_config_to_embedded_widgets() -> None:
         ),
         floating_windows={},
         status_progress_bar=progress_bar,
+        ui_bridge_lifecycle=MainWindowUiBridgeLifecycle(),
     )
 
     new_config = GlobalPipelineConfig(num_workers=3)

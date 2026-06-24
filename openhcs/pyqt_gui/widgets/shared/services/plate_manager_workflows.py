@@ -12,6 +12,11 @@ from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerGeneratedStepFunctionSpec,
+    CellProfilerPipelineRuntimeRebinder,
+)
+from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,
 )
@@ -40,6 +45,26 @@ class PlateManagerCodeNamespaceField(str, Enum):
     PLATE_PATHS = "plate_paths"
 
 
+class RemovedPlateManagerCodeNamespaceField(str, Enum):
+    """Removed plate-manager code fields with explicit migration messages."""
+
+    PIPELINE_CONFIG = "pipeline_config"
+
+    @classmethod
+    def reject_present_fields(cls, namespace: dict) -> None:
+        for field in cls:
+            if field.value in namespace:
+                raise ValueError(field.error_message())
+
+    def error_message(self) -> str:
+        if self is RemovedPlateManagerCodeNamespaceField.PIPELINE_CONFIG:
+            return (
+                f"{self.value} is not a plate-manager code document field; "
+                "use per_plate_configs keyed by plate path."
+            )
+        raise RuntimeError(f"Unhandled removed plate-manager field: {self.value}.")
+
+
 @dataclass(frozen=True, slots=True)
 class PlateManagerOrchestratorCodePayload:
     """Authoritative payload for plate-manager orchestrator code documents."""
@@ -54,11 +79,7 @@ class PlateManagerOrchestratorCodePayload:
         cls,
         namespace: dict,
     ) -> "PlateManagerOrchestratorCodePayload | None":
-        if "pipeline_config" in namespace:
-            raise ValueError(
-                "pipeline_config is not a plate-manager code document field; "
-                "use per_plate_configs keyed by plate path."
-            )
+        RemovedPlateManagerCodeNamespaceField.reject_present_fields(namespace)
 
         plate_paths_field = PlateManagerCodeNamespaceField.PLATE_PATHS.value
         pipeline_data_field = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
@@ -131,7 +152,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         if payload is None:
             return False
 
-        self.ensure_plate_entries(list(payload.plate_paths))
+        self.sync_plate_entries(payload.plate_paths)
 
         if payload.global_pipeline_config is not None:
             self.apply_global_config(payload.global_pipeline_config)
@@ -141,6 +162,34 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
         self.apply_pipeline_data(payload.pipeline_data)
         return True
+
+    def sync_plate_entries(self, plate_paths: tuple[str, ...]) -> None:
+        """Make visible plate rows match the code document's plate path list."""
+        requested_paths = tuple(dict.fromkeys(str(path) for path in plate_paths))
+        root_state = self.manager._ensure_root_state()
+        current_paths = tuple(root_orchestrator_scope_ids(root_state))
+        requested_path_set = set(requested_paths)
+        removed_paths = tuple(
+            path for path in current_paths if path not in requested_path_set
+        )
+
+        if removed_paths:
+            removed_rows = [
+                PlateManagerRow.from_scope(
+                    path,
+                    cppipe_path=self.manager._cppipe_path_for_scope_id(path),
+                )
+                for path in removed_paths
+            ]
+            if not self.manager.deletion_workflow.validate(removed_rows):
+                raise ValueError("Cannot remove plates while execution is in progress.")
+            self.manager.deletion_workflow.delete(removed_rows)
+
+        self.ensure_plate_entries(list(requested_paths))
+        selection_changed = self.reconcile_selection(requested_paths)
+        self.manager.update_item_list()
+        if selection_changed:
+            self.manager.plate_selected.emit(self.manager.selected_plate_path)
 
     def ensure_plate_entries(self, plate_paths: list[str]) -> None:
         if not plate_paths:
@@ -174,6 +223,20 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         status_message = f"Added {added_count} plate(s) from orchestrator code"
         self.manager.status_message.emit(status_message)
         logger.info(status_message)
+
+    def reconcile_selection(self, requested_paths: tuple[str, ...]) -> bool:
+        """Align semantic selection with the applied plate document."""
+        current_selection = self.manager.selected_plate_path
+        if requested_paths:
+            if current_selection in requested_paths:
+                return False
+            self.manager.selected_plate_path = requested_paths[0]
+            return True
+
+        if current_selection:
+            self.manager.selected_plate_path = ""
+            return True
+        return False
 
     def apply_global_config(self, global_config: GlobalPipelineConfig) -> None:
         self.manager.global_config = global_config
@@ -237,6 +300,10 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
         current_plate = plate_pipeline_editor.current_plate
         for plate_path, pipeline_steps in pipeline_data.items():
+            pipeline_steps = self.runtime_bound_pipeline_for_plate(
+                plate_path,
+                pipeline_steps,
+            )
             plate_pipeline_editor.update_pipeline_for_plate(
                 plate_path,
                 pipeline_steps,
@@ -262,6 +329,63 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             )
 
         self.manager.pipeline_data_changed.emit()
+
+    def runtime_bound_pipeline_for_plate(
+        self,
+        plate_path: str,
+        pipeline_steps: list[FunctionStep],
+    ) -> list[FunctionStep]:
+        """Preserve generated CellProfiler artifact bindings through code mode."""
+        if not self.pipeline_contains_cellprofiler_steps(pipeline_steps):
+            return pipeline_steps
+
+        plate_pipeline_editor = self.manager.plate_pipeline_editor
+        if plate_pipeline_editor is None:
+            raise RuntimeError(
+                "Cannot apply CellProfiler pipeline code without a pipeline editor."
+            )
+
+        import_result = self.cellprofiler_import_result_for_plate(
+            plate_pipeline_editor,
+            plate_path,
+        )
+        if import_result is None:
+            identity = PlateScopeIdentity.from_scope_id(plate_path)
+            if identity.cppipe_path is None:
+                return pipeline_steps
+            raise RuntimeError(
+                "Cannot apply CellProfiler pipeline code for "
+                f"{plate_path!r} because the .cppipe import context is not loaded. "
+                "Initialize the plate before editing or applying generated pipeline code."
+            )
+
+        return CellProfilerPipelineRuntimeRebinder.from_import_result(
+            import_result,
+        ).rebind(pipeline_steps)
+
+    @staticmethod
+    def pipeline_contains_cellprofiler_steps(
+        pipeline_steps: list[FunctionStep],
+    ) -> bool:
+        """Return whether any edited step references absorbed CellProfiler callables."""
+        return any(
+            isinstance(step, FunctionStep)
+            and CellProfilerGeneratedStepFunctionSpec(step.func).metadata() is not None
+            for step in pipeline_steps
+        )
+
+    @staticmethod
+    def cellprofiler_import_result_for_plate(
+        plate_pipeline_editor,
+        plate_path: str,
+    ):
+        """Return the import result already associated with a logical plate scope."""
+        plate_key = str(plate_path)
+        if plate_key in plate_pipeline_editor.cellprofiler_import_results_by_plate:
+            return plate_pipeline_editor.cellprofiler_import_results_by_plate[plate_key]
+        if plate_pipeline_editor.current_plate == plate_key:
+            return plate_pipeline_editor.cellprofiler_import_result
+        return None
 
     def invalidate_orchestrator_compilation_state(self, plate_path: str) -> None:
         if plate_path in self.manager.plate_compiled_data:

@@ -1,5 +1,6 @@
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
+    PlateRuntimeIdentity,
     PlateRuntimeProjection,
     PlateRuntimeState,
 )
@@ -23,16 +24,14 @@ def test_execution_server_status_presenter_returns_ready_when_no_plates():
 def test_execution_server_status_presenter_includes_projection_counts():
     presenter = ExecutionServerStatusPresenter()
     plate_one = PlateRuntimeProjection(
-        execution_id="exec-1",
-        plate_id="/tmp/p1",
+        identity=PlateRuntimeIdentity(execution_id="exec-1", plate_id="/tmp/p1"),
         state=PlateRuntimeState.COMPILING,
         percent=40.0,
         axis_progress=tuple(),
         latest_timestamp=1.0,
     )
     plate_two = PlateRuntimeProjection(
-        execution_id="exec-2",
-        plate_id="/tmp/p2",
+        identity=PlateRuntimeIdentity(execution_id="exec-2", plate_id="/tmp/p2"),
         state=PlateRuntimeState.EXECUTING,
         percent=85.0,
         axis_progress=tuple(),
@@ -60,8 +59,7 @@ def test_execution_server_status_presenter_includes_projection_counts():
 def test_execution_server_status_presenter_includes_failed_projection_count():
     presenter = ExecutionServerStatusPresenter()
     failed_plate = PlateRuntimeProjection(
-        execution_id="exec-3",
-        plate_id="/tmp/p3",
+        identity=PlateRuntimeIdentity(execution_id="exec-3", plate_id="/tmp/p3"),
         state=PlateRuntimeState.FAILED,
         percent=10.0,
         axis_progress=tuple(),
