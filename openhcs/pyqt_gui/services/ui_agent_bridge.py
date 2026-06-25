@@ -45,6 +45,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeCatalog,
     UiObjectStateScopeListRequest,
     UiObjectStateScopeVisibility,
+    UiSelectedPlateWorkflowRequest,
+    UiSelectedPlateWorkflowResult,
     UiStateSurfaceCatalog,
     UiStateSurfaceDocument,
     UiStateSurfaceRequest,
@@ -55,7 +57,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotRestoreRequest,
     UiSnapshotRestoreResult,
     UiTimeTravelHeadRequest,
-    UiTimeTravelRuntimeState,
+    UiWidgetId,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -65,6 +67,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 from openhcs.agent.services.ui_bridge_service import UiBridgeGatewayABC
 from openhcs.config_framework.object_state import ObjectStateRegistry
@@ -89,24 +93,35 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
 )
 from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerCodeNamespace,
     PlateManagerOrchestratorCodePayload,
 )
 
 
 @dataclass(frozen=True, slots=True)
-class CodeDocumentExecutionResult:
+class CodeDocumentExecutionResult(PlateManagerOrchestratorCodePayload):
     """Parsed and normalized payload from one declarative UI code document."""
 
-    payload: PlateManagerOrchestratorCodePayload
+    @classmethod
+    def from_payload(
+        cls,
+        payload: PlateManagerOrchestratorCodePayload,
+    ) -> "CodeDocumentExecutionResult":
+        return cls(
+            plate_paths=payload.plate_paths,
+            pipeline_data=payload.pipeline_data,
+            global_pipeline_config=payload.global_pipeline_config,
+            per_plate_configs=payload.per_plate_configs,
+        )
 
     @property
     def mutation_scope(self) -> str | None:
-        if len(self.payload.plate_paths) != 1:
+        if len(self.plate_paths) != 1:
             return None
-        return self.payload.plate_paths[0]
+        return self.plate_paths[0]
 
-    def apply_namespace(self) -> dict:
-        return self.payload.to_namespace()
+    def apply_namespace(self) -> PlateManagerCodeNamespace:
+        return self.to_namespace()
 
 
 class UiCodeDocumentSourcePolicy:
@@ -269,7 +284,7 @@ class UiCodeDocumentExecutionService:
         if errors:
             raise UiCodeDocumentValidationError(errors)
 
-        namespace: dict[str, object] = {}
+        namespace = PlateManagerCodeNamespace()
         try:
             with operations.patch_lazy_constructors():
                 exec(source, namespace)
@@ -281,7 +296,7 @@ class UiCodeDocumentExecutionService:
             )
             if migrated_namespace is None:
                 raise
-            namespace = migrated_namespace
+            namespace = PlateManagerCodeNamespace.from_mapping(migrated_namespace)
 
         payload = PlateManagerOrchestratorCodePayload.from_namespace(namespace)
         if payload is None:
@@ -299,7 +314,7 @@ class UiCodeDocumentExecutionService:
             for plate_path, pipeline_steps in payload.pipeline_data.items()
         }
         normalized_payload = replace(payload, pipeline_data=normalized_pipeline_data)
-        return CodeDocumentExecutionResult(payload=normalized_payload)
+        return CodeDocumentExecutionResult.from_payload(normalized_payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,9 +534,7 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
             current_branch=current_branch,
             current_snapshot_index=current_index,
             object_state_token=ObjectStateRegistry.get_token(),
-            time_travel_state=UiTimeTravelRuntimeState(
-                active=ObjectStateRegistry.is_time_traveling()
-            ),
+            active=ObjectStateRegistry.is_time_traveling(),
             snapshots=refs,
             branches=self.branch_refs(),
         )
@@ -564,16 +577,14 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
         return history[-1].id
 
     def revision_token(self, document_id: str) -> str:
-        time_travel_state = UiTimeTravelRuntimeState(
-            active=ObjectStateRegistry.is_time_traveling()
-        )
+        time_travel_active = ObjectStateRegistry.is_time_traveling()
         parts = (
             document_id,
             str(ObjectStateRegistry.get_token()),
             ObjectStateRegistry.get_current_branch(),
             str(self.current_branch_head_snapshot_id()),
             str(ObjectStateRegistry.get_current_snapshot_index()),
-            str(time_travel_state.active),
+            str(time_travel_active),
         )
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -907,9 +918,7 @@ class UiAgentBridgeService:
                 object_state_token=ObjectStateRegistry.get_token(),
                 current_branch=ObjectStateRegistry.get_current_branch(),
                 current_snapshot_index=ObjectStateRegistry.get_current_snapshot_index(),
-                time_travel_state=UiTimeTravelRuntimeState(
-                    active=ObjectStateRegistry.is_time_traveling()
-                ),
+                active=ObjectStateRegistry.is_time_traveling(),
                 scopes=tuple(scopes),
                 errors=tuple(errors),
                 warnings=tuple(warnings),
@@ -918,16 +927,22 @@ class UiAgentBridgeService:
         return self._dispatcher.call(catalog)
 
     def get_document(self, request: UiCodeDocumentRequest) -> UiCodeDocument:
-        return self._dispatcher.call(lambda: self._provider(request.document_id).read(request))
+        return self._dispatcher.call(
+            lambda: self._registry.code_document_provider(request.document_id).read(
+                request
+            )
+        )
 
     def get_state_surface(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
         return self._dispatcher.call(
-            lambda: self._state_provider(request.surface_id).read(request)
+            lambda: self._registry.state_surface_provider(request.surface_id).read(
+                request
+            )
         )
 
     def invoke_action(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:
         def run(operation: UiBridgeOperationRef) -> UiActionInvokeResult:
-            result = self._action_provider(request.widget_id).invoke(request)
+            result = self._registry.action_provider(request.widget_id).invoke(request)
             return replace(
                 result,
                 receipt=replace(
@@ -950,9 +965,30 @@ class UiAgentBridgeService:
                 AgentError.from_exception("ui_bridge_busy", exc),
             )
 
+    def selected_plate_workflow(
+        self,
+        request: UiSelectedPlateWorkflowRequest,
+    ) -> UiSelectedPlateWorkflowResult:
+        action_request = UiActionInvokeRequest(
+            widget_id=UiWidgetId.PLATE_MANAGER.value,
+            action_id=request.workflow.value,
+            selected_scope_ids=request.selected_scope_ids,
+            observed_selection_revision_token=request.observed_selection_revision_token,
+            request_token=request.request_token,
+            confirmation_requirement=request.confirmation_requirement,
+        )
+        action_result = self.invoke_action(action_request)
+        return UiSelectedPlateWorkflowResult(
+            schema_version=SCHEMA_VERSION,
+            workflow=request.workflow,
+            action_result=action_result,
+            errors=action_result.errors,
+            warnings=action_result.warnings,
+        )
+
     def focus_window(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
         return self._dispatcher.call(
-            lambda: self._window_provider(request.window_id).focus(request)
+            lambda: self._registry.window_provider(request.window_id).focus(request)
         )
 
     def navigate_window(
@@ -960,12 +996,12 @@ class UiAgentBridgeService:
         request: UiWindowNavigateRequest,
     ) -> UiWindowNavigateResult:
         return self._dispatcher.call(
-            lambda: self._window_provider(request.window_id).navigate(request)
+            lambda: self._registry.window_provider(request.window_id).navigate(request)
         )
 
     def close_window(self, request: UiWindowCloseRequest) -> UiWindowCloseResult:
         return self._dispatcher.call(
-            lambda: self._window_provider(request.window_id).close(request)
+            lambda: self._registry.window_provider(request.window_id).close(request)
         )
 
     def snapshot_window(
@@ -973,7 +1009,17 @@ class UiAgentBridgeService:
         request: UiWindowSnapshotRequest,
     ) -> UiWindowSnapshotResult:
         return self._dispatcher.call(
-            lambda: self._window_provider(request.window_id).snapshot(request)
+            lambda: self._registry.window_provider(request.window_id).snapshot(request)
+        )
+
+    def widget_tree(
+        self,
+        request: UiWidgetTreeRequest,
+    ) -> UiWidgetTreeResult:
+        return self._dispatcher.call(
+            lambda: self._registry.window_provider(request.window_id).widget_tree(
+                request
+            )
         )
 
     def validate_document(
@@ -981,7 +1027,9 @@ class UiAgentBridgeService:
         request: UiCodeDocumentValidationRequest,
     ) -> UiCodeDocumentValidationResult:
         return self._dispatcher.call(
-            lambda: self._provider(request.document_id).validate(request)
+            lambda: self._registry.code_document_provider(
+                request.document_id
+            ).validate(request)
         )
 
     def apply_document(
@@ -989,7 +1037,9 @@ class UiAgentBridgeService:
         request: UiCodeDocumentApplyRequest,
     ) -> UiCodeDocumentApplyResult:
         def run(operation: UiBridgeOperationRef) -> UiCodeDocumentApplyResult:
-            result = self._provider(request.document_id).apply(request)
+            result = self._registry.code_document_provider(request.document_id).apply(
+                request
+            )
             return replace(result, operation_id=operation.identity.operation_id)
 
         try:
@@ -1057,18 +1107,6 @@ class UiAgentBridgeService:
 
     def get_operation_status(self, operation_id: str) -> UiBridgeOperationRef:
         return self._operation_tracker.get(operation_id)
-
-    def _provider(self, document_id: str) -> UiCodeDocumentProviderABC:
-        return self._registry.code_document_provider(document_id)
-
-    def _state_provider(self, surface_id: str) -> UiStateSurfaceProviderABC:
-        return self._registry.state_surface_provider(surface_id)
-
-    def _action_provider(self, widget_id: str) -> UiActionProviderABC:
-        return self._registry.action_provider(widget_id)
-
-    def _window_provider(self, window_id: str) -> UiWindowProviderABC:
-        return self._registry.window_provider(window_id)
 
     @staticmethod
     def _apply_document_error(
@@ -1166,6 +1204,14 @@ class InProcessUiBridgeGateway(UiBridgeGatewayABC):
         del connection
         return self._bridge.invoke_action(request)
 
+    def selected_plate_workflow(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiSelectedPlateWorkflowRequest,
+    ) -> UiSelectedPlateWorkflowResult:
+        del connection
+        return self._bridge.selected_plate_workflow(request)
+
     def focus_window(
         self,
         connection: UiBridgeConnectionSpec,
@@ -1197,6 +1243,14 @@ class InProcessUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowSnapshotResult:
         del connection
         return self._bridge.snapshot_window(request)
+
+    def widget_tree(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWidgetTreeRequest,
+    ) -> UiWidgetTreeResult:
+        del connection
+        return self._bridge.widget_tree(request)
 
     def validate_document(
         self,

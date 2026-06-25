@@ -37,6 +37,7 @@ Practical guides for specific development tasks.
    pyclesperanto_simple_implementation
    window_manager_usage
    compact_window_patterns
+   mcp_development
 
 Testing and CI
 ==============

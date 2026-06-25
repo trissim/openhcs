@@ -83,7 +83,7 @@ def test_transport_authority_normalizes_unstripped_pipeline_steps():
     pickle.dumps(normalized)
 
 
-def test_zmq_pipeline_transport_source_rebinds_cellprofiler_contracts():
+def test_zmq_pipeline_transport_source_preserves_cellprofiler_contracts():
     import inspect
 
     contract = ModuleArtifactContract(
@@ -111,20 +111,16 @@ def test_zmq_pipeline_transport_source_rebinds_cellprofiler_contracts():
     exec(source, namespace)
 
     restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    rebound = CellProfilerPipelineRuntimeRebinder(
-        generated_module_name="generated_test_pipeline",
-        contracts_by_module_num={1: contract},
-    ).rebind(restored)
-    restored_func = rebound[0].func
+    restored_func = restored[0].func
     restored_contract = CallableContract.from_callable(restored_func)
 
     assert "__openhcs_zmq_pipeline_payload__" not in source
-    assert "ModuleArtifactContract(" not in source
-    assert "cellprofiler_module_callable" not in source
+    assert "ModuleArtifactContract(" in source
+    assert "cellprofiler_module_callable" in source
     assert restored_func.__name__ == "crop"
     assert "cellprofiler_runtime" in inspect.signature(restored_func).parameters
     assert restored_contract.module_artifact_contract == contract
-    pickle.dumps(rebound)
+    pickle.dumps(restored)
 
 
 def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callables():
@@ -298,17 +294,13 @@ def test_cellprofiler_runtime_callable_source_derives_materialization_contract()
     exec(pipeline_source, namespace)
 
     restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    rebound = CellProfilerPipelineRuntimeRebinder(
-        generated_module_name="generated_test_pipeline",
-        contracts_by_module_num={1: contract},
-    ).rebind(restored)
-    restored_contract = CallableContract.from_callable(rebound[0].func)
+    restored_contract = CallableContract.from_callable(restored[0].func)
     restored_materialization = restored_contract.module_artifact_contract.outputs[
         0
     ].materialization
 
-    assert "MaterializationSpec(" not in pipeline_source
-    assert "ModuleArtifactContract(" not in pipeline_source
+    assert "MaterializationSpec(" in pipeline_source
+    assert "ModuleArtifactContract(" in pipeline_source
     assert restored_materialization == contract.outputs[0].materialization
 
 

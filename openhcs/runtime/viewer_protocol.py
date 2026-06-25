@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from typing import ClassVar, TypeAlias, cast
+from typing import ClassVar, Self, TypeAlias, cast
 
 from openhcs.core.config import TransportMode as ViewerTransportMode
 from openhcs.core.streaming_config_factory import (
@@ -67,6 +67,202 @@ class ViewerControlMessageType(Enum):
     SCREENSHOT = "screenshot"
     SETTLE = "settle"
     STATE = "state"
+    PAYLOADS = "payloads"
+
+
+class ViewerPayloadControlField(Enum):
+    """Shared fields for viewer payload-extraction control messages."""
+
+    ROUTE_KEY = "route_key"
+    INCLUDE_ARRAY_VALUES = "include_array_values"
+    MAX_ARRAY_ELEMENTS = "max_array_elements"
+    INCLUDE_SHAPE_PAYLOADS = "include_shape_payloads"
+    MAX_SHAPE_PAYLOADS = "max_shape_payloads"
+
+
+VIEWER_PAYLOAD_INCLUDE_ARRAY_VALUES_DEFAULT = False
+VIEWER_PAYLOAD_MAX_ARRAY_ELEMENTS_DEFAULT = 4096
+VIEWER_PAYLOAD_INCLUDE_SHAPE_PAYLOADS_DEFAULT = True
+VIEWER_PAYLOAD_MAX_SHAPE_PAYLOADS_DEFAULT = 256
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerPayloadControlOptions:
+    """Formal payload-inspection controls shared by agent and viewer runtimes."""
+
+    route_key: str | None = None
+    include_array_values: bool = VIEWER_PAYLOAD_INCLUDE_ARRAY_VALUES_DEFAULT
+    max_array_elements: int = VIEWER_PAYLOAD_MAX_ARRAY_ELEMENTS_DEFAULT
+    include_shape_payloads: bool = VIEWER_PAYLOAD_INCLUDE_SHAPE_PAYLOADS_DEFAULT
+    max_shape_payloads: int = VIEWER_PAYLOAD_MAX_SHAPE_PAYLOADS_DEFAULT
+
+    @classmethod
+    def from_overrides(
+        cls,
+        *,
+        route_key: str | None = None,
+        include_array_values: bool | None = None,
+        max_array_elements: int | None = None,
+        include_shape_payloads: bool | None = None,
+        max_shape_payloads: int | None = None,
+    ) -> Self:
+        defaults = cls()
+        return cls(
+            route_key=route_key,
+            include_array_values=cls._resolved_bool_override(
+                ViewerPayloadControlField.INCLUDE_ARRAY_VALUES,
+                include_array_values,
+                defaults.include_array_values,
+            ),
+            max_array_elements=cls._resolved_nonnegative_int_override(
+                ViewerPayloadControlField.MAX_ARRAY_ELEMENTS,
+                max_array_elements,
+                defaults.max_array_elements,
+            ),
+            include_shape_payloads=cls._resolved_bool_override(
+                ViewerPayloadControlField.INCLUDE_SHAPE_PAYLOADS,
+                include_shape_payloads,
+                defaults.include_shape_payloads,
+            ),
+            max_shape_payloads=cls._resolved_nonnegative_int_override(
+                ViewerPayloadControlField.MAX_SHAPE_PAYLOADS,
+                max_shape_payloads,
+                defaults.max_shape_payloads,
+            ),
+        )
+
+    @classmethod
+    def from_wire_payload(
+        cls,
+        payload: Mapping[str, ViewerControlWireValue],
+    ) -> Self:
+        return cls(
+            route_key=cls._optional_str(
+                payload,
+                ViewerPayloadControlField.ROUTE_KEY,
+            ),
+            include_array_values=cls._optional_bool(
+                payload,
+                ViewerPayloadControlField.INCLUDE_ARRAY_VALUES,
+                VIEWER_PAYLOAD_INCLUDE_ARRAY_VALUES_DEFAULT,
+            ),
+            max_array_elements=cls._optional_nonnegative_int(
+                payload,
+                ViewerPayloadControlField.MAX_ARRAY_ELEMENTS,
+                VIEWER_PAYLOAD_MAX_ARRAY_ELEMENTS_DEFAULT,
+            ),
+            include_shape_payloads=cls._optional_bool(
+                payload,
+                ViewerPayloadControlField.INCLUDE_SHAPE_PAYLOADS,
+                VIEWER_PAYLOAD_INCLUDE_SHAPE_PAYLOADS_DEFAULT,
+            ),
+            max_shape_payloads=cls._optional_nonnegative_int(
+                payload,
+                ViewerPayloadControlField.MAX_SHAPE_PAYLOADS,
+                VIEWER_PAYLOAD_MAX_SHAPE_PAYLOADS_DEFAULT,
+            ),
+        )
+
+    def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
+        payload: dict[str, ViewerControlWireValue] = {
+            ViewerPayloadControlField.INCLUDE_ARRAY_VALUES.value: (
+                self.include_array_values
+            ),
+            ViewerPayloadControlField.MAX_ARRAY_ELEMENTS.value: (
+                self.max_array_elements
+            ),
+            ViewerPayloadControlField.INCLUDE_SHAPE_PAYLOADS.value: (
+                self.include_shape_payloads
+            ),
+            ViewerPayloadControlField.MAX_SHAPE_PAYLOADS.value: (
+                self.max_shape_payloads
+            ),
+        }
+        if self.route_key is not None:
+            payload[ViewerPayloadControlField.ROUTE_KEY.value] = self.route_key
+        return payload
+
+    @staticmethod
+    def _optional_str(
+        payload: Mapping[str, ViewerControlWireValue],
+        field: ViewerPayloadControlField,
+    ) -> str | None:
+        if field.value not in payload:
+            return None
+        value = payload[field.value]
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError(
+                f"Viewer payload control field {field.value!r} must be a string."
+            )
+        return value
+
+    @staticmethod
+    def _optional_bool(
+        payload: Mapping[str, ViewerControlWireValue],
+        field: ViewerPayloadControlField,
+        fallback: bool,
+    ) -> bool:
+        if field.value not in payload:
+            return fallback
+        value = payload[field.value]
+        if not isinstance(value, bool):
+            raise TypeError(
+                f"Viewer payload control field {field.value!r} must be a bool."
+            )
+        return value
+
+    @staticmethod
+    def _resolved_bool_override(
+        field: ViewerPayloadControlField,
+        value: bool | None,
+        fallback: bool,
+    ) -> bool:
+        if value is None:
+            return fallback
+        if not isinstance(value, bool):
+            raise TypeError(
+                f"Viewer payload control field {field.value!r} must be a bool."
+            )
+        return value
+
+    @staticmethod
+    def _optional_nonnegative_int(
+        payload: Mapping[str, ViewerControlWireValue],
+        field: ViewerPayloadControlField,
+        fallback: int,
+    ) -> int:
+        if field.value not in payload:
+            return fallback
+        value = payload[field.value]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(
+                f"Viewer payload control field {field.value!r} must be an integer."
+            )
+        if value < 0:
+            raise ValueError(
+                f"Viewer payload control field {field.value!r} must be nonnegative."
+            )
+        return value
+
+    @staticmethod
+    def _resolved_nonnegative_int_override(
+        field: ViewerPayloadControlField,
+        value: int | None,
+        fallback: int,
+    ) -> int:
+        if value is None:
+            return fallback
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(
+                f"Viewer payload control field {field.value!r} must be an integer."
+            )
+        if value < 0:
+            raise ValueError(
+                f"Viewer payload control field {field.value!r} must be nonnegative."
+            )
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +323,9 @@ class ViewerComponentValueOrdering:
         return (1, cls.natural_text_key(text), type(value).__name__, text)
 
     @classmethod
-    def tuple_key(cls, values: tuple[ViewerComponentValue, ...]) -> ComponentTupleSortKey:
+    def tuple_key(
+        cls, values: tuple[ViewerComponentValue, ...]
+    ) -> ComponentTupleSortKey:
         return tuple(cls.key(value) for value in values)
 
     @classmethod
@@ -468,7 +666,9 @@ class DetachedViewerPythonExpression:
     @classmethod
     def symbol(cls, name: str) -> "DetachedViewerPythonExpression":
         if not name.isidentifier():
-            raise ValueError(f"Detached viewer symbol is not a valid identifier: {name!r}")
+            raise ValueError(
+                f"Detached viewer symbol is not a valid identifier: {name!r}"
+            )
         return cls(name)
 
 
@@ -483,7 +683,9 @@ class DetachedViewerPythonArguments:
         cls,
         *values: ViewerLaunchLiteral,
     ) -> "DetachedViewerPythonArguments":
-        return cls(tuple(DetachedViewerPythonExpression.literal(value) for value in values))
+        return cls(
+            tuple(DetachedViewerPythonExpression.literal(value) for value in values)
+        )
 
     def append(
         self,
@@ -814,6 +1016,7 @@ class ViewerControlPingRequest:
             require_ready=policy.require_ready,
         )
 
+
 @dataclass(frozen=True, slots=True)
 class ViewerControlMessageRequest:
     """Typed REQ/REP control-message request shared by viewer visualizers."""
@@ -836,9 +1039,7 @@ class ViewerControlMessageRequest:
             socket.setsockopt(zmq.RCVTIMEO, int(self.timeout * 1000))
             socket.connect(self.endpoint.control_url())
             socket.send(
-                pickle.dumps(
-                    {ViewerControlResponseField.TYPE.value: self.message_type}
-                )
+                pickle.dumps({ViewerControlResponseField.TYPE.value: self.message_type})
             )
             payload = pickle.loads(socket.recv())
             if not isinstance(payload, Mapping):
@@ -1027,7 +1228,9 @@ class ManagedViewerLifecycleMixin(
     def start(self, detached: bool = True) -> subprocess.Popen[bytes]:
         self.start_viewer(async_mode=False)
         if self.process is None:
-            raise RuntimeError(f"{self.viewer_process_label} viewer process failed to start.")
+            raise RuntimeError(
+                f"{self.viewer_process_label} viewer process failed to start."
+            )
         return self.process
 
     @property

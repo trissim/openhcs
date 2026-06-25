@@ -15,6 +15,22 @@ def test_capability_registry_declares_schema_and_unique_names():
     assert len(names) == len(set(names))
 
 
+def test_health_capability_declares_mcp_reliability_contract():
+    registry = get_capability_registry()
+    capabilities = {capability.name: capability for capability in registry.capabilities}
+
+    health = capabilities["openhcs_health_check"]
+
+    assert health.service == "capability_registry"
+    assert "process identity" in health.description
+    assert "source freshness" in health.description
+    assert health.data_exposure == (
+        "mcp_process_identity",
+        "mcp_source_freshness",
+    )
+    assert health.output_type == "McpServerHealthResult"
+
+
 def test_mutating_tools_must_declare_side_effects():
     mutating_tool = AgentCapabilitySpec(
         name="openhcs_create_something",
@@ -39,6 +55,8 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
     status = capabilities["openhcs_ui_bridge_status"]
     read_document = capabilities["openhcs_ui_get_code_document"]
     apply_document = capabilities["openhcs_ui_apply_code_document"]
+    selected_workflow = capabilities["openhcs_ui_selected_plate_workflow"]
+    widget_tree = capabilities["openhcs_ui_get_widget_tree"]
     restore_snapshot = capabilities["openhcs_ui_restore_snapshot"]
     operation_status = capabilities["openhcs_ui_get_operation_status"]
 
@@ -47,7 +65,22 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
     assert read_document.data_exposure == ("local_paths_in_source",)
     assert read_document.security_requirements == ("ui_bridge_auth_token",)
     assert apply_document.side_effects == ("mutates_running_ui_state",)
-    assert apply_document.data_exposure == ("local_paths_in_source",)
+    assert apply_document.output_type == "UiCodeDocumentApplyResult"
+    assert apply_document.data_exposure == (
+        "local_paths_in_source",
+        "ui_revision_tokens",
+        "object_state_snapshot_refs",
+        "object_state_undo_targets",
+    )
+    assert selected_workflow.side_effects == (
+        "may_mutate_running_ui_state",
+        "may_start_ui_workflow",
+    )
+    assert widget_tree.output_type == "UiWidgetTreeResult"
+    assert "ui_clickable_geometry" in widget_tree.data_exposure
+    assert "ui_widget_enabled_state" in widget_tree.data_exposure
+    assert "ui_action_kinds" in widget_tree.data_exposure
+    assert "action kinds" in widget_tree.description
     assert restore_snapshot.side_effects == (
         "mutates_running_ui_state",
         "time_travels_ui_state",

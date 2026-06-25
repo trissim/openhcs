@@ -15,6 +15,7 @@ class CapabilityKind(Enum):
 
 
 class AgentContractName(Enum):
+    MCP_SERVER_HEALTH_RESULT = "McpServerHealthResult"
     PIPELINE_REF = "PipelineRef"
     ORCHESTRATOR_SESSION_REF = "OrchestratorSessionRef"
     EXECUTION_JOB_REF = "ExecutionJobRef"
@@ -26,11 +27,15 @@ class AgentContractName(Enum):
     UI_WINDOW_FOCUS_RESULT = "UiWindowFocusResult"
     UI_WINDOW_NAVIGATE_RESULT = "UiWindowNavigateResult"
     UI_WINDOW_SNAPSHOT_RESULT = "UiWindowSnapshotResult"
+    UI_WIDGET_TREE_RESULT = "UiWidgetTreeResult"
+    UI_SELECTED_PLATE_WORKFLOW_RESULT = "UiSelectedPlateWorkflowResult"
+    UI_CODE_DOCUMENT_APPLY_RESULT = "UiCodeDocumentApplyResult"
     UI_OBJECT_STATE_SCOPE_CATALOG = "UiObjectStateScopeCatalog"
     UI_SNAPSHOT_RESTORE_RESULT = "UiSnapshotRestoreResult"
     VIEWER_WINDOW_PROBE_RESULT = "ViewerWindowProbeResult"
     VIEWER_WINDOW_SNAPSHOT_RESULT = "ViewerWindowSnapshotResult"
     VIEWER_WINDOW_STATE_RESULT = "ViewerWindowStateResult"
+    VIEWER_WINDOW_PAYLOAD_RESULT = "ViewerWindowPayloadResult"
     VIEWER_WINDOW_VALIDATION_SUMMARY_RESULT = "ViewerWindowValidationSummaryResult"
     ARTIFACT_PLAN_INSPECTION = "ArtifactPlanInspection"
 
@@ -115,9 +120,13 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         name="openhcs_health_check",
         kind=CapabilityKind.TOOL,
         title="Health check",
-        description="Reports basic OpenHCS agent server health and schema version.",
+        description=(
+            "Reports OpenHCS MCP health, schema version, server process identity, "
+            "and source freshness for stale-process diagnostics."
+        ),
         service="capability_registry",
-        output_type="dict",
+        data_exposure=("mcp_process_identity", "mcp_source_freshness"),
+        output_type=AgentContractName.MCP_SERVER_HEALTH_RESULT.value,
     ),
     AgentCapabilitySpec(
         name="openhcs_list_capabilities",
@@ -357,7 +366,7 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         name="openhcs_get_runtime_server_execution_status",
         kind=CapabilityKind.TOOL,
         title="Get runtime execution status",
-        description="Returns raw ZMQ execution status from a running OpenHCS runtime server.",
+        description="Returns a bounded execution-status projection from a running OpenHCS runtime server.",
         service="runtime_server",
         input_type="RuntimeExecutionStatusRequest",
         output_type="RuntimeExecutionStatus",
@@ -394,6 +403,25 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         ),
         input_type="ViewerWindowStateRequest",
         output_type=AgentContractName.VIEWER_WINDOW_STATE_RESULT.value,
+    ),
+    AgentCapabilitySpec(
+        name="openhcs_get_viewer_window_payloads",
+        kind=CapabilityKind.TOOL,
+        title="Get viewer window payloads",
+        description=(
+            "Returns bounded per-layer, per-axis image and shape payload records "
+            "from a running viewer control endpoint."
+        ),
+        service="viewer_window",
+        runtime_requirements=("running_openhcs_viewer_server",),
+        data_exposure=(
+            "viewer_payload_records",
+            "viewer_axis_coordinates",
+            "viewer_shape_payloads",
+            "viewer_array_values",
+        ),
+        input_type="ViewerWindowPayloadRequest",
+        output_type=AgentContractName.VIEWER_WINDOW_PAYLOAD_RESULT.value,
     ),
     AgentCapabilitySpec(
         name="openhcs_probe_viewer_window",
@@ -501,6 +529,18 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         output_type=AgentContractName.UI_ACTION_INVOKE_RESULT.value,
     ),
     AgentCapabilitySpec(
+        name="openhcs_ui_selected_plate_workflow",
+        kind=CapabilityKind.TOOL,
+        title="Selected plate workflow",
+        description="Dispatches init, compile, or run for the current PlateManager selection through the UI bridge.",
+        service="ui_bridge",
+        side_effects=("may_mutate_running_ui_state", "may_start_ui_workflow"),
+        runtime_requirements=("running_openhcs_ui_bridge",),
+        security_requirements=("ui_bridge_auth_token",),
+        input_type="UiSelectedPlateWorkflowRequest",
+        output_type=AgentContractName.UI_SELECTED_PLATE_WORKFLOW_RESULT.value,
+    ),
+    AgentCapabilitySpec(
         name="openhcs_ui_list_windows",
         kind=CapabilityKind.TOOL,
         title="List UI windows",
@@ -560,6 +600,28 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         output_type=AgentContractName.UI_WINDOW_SNAPSHOT_RESULT.value,
     ),
     AgentCapabilitySpec(
+        name="openhcs_ui_get_widget_tree",
+        kind=CapabilityKind.TOOL,
+        title="Get UI widget tree",
+        description=(
+            "Returns a generic window-manager widget projection for one running "
+            "UI window, including visible text, enabled state, clickable "
+            "geometry, and action kinds for blind interaction."
+        ),
+        service="ui_bridge",
+        runtime_requirements=("running_openhcs_ui_bridge",),
+        data_exposure=(
+            "ui_widget_tree",
+            "ui_clickable_geometry",
+            "ui_visible_text",
+            "ui_widget_enabled_state",
+            "ui_action_kinds",
+        ),
+        security_requirements=("ui_bridge_auth_token",),
+        input_type="UiWidgetTreeRequest",
+        output_type=AgentContractName.UI_WIDGET_TREE_RESULT.value,
+    ),
+    AgentCapabilitySpec(
         name="openhcs_ui_list_object_state_scopes",
         kind=CapabilityKind.TOOL,
         title="List ObjectState scopes",
@@ -599,14 +661,23 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         name="openhcs_ui_apply_code_document",
         kind=CapabilityKind.TOOL,
         title="Apply UI code document",
-        description="Applies an edited UI code document through the running PyQt workflow with revision protection.",
+        description=(
+            "Applies an edited UI code document through the running PyQt workflow "
+            "with revision protection, returning the resulting ObjectState snapshot, "
+            "undo snapshot, and revision tokens."
+        ),
         service="ui_bridge",
         side_effects=("mutates_running_ui_state",),
         runtime_requirements=("running_openhcs_ui_bridge",),
-        data_exposure=("local_paths_in_source",),
+        data_exposure=(
+            "local_paths_in_source",
+            "ui_revision_tokens",
+            "object_state_snapshot_refs",
+            "object_state_undo_targets",
+        ),
         security_requirements=("ui_bridge_auth_token",),
         input_type="UiCodeDocumentApplyRequest",
-        output_type="UiCodeDocumentApplyResult",
+        output_type=AgentContractName.UI_CODE_DOCUMENT_APPLY_RESULT.value,
     ),
     AgentCapabilitySpec(
         name="openhcs_ui_list_snapshots",

@@ -10,6 +10,7 @@ from openhcs.agent.dto.common import (
     JsonValue,
     RenderedSource,
 )
+from openhcs.agent.dto.mcp import McpServerHealthResult
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
     WindowSnapshotCaptureSpec,
@@ -52,9 +53,13 @@ from openhcs.agent.dto.pipeline import (
     PipelineValidationResult,
 )
 from openhcs.agent.dto.viewer import (
-    ViewerWindowLayerValidationSummary,
     ViewerWindowDescriptor,
+    ViewerWindowLayerPayloads,
     ViewerWindowLayerState,
+    ViewerWindowLayerValidationSummary,
+    ViewerWindowPayloadRecord,
+    ViewerWindowPayloadRequest,
+    ViewerWindowPayloadResult,
     ViewerWindowProbeResult,
     ViewerWindowSnapshotRequest,
     ViewerWindowSnapshotResult,
@@ -113,6 +118,9 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeVisibility,
     UiPlateManagerRowState,
     UiPlateManagerState,
+    UiSelectedPlateWorkflowKind,
+    UiSelectedPlateWorkflowRequest,
+    UiSelectedPlateWorkflowResult,
     UiStateSurfaceDocument,
     UiStateSurfaceEnvelope,
     UiStateSurfaceCatalog,
@@ -129,6 +137,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiTimeTravelRuntimeState,
     UiTimeTravelHeadRequest,
     UiWidgetIdentity,
+    UiWidgetRect,
+    UiWidgetTreeNode,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,

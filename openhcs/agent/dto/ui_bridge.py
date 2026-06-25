@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from pyqt_reactive.services.widget_tree_projection_config import (
+    WidgetNodeIdentity,
+    WidgetTreeProjectionControls,
+)
+
 from openhcs.core.selection import (
     SelectedAllSelectionMode as UiCodeDocumentSelectionMode,
     SelectedScopeIdsCarrier,
@@ -37,6 +42,18 @@ class UiCodeDocumentId(str, Enum):
 
 class UiStateSurfaceId(str, Enum):
     PLATE_MANAGER = "plate_manager.state"
+
+
+class UiWidgetId(str, Enum):
+    PLATE_MANAGER = "plate_manager"
+
+
+class UiSelectedPlateWorkflowKind(str, Enum):
+    """Agent-facing workflow commands for the current PlateManager selection."""
+
+    INIT = "init_plate"
+    COMPILE = "compile_plate"
+    RUN = "run_plate"
 
 
 class UiBridgeOperationStatus(str, Enum):
@@ -116,11 +133,6 @@ class UiActionIdentity(UiWidgetIdentity):
 class UiWindowIdentity:
     window_id: str
 
-    def as_window_identity(self) -> "UiWindowIdentity":
-        if type(self) is UiWindowIdentity:
-            return self
-        return UiWindowIdentity(window_id=self.window_id)
-
 
 @dataclass(frozen=True, kw_only=True)
 class UiObjectStateScopeIdentity:
@@ -164,9 +176,9 @@ class UiCodeDocumentOptionalBaseRevision:
     base_revision_token: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, kw_only=True)
 class UiTimeTravelRuntimeState:
-    active: bool
+    active: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,10 +205,13 @@ class UiBridgeConfirmationRequirementCarrier:
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeConnectionFields(UiBridgeInstanceIdentity, UiBridgeDescriptorFileRef):
+class UiBridgeConnectionFields(
+    ExecutionConnectionSpec,
+    UiBridgeInstanceIdentity,
+    UiBridgeDescriptorFileRef,
+):
     """Sparse connection-field projection for descriptor/env/MCP inputs."""
 
-    connection: ExecutionConnectionSpec | None = None
     connection_fields: tuple[str, ...] = ()
     timeout_ms: int | None = None
     auth_token: str | None = None
@@ -224,16 +239,11 @@ class UiBridgeConnectionFields(UiBridgeInstanceIdentity, UiBridgeDescriptorFileR
             )
             if value is not None
         )
-        connection = None
-        if connection_fields:
-            connection = ExecutionConnectionSpec(
-                host=UiBridgeConnectionDefault.host(host),
-                port=port,
-                transport_mode=transport_mode,
-                persistent=UiBridgeConnectionDefault.persistent(persistent),
-            )
         return cls(
-            connection=connection,
+            host=UiBridgeConnectionDefault.host(host),
+            port=port,
+            transport_mode=transport_mode,
+            persistent=UiBridgeConnectionDefault.persistent(persistent),
             connection_fields=connection_fields,
             timeout_ms=timeout_ms,
             auth_token=auth_token,
@@ -278,37 +288,38 @@ class UiBridgeConnectionSpec(
     ) -> "UiBridgeConnectionSpec":
         if defaults is None:
             defaults = cls()
-        connection = fields.connection
         connection_fields = set(fields.connection_fields)
 
         def connection_field(field_name: str, field_value, default_value):
-            if connection is not None and field_name in connection_fields:
+            if field_name in connection_fields:
                 return field_value
             return default_value
 
         return cls(
             host=connection_field(
                 "host",
-                connection.host if connection is not None else None,
+                fields.host,
                 defaults.host,
             ),
             port=connection_field(
                 "port",
-                connection.port if connection is not None else None,
+                fields.port,
                 defaults.port,
             ),
             transport_mode=connection_field(
                 "transport_mode",
-                connection.transport_mode if connection is not None else None,
+                fields.transport_mode,
                 defaults.transport_mode,
             ),
             persistent=connection_field(
                 "persistent",
-                connection.persistent if connection is not None else None,
+                fields.persistent,
                 defaults.persistent,
             ),
             timeout_ms=(
-                fields.timeout_ms if fields.timeout_ms is not None else defaults.timeout_ms
+                fields.timeout_ms
+                if fields.timeout_ms is not None
+                else defaults.timeout_ms
             ),
             auth_token=(
                 fields.auth_token
@@ -349,10 +360,11 @@ class UiBridgeDescriptorFile(
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeDescriptorWirePayload(UiBridgeDescriptorEnvelope):
+class UiBridgeDescriptorWirePayload(
+    ExecutionConnectionProjection,
+    UiBridgeDescriptorEnvelope,
+):
     """JSON descriptor file payload written by a running UI bridge."""
-
-    connection: ExecutionConnectionSpec
 
     @classmethod
     def from_descriptor(
@@ -491,6 +503,20 @@ class UiCatalogPageMetadata:
     next_offset: int | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class UiCatalogPageCarrier:
+    """Inherited carrier for catalog responses that expose a nested page object."""
+
+    page: UiCatalogPageMetadata | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class UiFieldCatalogPageCarrier:
+    """Inherited carrier for field-list pagination nested under a scope summary."""
+
+    field_page: UiCatalogPageMetadata | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class UiPageRequest:
     """Shared page request for UI bridge catalogs."""
@@ -622,10 +648,9 @@ class UiActionSummary(SelectionModeCarrier):
 
 
 @dataclass(frozen=True, slots=True)
-class UiActionCatalog:
+class UiActionCatalog(UiCatalogPageCarrier):
     schema_version: str
     actions: tuple[UiActionSummary, ...]
-    page: UiCatalogPageMetadata | None = None
     errors: tuple[AgentError, ...] = ()
     warnings: tuple[AgentWarning, ...] = ()
 
@@ -681,9 +706,8 @@ class UiWindowSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class UiWindowCatalog(AgentResultEnvelope):
+class UiWindowCatalog(AgentResultEnvelope, UiCatalogPageCarrier):
     windows: tuple[UiWindowSummary, ...]
-    page: UiCatalogPageMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,18 +763,70 @@ class UiWindowCloseResult(AgentResultEnvelope, UiWindowIdentity):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class UiWindowSnapshotRequest(UiWindowOperationRequest):
-    snapshot: WindowSnapshotCaptureSpec
+class UiWindowSnapshotRequest(
+    WindowSnapshotCaptureSpec,
+    UiWindowOperationRequest,
+):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
-class UiWindowSnapshotResult(AgentResultEnvelope, UiWindowIdentity):
+class UiWindowSnapshotResult(
+    WindowSnapshotCaptureSpec,
+    AgentResultEnvelope,
+    UiWindowIdentity,
+):
     captured: bool
     resource: AgentResourceRef | None = None
     summary: UiWindowSummary | None = None
     width: int | None = None
     height: int | None = None
-    snapshot: WindowSnapshotCaptureSpec | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWidgetTreeRequest(WidgetTreeProjectionControls, UiWindowOperationRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class UiWidgetRect:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True, slots=True)
+class UiWidgetTreeNode(WidgetNodeIdentity):
+    visible: bool
+    enabled: bool
+    geometry: UiWidgetRect
+    global_geometry: UiWidgetRect
+    tool_tip: str
+    status_tip: str
+    whats_this: str
+    window_title: str
+    text: str | None
+    text_truncated: bool
+    title: str | None
+    action_kinds: tuple[str, ...]
+    clickable: bool
+    actionable: bool
+    checkable: bool | None
+    checked: bool | None
+    current_index: int | None
+    current_text: str | None
+    item_count: int | None
+    children: tuple["UiWidgetTreeNode", ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UiWidgetTreeResult(AgentResultEnvelope, UiWindowIdentity):
+    projected: bool
+    root: UiWidgetTreeNode | None = None
+    summary: UiWindowSummary | None = None
+    widget_count: int = 0
+    actionable_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -762,8 +838,15 @@ class UiObjectStateFieldProvenance:
     source_field_path: str | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class UiObjectStateFieldProvenanceCarrier:
+    """Inherited carrier for field summaries with resolved provenance."""
+
+    provenance: UiObjectStateFieldProvenance | None = None
+
+
 @dataclass(frozen=True, slots=True)
-class UiObjectStateFieldSummary:
+class UiObjectStateFieldSummary(UiObjectStateFieldProvenanceCarrier):
     """Field-level ObjectState semantics without exposing raw field values."""
 
     schema_version: str
@@ -775,11 +858,10 @@ class UiObjectStateFieldSummary:
     dirty: bool
     signature_diff: bool
     last_changed: bool
-    provenance: UiObjectStateFieldProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateScopeSummary:
+class UiObjectStateScopeSummary(UiFieldCatalogPageCarrier):
     schema_version: str
     identity: UiObjectStateScopeIdentity
     object_type: str
@@ -789,17 +871,18 @@ class UiObjectStateScopeSummary:
     last_changed_field: str | None = None
     registered: bool = True
     fields: tuple[UiObjectStateFieldSummary, ...] = ()
-    field_page: UiCatalogPageMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateScopeCatalog(AgentResultEnvelope):
+class UiObjectStateScopeCatalog(
+    AgentResultEnvelope,
+    UiTimeTravelRuntimeState,
+    UiCatalogPageCarrier,
+):
     object_state_token: int
     current_branch: str
     current_snapshot_index: int
-    time_travel_state: UiTimeTravelRuntimeState
     scopes: tuple[UiObjectStateScopeSummary, ...]
-    page: UiCatalogPageMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -870,6 +953,9 @@ class UiCodeDocumentApplyResult(UiCodeDocumentIdentity):
     outcome: str = "not_applied"
     operation_id: str | None = None
     new_revision_token: str | None = None
+    current_revision_token: str | None = None
+    current_snapshot: UiSnapshotRef | None = None
+    undo_snapshot: UiSnapshotRef | None = None
     pre_apply_snapshot: UiSnapshotRef | None = None
     post_apply_snapshot: UiSnapshotRef | None = None
     errors: tuple[AgentError, ...] = ()
@@ -877,12 +963,31 @@ class UiCodeDocumentApplyResult(UiCodeDocumentIdentity):
 
 
 @dataclass(frozen=True, slots=True)
-class UiSnapshotCatalog:
+class UiSelectedPlateWorkflowRequest(
+    SelectedScopeIdsCarrier,
+    UiBridgeConfirmationRequirementCarrier,
+    UiMutationRequestTokenCarrier,
+):
+    workflow: UiSelectedPlateWorkflowKind
+    observed_selection_revision_token: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiSelectedPlateWorkflowResult:
+    schema_version: str
+    workflow: UiSelectedPlateWorkflowKind
+    action_result: UiActionInvokeResult
+    state_surface_id: str = UiStateSurfaceId.PLATE_MANAGER.value
+    errors: tuple[AgentError, ...] = ()
+    warnings: tuple[AgentWarning, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class UiSnapshotCatalog(UiTimeTravelRuntimeState):
     schema_version: str
     current_branch: str
     current_snapshot_index: int
     object_state_token: int
-    time_travel_state: UiTimeTravelRuntimeState
     snapshots: tuple[UiSnapshotRef, ...]
     branches: tuple[UiBranchRef, ...]
     warnings: tuple[AgentWarning, ...] = ()

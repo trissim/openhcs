@@ -12,6 +12,12 @@ from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtWidgets import QApplication, QWidget
 from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
 from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
+from pyqt_reactive.services.widget_tree_projection import (
+    WidgetDescriptor,
+    WidgetRect,
+    WidgetTreeProjection,
+    WidgetTreeProjectionService,
+)
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import WindowNavigationRequest
 from pyqt_reactive.widgets.shared import (
@@ -37,9 +43,14 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowManagerScope,
     UiWindowNavigateRequest,
     UiWindowNavigateResult,
+    UiWindowOperationRequest,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
+    UiWidgetRect,
+    UiWidgetTreeNode,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 from openhcs.runtime.qt_window_snapshot import (
     QtWindowSnapshotRequest,
@@ -166,6 +177,17 @@ class WindowProjectionTarget:
     summary: UiWindowSummary
 
 
+class WindowProjectionResultAuthority:
+    """Shared agent-result fragments for UI window projection operations."""
+
+    @staticmethod
+    def unknown_window(identity: UiWindowIdentity) -> AgentError:
+        return AgentError(
+            code="unknown_ui_window",
+            message=f"Unknown or closed UI window: {identity.window_id!r}",
+        )
+
+
 class WindowCloseResultBoundaryPolicy:
     """Single result boundary for UI window close operations."""
 
@@ -268,6 +290,45 @@ class WindowCatalogProjectionABC(
     @abstractmethod
     def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
         raise NotImplementedError
+
+    @abstractmethod
+    def widget_tree(self, request: UiWidgetTreeRequest) -> UiWidgetTreeResult:
+        raise NotImplementedError
+
+
+class WindowTargetOperationProjectionMixin(ABC):
+    """Shared target-backed window operations for projection providers."""
+
+    @abstractmethod
+    def target_for_operation(
+        self,
+        request: UiWindowOperationRequest,
+    ) -> WindowProjectionTarget | None:
+        raise NotImplementedError
+
+    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
+        target = self.target_for_operation(request)
+        snapshot_results = UiWindowSnapshotResultFactory()
+        if target is None:
+            return snapshot_results.error(
+                request,
+                WindowProjectionResultAuthority.unknown_window(
+                    request
+                ),
+            )
+        return snapshot_results.capture(request, target)
+
+    def widget_tree(self, request: UiWidgetTreeRequest) -> UiWidgetTreeResult:
+        target = self.target_for_operation(request)
+        widget_tree_results = UiWidgetTreeResultFactory()
+        if target is None:
+            return widget_tree_results.error(
+                request,
+                WindowProjectionResultAuthority.unknown_window(
+                    request
+                ),
+            )
+        return widget_tree_results.project(request, target)
 
 
 @dataclass(frozen=True, slots=True)
@@ -489,7 +550,10 @@ class DynamicScopeWindowProjection:
         )
 
 
-class QtTopLevelWindowProjection(WindowCatalogProjectionABC):
+class QtTopLevelWindowProjection(
+    WindowTargetOperationProjectionMixin,
+    WindowCatalogProjectionABC,
+):
     """Project visible Qt top-level windows that are not WindowManager scopes."""
 
     projection_id = QT_TOP_LEVEL_PROVIDER_ID
@@ -503,7 +567,6 @@ class QtTopLevelWindowProjection(WindowCatalogProjectionABC):
         main_window: "OpenHCSMainWindow | None",
     ) -> None:
         self._main_window = main_window
-        self._snapshot_results = UiWindowSnapshotResultFactory()
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
         excluded_widgets = self._excluded_widgets()
@@ -522,17 +585,22 @@ class QtTopLevelWindowProjection(WindowCatalogProjectionABC):
                 return WindowProjectionTarget(widget=widget, summary=self.summary(widget))
         return None
 
+    def target_for_operation(
+        self,
+        request: UiWindowOperationRequest,
+    ) -> WindowProjectionTarget | None:
+        return self.target(request)
+
     def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
-        target = self.target(request.as_window_identity())
+        target = self.target(request)
         if target is None:
             return UiWindowFocusResult(
                 schema_version=SCHEMA_VERSION,
                 window_id=request.window_id,
                 focused=False,
                 errors=(
-                    AgentError(
-                        code="unknown_ui_window",
-                        message=f"Unknown or closed UI window: {request.window_id!r}",
+                    WindowProjectionResultAuthority.unknown_window(
+                        request
                     ),
                 ),
             )
@@ -565,7 +633,7 @@ class QtTopLevelWindowProjection(WindowCatalogProjectionABC):
         )
 
     def close(self, request: UiWindowCloseRequest) -> UiWindowCloseResult:
-        target = self.target(request.as_window_identity())
+        target = self.target(request)
         if target is None:
             return WindowCloseResultBoundaryPolicy.error(
                 request,
@@ -590,18 +658,6 @@ class QtTopLevelWindowProjection(WindowCatalogProjectionABC):
             f"Qt rejected the close request for UI window: {request.window_id!r}",
             summary=target.summary,
         )
-
-    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
-        target = self.target(request.as_window_identity())
-        if target is None:
-            return self._snapshot_results.error(
-                request,
-                AgentError(
-                    code="unknown_ui_window",
-                    message=f"Unknown or closed UI window: {request.window_id!r}",
-                ),
-            )
-        return self._snapshot_results.capture(request, target)
 
     @classmethod
     def summary(cls, widget: QWidget) -> UiWindowSummary:
@@ -666,7 +722,7 @@ class UiWindowSnapshotResultFactory:
             snapshot = self._snapshotter.capture(
                 QtWindowSnapshotRequest(
                     widget=target.widget,
-                    capture=request.snapshot,
+                    capture=request,
                     subject_id=request.window_id,
                     title=target.summary.title,
                 )
@@ -680,6 +736,8 @@ class UiWindowSnapshotResultFactory:
         return UiWindowSnapshotResult(
             schema_version=SCHEMA_VERSION,
             window_id=request.window_id,
+            output_dir_path=request.output_dir_path,
+            capture_scope=request.capture_scope,
             captured=True,
             resource=AgentResourceRef(
                 uri=snapshot.uri,
@@ -692,7 +750,6 @@ class UiWindowSnapshotResultFactory:
             summary=target.summary,
             width=snapshot.width,
             height=snapshot.height,
-            snapshot=snapshot.capture,
         )
 
     @staticmethod
@@ -705,13 +762,113 @@ class UiWindowSnapshotResultFactory:
         return UiWindowSnapshotResult(
             schema_version=SCHEMA_VERSION,
             window_id=request.window_id,
+            output_dir_path=request.output_dir_path,
+            capture_scope=request.capture_scope,
             captured=False,
             summary=summary,
             errors=(error,),
         )
 
 
-class UiWindowProjectionService(WindowCatalogProjectionABC):
+class UiWidgetTreeResultFactory:
+    """Build UI bridge widget-tree results from resolved Qt window targets."""
+
+    def project(
+        self,
+        request: UiWidgetTreeRequest,
+        target: WindowProjectionTarget,
+    ) -> UiWidgetTreeResult:
+        try:
+            projection = WidgetTreeProjectionService.project(
+                target.widget,
+                policy=request.as_projection_policy(),
+            )
+        except Exception as exc:
+            return self.error(
+                request,
+                AgentError.from_exception("ui_widget_tree_projection_failed", exc),
+                summary=target.summary,
+            )
+        return self.from_projection(request, target.summary, projection)
+
+    @classmethod
+    def from_projection(
+        cls,
+        request: UiWidgetTreeRequest,
+        summary: UiWindowSummary,
+        projection: WidgetTreeProjection,
+    ) -> UiWidgetTreeResult:
+        return UiWidgetTreeResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            projected=True,
+            root=cls.node(projection.root),
+            summary=summary,
+            widget_count=projection.widget_count,
+            actionable_count=projection.actionable_count,
+        )
+
+    @classmethod
+    def node(cls, descriptor: WidgetDescriptor) -> UiWidgetTreeNode:
+        return UiWidgetTreeNode(
+            path=descriptor.path,
+            path_id=descriptor.path_id,
+            child_index=descriptor.child_index,
+            class_name=descriptor.class_name,
+            object_name=descriptor.object_name,
+            visible=descriptor.visible,
+            enabled=descriptor.enabled,
+            geometry=cls.rect(descriptor.geometry),
+            global_geometry=cls.rect(descriptor.global_geometry),
+            tool_tip=descriptor.tool_tip,
+            status_tip=descriptor.status_tip,
+            whats_this=descriptor.whats_this,
+            window_title=descriptor.window_title,
+            accessible_name=descriptor.accessible_name,
+            accessible_description=descriptor.accessible_description,
+            text=descriptor.text,
+            text_truncated=descriptor.text_truncated,
+            title=descriptor.title,
+            action_kinds=tuple(kind.value for kind in descriptor.action_kinds),
+            clickable=descriptor.clickable,
+            actionable=descriptor.actionable,
+            checkable=descriptor.checkable,
+            checked=descriptor.checked,
+            current_index=descriptor.current_index,
+            current_text=descriptor.current_text,
+            item_count=descriptor.item_count,
+            children=tuple(cls.node(child) for child in descriptor.children),
+        )
+
+    @staticmethod
+    def rect(rect: WidgetRect) -> UiWidgetRect:
+        return UiWidgetRect(
+            x=rect.x,
+            y=rect.y,
+            width=rect.width,
+            height=rect.height,
+        )
+
+    @staticmethod
+    def error(
+        request: UiWidgetTreeRequest,
+        error: AgentError,
+        *,
+        summary: UiWindowSummary | None = None,
+    ) -> UiWidgetTreeResult:
+        return UiWidgetTreeResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            projected=False,
+            summary=summary,
+            errors=(error,),
+        )
+
+
+class UiWindowProjectionService(
+    WindowTargetOperationProjectionMixin,
+    WindowCatalogProjectionABC,
+):
     """Project the main-window/WindowManager window graph into agent DTOs."""
 
     projection_id = MAIN_WINDOW_PROVIDER_ID
@@ -724,7 +881,6 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
         self._embedded = EmbeddedWindowProjection(main_window)
         self._managed = ManagedWindowProjection(main_window)
         self._dynamic = DynamicScopeWindowProjection()
-        self._snapshot_results = UiWindowSnapshotResultFactory()
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
         route_index = self._route_index()
@@ -748,7 +904,7 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
         return ScopeWindowRegistry.find_handler(identity.window_id) is not None
 
     def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
-        identity = request.as_window_identity()
+        identity = request
         route_index = self._route_index()
         embedded_route = route_index.embedded_route(identity)
         if embedded_route is not None:
@@ -769,19 +925,14 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
             schema_version=SCHEMA_VERSION,
             window_id=identity.window_id,
             focused=False,
-            errors=(
-                AgentError(
-                    code="unknown_ui_window",
-                    message=f"Unknown or closed UI window: {scope.value!r}",
-                ),
-            ),
+            errors=(WindowProjectionResultAuthority.unknown_window(identity),),
         )
 
     def navigate(
         self,
         request: UiWindowNavigateRequest,
     ) -> UiWindowNavigateResult:
-        identity = request.as_window_identity()
+        identity = request
         route_index = self._route_index()
         embedded_route = route_index.embedded_route(identity)
         if embedded_route is not None:
@@ -826,16 +977,11 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
             focused=False,
             navigated=False,
             created=result.created,
-            errors=(
-                AgentError(
-                    code="unknown_ui_window",
-                    message=f"Unknown or closed UI window: {identity.window_id!r}",
-                ),
-            ),
+            errors=(WindowProjectionResultAuthority.unknown_window(identity),),
         )
 
     def close(self, request: UiWindowCloseRequest) -> UiWindowCloseResult:
-        identity = request.as_window_identity()
+        identity = request
         route_index = self._route_index()
         embedded_route = route_index.embedded_route(identity)
         if embedded_route is not None:
@@ -874,21 +1020,15 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
             f"Unknown or closed UI window: {identity.window_id!r}",
         )
 
-    def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
-        identity = request.as_window_identity()
-        target = self._target(
+    def target_for_operation(
+        self,
+        request: UiWindowOperationRequest,
+    ) -> WindowProjectionTarget | None:
+        identity = request
+        return self._target(
             identity,
             create_if_missing=request.open_policy.create_if_missing,
         )
-        if target is None:
-            return self._snapshot_results.error(
-                request,
-                AgentError(
-                    code="unknown_ui_window",
-                    message=f"Unknown or closed UI window: {identity.window_id!r}",
-                ),
-            )
-        return self._snapshot_results.capture(request, target)
 
     def _target(
         self,
@@ -922,6 +1062,24 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
                 summary=self._dynamic.summary(identity),
             )
 
+        if (
+            create_if_missing
+            and ScopeWindowRegistry.find_handler(identity.window_id) is not None
+        ):
+            navigation = ScopeWindowNavigationService.navigate(
+                WindowNavigationRequest(
+                    scope_id=identity.window_id,
+                    create_if_missing=True,
+                )
+            )
+            if navigation.focused:
+                scope_widget = WindowManager.get_window(scope.value)
+                if scope_widget is not None:
+                    return WindowProjectionTarget(
+                        widget=scope_widget,
+                        summary=self._dynamic.summary(identity),
+                    )
+
         return None
 
     @staticmethod
@@ -929,7 +1087,7 @@ class UiWindowProjectionService(WindowCatalogProjectionABC):
         request: UiWindowCloseRequest,
         summary: UiWindowSummary,
     ) -> UiWindowCloseResult:
-        scope = UiWindowManagerScope.from_identity(request.as_window_identity())
+        scope = UiWindowManagerScope.from_identity(request)
         if WindowManager.close_window(scope.value):
             return WindowCloseResultBoundaryPolicy.closed(
                 request,

@@ -29,6 +29,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
     UiMutationReceipt,
+    UiWidgetId,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.config_framework.object_state import ObjectStateRegistry
@@ -71,7 +72,7 @@ from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
 ORCHESTRATOR_DOCUMENT_TITLE = "Plate manager orchestrator config"
 PLATE_MANAGER_STATE_TITLE = "Plate manager state"
 PLATE_MANAGER_ACTIONS_TITLE = "Plate manager actions"
-ORCHESTRATOR_WIDGET_ID = "plate_manager"
+ORCHESTRATOR_WIDGET_ID = UiWidgetId.PLATE_MANAGER.value
 PYTHON_MIME_TYPE = "text/x-python"
 PLATE_MANAGER_STATE_PAYLOAD_SCHEMA = "openhcs.ui.plate_manager_state.v1"
 
@@ -248,7 +249,7 @@ class PlateManagerOrchestratorCodeDocumentProvider(
             schema_version=SCHEMA_VERSION,
             document_id=request.document_id,
             valid=True,
-            normalized_scope_ids=result.payload.plate_paths,
+            normalized_scope_ids=result.plate_paths,
         )
 
     def apply(self, request: UiCodeDocumentApplyRequest) -> UiCodeDocumentApplyResult:
@@ -292,17 +293,22 @@ class PlateManagerOrchestratorCodeDocumentProvider(
                         ),
                     ),
                 )
+            post_snapshot = self._snapshot_provider.current_snapshot()
+            new_revision_token = self._snapshot_provider.revision_token(
+                self.identity.revision_key
+            )
             return UiCodeDocumentApplyResult(
                 schema_version=SCHEMA_VERSION,
                 document_id=request.document_id,
                 applied=True,
                 base_revision_token=request.base_revision_token,
                 outcome="applied",
-                new_revision_token=self._snapshot_provider.revision_token(
-                    self.identity.revision_key
-                ),
+                new_revision_token=new_revision_token,
+                current_revision_token=new_revision_token,
+                current_snapshot=post_snapshot,
+                undo_snapshot=pre_snapshot,
                 pre_apply_snapshot=pre_snapshot,
-                post_apply_snapshot=self._snapshot_provider.current_snapshot(),
+                post_apply_snapshot=post_snapshot,
             )
         except UiCodeDocumentValidationError as exc:
             return UiCodeDocumentApplyResult(

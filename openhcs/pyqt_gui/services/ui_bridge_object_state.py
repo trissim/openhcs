@@ -28,7 +28,6 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeListRequest,
     UiObjectStateScopeSummary,
     UiSemanticAddress,
-    UiTimeTravelRuntimeState,
 )
 from openhcs.config_framework import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
@@ -166,9 +165,7 @@ class ObjectStateScopeProjectionService:
             object_state_token=ObjectStateRegistry.get_token(),
             current_branch=ObjectStateRegistry.get_current_branch(),
             current_snapshot_index=ObjectStateRegistry.get_current_snapshot_index(),
-            time_travel_state=UiTimeTravelRuntimeState(
-                active=ObjectStateRegistry.is_time_traveling()
-            ),
+            active=ObjectStateRegistry.is_time_traveling(),
             scopes=scopes,
         )
 
@@ -417,17 +414,22 @@ class ObjectStateScopeCodeDocumentProvider(UiCodeDocumentProviderABC):
                     ),
                 )
 
+            post_snapshot = self._snapshot_provider.current_snapshot()
+            new_revision_token = self._snapshot_provider.revision_token(
+                address.revision_key
+            )
             return UiCodeDocumentApplyResult(
                 schema_version=SCHEMA_VERSION,
                 document_id=request.document_id,
                 applied=True,
                 base_revision_token=request.base_revision_token,
                 outcome="applied",
-                new_revision_token=self._snapshot_provider.revision_token(
-                    address.revision_key
-                ),
+                new_revision_token=new_revision_token,
+                current_revision_token=new_revision_token,
+                current_snapshot=post_snapshot,
+                undo_snapshot=pre_snapshot,
                 pre_apply_snapshot=pre_snapshot,
-                post_apply_snapshot=self._snapshot_provider.current_snapshot(),
+                post_apply_snapshot=post_snapshot,
             )
         except Exception as exc:
             return self._apply_error(

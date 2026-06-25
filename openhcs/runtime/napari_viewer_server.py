@@ -48,6 +48,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerBatchMessageType,
     ViewerBatchWireField,
     ViewerControlMessageType,
+    ViewerPayloadControlOptions,
     ViewerControlResponseField,
     ViewerControlReplyHeader,
     ViewerControlReplyPayload,
@@ -2052,14 +2053,14 @@ class NapariViewerStateProjection:
     server: "NapariViewerServer"
     viewer: NapariViewerLayerCreator
 
-    def to_wire_mapping(self) -> dict[str, NapariWireValue]:
-        route_keys = self.route_keys()
-        layers = tuple(
-            self.layer_state_for(route_key)
-            for route_key in route_keys
-        )
+    def wire_envelope(
+        self,
+        *,
+        response_type: str,
+        layers: tuple[dict[str, NapariWireValue], ...],
+    ) -> dict[str, NapariWireValue]:
         return {
-            "type": "state_ack",
+            "type": response_type,
             "status": _ACK_SUCCESS,
             "viewer": {
                 "type": "napari",
@@ -2067,18 +2068,35 @@ class NapariViewerStateProjection:
             },
             "layer_count": len(layers),
             "layers": layers,
-            "active_dimension_label_route": (
-                self.server.layer_route_state.active_dimension_label_route
-            ),
-            "viewer_ndim": int(self.viewer.dims.ndim),
-            "current_step": tuple(int(step) for step in self.viewer.dims.current_step),
-            "axis_labels": tuple(str(label) for label in self.viewer.dims.axis_labels),
-            "component_group_count": len(self.server.component_groups),
-            "component_item_count": sum(
-                self.server.component_groups.item_count(route_key)
-                for route_key in route_keys
-            ),
         }
+
+    def to_wire_mapping(self) -> dict[str, NapariWireValue]:
+        route_keys = self.route_keys()
+        layers = tuple(
+            self.layer_state_for(route_key)
+            for route_key in route_keys
+        )
+        wire_mapping = self.wire_envelope(response_type="state_ack", layers=layers)
+        wire_mapping.update(
+            {
+                "active_dimension_label_route": (
+                    self.server.layer_route_state.active_dimension_label_route
+                ),
+                "viewer_ndim": int(self.viewer.dims.ndim),
+                "current_step": tuple(
+                    int(step) for step in self.viewer.dims.current_step
+                ),
+                "axis_labels": tuple(
+                    str(label) for label in self.viewer.dims.axis_labels
+                ),
+                "component_group_count": len(self.server.component_groups),
+                "component_item_count": sum(
+                    self.server.component_groups.item_count(route_key)
+                    for route_key in route_keys
+                ),
+            }
+        )
+        return wire_mapping
 
     def route_keys(self) -> tuple[str, ...]:
         return tuple(
@@ -2311,6 +2329,204 @@ class NapariViewerStateProjection:
         return str(scalar)
 
 
+@dataclass(frozen=True, slots=True)
+class NapariViewerPayloadProjection(NapariViewerStateProjection):
+    """Project live Napari layer payloads with axis-coordinate evidence."""
+
+    request: ViewerPayloadControlOptions
+
+    def to_wire_mapping(self) -> dict[str, NapariWireValue]:
+        layers = tuple(
+            self.layer_payloads_for(route_key)
+            for route_key in self.route_keys()
+        )
+        return self.wire_envelope(response_type="payloads_ack", layers=layers)
+
+    def route_keys(self) -> tuple[str, ...]:
+        route_keys = super().route_keys()
+        if self.request.route_key is None:
+            return route_keys
+        return tuple(
+            route_key for route_key in route_keys if route_key == self.request.route_key
+        )
+
+    def layer_payloads_for(self, route_key: str) -> dict[str, NapariWireValue]:
+        layer_state = self.layer_state_for(route_key)
+        items = self.server.component_groups.existing_items_for(route_key)
+        item_tuple: tuple[NapariStreamLayerItem, ...] = ()
+        if items is not None:
+            item_tuple = tuple(items)
+        dimension_state = self.server.layer_route_state.dimension_state_for(route_key)
+        return {
+            "route_key": route_key,
+            "title": layer_state["title"],
+            "mounted": layer_state["mounted"],
+            "item_count": len(item_tuple),
+            "axis_labels": layer_state["axis_labels"],
+            "stack_axes": layer_state["stack_axes"],
+            "pending_update": layer_state["pending_update"],
+            "payloads": tuple(
+                record
+                for item in item_tuple
+                for record in self.records_for_item(item, route_key, dimension_state)
+            ),
+        }
+
+    def records_for_item(
+        self,
+        item: NapariStreamLayerItem,
+        route_key: str,
+        dimension_state: NapariDimensionLayerState,
+    ) -> tuple[dict[str, NapariWireValue], ...]:
+        if dimension_state.presentation is None:
+            return (self.record_for_item(item, route_key, (), (), None),)
+
+        aggregate_axis_bindings = dimension_state.presentation.aggregate_axis_bindings
+        aggregate_index_tuples = self.aggregate_index_tuples(aggregate_axis_bindings)
+        return tuple(
+            self.record_for_item(
+                item,
+                route_key,
+                aggregate_indices,
+                dimension_state.presentation.projection.coordinate_index(
+                    aggregate_axis_bindings.item_component_values(
+                        item,
+                        aggregate_indices,
+                    ),
+                    context="Napari payload inspection",
+                ),
+                aggregate_axis_bindings,
+            )
+            for aggregate_indices in aggregate_index_tuples
+        )
+
+    @staticmethod
+    def aggregate_index_tuples(
+        aggregate_axis_bindings: NapariAggregateAxisBindingSet,
+    ) -> tuple[tuple[int, ...], ...]:
+        if not aggregate_axis_bindings.bindings:
+            return ((),)
+        return tuple(
+            tuple(indices)
+            for indices in product(
+                *(range(binding.extent) for binding in aggregate_axis_bindings.bindings)
+            )
+        )
+
+    def record_for_item(
+        self,
+        item: NapariStreamLayerItem,
+        route_key: str,
+        aggregate_indices: tuple[int, ...],
+        axis_indices: tuple[int, ...],
+        aggregate_axis_bindings: NapariAggregateAxisBindingSet | None,
+    ) -> dict[str, NapariWireValue]:
+        components = dict(item.address.components)
+        data = item.data
+        if aggregate_axis_bindings is not None:
+            components = dict(
+                aggregate_axis_bindings.item_component_values(
+                    item,
+                    aggregate_indices,
+                )
+            )
+            data = self.aggregate_data_slice(item.data, aggregate_indices)
+
+        return {
+            "route_key": route_key,
+            "data_type": item.address.stream_layer_data_type.value,
+            "path": item.address.path,
+            "components": components,
+            "axis_indices": axis_indices,
+            "aggregate_axis_indices": aggregate_indices,
+            "summary": self.payload_summary(item, components, data),
+            "array_values": self.array_values(data),
+            "shape_payloads": self.shape_payloads(data),
+        }
+
+    @staticmethod
+    def aggregate_data_slice(
+        data: LayerData,
+        aggregate_indices: tuple[int, ...],
+    ) -> LayerData:
+        if not aggregate_indices:
+            return data
+        if isinstance(data, np.ndarray):
+            return data[aggregate_indices]
+        return data
+
+    @classmethod
+    def payload_summary(
+        cls,
+        item: NapariStreamLayerItem,
+        components: Mapping[str, ComponentValue],
+        data: LayerData,
+    ) -> dict[str, NapariWireValue]:
+        summary: dict[str, NapariWireValue] = {
+            "data_type": item.address.stream_layer_data_type.value,
+            "path": item.address.path,
+            "components": dict(components),
+            "payload_type": type(data).__name__,
+        }
+        if isinstance(data, np.ndarray):
+            summary.update(NapariViewerStateProjection.array_summary(data))
+            return summary
+        if isinstance(data, (list, tuple)):
+            summary["item_count"] = len(data)
+            summary["nonzero_count"] = len(data)
+            summary.update(NapariViewerStateProjection.shape_payload_summary(data))
+            return summary
+        return summary
+
+    def array_values(self, data: LayerData) -> tuple[NapariWireValue, ...]:
+        if not self.request.include_array_values:
+            return ()
+        if not isinstance(data, np.ndarray):
+            return ()
+        if data.size > self.request.max_array_elements:
+            return ()
+        value = self.wire_value(data)
+        if isinstance(value, tuple):
+            return value
+        return (value,)
+
+    def shape_payloads(self, data: LayerData) -> tuple[dict[str, NapariWireValue], ...]:
+        if not self.request.include_shape_payloads:
+            return ()
+        if not isinstance(data, (list, tuple)):
+            return ()
+        records: list[dict[str, NapariWireValue]] = []
+        for payload in data:
+            if not isinstance(payload, Mapping):
+                continue
+            records.append(
+                {
+                    str(key): self.wire_value(value)
+                    for key, value in payload.items()
+                }
+            )
+            if len(records) >= self.request.max_shape_payloads:
+                break
+        return tuple(records)
+
+    @classmethod
+    def wire_value(cls, value: NapariWireValue) -> NapariWireValue:
+        if isinstance(value, np.ndarray):
+            return cls.wire_value(value.tolist())
+        if isinstance(value, np.generic):
+            return NapariViewerStateProjection.json_scalar(value)
+        if isinstance(value, Mapping):
+            return {
+                str(key): cls.wire_value(mapping_value)
+                for key, mapping_value in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return tuple(cls.wire_value(item) for item in value)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+
 class NapariStateControlMessageAction(NapariControlMessageAction):
     """Registered action that reports live layer and axis state."""
 
@@ -2334,6 +2550,33 @@ class NapariStateControlMessageAction(NapariControlMessageAction):
         return NapariViewerStateProjection(
             server=server,
             viewer=server.viewer,
+        ).to_wire_mapping()
+
+
+class NapariPayloadsControlMessageAction(NapariControlMessageAction):
+    """Registered action that reports live payload records by layer and axis."""
+
+    message_type = ViewerControlMessageType.PAYLOADS.value
+
+    def handle(
+        self,
+        server: "NapariViewerServer",
+        message: Mapping[str, NapariWireValue],
+    ) -> dict[str, NapariWireValue]:
+        if server.viewer is None:
+            return ViewerControlReplyPayload(
+                ViewerControlReplyHeader(
+                    ViewerProtocolStatus.ERROR,
+                    response_type="payloads_ack",
+                    message="Napari viewer is not available.",
+                )
+            ).to_wire_mapping()
+
+        request = ViewerPayloadControlOptions.from_wire_payload(message)
+        return NapariViewerPayloadProjection(
+            server=server,
+            viewer=server.viewer,
+            request=request,
         ).to_wire_mapping()
 
 

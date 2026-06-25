@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
@@ -51,9 +51,9 @@ class RemovedPlateManagerCodeNamespaceField(str, Enum):
     PIPELINE_CONFIG = "pipeline_config"
 
     @classmethod
-    def reject_present_fields(cls, namespace: dict) -> None:
+    def reject_present_fields(cls, namespace: "PlateManagerCodeNamespace") -> None:
         for field in cls:
-            if field.value in namespace:
+            if namespace.has_field(field.value):
                 raise ValueError(field.error_message())
 
     def error_message(self) -> str:
@@ -63,6 +63,98 @@ class RemovedPlateManagerCodeNamespaceField(str, Enum):
                 "use per_plate_configs keyed by plate path."
             )
         raise RuntimeError(f"Unhandled removed plate-manager field: {self.value}.")
+
+
+class PlateManagerCodeNamespace(dict):
+    """Nominal exec namespace for plate-manager code documents."""
+
+    @classmethod
+    def from_mapping(cls, namespace) -> Self:
+        code_namespace = cls()
+        code_namespace.update(namespace)
+        return code_namespace
+
+    def has_field(self, field_name: str) -> bool:
+        return field_name in self
+
+    def has_orchestrator_payload_fields(self) -> bool:
+        return (
+            PlateManagerCodeNamespaceField.PLATE_PATHS.value in self
+            and PlateManagerCodeNamespaceField.PIPELINE_DATA.value in self
+        )
+
+    def plate_paths(self) -> tuple[str, ...]:
+        field_name = PlateManagerCodeNamespaceField.PLATE_PATHS.value
+        value = self[field_name]
+        if not isinstance(value, list):
+            raise TypeError("plate_paths must be a list of strings.")
+        if not all(isinstance(path, str) for path in value):
+            raise TypeError("plate_paths must be a list of strings.")
+        return tuple(value)
+
+    def pipeline_data(self) -> dict[str, list[FunctionStep]]:
+        field_name = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
+        value = self[field_name]
+        if not isinstance(value, dict):
+            raise TypeError("pipeline_data must be a dict of plate paths to steps.")
+
+        pipeline_data: dict[str, list[FunctionStep]] = {}
+        for plate_path, pipeline_steps in value.items():
+            if not isinstance(plate_path, str):
+                raise TypeError("pipeline_data keys must be plate path strings.")
+            if not isinstance(pipeline_steps, list):
+                raise TypeError("pipeline_data values must be FunctionStep lists.")
+            if not all(isinstance(step, FunctionStep) for step in pipeline_steps):
+                raise TypeError("pipeline_data values must be FunctionStep lists.")
+            pipeline_data[plate_path] = list(pipeline_steps)
+        return pipeline_data
+
+    def global_config(self) -> GlobalPipelineConfig | None:
+        field_name = PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value
+        if field_name not in self:
+            return None
+        value = self[field_name]
+        if not isinstance(value, GlobalPipelineConfig):
+            raise TypeError("global_config must be a GlobalPipelineConfig.")
+        return value
+
+    def per_plate_configs(self) -> dict[str, PipelineConfig] | None:
+        field_name = PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value
+        if field_name not in self:
+            return None
+        value = self[field_name]
+        if not isinstance(value, dict):
+            raise TypeError("per_plate_configs must be a dict of PipelineConfig values.")
+
+        per_plate_configs: dict[str, PipelineConfig] = {}
+        for plate_path, pipeline_config in value.items():
+            if not isinstance(plate_path, str):
+                raise TypeError("per_plate_configs keys must be plate path strings.")
+            if not isinstance(pipeline_config, PipelineConfig):
+                raise TypeError(
+                    "per_plate_configs values must be PipelineConfig instances."
+                )
+            per_plate_configs[plate_path] = pipeline_config
+        return per_plate_configs
+
+    def set_orchestrator_payload(
+        self,
+        payload: "PlateManagerOrchestratorCodePayload",
+    ) -> None:
+        self[PlateManagerCodeNamespaceField.PLATE_PATHS.value] = list(
+            payload.plate_paths
+        )
+        self[PlateManagerCodeNamespaceField.PIPELINE_DATA.value] = (
+            payload.pipeline_data
+        )
+        if payload.global_pipeline_config is not None:
+            self[PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value] = (
+                payload.global_pipeline_config
+            )
+        if payload.per_plate_configs is not None:
+            self[PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value] = (
+                payload.per_plate_configs
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,62 +169,23 @@ class PlateManagerOrchestratorCodePayload:
     @classmethod
     def from_namespace(
         cls,
-        namespace: dict,
+        namespace: PlateManagerCodeNamespace,
     ) -> "PlateManagerOrchestratorCodePayload | None":
         RemovedPlateManagerCodeNamespaceField.reject_present_fields(namespace)
 
-        plate_paths_field = PlateManagerCodeNamespaceField.PLATE_PATHS.value
-        pipeline_data_field = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
-        if plate_paths_field not in namespace or pipeline_data_field not in namespace:
+        if not namespace.has_orchestrator_payload_fields():
             return None
 
-        plate_paths = tuple(str(path) for path in namespace[plate_paths_field])
-        pipeline_data = {
-            str(plate_path): list(pipeline_steps)
-            for plate_path, pipeline_steps in namespace[pipeline_data_field].items()
-        }
-        global_config = namespace.get(
-            PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value
-        )
-        per_plate_configs = namespace.get(
-            PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value
-        )
-
-        if global_config is not None and not isinstance(
-            global_config, GlobalPipelineConfig
-        ):
-            raise TypeError("global_config must be a GlobalPipelineConfig.")
-        if per_plate_configs is not None:
-            per_plate_configs = {
-                str(plate_path): pipeline_config
-                for plate_path, pipeline_config in per_plate_configs.items()
-            }
-            for pipeline_config in per_plate_configs.values():
-                if not isinstance(pipeline_config, PipelineConfig):
-                    raise TypeError(
-                        "per_plate_configs values must be PipelineConfig instances."
-                    )
-
         return cls(
-            plate_paths=plate_paths,
-            pipeline_data=pipeline_data,
-            global_pipeline_config=global_config,
-            per_plate_configs=per_plate_configs,
+            plate_paths=namespace.plate_paths(),
+            pipeline_data=namespace.pipeline_data(),
+            global_pipeline_config=namespace.global_config(),
+            per_plate_configs=namespace.per_plate_configs(),
         )
 
-    def to_namespace(self) -> dict:
-        namespace = {
-            PlateManagerCodeNamespaceField.PLATE_PATHS.value: list(self.plate_paths),
-            PlateManagerCodeNamespaceField.PIPELINE_DATA.value: self.pipeline_data,
-        }
-        if self.global_pipeline_config is not None:
-            namespace[PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value] = (
-                self.global_pipeline_config
-            )
-        if self.per_plate_configs is not None:
-            namespace[PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value] = (
-                self.per_plate_configs
-            )
+    def to_namespace(self) -> PlateManagerCodeNamespace:
+        namespace = PlateManagerCodeNamespace()
+        namespace.set_orchestrator_payload(self)
         return namespace
 
 
@@ -147,8 +200,10 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         del code, error
         return None
 
-    def apply_namespace(self, namespace: dict) -> bool:
-        payload = PlateManagerOrchestratorCodePayload.from_namespace(namespace)
+    def apply_namespace(self, namespace) -> bool:
+        payload = PlateManagerOrchestratorCodePayload.from_namespace(
+            PlateManagerCodeNamespace.from_mapping(namespace)
+        )
         if payload is None:
             return False
 

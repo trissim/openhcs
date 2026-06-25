@@ -98,6 +98,7 @@ dev = [
     "coverage>=7.3.2",
     "genbadge[coverage]",
     "pytest-asyncio>=0.21.0",
+    "mcp>=1.0",
     "pyzmq>=26.0.0",  # Required for ZMQ execution and OMERO integration tests
 ]
 
@@ -283,7 +284,7 @@ openhcs-gui = "openhcs.pyqt_gui.__main__:main"
 
 # Utility scripts
 openhcs-recache = "openhcs.utils.recache_function_registry:main"
-openhcs-mcp = "openhcs.mcp.server:main"
+openhcs-mcp = "openhcs.mcp.bootstrap:main"
 
 [tool.setuptools]
 # Automatically find all packages under openhcs/

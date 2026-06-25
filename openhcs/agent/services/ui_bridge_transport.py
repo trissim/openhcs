@@ -33,6 +33,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentValidationResult,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeListRequest,
+    UiSelectedPlateWorkflowRequest,
+    UiSelectedPlateWorkflowResult,
     UiStateSurfaceCatalog,
     UiStateSurfaceDocument,
     UiStateSurfaceRequest,
@@ -50,6 +52,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
@@ -81,6 +85,7 @@ class UiBridgeOperationName(str, Enum):
     NAVIGATE_WINDOW = "navigate_window"
     CLOSE_WINDOW = "close_window"
     SNAPSHOT_WINDOW = "snapshot_window"
+    WIDGET_TREE = "widget_tree"
     LIST_OBJECT_STATE_SCOPES = "list_object_state_scopes"
     VALIDATE_DOCUMENT = "validate_document"
     APPLY_DOCUMENT = "apply_document"
@@ -90,6 +95,7 @@ class UiBridgeOperationName(str, Enum):
     LIST_BRANCHES = "list_branches"
     SWITCH_BRANCH = "switch_branch"
     GET_OPERATION_STATUS = "get_operation_status"
+    SELECTED_PLATE_WORKFLOW = "selected_plate_workflow"
 
 
 UiBridgeOperationRequestPayload = (
@@ -100,6 +106,7 @@ UiBridgeOperationRequestPayload = (
     | UiWindowNavigateRequest
     | UiWindowCloseRequest
     | UiWindowSnapshotRequest
+    | UiWidgetTreeRequest
     | UiObjectStateScopeListRequest
     | UiCodeDocumentValidationRequest
     | UiCodeDocumentApplyRequest
@@ -108,6 +115,7 @@ UiBridgeOperationRequestPayload = (
     | UiTimeTravelHeadRequest
     | UiBranchSwitchRequest
     | UiBridgeOperationStatusRequest
+    | UiSelectedPlateWorkflowRequest
     | None
 )
 
@@ -395,6 +403,21 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiActionInvokeResult, payload)
 
+    def selected_plate_workflow(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiSelectedPlateWorkflowRequest,
+    ) -> UiSelectedPlateWorkflowResult:
+        payload = self._client.request(
+            connection,
+            UiBridgeOperationName.SELECTED_PLATE_WORKFLOW,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(
+            UiSelectedPlateWorkflowResult,
+            payload,
+        )
+
     def focus_window(
         self,
         connection: UiBridgeConnectionSpec,
@@ -442,6 +465,18 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowSnapshotResult, payload)
+
+    def widget_tree(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWidgetTreeRequest,
+    ) -> UiWidgetTreeResult:
+        payload = self._client.request(
+            connection,
+            UiBridgeOperationName.WIDGET_TREE,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(UiWidgetTreeResult, payload)
 
     def validate_document(
         self,

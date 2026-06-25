@@ -39,6 +39,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentValidationRequest,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeListRequest,
+    UiSelectedPlateWorkflowRequest,
+    UiSelectedPlateWorkflowResult,
     UiStateSurfaceCatalog,
     UiStateSurfaceDocument,
     UiStateSurfaceRequest,
@@ -56,6 +58,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
@@ -106,10 +110,13 @@ UiBridgeOperationDispatchResult = (
     | UiStateSurfaceDocument
     | UiActionCatalog
     | UiActionInvokeResult
+    | UiSelectedPlateWorkflowResult
     | UiWindowCatalog
     | UiWindowCloseResult
     | UiWindowFocusResult
     | UiWindowNavigateResult
+    | UiWindowSnapshotResult
+    | UiWidgetTreeResult
     | UiObjectStateScopeCatalog
     | UiSnapshotCatalog
     | UiSnapshotRestoreResult
@@ -363,6 +370,19 @@ class UiBridgeSnapshotWindowOperation(UiBridgeRequestOperation):
         )
 
 
+class UiBridgeWidgetTreeOperation(UiBridgeRequestOperation):
+    operation = UiBridgeOperationName.WIDGET_TREE
+
+    def execute(
+        self,
+        dispatcher: "UiBridgeRequestDispatcher",
+        request: UiBridgeRequestEnvelope,
+    ) -> UiWidgetTreeResult:
+        return dispatcher.bridge.widget_tree(
+            dispatcher.request_payload(UiWidgetTreeRequest, request)
+        )
+
+
 class UiBridgeListObjectStateScopesOperation(UiBridgeRequestOperation):
     operation = UiBridgeOperationName.LIST_OBJECT_STATE_SCOPES
 
@@ -478,6 +498,19 @@ class UiBridgeGetOperationStatusOperation(UiBridgeRequestOperation):
         return dispatcher.bridge.get_operation_status(status_request.operation_id)
 
 
+class UiBridgeSelectedPlateWorkflowOperation(UiBridgeRequestOperation):
+    operation = UiBridgeOperationName.SELECTED_PLATE_WORKFLOW
+
+    def execute(
+        self,
+        dispatcher: "UiBridgeRequestDispatcher",
+        request: UiBridgeRequestEnvelope,
+    ) -> UiSelectedPlateWorkflowResult:
+        return dispatcher.bridge.selected_plate_workflow(
+            dispatcher.request_payload(UiSelectedPlateWorkflowRequest, request)
+        )
+
+
 class UiBridgeRequestErrorAuthority:
     """Classify request-dispatch exceptions into agent-facing error codes."""
 
@@ -585,6 +618,8 @@ class UiBridgeRequestDispatcher:
                 "ui_windows",
                 "ui_window_navigation",
                 "ui_window_snapshots",
+                "selected_plate_workflows",
+                "widget_tree_projection",
                 "objectstate_scopes",
                 "objectstate_snapshots",
                 "objectstate_branches",

@@ -18,6 +18,20 @@ from openhcs.agent.services import (
 )
 
 
+OPENHCS_AGENT_CONTEXT_SOURCE_TYPES = (
+    AgentPathPolicy,
+    FunctionCatalogService,
+    ConfigService,
+    ArchitectureProjectionService,
+    PipelineAuthoringService,
+    AgentAuthoringContextService,
+    ExecutionSessionService,
+    RuntimeServerService,
+    UiBridgeService,
+    ViewerWindowService,
+)
+
+
 @dataclass(slots=True)
 class OpenHCSAgentContext:
     path_policy: AgentPathPolicy = field(default_factory=AgentPathPolicy.from_environment)

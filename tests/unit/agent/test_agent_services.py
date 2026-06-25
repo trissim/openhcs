@@ -25,13 +25,20 @@ from openhcs.agent.services.viewer_window_service import (
     ViewerWindowService,
     ZMQViewerWindowGateway,
 )
+from openhcs.agent.dto.viewer import (
+    ViewerWindowPayloadRequest,
+    ViewerWindowSnapshotRequest,
+    ViewerWindowStateRequest,
+    ViewerWindowValidationPolicy,
+    ViewerWindowValidationRequest,
+)
 from openhcs.core.config import Backend, PipelineConfig
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
-    WindowSnapshotCaptureSpec,
 )
+from openhcs.runtime.viewer_protocol import ViewerPayloadControlOptions
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
@@ -39,6 +46,10 @@ from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 def sample_processing_function(image, sigma: float = 1.0):
     """Apply a small sample operation."""
     return image
+
+
+def _viewer_connection(port: int = 5584) -> ExecutionConnectionSpec:
+    return ExecutionConnectionSpec(port=port)
 
 
 def test_execution_connection_spec_owns_zmq_endpoint_projection():
@@ -255,7 +266,7 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
             },
             "width": 640,
             "height": 480,
-            "snapshot": request.snapshot.to_wire_payload().as_dict(),
+            "snapshot": request.to_wire_payload().as_dict(),
             "resource": {
                 "uri": "file:///tmp/napari.png",
                 "title": "OpenHCS Napari Viewer",
@@ -342,6 +353,57 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
             "component_item_count": 2,
         }
 
+    def window_payloads(self, request):
+        self.requests.append(request)
+        return {
+            "status": "success",
+            "viewer": {
+                "type": "napari",
+                "title": "OpenHCS Napari Viewer",
+            },
+            "layer_count": 1,
+            "layers": (
+                {
+                    "route_key": "IdentifyPrimaryObjects|image",
+                    "title": "IdentifyPrimaryObjects",
+                    "mounted": True,
+                    "item_count": 2,
+                    "axis_labels": ("well", "site", "channel", "y", "x"),
+                    "stack_axes": ("well", "site", "channel"),
+                    "pending_update": False,
+                    "payloads": (
+                        {
+                            "route_key": "IdentifyPrimaryObjects|image",
+                            "data_type": "image",
+                            "path": "/tmp/A14.tif",
+                            "components": {
+                                "well": "A14",
+                                "site": 1,
+                                "channel": 0,
+                            },
+                            "axis_indices": (0, 0, 0),
+                            "aggregate_axis_indices": (),
+                            "summary": {
+                                "payload_type": "ndarray",
+                                "shape": (16, 16),
+                                "dtype": "uint16",
+                                "size": 256,
+                                "nonzero_count": 128,
+                            },
+                            "array_values": (1, 2, 3),
+                            "shape_payloads": (
+                                {
+                                    "shape_type": "rectangle",
+                                    "axis_indices": (0, 0, 0),
+                                    "bounds": (2.0, 3.0, 8.0, 9.0),
+                                },
+                            ),
+                        },
+                    ),
+                },
+            ),
+        }
+
 
 class _MalformedViewerWindowGateway(ViewerWindowGatewayABC):
     def snapshot_window(self, request):
@@ -349,6 +411,10 @@ class _MalformedViewerWindowGateway(ViewerWindowGatewayABC):
         return {"status": "error"}
 
     def window_state(self, request):
+        del request
+        return {"status": "success", "layers": ()}
+
+    def window_payloads(self, request):
         del request
         return {"status": "success", "layers": ()}
 
@@ -393,9 +459,7 @@ class _AggregateStackViewerWindowGateway(_FakeViewerWindowGateway):
         state = super().window_state(request)
         layer = dict(state["layers"][0])
         layer["item_count"] = 1
-        layer["component_values"] = (
-            {"well": "A14", "site": 1, "channel": 1},
-        )
+        layer["component_values"] = ({"well": "A14", "site": 1, "channel": 1},)
         layer["payload_summaries"] = (
             {
                 "data_type": "image",
@@ -489,7 +553,9 @@ def test_viewer_window_zmq_gateway_times_out_without_blocking_context_teardown(
     gateway = ZMQViewerWindowGateway(context_factory=lambda: context)
     service = ViewerWindowService(gateway=gateway)
 
-    result = service.probe_window(port=5584, timeout_ms=25)
+    result = service.probe_window(
+        ViewerWindowStateRequest(connection=_viewer_connection(), timeout_ms=25)
+    )
 
     assert result.reachable is False
     assert result.errors[0].code == "viewer_window_state_failed"
@@ -564,8 +630,8 @@ def test_viewer_window_service_snapshots_running_viewer():
     service = ViewerWindowService(gateway=gateway)
 
     result = service.snapshot_window(
-        port=5584,
-        snapshot=WindowSnapshotCaptureSpec(
+        ViewerWindowSnapshotRequest(
+            connection=_viewer_connection(),
             output_dir_path="/tmp/openhcs-mcp-window-snapshots",
             capture_scope=WindowSnapshotCaptureScope.WINDOW,
         ),
@@ -580,21 +646,20 @@ def test_viewer_window_service_snapshots_running_viewer():
     assert result.resource.mime_type == "image/png"
     assert result.width == 640
     assert result.height == 480
-    assert result.snapshot is not None
-    assert result.snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+    assert result.capture_scope is WindowSnapshotCaptureScope.WINDOW
     assert (
-        gateway.requests[0].snapshot.output_dir_path
+        gateway.requests[0].output_dir_path
         == "/tmp/openhcs-mcp-window-snapshots"
     )
-    assert gateway.requests[0].snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+    assert gateway.requests[0].capture_scope is WindowSnapshotCaptureScope.WINDOW
 
 
 def test_viewer_window_service_reports_malformed_viewer_response():
     result = ViewerWindowService(
         gateway=_MalformedViewerWindowGateway()
     ).snapshot_window(
-        port=5584,
-        snapshot=WindowSnapshotCaptureSpec(
+        ViewerWindowSnapshotRequest(
+            connection=_viewer_connection(),
             output_dir_path="/tmp/openhcs-mcp-window-snapshots",
             capture_scope=WindowSnapshotCaptureScope.WIDGET,
         ),
@@ -608,7 +673,9 @@ def test_viewer_window_service_reads_running_viewer_state():
     gateway = _FakeViewerWindowGateway()
     service = ViewerWindowService(gateway=gateway)
 
-    result = service.window_state(port=5584)
+    result = service.window_state(
+        ViewerWindowStateRequest(connection=_viewer_connection())
+    )
 
     assert result.observed is True
     assert result.connection.port == 5584
@@ -646,11 +713,59 @@ def test_viewer_window_service_reads_running_viewer_state():
     assert gateway.requests[0].timeout_ms == 5000
 
 
+def test_viewer_window_service_reads_payload_records():
+    gateway = _FakeViewerWindowGateway()
+    service = ViewerWindowService(gateway=gateway)
+
+    result = service.window_payloads(
+        ViewerWindowPayloadRequest(
+            connection=_viewer_connection(),
+            payload_controls=ViewerPayloadControlOptions.from_overrides(
+                route_key="IdentifyPrimaryObjects|image",
+                include_array_values=True,
+                max_array_elements=16,
+            ),
+        ),
+    )
+
+    assert result.observed is True
+    assert result.connection.port == 5584
+    assert result.viewer is not None
+    assert result.viewer.viewer_type == "napari"
+    assert result.layer_count == 1
+    assert len(result.layers) == 1
+    layer = result.layers[0]
+    assert layer.route_key == "IdentifyPrimaryObjects|image"
+    assert layer.axis_labels == ("well", "site", "channel", "y", "x")
+    assert len(layer.payloads) == 1
+    payload = layer.payloads[0]
+    assert payload.components["well"] == "A14"
+    assert payload.axis_indices == (0, 0, 0)
+    assert payload.summary["nonzero_count"] == 128
+    assert payload.array_values == (1, 2, 3)
+    assert payload.shape_payloads == (
+        {
+            "shape_type": "rectangle",
+            "axis_indices": (0, 0, 0),
+            "bounds": (2.0, 3.0, 8.0, 9.0),
+        },
+    )
+    assert (
+        gateway.requests[0].payload_controls.route_key == "IdentifyPrimaryObjects|image"
+    )
+    assert gateway.requests[0].payload_controls.include_array_values is True
+    assert gateway.requests[0].payload_controls.max_array_elements == 16
+    assert gateway.requests[0].payload_controls.include_shape_payloads is True
+    assert gateway.requests[0].payload_controls.max_shape_payloads == 256
+
+
 def test_viewer_window_service_probes_running_viewer_endpoint():
     gateway = _FakeViewerWindowGateway()
     service = ViewerWindowService(gateway=gateway)
 
-    result = service.probe_window(port=5584, timeout_ms=25)
+    result = service.probe_window(
+        ViewerWindowStateRequest(connection=_viewer_connection(), timeout_ms=25)
+    )
 
     assert result.reachable is True
     assert result.observed is True
@@ -665,9 +780,9 @@ def test_viewer_window_service_probes_running_viewer_endpoint():
 
 
 def test_viewer_window_service_probe_reports_unreachable_viewer_endpoint():
-    result = ViewerWindowService(
-        gateway=_MalformedViewerWindowGateway()
-    ).probe_window(port=5584)
+    result = ViewerWindowService(gateway=_MalformedViewerWindowGateway()).probe_window(
+        ViewerWindowStateRequest(connection=_viewer_connection())
+    )
 
     assert result.reachable is False
     assert result.observed is False
@@ -679,9 +794,13 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
     service = ViewerWindowService(gateway=gateway)
 
     result = service.validation_summary(
-        port=5584,
-        expected_layer_count=1,
-        required_axis_labels=("well", "site", "channel"),
+        ViewerWindowValidationRequest(
+            connection=_viewer_connection(),
+            validation_policy=ViewerWindowValidationPolicy(
+                expected_layer_count=1,
+                required_axis_labels=("well", "site", "channel"),
+            ),
+        )
     )
 
     assert result.valid is True
@@ -712,9 +831,13 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
 
 def test_viewer_window_service_validation_reports_axis_and_count_mismatch():
     result = ViewerWindowService(gateway=_FakeViewerWindowGateway()).validation_summary(
-        port=5584,
-        expected_layer_count=2,
-        required_axis_labels=("source",),
+        ViewerWindowValidationRequest(
+            connection=_viewer_connection(),
+            validation_policy=ViewerWindowValidationPolicy(
+                expected_layer_count=2,
+                required_axis_labels=("source",),
+            ),
+        )
     )
 
     assert result.valid is False
@@ -731,7 +854,7 @@ def test_viewer_window_service_validation_reports_axis_and_count_mismatch():
 def test_viewer_window_service_validation_reports_coordinate_gaps():
     result = ViewerWindowService(
         gateway=_CoordinateGapViewerWindowGateway()
-    ).validation_summary(port=5584)
+    ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
 
     assert result.valid is False
     assert result.layer_summaries[0].coordinate_gap_count == 2
@@ -743,9 +866,9 @@ def test_viewer_window_service_validation_reports_coordinate_gaps():
 
 
 def test_viewer_window_service_validation_accepts_channel_last_rgb_spatial_shape():
-    result = ViewerWindowService(
-        gateway=_RgbViewerWindowGateway()
-    ).validation_summary(port=5584)
+    result = ViewerWindowService(gateway=_RgbViewerWindowGateway()).validation_summary(
+        ViewerWindowValidationRequest(connection=_viewer_connection())
+    )
 
     assert result.valid is True
     assert result.layer_summaries[0].spatial_mismatch_count == 0
@@ -754,7 +877,7 @@ def test_viewer_window_service_validation_accepts_channel_last_rgb_spatial_shape
 def test_viewer_window_service_validation_expands_aggregate_payload_coordinates():
     result = ViewerWindowService(
         gateway=_AggregateStackViewerWindowGateway()
-    ).validation_summary(port=5584)
+    ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
 
     assert result.valid is True
     assert result.layer_summaries[0].expected_coordinate_count == 3
@@ -763,9 +886,9 @@ def test_viewer_window_service_validation_expands_aggregate_payload_coordinates(
 
 
 def test_viewer_window_service_reports_malformed_state_response():
-    result = ViewerWindowService(
-        gateway=_MalformedViewerWindowGateway()
-    ).window_state(port=5584)
+    result = ViewerWindowService(gateway=_MalformedViewerWindowGateway()).window_state(
+        ViewerWindowStateRequest(connection=_viewer_connection())
+    )
 
     assert result.observed is False
     assert result.errors[0].code == "viewer_window_state_response_invalid"
@@ -892,7 +1015,10 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
     assert execute_ref.server_execution_id == _ExecutionTestId.EXECUTE
     assert compile_status.status == "complete"
     assert fake_client.compile_submissions[0].plate_id == str(tmp_path.resolve())
-    assert fake_client.execution_submissions[0].compile_artifact_id == _ExecutionTestId.COMPILE
+    assert (
+        fake_client.execution_submissions[0].compile_artifact_id
+        == _ExecutionTestId.COMPILE
+    )
 
 
 def test_execution_session_service_preserves_pycodified_pipeline_source(
@@ -1040,7 +1166,9 @@ def test_runtime_server_service_reads_runtime_server_state():
 
 
 def test_authoring_context_uses_function_catalog(monkeypatch):
-    context = AgentAuthoringContextService(_catalog(monkeypatch)).get_authoring_context()
+    context = AgentAuthoringContextService(
+        _catalog(monkeypatch)
+    ).get_authoring_context()
 
     assert context.kind == "pipeline"
     assert "CONFIG SCHEMA HINTS" in context.content

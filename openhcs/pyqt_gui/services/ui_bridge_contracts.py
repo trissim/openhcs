@@ -39,6 +39,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 
 
@@ -142,6 +144,10 @@ class UiWindowProviderABC(ABC):
 
     @abstractmethod
     def snapshot(self, request: UiWindowSnapshotRequest) -> UiWindowSnapshotResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def widget_tree(self, request: UiWidgetTreeRequest) -> UiWidgetTreeResult:
         raise NotImplementedError
 
 

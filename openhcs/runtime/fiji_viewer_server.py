@@ -1037,6 +1037,27 @@ class FijiUnsupportedStateControlPlan(FijiControlMessagePlan):
 
 
 @dataclass(frozen=True, slots=True)
+class FijiUnsupportedPayloadsControlPlan(FijiControlMessagePlan):
+    """Fail loudly for live payload extraction until Fiji has a state projector."""
+
+    wire_value = ViewerControlMessageType.PAYLOADS.value
+
+    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
+        del windows
+        return FijiControlMessageResponse(
+            ViewerControlReplyHeader(
+                ViewerProtocolStatus.ERROR,
+                response_type="payloads_ack",
+                message=(
+                    "Fiji live viewer payload extraction is not implemented. "
+                    "Add a Fiji state and payload projection before requesting "
+                    "per-layer images, labels, shapes, or axis-coordinate payloads."
+                ),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FijiControlMessageAuthority:
     """Handle Fiji control messages without leaking control literals into server."""
 

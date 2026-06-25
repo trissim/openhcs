@@ -35,6 +35,9 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeListRequest,
     UiPlateManagerRowState,
     UiPlateManagerState,
+    UiSelectedPlateWorkflowKind,
+    UiSelectedPlateWorkflowRequest,
+    UiSelectedPlateWorkflowResult,
     UiStateSurfaceId,
     UiStateSurfaceCatalog,
     UiStateSurfaceDocument,
@@ -43,9 +46,9 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceSummary,
     UiSnapshotCatalog,
     UiSnapshotListRequest,
+    UiSnapshotRef,
     UiSnapshotRestoreRequest,
     UiSnapshotRestoreResult,
-    UiTimeTravelRuntimeState,
     UiTimeTravelHeadRequest,
     UiWindowCatalog,
     UiWindowCloseRequest,
@@ -59,6 +62,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
+    UiWidgetRect,
+    UiWidgetTreeNode,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
@@ -68,7 +75,6 @@ from openhcs.agent.services.ui_bridge_service import (
 from openhcs.agent.serialization import to_jsonable
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
-    WindowSnapshotCaptureSpec,
 )
 
 
@@ -151,6 +157,30 @@ def _state_surface_document(state: UiPlateManagerState) -> UiStateSurfaceDocumen
     )
 
 
+def _snapshot_ref(
+    snapshot_id: str,
+    *,
+    index: int,
+    label: str,
+    is_current: bool,
+    is_head: bool,
+) -> UiSnapshotRef:
+    return UiSnapshotRef(
+        schema_version=SCHEMA_VERSION,
+        snapshot_id=snapshot_id,
+        index=index,
+        branch="main",
+        parent_snapshot_id=None,
+        timestamp_unix=1.0 + index,
+        timestamp=f"2026-06-25T11:38:5{index}.000",
+        label=label,
+        num_states=1,
+        is_current=is_current,
+        is_head=is_head,
+        uri=f"openhcs://ui/snapshots/{snapshot_id}",
+    )
+
+
 class _FakeUiBridgeGateway(UiBridgeGatewayABC):
     def __init__(self) -> None:
         self.connections: list[UiBridgeConnectionSpec] = []
@@ -159,6 +189,8 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
         self.navigate_requests: list[UiWindowNavigateRequest] = []
         self.close_requests: list[UiWindowCloseRequest] = []
         self.snapshot_requests: list[UiWindowSnapshotRequest] = []
+        self.widget_tree_requests: list[UiWidgetTreeRequest] = []
+        self.selected_plate_workflow_requests: list[UiSelectedPlateWorkflowRequest] = []
 
     def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
         self.connections.append(connection)
@@ -245,6 +277,31 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             target_scope_ids=request.selected_scope_ids,
         )
 
+    def selected_plate_workflow(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiSelectedPlateWorkflowRequest,
+    ) -> UiSelectedPlateWorkflowResult:
+        self.connections.append(connection)
+        self.selected_plate_workflow_requests.append(request)
+        return UiSelectedPlateWorkflowResult(
+            schema_version=SCHEMA_VERSION,
+            workflow=request.workflow,
+            action_result=UiActionInvokeResult(
+                schema_version=SCHEMA_VERSION,
+                identity=UiActionIdentity(
+                    widget_id=WIDGET_ID,
+                    action_id=request.workflow.value,
+                ),
+                status=UiActionInvocationStatus.ACCEPTED.value,
+                receipt=UiMutationReceipt(
+                    request_token=request.request_token,
+                    accepted=True,
+                ),
+                target_scope_ids=request.selected_scope_ids,
+            ),
+        )
+
     def list_windows(
         self,
         connection: UiBridgeConnectionSpec,
@@ -324,7 +381,95 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             ),
             width=320,
             height=200,
-            snapshot=request.snapshot,
+            output_dir_path=request.output_dir_path,
+            capture_scope=request.capture_scope,
+        )
+
+    def widget_tree(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWidgetTreeRequest,
+    ) -> UiWidgetTreeResult:
+        self.connections.append(connection)
+        self.widget_tree_requests.append(request)
+        return UiWidgetTreeResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            projected=True,
+            root=UiWidgetTreeNode(
+                path=(),
+                path_id="root",
+                child_index=None,
+                class_name="QWidget",
+                object_name="main",
+                visible=True,
+                enabled=True,
+                geometry=UiWidgetRect(x=0, y=0, width=320, height=200),
+                global_geometry=UiWidgetRect(x=10, y=20, width=320, height=200),
+                tool_tip="",
+                status_tip="",
+                whats_this="",
+                window_title="Main window",
+                accessible_name="",
+                accessible_description="",
+                text=None,
+                text_truncated=False,
+                title=None,
+                action_kinds=(),
+                clickable=False,
+                actionable=False,
+                checkable=None,
+                checked=None,
+                current_index=None,
+                current_text=None,
+                item_count=None,
+                children=(
+                    UiWidgetTreeNode(
+                        path=(0,),
+                        path_id="root/0",
+                        child_index=0,
+                        class_name="QPushButton",
+                        object_name="compile_button",
+                        visible=True,
+                        enabled=True,
+                        geometry=UiWidgetRect(x=8, y=160, width=72, height=24),
+                        global_geometry=UiWidgetRect(
+                            x=18,
+                            y=180,
+                            width=72,
+                            height=24,
+                        ),
+                        tool_tip="Compile selected plate",
+                        status_tip="",
+                        whats_this="",
+                        window_title="Main window",
+                        accessible_name="Compile",
+                        accessible_description="Compile selected plate",
+                        text="Compile",
+                        text_truncated=False,
+                        title=None,
+                        action_kinds=("click",),
+                        clickable=True,
+                        actionable=True,
+                        checkable=False,
+                        checked=False,
+                        current_index=None,
+                        current_text=None,
+                        item_count=None,
+                        children=(),
+                    ),
+                ),
+            ),
+            summary=UiWindowSummary(
+                schema_version=SCHEMA_VERSION,
+                identity=UiWindowIdentity(window_id=request.window_id),
+                title="Main window",
+                window_kind="embedded",
+                visible=True,
+                focusable=True,
+            ),
+            widget_count=2,
+            actionable_count=1,
         )
 
     def list_object_state_scopes(
@@ -339,7 +484,7 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             object_state_token=1,
             current_branch="main",
             current_snapshot_index=-1,
-            time_travel_state=UiTimeTravelRuntimeState(active=False),
+            active=False,
             scopes=(),
         )
 
@@ -437,6 +582,20 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
         request: UiCodeDocumentApplyRequest,
     ) -> UiCodeDocumentApplyResult:
         self.connections.append(connection)
+        pre_snapshot = _snapshot_ref(
+            snapshot_id="snap-1",
+            index=1,
+            label="before apply",
+            is_current=False,
+            is_head=False,
+        )
+        post_snapshot = _snapshot_ref(
+            snapshot_id="snap-2",
+            index=2,
+            label="after apply",
+            is_current=True,
+            is_head=True,
+        )
         return UiCodeDocumentApplyResult(
             schema_version=SCHEMA_VERSION,
             document_id=request.document_id,
@@ -445,6 +604,11 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             outcome="applied",
             operation_id="op-1",
             new_revision_token="rev-2",
+            current_revision_token="rev-2",
+            current_snapshot=post_snapshot,
+            undo_snapshot=pre_snapshot,
+            pre_apply_snapshot=pre_snapshot,
+            post_apply_snapshot=post_snapshot,
         )
 
     def list_snapshots(
@@ -458,7 +622,7 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             current_branch="main",
             current_snapshot_index=-1,
             object_state_token=1,
-            time_travel_state=UiTimeTravelRuntimeState(active=False),
+            active=False,
             snapshots=(),
             branches=(),
         )
@@ -642,6 +806,21 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
         UiWindowCloseRequest(window_id=WINDOW_ID),
         connection,
     )
+    workflow_result = service.selected_plate_workflow(
+        UiSelectedPlateWorkflowRequest(
+            workflow=UiSelectedPlateWorkflowKind.COMPILE,
+            selected_scope_ids=(PLATE_SCOPE_ID,),
+        ),
+        connection,
+    )
+    widget_tree = service.widget_tree(
+        UiWidgetTreeRequest(
+            window_id=WINDOW_ID,
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            maximum_text_length=128,
+        ),
+        connection,
+    )
     operation = service.get_operation_status("op-1", connection)
 
     assert catalog.documents[0].current_selection_count == 1
@@ -658,9 +837,48 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
     ]
     assert validation.valid is True
     assert apply_result.applied is True
+    assert apply_result.current_revision_token == "rev-2"
+    assert apply_result.current_snapshot is not None
+    assert apply_result.current_snapshot.snapshot_id == "snap-2"
+    assert apply_result.undo_snapshot is not None
+    assert apply_result.undo_snapshot.snapshot_id == "snap-1"
+    assert apply_result.pre_apply_snapshot == apply_result.undo_snapshot
+    assert apply_result.post_apply_snapshot == apply_result.current_snapshot
     assert close_result.closed is True
     assert gateway.close_requests == [
         UiWindowCloseRequest(window_id=WINDOW_ID)
+    ]
+    assert workflow_result.action_result.status == UiActionInvocationStatus.ACCEPTED.value
+    assert gateway.selected_plate_workflow_requests == [
+        UiSelectedPlateWorkflowRequest(
+            workflow=UiSelectedPlateWorkflowKind.COMPILE,
+            selected_scope_ids=(PLATE_SCOPE_ID,),
+        )
+    ]
+    assert widget_tree.projected is True
+    assert widget_tree.root is not None
+    assert widget_tree.root.path_id == "root"
+    assert widget_tree.widget_count == 2
+    assert widget_tree.actionable_count == 1
+    assert len(widget_tree.root.children) == 1
+    compile_button = widget_tree.root.children[0]
+    assert compile_button.class_name == "QPushButton"
+    assert compile_button.text == "Compile"
+    assert compile_button.clickable is True
+    assert compile_button.actionable is True
+    assert compile_button.action_kinds == ("click",)
+    assert compile_button.global_geometry == UiWidgetRect(
+        x=18,
+        y=180,
+        width=72,
+        height=24,
+    )
+    assert gateway.widget_tree_requests == [
+        UiWidgetTreeRequest(
+            window_id=WINDOW_ID,
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            maximum_text_length=128,
+        )
     ]
     assert operation.status == "complete"
     assert all(sent.auth_token == "token" for sent in gateway.connections)
@@ -709,10 +927,8 @@ def test_snapshot_window_forwards_request_and_resource(monkeypatch, tmp_path):
     result = service.snapshot_window(
         UiWindowSnapshotRequest(
             window_id=WINDOW_ID,
-            snapshot=WindowSnapshotCaptureSpec(
-                output_dir_path=str(tmp_path),
-                capture_scope=WindowSnapshotCaptureScope.WINDOW,
-            ),
+            output_dir_path=str(tmp_path),
+            capture_scope=WindowSnapshotCaptureScope.WINDOW,
             open_policy=UiWindowOpenPolicy(create_if_missing=False),
         ),
         connection,
@@ -723,15 +939,12 @@ def test_snapshot_window_forwards_request_and_resource(monkeypatch, tmp_path):
     assert result.resource.mime_type == "image/png"
     assert result.width == 320
     assert result.height == 200
-    assert result.snapshot is not None
-    assert result.snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+    assert result.capture_scope is WindowSnapshotCaptureScope.WINDOW
     assert gateway.snapshot_requests == [
         UiWindowSnapshotRequest(
             window_id=WINDOW_ID,
-            snapshot=WindowSnapshotCaptureSpec(
-                output_dir_path=str(tmp_path),
-                capture_scope=WindowSnapshotCaptureScope.WINDOW,
-            ),
+            output_dir_path=str(tmp_path),
+            capture_scope=WindowSnapshotCaptureScope.WINDOW,
             open_policy=UiWindowOpenPolicy(create_if_missing=False),
         ),
     ]
