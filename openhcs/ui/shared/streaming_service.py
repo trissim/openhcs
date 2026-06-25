@@ -19,7 +19,6 @@ from polystore.streaming.identity import (
     StreamProducerIdentity,
 )
 from polystore.streaming.viewer_transport import (
-    PathMappedViewerStreamSourceMetadata,
     ViewerStreamProducer,
     ViewerStreamSourceIdentity,
 )
@@ -269,18 +268,19 @@ class StreamingService:
                 source_metadata_items = StreamSourceComponentMetadataItems.from_values(
                     all_metadata_by_path[path] for path in request.filenames
                 )
-                stream_backend_kwargs = StreamComponentMessageExtraAuthority.from_viewer_surface(
+                message_authority = StreamComponentMessageExtraAuthority.from_viewer_surface(
                     viewer_surface,
                     source_metadata_items=source_metadata_items,
-                ).viewer_backend_kwargs(
+                )
+                stream_backend_kwargs = message_authority.viewer_backend_kwargs(
                     producer=ViewerStreamProducer.from_identity(
                         StreamProducerIdentity.fixed_output(
                             FixedStreamProducerIdentityKind.MANUAL,
                             "selected_images",
                         )
                     ),
-                    source_metadata=PathMappedViewerStreamSourceMetadata(
-                        metadata_by_path=all_metadata_by_path,
+                    source_metadata=message_authority.path_mapped_source_metadata(
+                        all_metadata_by_path
                     ),
                 )
 
@@ -392,18 +392,19 @@ class StreamingService:
                 source_metadata_items = StreamSourceComponentMetadataItems.from_values(
                     metadata_by_path[path] for path in paths
                 )
-                stream_backend_kwargs = StreamComponentMessageExtraAuthority.from_viewer_surface(
+                message_authority = StreamComponentMessageExtraAuthority.from_viewer_surface(
                     viewer_surface,
                     source_metadata_items=source_metadata_items,
-                ).viewer_backend_kwargs(
+                )
+                stream_backend_kwargs = message_authority.viewer_backend_kwargs(
                     producer=ViewerStreamProducer.from_identity(
                         StreamProducerIdentity.fixed_output(
                             FixedStreamProducerIdentityKind.MANUAL,
                             "selected_rois",
                         )
                     ),
-                    source_metadata=PathMappedViewerStreamSourceMetadata(
-                        metadata_by_path=metadata_by_path,
+                    source_metadata=message_authority.path_mapped_source_metadata(
+                        metadata_by_path
                     ),
                 )
 

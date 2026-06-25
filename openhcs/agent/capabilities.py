@@ -379,10 +379,19 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         name="openhcs_get_viewer_window_state",
         kind=CapabilityKind.TOOL,
         title="Get viewer window state",
-        description="Returns structured layer, component, and axis state from a running OpenHCS viewer through its ZMQ control socket.",
+        description=(
+            "Returns structured layer, component, axis, payload-summary, and "
+            "shape-bound state from a running OpenHCS viewer through its ZMQ "
+            "control socket."
+        ),
         service="viewer_window",
         runtime_requirements=("running_openhcs_viewer_server",),
-        data_exposure=("viewer_layer_state", "viewer_axis_state"),
+        data_exposure=(
+            "viewer_layer_state",
+            "viewer_axis_state",
+            "viewer_payload_summaries",
+            "viewer_shape_bounds",
+        ),
         input_type="ViewerWindowStateRequest",
         output_type=AgentContractName.VIEWER_WINDOW_STATE_RESULT.value,
     ),
@@ -402,8 +411,10 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
         kind=CapabilityKind.TOOL,
         title="Validate viewer window state",
         description=(
-            "Summarizes whether a running OpenHCS viewer has mounted layers, "
-            "expected axis labels, and nonzero streamed payload summaries."
+            "Validates mounted layers, expected axis labels, payload nonzero "
+            "metadata, routed coordinate coverage, duplicate/missing payload "
+            "coordinates, and payload spatial compatibility for a running "
+            "OpenHCS viewer."
         ),
         service="viewer_window",
         runtime_requirements=("running_openhcs_viewer_server",),
@@ -411,6 +422,8 @@ CAPABILITIES: tuple[AgentCapabilitySpec, ...] = (
             "viewer_layer_state",
             "viewer_axis_state",
             "viewer_payload_summaries",
+            "viewer_coordinate_coverage",
+            "viewer_payload_spatial_compatibility",
         ),
         input_type="ViewerWindowValidationRequest",
         output_type=AgentContractName.VIEWER_WINDOW_VALIDATION_SUMMARY_RESULT.value,

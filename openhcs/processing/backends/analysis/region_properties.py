@@ -149,7 +149,11 @@ class DenseLabelRegionProperties:
     inertia_tensor: np.ndarray
     inertia_tensor_eigvals: np.ndarray
 
-    def as_regionprops_table_subset(self) -> dict[str, np.ndarray]:
+    def as_regionprops_table_subset(
+        self,
+        *,
+        include_advanced: bool = False,
+    ) -> dict[str, np.ndarray]:
         """Return keys matching skimage.regionprops_table for covered fields."""
         props: dict[str, np.ndarray] = {
             "label": self.label,
@@ -170,6 +174,8 @@ class DenseLabelRegionProperties:
             "orientation": self.orientation,
             "euler_number": self.euler_number,
         }
+        if not include_advanced:
+            return props
         for row in range(4):
             for column in range(4):
                 props[f"moments-{row}-{column}"] = self.moments[:, row, column]
@@ -204,7 +210,12 @@ class LabelRegionPropertiesBackendStrategy(
     __skip_if_no_key__ = True
 
     @abstractmethod
-    def measure_2d(self, labels: np.ndarray) -> DenseLabelRegionProperties:
+    def measure_2d(
+        self,
+        labels: np.ndarray,
+        *,
+        include_advanced: bool = False,
+    ) -> DenseLabelRegionProperties:
         """Measure reusable 2-D dense-label region properties."""
 
 
@@ -221,14 +232,20 @@ class NumbaNumpyLabelRegionPropertiesBackendStrategy(
     backend_provider = AnalysisBackendProvider.NUMBA
     is_default_backend = True
 
-    def measure_2d(self, labels: np.ndarray) -> DenseLabelRegionProperties:
+    def measure_2d(
+        self,
+        labels: np.ndarray,
+        *,
+        include_advanced: bool = False,
+    ) -> DenseLabelRegionProperties:
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
             raise NotImplementedError(
                 "Numba label-region properties currently support 2-D labels."
             )
         arrays = _dense_label_region_properties_2d_numba(
-            np.ascontiguousarray(label_array)
+            np.ascontiguousarray(label_array),
+            bool(include_advanced),
         )
         return DenseLabelRegionProperties(*arrays)
 
@@ -270,7 +287,10 @@ def label_area_and_rounded_perimeter_2d(labels: np.ndarray) -> tuple[float, floa
 
 
 @njit(cache=True)
-def _dense_label_region_properties_2d_numba(labels: np.ndarray):
+def _dense_label_region_properties_2d_numba(
+    labels: np.ndarray,
+    include_advanced: bool,
+):
     height, width = labels.shape
     max_label = 0
     for row in range(height):
@@ -366,26 +386,34 @@ def _dense_label_region_properties_2d_numba(labels: np.ndarray):
             local_x = float(col - bbox_min_x[index])
             centered_y = float(row) - centroid_y[index]
             centered_x = float(col) - centroid_x[index]
-            powers_y = np.empty(4, dtype=np.float64)
-            powers_x = np.empty(4, dtype=np.float64)
-            powers_cy = np.empty(4, dtype=np.float64)
-            powers_cx = np.empty(4, dtype=np.float64)
-            powers_y[0] = 1.0
-            powers_x[0] = 1.0
-            powers_cy[0] = 1.0
-            powers_cx[0] = 1.0
-            for power in range(1, 4):
-                powers_y[power] = powers_y[power - 1] * local_y
-                powers_x[power] = powers_x[power - 1] * local_x
-                powers_cy[power] = powers_cy[power - 1] * centered_y
-                powers_cx[power] = powers_cx[power - 1] * centered_x
-            for p in range(4):
-                for q in range(4):
-                    moments[index, p, q] += powers_y[p] * powers_x[q]
-                    moments_central[index, p, q] += powers_cy[p] * powers_cx[q]
+            if include_advanced:
+                powers_y = np.empty(4, dtype=np.float64)
+                powers_x = np.empty(4, dtype=np.float64)
+                powers_cy = np.empty(4, dtype=np.float64)
+                powers_cx = np.empty(4, dtype=np.float64)
+                powers_y[0] = 1.0
+                powers_x[0] = 1.0
+                powers_cy[0] = 1.0
+                powers_cx[0] = 1.0
+                for power in range(1, 4):
+                    powers_y[power] = powers_y[power - 1] * local_y
+                    powers_x[power] = powers_x[power - 1] * local_x
+                    powers_cy[power] = powers_cy[power - 1] * centered_y
+                    powers_cx[power] = powers_cx[power - 1] * centered_x
+                for p in range(4):
+                    for q in range(4):
+                        moments[index, p, q] += powers_y[p] * powers_x[q]
+                        moments_central[index, p, q] += (
+                            powers_cy[p] * powers_cx[q]
+                        )
+            else:
+                moments_central[index, 0, 0] += 1.0
+                moments_central[index, 2, 0] += centered_y * centered_y
+                moments_central[index, 0, 2] += centered_x * centered_x
 
     for index in range(object_count):
-        m00 = moments_central[index, 0, 0]
+        m00 = area[index] if not include_advanced else moments_central[index, 0, 0]
+        moments_central[index, 0, 0] = m00
         if m00 <= 0.0:
             continue
         moments_central[index, 1, 1] = _label_mu11_skimage_order_2d(
@@ -398,12 +426,13 @@ def _dense_label_region_properties_2d_numba(labels: np.ndarray):
             centroid_y[index],
             centroid_x[index],
         )
-        for p in range(4):
-            for q in range(4):
-                if p + q >= 2:
-                    moments_normalized[index, p, q] = moments_central[
-                        index, p, q
-                    ] / (m00 ** (1.0 + (p + q) / 2.0))
+        if include_advanced:
+            for p in range(4):
+                for q in range(4):
+                    if p + q >= 2:
+                        moments_normalized[index, p, q] = moments_central[
+                            index, p, q
+                        ] / (m00 ** (1.0 + (p + q) / 2.0))
         nu20 = moments_normalized[index, 2, 0]
         nu02 = moments_normalized[index, 0, 2]
         nu11 = moments_normalized[index, 1, 1]
@@ -411,25 +440,26 @@ def _dense_label_region_properties_2d_numba(labels: np.ndarray):
         nu12 = moments_normalized[index, 1, 2]
         nu21 = moments_normalized[index, 2, 1]
         nu03 = moments_normalized[index, 0, 3]
-        moments_hu[index, 0] = nu20 + nu02
-        moments_hu[index, 1] = (nu20 - nu02) ** 2 + 4.0 * nu11**2
-        moments_hu[index, 2] = (nu30 - 3.0 * nu12) ** 2 + (
-            3.0 * nu21 - nu03
-        ) ** 2
-        moments_hu[index, 3] = (nu30 + nu12) ** 2 + (nu21 + nu03) ** 2
-        moments_hu[index, 4] = (nu30 - 3.0 * nu12) * (nu30 + nu12) * (
-            (nu30 + nu12) ** 2 - 3.0 * (nu21 + nu03) ** 2
-        ) + (3.0 * nu21 - nu03) * (nu21 + nu03) * (
-            3.0 * (nu30 + nu12) ** 2 - (nu21 + nu03) ** 2
-        )
-        moments_hu[index, 5] = (nu20 - nu02) * (
-            (nu30 + nu12) ** 2 - (nu21 + nu03) ** 2
-        ) + 4.0 * nu11 * (nu30 + nu12) * (nu21 + nu03)
-        moments_hu[index, 6] = (3.0 * nu21 - nu03) * (nu30 + nu12) * (
-            (nu30 + nu12) ** 2 - 3.0 * (nu21 + nu03) ** 2
-        ) - (nu30 - 3.0 * nu12) * (nu21 + nu03) * (
-            3.0 * (nu30 + nu12) ** 2 - (nu21 + nu03) ** 2
-        )
+        if include_advanced:
+            moments_hu[index, 0] = nu20 + nu02
+            moments_hu[index, 1] = (nu20 - nu02) ** 2 + 4.0 * nu11**2
+            moments_hu[index, 2] = (nu30 - 3.0 * nu12) ** 2 + (
+                3.0 * nu21 - nu03
+            ) ** 2
+            moments_hu[index, 3] = (nu30 + nu12) ** 2 + (nu21 + nu03) ** 2
+            moments_hu[index, 4] = (nu30 - 3.0 * nu12) * (nu30 + nu12) * (
+                (nu30 + nu12) ** 2 - 3.0 * (nu21 + nu03) ** 2
+            ) + (3.0 * nu21 - nu03) * (nu21 + nu03) * (
+                3.0 * (nu30 + nu12) ** 2 - (nu21 + nu03) ** 2
+            )
+            moments_hu[index, 5] = (nu20 - nu02) * (
+                (nu30 + nu12) ** 2 - (nu21 + nu03) ** 2
+            ) + 4.0 * nu11 * (nu30 + nu12) * (nu21 + nu03)
+            moments_hu[index, 6] = (3.0 * nu21 - nu03) * (nu30 + nu12) * (
+                (nu30 + nu12) ** 2 - 3.0 * (nu21 + nu03) ** 2
+            ) - (nu30 - 3.0 * nu12) * (nu21 + nu03) * (
+                3.0 * (nu30 + nu12) ** 2 - (nu21 + nu03) ** 2
+            )
 
         mu20 = moments_central[index, 2, 0] / m00
         mu02 = moments_central[index, 0, 2] / m00

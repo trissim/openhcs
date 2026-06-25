@@ -38,6 +38,8 @@ from openhcs.core.source_bindings import (
     SourceSelector,
 )
 from openhcs.core.source_metadata import (
+    SOURCE_PLANE_COUNT_FIELD,
+    SOURCE_PLANE_INDEX_FIELD,
     SourceMetadataIdentityItems,
     SourceMetadataIdentityProjection,
     SourceMetadataMapping,
@@ -966,8 +968,8 @@ class TiffPageSourcePlaneInventory(SourceSchemaSourcePlaneInventory):
                     **dict(candidate.metadata),
                     AllComponents.Z_INDEX.value: str(plane_index + 1),
                     _SOURCE_PLANE_GROUP_KEY: candidate.relative_path,
-                    "source_plane_index": str(plane_index),
-                    "source_plane_count": str(inventory.plane_count),
+                    SOURCE_PLANE_INDEX_FIELD: str(plane_index),
+                    SOURCE_PLANE_COUNT_FIELD: str(inventory.plane_count),
                 },
                 source_plane_index=plane_index,
                 source_plane_count=inventory.plane_count,

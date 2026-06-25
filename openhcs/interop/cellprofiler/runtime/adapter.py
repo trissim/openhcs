@@ -105,6 +105,7 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     RuntimeArrayPayload,
     RuntimeImagePayloadContext,
+    RuntimeImageSourceIdentityCompleteness,
     RuntimeValue,
     SourceAlignedObjectLabelProvenanceRequest,
     SourceImageObjectLabelBuildRequest,
@@ -216,9 +217,9 @@ from openhcs.interop.cellprofiler.runtime.source_candidates import (
     CellProfilerImageNumberResolver,
     SourceBindingPlaneCandidateContext,
     SourceCandidateRuntimeCache,
+    cellprofiler_source_order_identity,
 )
 from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
-    PipelineStartPayloadCacheValue,
     SourceBindingAxisResolutionAuthority,
     SourceBindingAxisPlaneResolution,
     SourceBindingResolutionRequest,
@@ -286,10 +287,6 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         repr=False,
         compare=False,
     )
-    _pipeline_start_payload_cache: dict[
-        tuple[Hashable, ...],
-        PipelineStartPayloadCacheValue,
-    ] = field(default_factory=dict, init=False, repr=False, compare=False)
     _image_cache: dict[tuple[str | None, str], NamedImage] = field(
         default_factory=dict,
         init=False,
@@ -378,7 +375,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         context = self.source_binding_context
         cache_key = (
             "ordered_pipeline_image_paths",
-            tuple(sorted(context.pipeline_input_files)),
+            context.pipeline_input_files_identity,
             tuple(sorted(context.step_input_source_paths.items())),
         )
         cache = CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE
@@ -388,7 +385,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         ordered = tuple(
             dict.fromkeys(
                 self.cellprofiler_source_order_path(path)
-                for path in sorted(context.pipeline_input_files)
+                for path in context.pipeline_input_files_identity
                 if is_image_path(path)
             )
         )
@@ -440,7 +437,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         cache_key = (
             "axis_image_number_start",
             self.axis_scope.cache_key,
-            tuple(sorted(self.source_binding_context.pipeline_input_files)),
+            self.source_binding_context.pipeline_input_files_identity,
             tuple(sorted(self.source_binding_context.step_input_source_paths.items())),
             self.source_binding_plan.metadata_rules,
             parser_identity,
@@ -473,9 +470,35 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         """Return the CP ImageNumber for the first resolvable source path."""
         if not source_paths:
             return None
-        return CellProfilerImageNumberResolver.for_adapter(
+        source_order_paths = tuple(
+            self.cellprofiler_source_order_path(source_path)
+            for source_path in source_paths
+        )
+        parser_identity: Hashable | None = None
+        if self.can_resolve_source_candidates:
+            parser_identity = RequireProcessingContextBoundaryPolicy(
+                self
+            ).context.microscope_handler.parser.semantic_identity()
+        axis_component_values = self.source_axis_metadata_scope().component_values
+        cache_key = (
+            "image_number_for_source_paths",
+            self.source_binding_context.pipeline_input_files_identity,
+            self.source_binding_plan.metadata_rules,
+            parser_identity,
+            axis_component_values,
+            cellprofiler_source_order_identity(self),
+            source_order_paths,
+        )
+        cache = CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE
+        cached = cache.cached_value(cache_key)
+        if cached is not None:
+            return int(cached)
+        image_number = CellProfilerImageNumberResolver.for_adapter(
             self
         ).image_number_start_for_paths(source_paths)
+        if image_number is not None:
+            cache.store_value(cache_key, int(image_number))
+        return image_number
 
     def cellprofiler_image_number_for_payload(
         self,
@@ -605,24 +628,47 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         image = SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
             request
         )
-        if isinstance(image_payload_data(image), RuntimeArrayPayload):
-            return cast(ImagePayloadValue, image)
         source_metadata = image_payload_metadata(image)
         metadata = replace(
             source_metadata,
             source_image_names=source_metadata.source_image_names or (alias,),
         )
-        payload = metadata.payload_with(
-            image_payload_data(image),
-            mask=image_payload_mask(image),
-        )
-        payload = RuntimePlaneImagePayloadProjection(
-            RuntimePlaneProjectionContext(
-                adapter=self,
-                current_image_context=RuntimePlaneCurrentImageContext(current_image),
+        return self.image_payload_for_current_runtime_plane(
+            cast(
+                ImagePayloadValue,
+                metadata.payload_with(
+                    image_payload_data(image),
+                    mask=image_payload_mask(image),
+                ),
             ),
-        ).project(payload)
-        return cast(ImagePayloadValue, payload)
+            current_image=current_image,
+        )
+
+    def image_payload_for_current_runtime_plane(
+        self,
+        payload: ImagePayloadValue,
+        *,
+        current_image: ImagePayloadValue | None,
+        match_current_source: bool = False,
+    ) -> ImagePayloadValue:
+        """Return image payload data projected to this invocation's runtime plane."""
+        projected: ImagePayloadValue = payload
+        if match_current_source and current_image is not None:
+            projected = CurrentSourceImagePayloadProjection(
+                self,
+                current_image,
+            ).project(projected)
+        return cast(
+            ImagePayloadValue,
+            RuntimePlaneImagePayloadProjection(
+                RuntimePlaneProjectionContext(
+                    adapter=self,
+                    current_image_context=RuntimePlaneCurrentImageContext(
+                        current_image
+                    ),
+                ),
+            ).project(projected),
+        )
 
     def runtime_slice_plane_index(self) -> int | None:
         """Return the current axis-local runtime-slice plane index."""
@@ -807,19 +853,11 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             if len(records) > 1
             else record.value.data
         )
-        if current_image is not None:
-            data = CurrentSourceImagePayloadProjection(
-                self,
-                current_image,
-            ).project(data)
-        data = RuntimePlaneImagePayloadProjection(
-            RuntimePlaneProjectionContext(
-                adapter=self,
-                current_image_context=RuntimePlaneCurrentImageContext(
-                    current_image
-                ),
-            ),
-        ).project(data)
+        data = self.image_payload_for_current_runtime_plane(
+            data,
+            current_image=current_image,
+            match_current_source=current_image is not None,
+        )
         schema = record.value.schema
         image = NamedImage(
             name=name,
@@ -914,8 +952,9 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                     )
                     if (
                         requires_source_coordinate
-                        and not source_provenance.addressable
-                        and not source_provenance.source_image_provenance_planes.has_values
+                        and not RuntimeImageSourceIdentityCompleteness(
+                            source_image.data
+                        ).complete()
                     ):
                         raise RuntimeError(
                             "Object labels produced from declared source image "

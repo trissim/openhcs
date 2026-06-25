@@ -60,6 +60,7 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowSnapshotResult,
     ViewerWindowStateRequest,
     ViewerWindowStateResult,
+    ViewerWindowValidationPolicy,
     ViewerWindowValidationRequest,
     ViewerWindowValidationSummaryResult,
 )

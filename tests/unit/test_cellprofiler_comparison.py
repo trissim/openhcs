@@ -20,6 +20,7 @@ from benchmark.cellprofiler_comparison import (
     write_phase_timing_csv,
     write_summary_csv,
 )
+from benchmark.cellprofiler_benchmark_cli import _filter_cases_by_name
 import pytest
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.contracts.tool_adapter import BenchmarkResult
@@ -322,6 +323,66 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
     assert summary_rows[0]["equivalent_count"] == "0"
 
 
+def test_summary_speedup_target_uses_execution_time_only(
+    tmp_path: Path,
+) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleExecutionFast",
+        dataset_path=tmp_path / "ExampleExecutionFast",
+        cppipe_path=tmp_path / "ExampleExecutionFast.cppipe",
+    )
+    native_output = tmp_path / "native"
+    openhcs_output = tmp_path / "openhcs"
+    native_output.mkdir()
+    openhcs_output.mkdir()
+    observation = comparison_observation_from_result(
+        CellProfilerCompatibilityResult(
+            native_cellprofiler=BenchmarkResult(
+                tool_name="CellProfiler",
+                dataset_id="dataset",
+                pipeline_name="pipeline",
+                metrics={"execution_time_seconds": 60.0},
+                output_path=native_output,
+                success=True,
+                provenance={
+                    "phase_timing_records": (
+                        {"phase": "EXECUTE_NATIVE_CP", "seconds": 60.0},
+                        {"phase": "COMPARE_NATIVE", "seconds": 1.0},
+                    ),
+                },
+            ),
+            openhcs_converted=BenchmarkResult(
+                tool_name="OpenHCS",
+                dataset_id="dataset",
+                pipeline_name="pipeline",
+                metrics={"execution_time_seconds": 10.0},
+                output_path=openhcs_output,
+                success=True,
+                provenance={
+                    "equivalence_difference_count": 0,
+                    "phase_timing_records": (
+                        {"phase": "COMPILE_OPENHCS", "seconds": 15.0},
+                        {"phase": "EXECUTE_OPENHCS", "seconds": 10.0},
+                        {"phase": "COMPARE_OPENHCS", "seconds": 15.0},
+                    ),
+                },
+            ),
+        ),
+        case=case,
+        suite_id="suite-1",
+        repetition=1,
+    )
+
+    write_summary_csv(tmp_path / "summary.csv", (observation,))
+    summary_row = _csv_rows(tmp_path / "summary.csv")[0]
+
+    assert summary_row["median_speedup"] == "6.0"
+    assert summary_row["median_total_phase_speedup"] == "1.525"
+    assert summary_row["meets_execution_speedup_target"] == "True"
+    assert summary_row["meets_total_phase_speedup_target"] == "False"
+    assert summary_row["meets_speedup_target"] == "True"
+
+
 def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
@@ -368,6 +429,65 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             },
         ),
     )
+
+
+def test_filter_comparison_cases_by_exact_name_preserves_merged_params(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "default_pipeline_params": {"openhcs_max_axis_count": 1},
+                "cases": [
+                    {
+                        "name": "first",
+                        "dataset_path": "data/first",
+                        "cppipe_path": "pipes/first.cppipe",
+                    },
+                    {
+                        "name": "second",
+                        "dataset_path": "data/second",
+                        "cppipe_path": "pipes/second.cppipe",
+                        "pipeline_params": {"compare_image_outputs": False},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = _filter_cases_by_name(load_comparison_cases(manifest), ("second",))
+
+    assert tuple(case.name for case in selected) == ("second",)
+    assert selected[0].pipeline_params == {
+        "openhcs_max_axis_count": 1,
+        "compare_image_outputs": False,
+    }
+
+
+def test_filter_comparison_cases_by_exact_name_reports_unknown_and_available(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        CellProfilerComparisonCase(
+            name="first",
+            dataset_path=tmp_path / "first",
+            cppipe_path=tmp_path / "first.cppipe",
+        ),
+        CellProfilerComparisonCase(
+            name="second",
+            dataset_path=tmp_path / "second",
+            cppipe_path=tmp_path / "second.cppipe",
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        _filter_cases_by_name(cases, ("missing", "other"))
+
+    message = str(exc_info.value)
+    assert "Unknown benchmark case name(s): missing, other" in message
+    assert "Available case name(s): first, second" in message
 
 
 def test_load_comparison_cases_resolves_declared_path_roots(

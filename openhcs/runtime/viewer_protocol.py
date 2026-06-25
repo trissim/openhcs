@@ -65,6 +65,7 @@ class ViewerControlMessageType(Enum):
     """Shared control-message names consumed by viewer servers."""
 
     SCREENSHOT = "screenshot"
+    SETTLE = "settle"
     STATE = "state"
 
 
@@ -1078,6 +1079,14 @@ class ManagedViewerLifecycleMixin(
         """Clear accumulated viewer state for a new pipeline run."""
 
         return self.send_control_message("clear_state")
+
+    def settle_viewer_state(self, timeout: float = 30.0) -> bool:
+        """Wait for queued viewer layer updates before state/screenshot reads."""
+
+        return self.send_control_message(
+            ViewerControlMessageType.SETTLE.value,
+            timeout=timeout,
+        )
 
     @property
     def is_running(self) -> bool:

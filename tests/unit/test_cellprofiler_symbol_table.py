@@ -1731,14 +1731,8 @@ def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
         binding.alias
         for binding in contract.source_bindings.groups[0].bindings
     ) == ("OrigBlue",)
-    assert [spec.name for spec in contract.outputs] == [
-        "IllumBlue",
-        "CorrectIlluminationCalculate_1_measurements",
-    ]
-    assert [spec.kind for spec in contract.outputs] == [
-        ArtifactKind.IMAGE,
-        ArtifactKind.MEASUREMENTS,
-    ]
+    assert [spec.name for spec in contract.outputs] == ["IllumBlue"]
+    assert [spec.kind for spec in contract.outputs] == [ArtifactKind.IMAGE]
 
 
 def test_cellprofiler_symbol_table_infers_common_object_transform_contract():

@@ -72,6 +72,7 @@ class CellProfilerOutputRecordContext(
     source: CellProfilerImageRequest | CellProfilerMeasurementImage
     func: CellProfilerFunction
     call_kwargs: CellProfilerKwargs
+    function_name: str = ""
 
     @property
     def module_name(self) -> str:
@@ -123,6 +124,34 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
             return self.runtime_input_image_payload(spec)
         return self.external_input_image_payload(spec)
 
+    def primary_image_output_source_payload(
+        self,
+    ) -> CellProfilerRuntimeValue | None:
+        """Resolve the declared primary-image source for this image output."""
+        ordinal_payload = self.ordinal_primary_image_output_source_payload()
+        if ordinal_payload is not None:
+            return ordinal_payload
+        unique_payload = self.unique_primary_image_source_payload()
+        if unique_payload is not None:
+            return unique_payload
+        return self.source.payload
+
+    def ordinal_primary_image_output_source_payload(
+        self,
+    ) -> CellProfilerRuntimeValue | None:
+        """Map image output ordinal to primary-image input ordinal when declared."""
+        output_index = self._image_output_index()
+        if output_index is None:
+            return None
+        primary_image_inputs = self.primary_image_input_policy.primary_image_inputs(
+            self.module_name,
+            self.func,
+            self.declared_input_specs,
+        )
+        if len(primary_image_inputs) != len(self._image_outputs()):
+            return None
+        return self.input_image_source_payload(primary_image_inputs[output_index])
+
     def unique_primary_image_source_payload(
         self,
     ) -> CellProfilerRuntimeValue | None:
@@ -133,21 +162,39 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
             self.declared_input_specs,
         )
         if len(primary_image_inputs) != 1:
-            return self.source.payload
+            return None
         primary_input = primary_image_inputs[0]
+        input_payload = self.input_image_source_payload(primary_input)
         invocation_payload = self.invocation_primary_image_source_payload(primary_input)
-        if invocation_payload is not None:
+        if input_payload is None:
             return invocation_payload
-        return self.input_image_source_payload(primary_input)
+        if invocation_payload is None:
+            return input_payload
+        return self.preferred_unique_primary_source_payload(
+            input_payload=input_payload,
+            invocation_payload=invocation_payload,
+        )
+
+    def preferred_unique_primary_source_payload(
+        self,
+        *,
+        input_payload: CellProfilerRuntimeValue,
+        invocation_payload: CellProfilerRuntimeValue,
+    ) -> CellProfilerRuntimeValue:
+        """Select source context for one declared primary-image input."""
+        if (
+            self.payload_explains_output_label_planes(invocation_payload)
+            and not self.payload_explains_output_label_planes(input_payload)
+        ):
+            return invocation_payload
+        return input_payload
 
     def invocation_primary_image_source_payload(
         self,
         spec: ArtifactSpec,
     ) -> CellProfilerRuntimeValue | None:
         """Return invocation payload when it already owns the primary input source."""
-        if self.source.matches_single_source_name(spec.name):
-            return self.source.payload
-        return None
+        return self.source.source_payload_for_name(spec.name)
 
     def runtime_input_image_payload(
         self,
@@ -243,6 +290,9 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
             else:
                 source_spec = relationship_source_spec
             return self.object_label_source_payload_for_spec(source_spec)
+        primary_image_source = self.unique_primary_image_source_payload()
+        if primary_image_source is not None:
+            return primary_image_source
         return self.object_label_source_payload_for_current_invocation()
 
     def object_label_output_domain_scope(self) -> ObjectLabelDomainScope | None:

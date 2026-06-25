@@ -686,23 +686,54 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
 
     def project_rows(self) -> ProjectedMeasurementRowsResult:
         """Return rows projected into CellProfiler ImageNumber space."""
+        phase_started_at = time.perf_counter()
         start, source_paths = self.axis_image_number_start()
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_project_axis_start",
+            time.perf_counter() - phase_started_at,
+            source_paths=len(source_paths),
+        )
+        phase_started_at = time.perf_counter()
         image_numbers = MeasurementSliceIndexImageNumberProjection(
             start=start,
-            image_numbers_by_slice=self.image_numbers_by_slice(source_paths),
+            image_numbers_by_slice=self.image_numbers_by_slice(
+                source_paths,
+                start=start,
+            ),
         )
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_project_image_numbers",
+            time.perf_counter() - phase_started_at,
+            source_paths=len(source_paths),
+        )
+        phase_started_at = time.perf_counter()
         projection = MeasurementRowsAxisProjection.from_rows(self.rows)
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_project_projection",
+            time.perf_counter() - phase_started_at,
+            rows=projection.row_count,
+        )
         source_qualified_image_number_start = None
         if (
             self.source_context.source_image_payload is not None
             and self.object_name in (_MISSING_MEASUREMENT_OBJECT_NAME, None)
         ):
             source_qualified_image_number_start = start
+        phase_started_at = time.perf_counter()
         projected_rows = projection.apply(
             image_numbers,
             image_number_start_for_source_qualified_image_rows=(
                 source_qualified_image_number_start
             ),
+        )
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_project_apply",
+            time.perf_counter() - phase_started_at,
+            rows=projection.row_count,
         )
         rows = self.rows if projected_rows is None else projected_rows
         row_mappings: ProjectedMeasurementRows = ()
@@ -717,17 +748,45 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
 
     def axis_image_number_start(self) -> tuple[int, tuple[str, ...]]:
         """Return CellProfiler ImageNumber start and source-path provenance."""
+        phase_started_at = time.perf_counter()
         source_context = self.source_resolver.projection_source_context(
             self.source_context,
             object_name=self.object_name,
         )
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_axis_source_context",
+            time.perf_counter() - phase_started_at,
+        )
+        phase_started_at = time.perf_counter()
         source_paths = source_context.payload_metadata().source_image_paths
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_axis_payload_metadata",
+            time.perf_counter() - phase_started_at,
+            source_paths=len(source_paths),
+        )
         if not source_paths:
+            phase_started_at = time.perf_counter()
             source_paths = self.adapter.cellprofiler_source_paths_for_image_name(
                 source_context.source_image_name
             )
+            RuntimeProfileLogger.log(
+                logger,
+                "measurement_axis_source_paths_for_image",
+                time.perf_counter() - phase_started_at,
+                source_paths=len(source_paths),
+            )
+        phase_started_at = time.perf_counter()
         start = self.adapter.cellprofiler_image_number_start_for_source_paths(
             source_paths
+        )
+        RuntimeProfileLogger.log(
+            logger,
+            "measurement_axis_image_number_start",
+            time.perf_counter() - phase_started_at,
+            source_paths=len(source_paths),
+            start=start,
         )
         log_object_name = self.object_name
         if log_object_name is _MISSING_MEASUREMENT_OBJECT_NAME:
@@ -747,13 +806,20 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
         start, source_paths = self.axis_image_number_start()
         return MeasurementSliceIndexImageNumberProjection(
             start=start,
-            image_numbers_by_slice=self.image_numbers_by_slice(source_paths),
+            image_numbers_by_slice=self.image_numbers_by_slice(
+                source_paths,
+                start=start,
+            ),
         )
 
     def image_numbers_by_slice(
         self,
         source_paths: tuple[str, ...],
+        *,
+        start: int,
     ) -> Mapping[int, int]:
+        if len(source_paths) == 1:
+            return MappingProxyType({0: start})
         return MappingProxyType(
             {
                 slice_index: image_number
@@ -778,6 +844,7 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     ) -> ImagePayloadMetadata:
         """Return source metadata projected to the represented measurement rows."""
         represented_rows = self.rows if rows is None else rows
+        projection = MeasurementRowsAxisProjection.from_rows(represented_rows)
         source_context = self.source_resolver.record_source_context(
             self.source_context,
             object_name=self.object_name,
@@ -786,7 +853,7 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
         if (
             not metadata.source_image_paths
             and self.has_measurement_object_name
-            and self.rows_need_object_source_context(represented_rows)
+            and self.rows_need_object_source_context(projection)
         ):
             object_metadata = self.source_resolver.object_label_source_metadata(
                 object_name=self.object_name,
@@ -795,19 +862,20 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
                 metadata = object_metadata
         projected_metadata = self.source_payload_metadata_for_rows(
             metadata,
-            represented_rows,
+            projection,
         )
         if projected_metadata.source_image_paths:
             return projected_metadata
         return self.source_payload_metadata_from_image_number_rows(
             projected_metadata,
-            represented_rows,
+            projection,
         )
 
     @staticmethod
-    def rows_need_object_source_context(rows: MeasurementRowsInput) -> bool:
+    def rows_need_object_source_context(
+        projection: MeasurementRowsAxisProjection,
+    ) -> bool:
         """Return whether row axes need object-label source context."""
-        projection = MeasurementRowsAxisProjection.from_rows(rows)
         if projection.has_image_number and not projection.has_slice_index:
             return False
         return True
@@ -815,10 +883,9 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     def source_payload_metadata_from_image_number_rows(
         self,
         metadata: ImagePayloadMetadata,
-        rows: MeasurementRowsInput,
+        projection: MeasurementRowsAxisProjection,
     ) -> ImagePayloadMetadata:
         """Derive source metadata from a single CellProfiler ImageNumber row axis."""
-        projection = MeasurementRowsAxisProjection.from_rows(rows)
         image_number = self.single_present_axis_value(
             projection,
             MeasurementRowAxisField.IMAGE_NUMBER,
@@ -833,10 +900,10 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     def source_payload_metadata_for_rows(
         self,
         metadata: ImagePayloadMetadata,
-        rows: MeasurementRowsInput,
+        projection: MeasurementRowsAxisProjection,
     ) -> ImagePayloadMetadata:
         """Project source provenance when rows represent one source plane."""
-        plane_index = self.source_plane_index_for_rows(metadata, rows)
+        plane_index = self.source_plane_index_for_rows(metadata, projection)
         if plane_index is None:
             return metadata
         return metadata.for_source_plane(plane_index)
@@ -844,13 +911,12 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     def source_plane_index_for_rows(
         self,
         metadata: ImagePayloadMetadata,
-        rows: MeasurementRowsInput,
+        projection: MeasurementRowsAxisProjection,
     ) -> int | None:
         """Return the represented source-provenance plane for a single-plane row set."""
         provenance = metadata.source_provenance
         if provenance.source_plane_count <= 1:
             return None
-        projection = MeasurementRowsAxisProjection.from_rows(rows)
         image_number = self.single_present_axis_value(
             projection,
             MeasurementRowAxisField.IMAGE_NUMBER,
@@ -883,13 +949,16 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     ) -> int | None:
         """Resolve one CellProfiler ImageNumber back to a source-provenance plane."""
         source_paths = metadata.source_image_paths
-        image_numbers_by_slice = self.image_numbers_by_slice(source_paths)
-        for slice_index, slice_image_number in image_numbers_by_slice.items():
-            if int(slice_image_number) == int(image_number):
-                return slice_index
         if not source_paths:
             return None
         start = self.adapter.cellprofiler_image_number_start_for_source_paths(source_paths)
+        image_numbers_by_slice = self.image_numbers_by_slice(
+            source_paths,
+            start=start,
+        )
+        for slice_index, slice_image_number in image_numbers_by_slice.items():
+            if int(slice_image_number) == int(image_number):
+                return slice_index
         inferred = int(image_number) - start
         if 0 <= inferred < metadata.source_provenance.source_plane_count:
             return inferred
@@ -1137,7 +1206,14 @@ class CellProfilerMeasurementMaterializer:
         if fields:
             kwargs["fields"] = fields
         kwargs["source_image_name"] = request.source_context.source_image_name
+        source_metadata_started_at = time.perf_counter()
         source_metadata = request.source_payload_metadata(projected_rows)
+        RuntimeProfileLogger.log(
+            logger,
+            "record_measurements_source_metadata",
+            time.perf_counter() - source_metadata_started_at,
+            rows=len(projected_rows),
+        )
         if source_metadata.source_path is not None:
             kwargs["source_path"] = source_metadata.source_path
         if source_metadata.source_component_metadata is not None:
@@ -1189,6 +1265,31 @@ def _measurement_fields_covering_mappings(
         )
         return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
     declared_names = {field.name for field in fields}
+    if rows:
+        first_extra_names = tuple(
+            field_name
+            for field_name in rows[0]
+            if field_name not in declared_names
+        )
+        if not first_extra_names and all(
+            len(row) <= len(declared_names)
+            for row in rows[1:]
+        ):
+            return fields
+        extra_names = tuple(
+            dict.fromkeys(
+                (
+                    *first_extra_names,
+                    *(
+                        field_name
+                        for row in rows[1:]
+                        for field_name in row
+                        if field_name not in declared_names
+                    ),
+                )
+            )
+        )
+        return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
     extra_names = tuple(
         dict.fromkeys(
             field_name

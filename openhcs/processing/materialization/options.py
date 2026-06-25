@@ -8,7 +8,15 @@ Greenfield design:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
+
+
+class MaterializedFilenameIdentity(str, Enum):
+    """Semantic identity used to construct materialized artifact filenames."""
+
+    SOURCE_IDENTITY = "source_identity"
+    ARTIFACT_NAME = "artifact_name"
 
 
 @dataclass(frozen=True)
@@ -18,6 +26,18 @@ class FileOutputOptions:
     filename_suffix: str = ""
     strip_roi_suffix: bool = False
     strip_pkl: bool = True
+    filename_identity: MaterializedFilenameIdentity = (
+        MaterializedFilenameIdentity.SOURCE_IDENTITY
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "filename_identity",
+            self.filename_identity
+            if isinstance(self.filename_identity, MaterializedFilenameIdentity)
+            else MaterializedFilenameIdentity(self.filename_identity),
+        )
 
 
 @dataclass(frozen=True)

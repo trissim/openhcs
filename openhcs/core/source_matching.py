@@ -595,11 +595,12 @@ def source_component_metadata_value(
         field_text = str(field)
         if (
             field_value is not None
-            and (
-                normalize_source_metadata_key(field_text) == normalized_component_key
-                or source_metadata_component(field_text) is component
-            )
+            and normalize_source_metadata_key(field_text) == normalized_component_key
         ):
+            return str(field_value)
+    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+        field_text = str(field)
+        if field_value is not None and source_metadata_component(field_text) is component:
             return str(field_value)
     return None
 
@@ -615,8 +616,11 @@ def source_component_metadata_raw_value(
         field_text = str(field)
         if (
             normalize_source_metadata_key(field_text) == normalized_component_key
-            or source_metadata_component(field_text) is component
         ) and field_value is not None:
+            return field_value
+    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+        field_text = str(field)
+        if source_metadata_component(field_text) is component and field_value is not None:
             return field_value
     return None
 
@@ -645,7 +649,14 @@ def source_component_metadata_values(
         field_text = str(field)
         if (
             normalize_source_metadata_key(field_text) == normalized_component_key
-            or source_metadata_component(field_text) is component
+            and field_value is not None
+        ):
+            values.append(str(field_value))
+    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+        field_text = str(field)
+        if (
+            normalize_source_metadata_key(field_text) != normalized_component_key
+            and source_metadata_component(field_text) is component
         ) and field_value is not None:
             values.append(str(field_value))
     return tuple(dict.fromkeys(values))

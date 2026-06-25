@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields as dataclass_fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
@@ -33,7 +33,6 @@ from openhcs.core.aligned_image_payload import (
     compose_aligned_image_payload,
     payload_slice_count,
     project_singleton_stack_image_domain,
-    stack_image_payload_context,
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 from openhcs.core.callable_contract import (
@@ -171,6 +170,7 @@ from openhcs.core.runtime_values import (
 from openhcs.core.runtime_values import (
     DerivedImagePayloadContext,
     ImageMetadataPayload,
+    ImagePayloadMetadataCompositionMode,
     ImagePayloadMetadataCompositionRequest,
     MaskedImagePayload,
     RuntimeArrayPayload,
@@ -254,6 +254,7 @@ from openhcs.interop.cellprofiler.runtime.image_execution_strategies import (
 )
 from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
     CellProfilerFunctionContractExecutor,
+    CellProfilerFunctionOutputAggregationContract,
     _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR,
     _execute_pure_2d_slice,
     _execute_runtime_batch_invocation,
@@ -609,7 +610,6 @@ class CellProfilerModuleContractRegistry:
         cls._contracts_by_generated_module[generated_module_name] = normalized
 
     @classmethod
-    @classmethod
     def contract_for(
         cls,
         binding: CellProfilerModuleContractBinding,
@@ -922,6 +922,7 @@ class CellProfilerModuleRuntimePlan:
     object_label_inputs: tuple[ArtifactSpec, ...]
     measurement_outputs: tuple[ArtifactSpec, ...]
     image_outputs: tuple[ArtifactSpec, ...]
+    declared_output_specs: tuple[ArtifactSpec, ...]
     binding_scope: RuntimeArtifactBindingScope
     object_input_policy: CellProfilerObjectInputPolicy
     special_input_policy: "CellProfilerSpecialInputPolicy"
@@ -1013,6 +1014,7 @@ class CellProfilerModuleRuntimePlan:
             object_label_inputs=object_label_inputs,
             measurement_outputs=measurement_outputs,
             image_outputs=image_outputs,
+            declared_output_specs=contract.declared_outputs,
             binding_scope=RuntimeArtifactBindingScope.from_contract(contract),
             object_input_policy=object_input_policy,
             special_input_policy=special_input_policy,
@@ -1071,8 +1073,16 @@ class CellProfilerModuleRuntimePlan:
     def runtime_batch_executor(
         self,
         domain: RuntimeBatchExecutionDomain,
-    ) -> object | None:
+    ) -> Callable | None:
         return self.callable_contract.runtime_batch_executor(domain)
+
+    def function_output_aggregation_contract(
+        self,
+    ) -> CellProfilerFunctionOutputAggregationContract:
+        return CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
+            self.replaces_main_flow,
+            declared_output_specs=self.declared_output_specs,
+        )
 
 
 @dataclass(slots=True)
@@ -1165,16 +1175,19 @@ class CellProfilerModuleExecutor:
         """Call the absorbed function and record declared outputs through the adapter."""
         plan = self.runtime_plan(func)
         function_name = plan.function_name
-        run_started_at = time.perf_counter()
-        mode_started_at = time.perf_counter()
+        profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
+        if profile_enabled:
+            run_started_at = time.perf_counter()
+            mode_started_at = time.perf_counter()
         if plan.runs_per_image_measurement:
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_runs_per_image_check",
-                time.perf_counter() - mode_started_at,
-                module=self.module_name,
-                function=function_name,
-            )
-            per_image_started_at = time.perf_counter()
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_runs_per_image_check",
+                    time.perf_counter() - mode_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+                per_image_started_at = time.perf_counter()
             result = self._run_per_image_measurement(
                 func,
                 plan,
@@ -1183,47 +1196,51 @@ class CellProfilerModuleExecutor:
                 cellprofiler_runtime=cellprofiler_runtime,
                 **kwargs,
             )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_run_per_image_measurement",
-                time.perf_counter() - per_image_started_at,
-                module=self.module_name,
-                function=function_name,
-            )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_module_run_total",
-                time.perf_counter() - run_started_at,
-                module=self.module_name,
-                function=function_name,
-            )
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_run_per_image_measurement",
+                    time.perf_counter() - per_image_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_module_run_total",
+                    time.perf_counter() - run_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
             return result
 
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_runs_per_image_check",
-            time.perf_counter() - mode_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        image_request_started_at = time.perf_counter()
-        image_request = self._image_request(
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_runs_per_image_check",
+                time.perf_counter() - mode_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+            image_request_started_at = time.perf_counter()
+        image_request = self._runtime_image_request(
             plan,
             image,
             cellprofiler_runtime,
         )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_image_request",
-            time.perf_counter() - image_request_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        object_mode_started_at = time.perf_counter()
-        if plan.runs_per_object_measurement:
+        if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_runs_per_object_check",
-                time.perf_counter() - object_mode_started_at,
-                module=self.module_name,
-                function=function_name,
-            )
-            per_object_started_at = time.perf_counter()
+                "cp_image_request",
+                time.perf_counter() - image_request_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+            object_mode_started_at = time.perf_counter()
+        if plan.runs_per_object_measurement:
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_runs_per_object_check",
+                    time.perf_counter() - object_mode_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+                per_object_started_at = time.perf_counter()
             result = self._run_per_object_measurement(
                 func,
                 plan,
@@ -1231,30 +1248,39 @@ class CellProfilerModuleExecutor:
                 current_image=image,
                 image_request=image_request,
                 cellprofiler_runtime=cellprofiler_runtime,
-                source_image_name=image_request.source_image_name,
+                source_image_name=self._source_image_name_for_measurement(
+                    image_request
+                ),
                 **kwargs,
             )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_run_per_object_measurement",
-                time.perf_counter() - per_object_started_at,
-                module=self.module_name,
-                function=function_name,
-            )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_module_run_total",
-                time.perf_counter() - run_started_at,
-                module=self.module_name,
-                function=function_name,
-            )
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_run_per_object_measurement",
+                    time.perf_counter() - per_object_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_module_run_total",
+                    time.perf_counter() - run_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
             return result
 
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_runs_per_object_check",
-            time.perf_counter() - object_mode_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        invocation_started_at = time.perf_counter()
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_runs_per_object_check",
+                time.perf_counter() - object_mode_started_at,
+                module=self.module_name,
+                function=function_name,
+            )
+        if image_request is None:
+            raise RuntimeError(
+                f"{self.module_name} image execution requires a resolved image request."
+            )
+        if profile_enabled:
+            invocation_started_at = time.perf_counter()
         invocation = self._invocation_request(
             plan,
             image_request=image_request,
@@ -1263,56 +1289,89 @@ class CellProfilerModuleExecutor:
             kwargs=kwargs,
             invocation_options=invocation_options,
         )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_invocation_request",
-            time.perf_counter() - invocation_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        execute_started_at = time.perf_counter()
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_invocation_request",
+                time.perf_counter() - invocation_started_at,
+                module=self.module_name,
+                function=function_name,
+            )
+            execute_started_at = time.perf_counter()
         raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
             func,
             invocation.image,
             invocation.kwargs,
             execution_mode=invocation.execution_mode,
+            output_aggregation_contract=plan.function_output_aggregation_contract(),
         )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_contract_execute",
-            time.perf_counter() - execute_started_at,
-            module=self.module_name,
-            function=function_name,
-            **cellprofiler_profile_payload_fields("input", invocation.image),
-            **cellprofiler_profile_payload_fields("output", raw_output),
-        )
-        split_started_at = time.perf_counter()
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile_deferred(
+                "cp_contract_execute",
+                time.perf_counter() - execute_started_at,
+                lambda: {
+                    "module": self.module_name,
+                    "function": function_name,
+                    **cellprofiler_profile_payload_fields("input", invocation.image),
+                    **cellprofiler_profile_payload_fields("output", raw_output),
+                },
+            )
+            split_started_at = time.perf_counter()
         main_output, artifact_values = _split_cellprofiler_output(raw_output)
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_split_output",
-            time.perf_counter() - split_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        record_started_at = time.perf_counter()
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_split_output",
+                time.perf_counter() - split_started_at,
+                module=self.module_name,
+                function=function_name,
+            )
+            record_started_at = time.perf_counter()
         CellProfilerOutputRecorder.record_module_outputs(
             contract=self.contract,
             recording_plan=plan.output_recording_plan,
             primary_image_input_policy=self._primary_image_input_policy,
             adapter=cellprofiler_runtime,
             func=func,
+            function_name=function_name,
             main_output=main_output,
             artifact_values=artifact_values,
             invocation=invocation,
             image_request=image_request,
             current_image=image,
         )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_record_outputs",
-            time.perf_counter() - record_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        replace_started_at = time.perf_counter()
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_record_outputs",
+                time.perf_counter() - record_started_at,
+                module=self.module_name,
+                function=function_name,
+            )
+            replace_started_at = time.perf_counter()
         if not plan.replaces_main_flow:
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_replace_main_flow_check",
+                    time.perf_counter() - replace_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_module_run_total",
+                    time.perf_counter() - run_started_at,
+                    module=self.module_name,
+                    function=function_name,
+                )
+            return CELLPROFILER_SIDE_EFFECT_MAIN_FLOW.output_image(
+                current_image=image,
+                image_request=image_request,
+            )
+        result = self._replacement_main_flow_output(
+            plan,
+            adapter=cellprofiler_runtime,
+            current_image=image,
+            invocation_image=invocation.image,
+            output_image=main_output,
+        )
+        if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
                 "cp_replace_main_flow_check",
                 time.perf_counter() - replace_started_at,
@@ -1325,29 +1384,6 @@ class CellProfilerModuleExecutor:
                 module=self.module_name,
                 function=function_name,
             )
-            return CELLPROFILER_SIDE_EFFECT_MAIN_FLOW.output_image(
-                current_image=image,
-                image_request=image_request,
-            )
-        result = self._replacement_main_flow_output(
-            plan,
-            adapter=cellprofiler_runtime,
-            current_image=image,
-            invocation_image=invocation.image,
-            output_image=main_output,
-        )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_replace_main_flow_check",
-            time.perf_counter() - replace_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_module_run_total",
-            time.perf_counter() - run_started_at,
-            module=self.module_name,
-            function=function_name,
-        )
         return result
 
     def _replacement_main_flow_output(
@@ -1376,13 +1412,6 @@ class CellProfilerModuleExecutor:
                 ),
             )
             payload = composition.payload
-            if isinstance(payload, AlignedImageStack):
-                return stack_image_payload_context(
-                    payload.slices,
-                    np.stack(
-                        tuple(image_payload_data(slice_payload) for slice_payload in payload.slices)
-                    ),
-                )
             return payload
         return cellprofiler_recorded_image_main_flow_output(
             current_image=current_image,
@@ -1397,7 +1426,7 @@ class CellProfilerModuleExecutor:
         *,
         input_image: CellProfilerRuntimeValue,
         current_image: CellProfilerRuntimeValue,
-        image_request: "CellProfilerImageRequest",
+        image_request: "CellProfilerImageRequest | None",
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         source_image_name: str | None,
         **kwargs: CellProfilerRuntimeValue,
@@ -1417,7 +1446,9 @@ class CellProfilerModuleExecutor:
             MeasurementScopeSelection.of(MeasurementScope.OBJECT),
         )
         combined_rows: list[CellProfilerRuntimeValue] = []
-        measurement_images_started_at = time.perf_counter()
+        profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
+        if profile_enabled:
+            measurement_images_started_at = time.perf_counter()
         measurement_image_resolver = CellProfilerMeasurementImageResolver(self)
         measurement_images = measurement_image_resolver.measurement_image_inputs(
             func,
@@ -1425,17 +1456,20 @@ class CellProfilerModuleExecutor:
             current_image,
             image_request,
         )
-        profile_events = [
-            CellProfilerRuntimeProfileEvent(
-                "cp_per_object_measurement_images",
-                time.perf_counter() - measurement_images_started_at,
-                (
-                    ("images", len(measurement_images)),
-                    ("objects", len(object_inputs)),
-                ),
+        profile_events: list[CellProfilerRuntimeProfileEvent] = []
+        if profile_enabled:
+            profile_events.append(
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_measurement_images",
+                    time.perf_counter() - measurement_images_started_at,
+                    (
+                        ("images", len(measurement_images)),
+                        ("objects", len(object_inputs)),
+                    ),
+                )
             )
-        ]
-        dual_scope_started_at = time.perf_counter()
+        if profile_enabled:
+            dual_scope_started_at = time.perf_counter()
         image_measurement_rows = self._dual_scope_image_measurement_rows(
             func,
             plan,
@@ -1444,13 +1478,14 @@ class CellProfilerModuleExecutor:
             kwargs,
             measurement_target_scope,
         )
-        profile_events.append(
-            CellProfilerRuntimeProfileEvent(
-                "cp_per_object_dual_scope_rows",
-                time.perf_counter() - dual_scope_started_at,
-                (("rows", len(image_measurement_rows)),),
+        if profile_enabled:
+            profile_events.append(
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_dual_scope_rows",
+                    time.perf_counter() - dual_scope_started_at,
+                    (("rows", len(image_measurement_rows)),),
+                )
             )
-        )
         combined_rows.extend(image_measurement_rows)
         measurement_row_policy = plan.object_measurement_row_policy
         label_payload_seconds = 0.0
@@ -1521,6 +1556,7 @@ class CellProfilerModuleExecutor:
                     batch_request = RuntimeBatchInvocationRequest(
                         source_image_name=measurement_image.source_image_name,
                         execution_mode=execution_mode,
+                        func=func,
                         image=aligned_image,
                         kwargs={
                             **invocation.lowered_kwargs(),
@@ -1624,35 +1660,36 @@ class CellProfilerModuleExecutor:
                     invocation=invocation,
                 )
 
-        profile_events.extend(
-            (
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_label_payload",
-                    label_payload_seconds,
-                ),
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_label_align",
-                    label_align_seconds,
-                ),
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_contract_execute",
-                    contract_execute_seconds,
-                ),
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_split_output",
-                    output_timings.split_seconds,
-                ),
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_complete_rows",
-                    output_timings.complete_rows_seconds,
-                ),
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_annotate_rows",
-                    output_timings.annotate_seconds,
-                    (("rows", len(combined_rows)),),
-                ),
+        if profile_enabled:
+            profile_events.extend(
+                (
+                    CellProfilerRuntimeProfileEvent(
+                        "cp_per_object_label_payload",
+                        label_payload_seconds,
+                    ),
+                    CellProfilerRuntimeProfileEvent(
+                        "cp_per_object_label_align",
+                        label_align_seconds,
+                    ),
+                    CellProfilerRuntimeProfileEvent(
+                        "cp_per_object_contract_execute",
+                        contract_execute_seconds,
+                    ),
+                    CellProfilerRuntimeProfileEvent(
+                        "cp_per_object_split_output",
+                        output_timings.split_seconds,
+                    ),
+                    CellProfilerRuntimeProfileEvent(
+                        "cp_per_object_complete_rows",
+                        output_timings.complete_rows_seconds,
+                    ),
+                    CellProfilerRuntimeProfileEvent(
+                        "cp_per_object_annotate_rows",
+                        output_timings.annotate_seconds,
+                        (("rows", len(combined_rows)),),
+                    ),
+                )
             )
-        )
 
         combined_source_image_name = measurement_row_policy.table_source_image_name(
             measurement_images,
@@ -1663,9 +1700,13 @@ class CellProfilerModuleExecutor:
         )
         combined_source_metadata = CellProfilerMeasurementImage.composed_source_metadata(
             measurement_images,
+            mode=measurement_row_policy.source_metadata_composition_mode(
+                measurement_images
+            ),
         )
 
-        record_started_at = time.perf_counter()
+        if profile_enabled:
+            record_started_at = time.perf_counter()
         CellProfilerMeasurementMaterializer.record_per_object(
             adapter=cellprofiler_runtime,
             spec=measurement_outputs[0],
@@ -1681,19 +1722,21 @@ class CellProfilerModuleExecutor:
                 source_metadata=combined_source_metadata,
             ),
         )
-        profile_events.append(
-            CellProfilerRuntimeProfileEvent(
-                "cp_per_object_record_measurements",
-                time.perf_counter() - record_started_at,
-                (
+        if profile_enabled:
+            profile_events.append(
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_record_measurements",
+                    time.perf_counter() - record_started_at,
                     (
-                        "rows",
-                        sum(len(rows) for rows in columnar_rows) + len(combined_rows),
+                        (
+                            "rows",
+                            sum(len(rows) for rows in columnar_rows)
+                            + len(combined_rows),
+                        ),
                     ),
-                ),
+                )
             )
-        )
-        profiler.record_events(tuple(profile_events))
+            profiler.record_events(tuple(profile_events))
         return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
             input_image=input_image,
             measurement_images=measurement_images,
@@ -1733,6 +1776,7 @@ class CellProfilerModuleExecutor:
                 _image_scope_measurement_payload(measurement_image.payload),
                 image_kwargs,
                 execution_mode=measurement_image.execution_mode,
+                output_aggregation_contract=plan.function_output_aggregation_contract(),
             )
             contract_execute_seconds += time.perf_counter() - contract_started_at
             split_rows_started_at = time.perf_counter()
@@ -1832,6 +1876,7 @@ class CellProfilerModuleExecutor:
                 _image_scope_measurement_payload(measurement_image.payload),
                 coerced_kwargs,
                 execution_mode=measurement_image.execution_mode,
+                output_aggregation_contract=plan.function_output_aggregation_contract(),
             )
             contract_execute_seconds += time.perf_counter() - contract_started_at
             split_rows_started_at = time.perf_counter()
@@ -1858,6 +1903,7 @@ class CellProfilerModuleExecutor:
                     ),
                     output_values=resolved_values.context_values,
                     func=func,
+                    function_name=function_name,
                     source=replace(
                         measurement_image,
                         source_image_name=source_image_name,
@@ -2037,11 +2083,16 @@ class CellProfilerModuleExecutor:
     ) -> "CellProfilerImageRequest":
         image_inputs = plan.primary_image_inputs
         if not image_inputs:
+            current_image_payload = self._current_runtime_plane_image(
+                plan,
+                current_image,
+                adapter,
+            )
             payload = (
-                OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image)
+                OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image_payload)
                 if plan.object_label_inputs
                 or plan.declared_input_collection.of_kind(ArtifactKind.SPATIAL_GRID)
-                else cellprofiler_image_payload(current_image)
+                else cellprofiler_image_payload(current_image_payload)
             )
             return CellProfilerImageRequest(
                 payload=payload,
@@ -2050,6 +2101,10 @@ class CellProfilerModuleExecutor:
                 image_count=1,
                 execution_mode=ImagePayloadExecutionMode.NATURAL,
                 projects_runtime_slice_kwargs=not plan.object_label_inputs,
+                publishes_side_effect_main_flow=not (
+                    plan.object_label_inputs
+                    or plan.declared_input_collection.of_kind(ArtifactKind.SPATIAL_GRID)
+                ),
             )
 
         adapter.require_resolvable_source_aliases(plan.external_primary_image_names)
@@ -2077,7 +2132,11 @@ class CellProfilerModuleExecutor:
                     adapter.resolve_source_image(spec.name, current_image)
                 )
             )
-        composition = compose_aligned_image_payload(self.module_name, tuple(payloads))
+        composition = compose_aligned_image_payload(
+            self.module_name,
+            tuple(payloads),
+            metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
+        )
         return CellProfilerImageRequest(
             payload=composition.payload,
             source_image_name=self._primary_image_source_name_from_sources(
@@ -2087,6 +2146,56 @@ class CellProfilerModuleExecutor:
             source_aliases=plan.primary_image_source_aliases,
             image_count=len(payloads),
             execution_mode=composition.execution_mode,
+        )
+
+    def _requires_image_request(
+        self,
+        plan: CellProfilerModuleRuntimePlan,
+    ) -> bool:
+        if not plan.runs_per_object_measurement:
+            return True
+        return not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
+            self.module_name
+        )
+
+    def _runtime_image_request(
+        self,
+        plan: CellProfilerModuleRuntimePlan,
+        image: CellProfilerRuntimeValue,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> CellProfilerImageRequest | None:
+        """Resolve the invocation image request when this execution path needs one."""
+        if self._requires_image_request(plan):
+            return self._image_request(plan, image, adapter)
+        return None
+
+    @staticmethod
+    def _source_image_name_for_measurement(
+        image_request: CellProfilerImageRequest | None,
+    ) -> str | None:
+        """Return the source image name carried by an optional image request."""
+        if image_request is None:
+            return None
+        return image_request.source_image_name
+
+    def _current_runtime_plane_image(
+        self,
+        plan: CellProfilerModuleRuntimePlan,
+        current_image: CellProfilerRuntimeValue,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> CellProfilerRuntimeValue:
+        default_execution_mode = (
+            plan.default_runtime_image_execution_mode
+            or ImagePayloadExecutionMode.NATURAL
+        )
+        if not CurrentRuntimePlaneKwargProjectionContract(
+            plan.func,
+            default_execution_mode,
+        ).projects_runtime_artifact_image_inputs():
+            return current_image
+        return adapter.image_payload_for_current_runtime_plane(
+            current_image,
+            current_image=current_image,
         )
 
     def _input_source_image_name(
@@ -2144,7 +2253,6 @@ class CellProfilerModuleExecutor:
         if CurrentRuntimePlaneKwargProjectionContract(
             plan.func,
             default_execution_mode,
-            source_identity_stack_axes=adapter.source_identity_stack_axes,
         ).projects_runtime_artifact_image_inputs():
             return policy_current_image
         return None
@@ -2209,7 +2317,6 @@ class CellProfilerModuleExecutor:
                     and CurrentRuntimePlaneKwargProjectionContract(
                         plan.func,
                         default_execution_mode,
-                        source_identity_stack_axes=adapter.source_identity_stack_axes,
                     ).projects_runtime_slice_kwargs()
                 ),
             ).kwargs_for_invocation()
@@ -2898,11 +3005,46 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicy):
                 f"shapes, got {sorted(shapes)!r}."
             )
         return {
-            _CELLPROFILER_IMAGE_OVERRIDE_KWARG: np.stack(label_planes, axis=0),
+            _CELLPROFILER_IMAGE_OVERRIDE_KWARG: self.aligned_label_pair_payload(
+                label_planes
+            ),
             _CELLPROFILER_EXECUTION_MODE_OVERRIDE_KWARG: (
-                ImagePayloadExecutionMode.FULL_STACK
+                ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
             ),
         }
+
+    def aligned_label_pair_payload(
+        self,
+        label_planes: tuple[np.ndarray, np.ndarray],
+    ) -> AlignedImageStack:
+        """Return pairwise label payloads without exposing the pair axis as slices."""
+        slice_count = self.common_runtime_slice_count(label_planes)
+        if slice_count is None:
+            return AlignedImageStack((np.stack(label_planes, axis=0),))
+        return AlignedImageStack(
+            tuple(
+                np.stack(
+                    tuple(label_stack[slice_index] for label_stack in label_planes),
+                    axis=0,
+                )
+                for slice_index in range(slice_count)
+            )
+        )
+
+    def common_runtime_slice_count(
+        self,
+        label_planes: tuple[np.ndarray, np.ndarray],
+    ) -> int | None:
+        """Return shared runtime-slice depth when both pair inputs are stacks."""
+        if any(labels.ndim != 3 for labels in label_planes):
+            return None
+        counts = {int(labels.shape[0]) for labels in label_planes}
+        if len(counts) != 1:
+            raise ValueError(
+                "CombineObjects requires object-label stack inputs with matching "
+                f"runtime slice counts, got {sorted(counts)!r}."
+            )
+        return counts.pop()
 
     def label_pair_payload(
         self,
@@ -3461,11 +3603,31 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         request = self.artifact_input_request(spec)
         artifact_strategy = RuntimeArtifactKindStrategy.for_kind(spec.kind)
         if semantics.dense_label_domain:
-            return object_label_dense_array(
+            started_at = time.perf_counter()
+            value = object_label_dense_array(
                 artifact_strategy.raw_runtime_input_value(request),
                 dtype=np.int32,
             )
-        return artifact_strategy.runtime_input_value(request)
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "special_input_runtime_value",
+                time.perf_counter() - started_at,
+                module=self.module_name,
+                spec=spec.name,
+                kind=spec.kind.value,
+                semantics=semantics.value,
+            )
+            return value
+        started_at = time.perf_counter()
+        value = artifact_strategy.runtime_input_value(request)
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "special_input_runtime_value",
+            time.perf_counter() - started_at,
+            module=self.module_name,
+            spec=spec.name,
+            kind=spec.kind.value,
+            semantics=semantics.value,
+        )
+        return value
 
     def runtime_value_without_current_image_projection(
         self,
@@ -3500,9 +3662,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         spec: ArtifactSpec,
     ) -> ObjectLabelValue:
         """Return object labels with provenance preserved for special inputs."""
-        payload = RuntimeArtifactKindStrategy.for_kind(spec.kind).runtime_input_value(
-            self.artifact_input_request(spec)
-        )
+        payload = self.label_payload_for(spec)
         if not isinstance(payload, ObjectLabelValue):
             raise TypeError(
                 f"{self.module_name} special input {spec.name!r} resolved to "

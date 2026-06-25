@@ -13,7 +13,6 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import MeasurementScope, ParentChildRelationshipPayload
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
@@ -635,13 +634,15 @@ class CellProfilerOutputRecorder(
         invocation: CellProfilerInvocationRequest,
         image_request: CellProfilerImageRequest,
         current_image: CellProfilerRuntimeValue,
+        function_name: str = "",
     ) -> None:
         """Record one module invocation's returned artifacts."""
         if not contract.outputs:
             return
 
-        function_name = CallableContract.from_callable(func).function_name
-        values_started_at = time.perf_counter()
+        profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
+        if profile_enabled:
+            values_started_at = time.perf_counter()
         resolved_values = CellProfilerResolvedOutputValues.from_returned_outputs(
             recorded_specs=contract.outputs,
             context_specs=contract.declared_outputs or contract.outputs,
@@ -650,13 +651,14 @@ class CellProfilerOutputRecorder(
             func=func,
             declared_output_specs=contract.declared_outputs,
         )
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_output_values_by_kind",
-            time.perf_counter() - values_started_at,
-            module=contract.module_name,
-            function=function_name,
-            outputs=len(contract.outputs),
-        )
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_output_values_by_kind",
+                time.perf_counter() - values_started_at,
+                module=contract.module_name,
+                function=function_name,
+                outputs=len(contract.outputs),
+            )
 
         output_source = replace(
             image_request,
@@ -666,7 +668,8 @@ class CellProfilerOutputRecorder(
             execution_mode=invocation.execution_mode,
         )
         for spec in recording_plan.ordered_outputs:
-            record_started_at = time.perf_counter()
+            if profile_enabled:
+                record_started_at = time.perf_counter()
             output_value = resolved_values.recorded_value(spec)
             recording_plan.recorders[spec.kind].record(
                 CellProfilerOutputRecordRequest(
@@ -678,19 +681,23 @@ class CellProfilerOutputRecorder(
                     output_values=resolved_values.context_values,
                     source=output_source,
                     func=func,
+                    function_name=function_name,
                     call_kwargs=invocation.kwargs,
                     current_image=current_image,
                 )
             )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_output_record_one",
-                time.perf_counter() - record_started_at,
-                module=contract.module_name,
-                function=function_name,
-                artifact=spec.name,
-                kind=spec.kind.value,
-                **cellprofiler_profile_payload_fields("value", output_value),
-            )
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile_deferred(
+                    "cp_output_record_one",
+                    time.perf_counter() - record_started_at,
+                    lambda: {
+                        "module": contract.module_name,
+                        "function": function_name,
+                        "artifact": spec.name,
+                        "kind": spec.kind.value,
+                        **cellprofiler_profile_payload_fields("value", output_value),
+                    },
+                )
 
     @abstractmethod
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
@@ -766,21 +773,25 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
     kind = ArtifactKind.MEASUREMENTS
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        function_name = CallableContract.from_callable(request.func).function_name
-        build_started_at = time.perf_counter()
+        function_name = request.function_name
+        profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
+        if profile_enabled:
+            build_started_at = time.perf_counter()
         measurement_record = CellProfilerMeasurementRecordBuilder.for_module(
             request.module_name
         ).build(request)
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_measurement_record_build",
-            time.perf_counter() - build_started_at,
-            module=request.module_name,
-            function=function_name,
-            artifact=request.spec.name,
-            rows=len(measurement_record.rows),
-        )
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_measurement_record_build",
+                time.perf_counter() - build_started_at,
+                module=request.module_name,
+                function=function_name,
+                artifact=request.spec.name,
+                rows=len(measurement_record.rows),
+            )
         if self._records_runtime_artifact(request):
-            materialize_started_at = time.perf_counter()
+            if profile_enabled:
+                materialize_started_at = time.perf_counter()
             CellProfilerMeasurementMaterializer.record(
                 measurement_record.materialization_request(
                     adapter=request.adapter,
@@ -789,32 +800,36 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
                     current_image=request.current_image,
                 )
             )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_measurement_record_materialize",
-                time.perf_counter() - materialize_started_at,
-                module=request.module_name,
-                function=function_name,
-                artifact=request.spec.name,
-                rows=len(measurement_record.rows),
-            )
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_measurement_record_materialize",
+                    time.perf_counter() - materialize_started_at,
+                    module=request.module_name,
+                    function=function_name,
+                    artifact=request.spec.name,
+                    rows=len(measurement_record.rows),
+                )
             return
 
         row_policy = CellProfilerObjectMeasurementRowPolicy.for_module(
             request.module_name
         )
-        partitions_started_at = time.perf_counter()
+        if profile_enabled:
+            partitions_started_at = time.perf_counter()
         partitions = row_policy.record_partitions(measurement_record)
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_measurement_record_partitions",
-            time.perf_counter() - partitions_started_at,
-            module=request.module_name,
-            function=function_name,
-            artifact=request.spec.name,
-            rows=len(measurement_record.rows),
-            partitions=len(partitions),
-        )
+        if profile_enabled:
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_measurement_record_partitions",
+                time.perf_counter() - partitions_started_at,
+                module=request.module_name,
+                function=function_name,
+                artifact=request.spec.name,
+                rows=len(measurement_record.rows),
+                partitions=len(partitions),
+            )
         for partition in partitions:
-            materialize_started_at = time.perf_counter()
+            if profile_enabled:
+                materialize_started_at = time.perf_counter()
             CellProfilerMeasurementMaterializer.record(
                 partition.materialization_request(
                     adapter=request.adapter,
@@ -823,14 +838,15 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
                     current_image=request.current_image,
                 )
             )
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_measurement_record_materialize",
-                time.perf_counter() - materialize_started_at,
-                module=request.module_name,
-                function=function_name,
-                artifact=request.spec.name,
-                rows=len(partition.rows),
-            )
+            if profile_enabled:
+                CellProfilerRuntimeProfileLogger.log_module_profile(
+                    "cp_measurement_record_materialize",
+                    time.perf_counter() - materialize_started_at,
+                    module=request.module_name,
+                    function=function_name,
+                    artifact=request.spec.name,
+                    rows=len(partition.rows),
+                )
 
     @staticmethod
     def _records_runtime_artifact(request: CellProfilerOutputRecordRequest) -> bool:

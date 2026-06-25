@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -28,6 +30,80 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 
 CONSTANT_PADDING_MODE = "constant"
 REFLECT_PADDING_MODE = "reflect"
+
+
+@dataclass(frozen=True, slots=True)
+class VectorizedMedianFilterPlan:
+    """Execution plan for exact vectorized 3-D constant-mode median filtering."""
+
+    image_shape: tuple[int, int, int]
+    window_shape: tuple[int, int, int]
+    window_volume: int
+    median_rank: int
+    chunk_plane_capacity: int
+
+
+@dataclass(frozen=True, slots=True)
+class VectorizedMedianFilterMemoryPolicy:
+    """Memory policy for exact vectorized median windows."""
+
+    max_window_bytes: int
+    max_chunk_bytes: int
+
+    def __post_init__(self) -> None:
+        if self.max_window_bytes < 1:
+            raise ValueError("max_window_bytes must be positive.")
+        if self.max_chunk_bytes < 1:
+            raise ValueError("max_chunk_bytes must be positive.")
+
+    def plan(
+        self,
+        image: np.ndarray,
+        *,
+        window_size: int,
+        mode: str,
+    ) -> VectorizedMedianFilterPlan | None:
+        """Return an exact vectorized plan when the image fits this policy."""
+        if image.ndim != 3 or mode != CONSTANT_PADDING_MODE:
+            return None
+        if not np.issubdtype(image.dtype, np.number):
+            return None
+        if np.issubdtype(image.dtype, np.floating) and not np.all(np.isfinite(image)):
+            return None
+
+        image_shape = self.image_shape_3d(image)
+        window_shape = (int(window_size),) * image.ndim
+        window_volume = int(np.prod(window_shape))
+        working_set_bytes = int(image.size) * window_volume * image.dtype.itemsize
+        if working_set_bytes > self.max_window_bytes:
+            return None
+
+        plane_window_bytes = (
+            image_shape[1] * image_shape[2] * window_volume * image.dtype.itemsize
+        )
+        return VectorizedMedianFilterPlan(
+            image_shape=image_shape,
+            window_shape=window_shape,
+            window_volume=window_volume,
+            median_rank=window_volume // 2,
+            chunk_plane_capacity=max(1, int(self.max_chunk_bytes // plane_window_bytes)),
+        )
+
+    @staticmethod
+    def image_shape_3d(image: np.ndarray) -> tuple[int, int, int]:
+        """Return a validated 3-D image shape for vectorized planning."""
+        shape = tuple(int(axis_size) for axis_size in image.shape)
+        if len(shape) != 3:
+            raise ValueError(
+                "Vectorized median filtering requires a 3-D image shape, "
+                f"got {shape!r}."
+            )
+        if min(shape) < 1:
+            raise ValueError(
+                "Vectorized median filtering requires non-empty axes, "
+                f"got {shape!r}."
+            )
+        return shape
 
 
 class MedianFilterBackendStrategy(
@@ -66,8 +142,12 @@ class MedianFilterBackendStrategy(
 class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
     """NumPy/SciPy median filtering with exact accelerated rank paths."""
 
-    max_vectorized_window_bytes = 1024**3
-    max_vectorized_chunk_bytes = 128 * 1024**2
+    vectorized_memory_policy: ClassVar[VectorizedMedianFilterMemoryPolicy] = (
+        VectorizedMedianFilterMemoryPolicy(
+            max_window_bytes=1024**3,
+            max_chunk_bytes=16 * 1024**2,
+        )
+    )
     backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NATIVE,
@@ -75,6 +155,17 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = True
+
+    def prepare_backend(self) -> None:
+        """Warm this backend's exact vectorized 3-D median path."""
+        image = np.linspace(0.0, 1.0, 8 * 16 * 16, dtype=np.float32).reshape(
+            (8, 16, 16)
+        )
+        self.filter(
+            image,
+            window_size=5,
+            mode=CONSTANT_PADDING_MODE,
+        )
 
     def filter(
         self,
@@ -127,52 +218,46 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         mode: str,
     ) -> np.ndarray | None:
         """Return an exact constant-mode median using NumPy's vectorized partition."""
-        if image.ndim != 3 or mode != CONSTANT_PADDING_MODE:
-            return None
-        if not np.issubdtype(image.dtype, np.number):
-            return None
-        if np.issubdtype(image.dtype, np.floating) and not np.all(np.isfinite(image)):
-            return None
-
-        window_shape = (int(window_size),) * image.ndim
-        window_volume = int(np.prod(window_shape))
-        working_set_bytes = int(image.size) * window_volume * image.dtype.itemsize
-        if working_set_bytes > self.max_vectorized_window_bytes:
+        plan = self.vectorized_memory_policy.plan(
+            image,
+            window_size=window_size,
+            mode=mode,
+        )
+        if plan is None:
             return None
 
         from numpy.lib.stride_tricks import sliding_window_view
 
         pad_width = int(window_size) // 2
         padded = np.pad(image, pad_width, mode=CONSTANT_PADDING_MODE, constant_values=0)
-        median_rank = window_volume // 2
-        max_chunk_planes = max(
-            1,
-            int(
-                self.max_vectorized_chunk_bytes
-                // (image.shape[1] * image.shape[2] * window_volume * image.dtype.itemsize)
-            ),
-        )
-        if image.shape[0] <= max_chunk_planes:
-            windows = sliding_window_view(padded, window_shape)
-            flattened_windows = windows.reshape(image.shape + (window_volume,))
-            filtered = np.partition(flattened_windows, median_rank, axis=-1)[
-                ..., median_rank
+        if plan.image_shape[0] <= plan.chunk_plane_capacity:
+            windows = sliding_window_view(padded, plan.window_shape)
+            flattened_windows = windows.reshape(
+                plan.image_shape + (plan.window_volume,)
+            )
+            filtered = np.partition(flattened_windows, plan.median_rank, axis=-1)[
+                ..., plan.median_rank
             ]
             return filtered.astype(image.dtype, copy=False)
 
         filtered = np.empty_like(image)
-        for z_start in range(0, image.shape[0], max_chunk_planes):
-            z_stop = min(z_start + max_chunk_planes, image.shape[0])
+        for z_start in range(0, plan.image_shape[0], plan.chunk_plane_capacity):
+            z_stop = min(z_start + plan.chunk_plane_capacity, plan.image_shape[0])
             chunk = padded[z_start : z_stop + window_size - 1]
-            windows = sliding_window_view(chunk, window_shape)
+            windows = sliding_window_view(chunk, plan.window_shape)
             flattened_windows = windows.reshape(
-                (z_stop - z_start, image.shape[1], image.shape[2], window_volume)
+                (
+                    z_stop - z_start,
+                    plan.image_shape[1],
+                    plan.image_shape[2],
+                    plan.window_volume,
+                )
             )
             filtered[z_start:z_stop] = np.partition(
                 flattened_windows,
-                median_rank,
+                plan.median_rank,
                 axis=-1,
-            )[..., median_rank]
+            )[..., plan.median_rank]
         return filtered.astype(image.dtype, copy=False)
 
     def scipy_filter(
@@ -295,7 +380,13 @@ def medianfilter(
     return with_image_payload_data(image, filtered)
 
 
+def prepare_medianfilter() -> None:
+    """Warm the median-filter module path before timed execution."""
+    MedianFilterBackendStrategy.prepare_registered_family()
+
+
 pure_2d_batch_executor(median_filter_backend().filter_batch)(medianfilter)
+medianfilter.__openhcs_prepare__ = prepare_medianfilter
 
 
 __all__ = public_names_from_objects(

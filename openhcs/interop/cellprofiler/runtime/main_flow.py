@@ -20,7 +20,9 @@ from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import detect_memory_type
 from openhcs.core.runtime_values import (
     DerivedImagePayloadContext,
+    ImagePayloadMetadataCompositionMode,
     RuntimeImagePayloadContext,
+    RuntimeImageSourceIdentityCompleteness,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
@@ -187,6 +189,7 @@ class MultipleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSu
         composed = compose_aligned_image_payload(
             "CellProfilerMeasurementMainFlow",
             tuple(image.payload for image in source_images),
+            metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
         ).payload
         if MeasurementMainFlowSurfaceAddressability(composed).addressable:
             return composed
@@ -260,6 +263,7 @@ class CellProfilerSideEffectMainFlowPolicy:
         return (
             image_request.payload
             if image_request.has_source_identity
+            and image_request.publishes_side_effect_main_flow
             else current_image
         )
 
@@ -301,10 +305,7 @@ def cellprofiler_main_flow_output(
         mask=stacked_mask,
         metadata=output_metadata,
     ).payload()
-    if (
-        output_metadata.source_provenance.addressable
-        or output_metadata.source_provenance.source_image_provenance_planes.has_values
-    ):
+    if RuntimeImageSourceIdentityCompleteness(output_payload).complete():
         return output_payload
     return DerivedImagePayloadContext(input_image, output_payload).payload()
 

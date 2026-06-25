@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TypeAlias
 
 ORIGINAL_SOURCE_METADATA_FIELD = "OpenHCSOriginalSourceMetadata"
+SOURCE_PLANE_INDEX_FIELD = "source_plane_index"
+SOURCE_PLANE_COUNT_FIELD = "source_plane_count"
 
 SourceMetadataScalar: TypeAlias = str | int | float | bool | None
 SourceMetadataValue: TypeAlias = SourceMetadataScalar | Mapping[str, SourceMetadataScalar]

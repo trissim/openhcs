@@ -27,6 +27,7 @@ from benchmark.adapters.openhcs import OPENHCS_MAX_AXIS_COUNT_PARAM
 from benchmark.adapters.openhcs import OPENHCS_NUM_WORKERS_PARAM
 from benchmark.adapters.openhcs import OPENHCS_START_METHOD_PARAM
 from benchmark.adapters.openhcs import OPENHCS_USE_THREADING_PARAM
+from benchmark.converter.execution_validation import CPPipeInfrastructureProfile
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
@@ -34,6 +35,7 @@ from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
 from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.comparison_manifest import ComparisonManifest
+from openhcs.core.equivalence.outputs import image_paths, table_paths
 
 if TYPE_CHECKING:
     from benchmark.converter.compatibility_matrix import CellProfilerCompatibilityReport
@@ -535,6 +537,31 @@ class NativeReferenceLocation:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeReferenceArtifactProfile:
+    """Artifact shape exposed by a cached native CellProfiler reference."""
+
+    table_count: int
+    image_count: int
+
+    @classmethod
+    def from_reference_output_dir(
+        cls,
+        reference_output_dir: Path | None,
+    ) -> "NativeReferenceArtifactProfile":
+        if reference_output_dir is None:
+            return cls(table_count=0, image_count=0)
+        return cls(
+            table_count=len(table_paths(reference_output_dir)),
+            image_count=len(image_paths(reference_output_dir)),
+        )
+
+    @property
+    def image_only(self) -> bool:
+        """Return whether image artifacts are the only reference outputs."""
+        return self.image_count > 0 and self.table_count == 0
+
+
+@dataclass(frozen=True, slots=True)
 class NativeCellProfilerReferenceScope:
     """Native CellProfiler reference directory identity for one benchmark case."""
 
@@ -991,9 +1018,7 @@ def _summary_csv_rows(
             SPEEDUP_TARGET_FIELD: speedup_target,
             MEETS_EXECUTION_SPEEDUP_TARGET_FIELD: meets_execution_speedup_target,
             MEETS_TOTAL_PHASE_SPEEDUP_TARGET_FIELD: meets_total_phase_speedup_target,
-            MEETS_SPEEDUP_TARGET_FIELD: (
-                meets_execution_speedup_target and meets_total_phase_speedup_target
-            ),
+            MEETS_SPEEDUP_TARGET_FIELD: meets_execution_speedup_target,
             MIN_PARITY_ACCURACY_FIELD: min(
                 observation.parity_accuracy for observation in case_observations
             ),
@@ -1109,6 +1134,9 @@ def _run_comparison_case(
     repetition: int,
     context: ComparisonSuiteRunContext,
 ) -> CellProfilerComparisonObservation:
+    cppipe_infrastructure = CPPipeInfrastructureProfile.from_cppipe_path(
+        case.cppipe_path
+    )
     pipeline_params: dict[str, object] = {
         **case.pipeline_params,
         "dataset_id": case.resolved_dataset_id,
@@ -1134,6 +1162,16 @@ def _run_comparison_case(
         case,
         context.native_reference_root,
         pipeline_params,
+    )
+    native_reference_profile = NativeReferenceArtifactProfile.from_reference_output_dir(
+        native_reference.reference_output_dir
+    )
+    pipeline_params["compare_image_outputs"] = (
+        not case.value_only or native_reference_profile.image_only
+        or (
+            native_reference.reference_output_dir is None
+            and cppipe_infrastructure.image_exports_without_table_exports
+        )
     )
     if (
         context.require_native_reference

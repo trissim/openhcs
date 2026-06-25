@@ -84,7 +84,7 @@ digraph G {
     worker-safe execution plan
   >, fillcolor="#E8EAF6", color="#283593", penwidth=2.0];
 
-  audit [label=<
+  change_audit [label=<
     <B>Inspectable change</B><BR ALIGN="LEFT"/>
     local / inherited / defaulted<BR ALIGN="LEFT"/>
     source of value<BR ALIGN="LEFT"/>
@@ -97,7 +97,7 @@ digraph G {
   llm -> state [label="construct"];
   state -> scope [label="resolve"];
   scope -> runtime [label="compile"];
-  state -> audit [label="provenance"];
-  audit -> gui [label="display"];
-  audit -> code [label="serialize"];
+  state -> change_audit [label="provenance"];
+  change_audit -> gui [label="display"];
+  change_audit -> code [label="serialize"];
 }

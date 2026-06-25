@@ -517,53 +517,10 @@ class SecondaryPropagationBackendStrategy(
         return filtered
 
 
-class CentrosomeSecondaryPropagationBackendStrategy(
-    SecondaryPropagationBackendStrategy,
-):
-    """Centrosome provider for exact CellProfiler propagation semantics."""
-
-    backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.CENTROSOME,
-    )
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = False
-
-    def propagate_result(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        mask: np.ndarray,
-        regularization: float,
-        *,
-        max_distance: float | None = None,
-    ) -> LabelPropagationResult:
-        del max_distance
-        import centrosome.propagate
-
-        if np.max(labels) == 0:
-            label_array = np.asarray(labels, dtype=np.int32).copy()
-            return LabelPropagationResult(
-                labels=label_array,
-                distances=np.zeros(label_array.shape, dtype=np.float64),
-            )
-        result, distance = centrosome.propagate.propagate(
-            image,
-            labels,
-            mask,
-            regularization,
-        )
-        return LabelPropagationResult(
-            labels=np.asarray(result, dtype=np.int32),
-            distances=np.asarray(distance, dtype=np.float64),
-        )
-
-
 class NumbaSecondaryPropagationBackendStrategy(
     SecondaryPropagationBackendStrategy,
 ):
-    """Numba implementation of centrosome's regularized propagation semantics."""
+    """Numba implementation of regularized secondary-label propagation."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
@@ -1602,7 +1559,6 @@ pure_2d_batch_executor(_identify_tertiary_objects_batch)(identify_tertiary_objec
 
 
 __all__ = public_names_from_objects(
-    CentrosomeSecondaryPropagationBackendStrategy,
     DistanceMaskedSegmentationStrategy,
     DistanceOnlySegmentationStrategy,
     GradientWatershedSegmentationStrategy,

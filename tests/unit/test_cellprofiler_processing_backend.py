@@ -120,6 +120,50 @@ def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     )
 
 
+def test_display_data_on_image_treats_hwc_color_image_as_slice() -> None:
+    from openhcs.interop.cellprofiler.display_data_on_image import (
+        DisplayMode,
+        ObjectsOrImage,
+        display_data_on_image,
+    )
+
+    image = np.ones((8, 9, 3), dtype=np.float32)
+    labels = np.zeros((8, 9), dtype=np.int32)
+    labels[2:5, 3:7] = 1
+
+    result = display_data_on_image(
+        image,
+        labels=labels,
+        measurements=np.array([0.5], dtype=np.float32),
+        objects_or_image=ObjectsOrImage.OBJECTS,
+        display_mode=DisplayMode.TEXT,
+    )
+
+    assert result.shape == image.shape
+
+
+def test_display_data_on_image_processes_nhwc_color_image_stack() -> None:
+    from openhcs.interop.cellprofiler.display_data_on_image import (
+        DisplayMode,
+        ObjectsOrImage,
+        display_data_on_image,
+    )
+
+    image = np.ones((2, 8, 9, 3), dtype=np.float32)
+    labels = np.zeros((2, 8, 9), dtype=np.int32)
+    labels[:, 2:5, 3:7] = 1
+
+    result = display_data_on_image(
+        image,
+        labels=labels,
+        measurements=np.array([0.5], dtype=np.float32),
+        objects_or_image=ObjectsOrImage.OBJECTS,
+        display_mode=DisplayMode.TEXT,
+    )
+
+    assert result.shape == image.shape
+
+
 def test_classify_objects_aligns_dense_label_indexed_measurements_to_sparse_labels() -> None:
     from openhcs.processing.backends.cellprofiler.classification import (
         classify_objects_single_measurement,
@@ -251,7 +295,6 @@ def test_cellprofiler_threshold_diagnostics_backend_resolves_numpy() -> None:
         ThresholdSmoothingBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
-        CentrosomeNumpyShapeMeasurementBackendStrategy,
         LegacyFastNumpyShapeMeasurementBackendStrategy,
         NumbaNumpyShapeMeasurementBackendStrategy,
         ShapeMeasurementBackendStrategy,
@@ -343,6 +386,20 @@ def test_cellprofiler_threshold_quantized_diagnostics_preserve_low_dynamic_range
     assert isinstance(sum_of_entropies, float)
 
 
+def test_threshold_diagnostics_scale_policy_accepts_uint16_unit_interval_proof() -> None:
+    from openhcs.core.runtime_values import ImagePayloadMetadata
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        unit_interval_scale_for_threshold_diagnostics,
+    )
+
+    image = np.asarray([[0, 65535]], dtype=np.uint16)
+    metadata = ImagePayloadMetadata.for_array(image).with_unit_interval_intensity_scale(
+        65535
+    )
+
+    assert unit_interval_scale_for_threshold_diagnostics(image, metadata) == 65535
+
+
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -368,7 +425,6 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         NumbaNumpyNeighborTopologyBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
-        CentrosomeNumpyShapeMeasurementBackendStrategy,
         LegacyFastNumpyShapeMeasurementBackendStrategy,
         NumbaNumpyShapeMeasurementBackendStrategy,
         ShapeMeasurementBackendStrategy,
@@ -389,7 +445,6 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         NumpyLegacyWatershedBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.zernike import (
-        CentrosomeNumpyShapeZernikeBackendStrategy,
         LegacyFastNumpyShapeZernikeBackendStrategy,
         ShapeZernikeBackendStrategy,
     )
@@ -509,21 +564,19 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     ) is (
         NumbaNumpyShapeMeasurementBackendStrategy
     )
-    assert type(
+    with pytest.raises(NotImplementedError):
         ShapeMeasurementBackendStrategy.for_memory_type(
             MemoryType.NUMPY,
             backend_provider=CellProfilerBackendProvider.CENTROSOME,
         )
-    ) is CentrosomeNumpyShapeMeasurementBackendStrategy
     assert type(ShapeZernikeBackendStrategy.for_memory_type(MemoryType.NUMPY)) is (
         LegacyFastNumpyShapeZernikeBackendStrategy
     )
-    assert type(
+    with pytest.raises(NotImplementedError):
         ShapeZernikeBackendStrategy.for_memory_type(
             MemoryType.NUMPY,
             backend_provider=CellProfilerBackendProvider.CENTROSOME,
         )
-    ) is CentrosomeNumpyShapeZernikeBackendStrategy
 
 
 def test_numba_neighbor_topology_outline_frontier_matches_dense_reference() -> None:
@@ -686,6 +739,34 @@ def test_shape_distance_to_edge_handles_stacked_planes_planewise() -> None:
     np.testing.assert_allclose(distances[1], backend.distance_to_edge(labels[1]))
 
 
+def test_default_shape_maximum_position_preserves_cellprofiler_tie_semantics() -> None:
+    from openhcs.processing.backends.cellprofiler.shape import (
+        ShapeMeasurementBackendStrategy,
+    )
+
+    default_backend = ShapeMeasurementBackendStrategy.for_memory_type(MemoryType.NUMPY)
+    labels = np.array(
+        [
+            [0, 1, 1, 0],
+            [0, 1, 1, 2],
+            [3, 0, 2, 2],
+            [3, 3, 0, 0],
+        ],
+        dtype=np.int32,
+    )
+    image = default_backend.distance_to_edge(labels)
+    label_ids = np.arange(1, int(labels.max()) + 1, dtype=np.int32)
+
+    actual_i, actual_j = default_backend.maximum_position_of_labels(
+        image,
+        labels,
+        label_ids,
+    )
+
+    np.testing.assert_array_equal(actual_i, np.array([1.0, 2.0, 3.0]))
+    np.testing.assert_array_equal(actual_j, np.array([1.0, 2.0, 0.0]))
+
+
 def test_medianfilter_preserves_unit_interval_scale_metadata() -> None:
     from openhcs.core.runtime_values import (
         ImagePayloadMetadata,
@@ -708,6 +789,126 @@ def test_medianfilter_preserves_unit_interval_scale_metadata() -> None:
 
     assert image_payload_metadata(filtered).unit_interval_intensity_scale == 65535
     assert image_payload_data(filtered).dtype == np.float32
+
+
+def test_rescale_intensity_identity_preserves_unit_interval_scale_metadata() -> None:
+    from openhcs.core.runtime_values import (
+        ImagePayloadMetadata,
+        RuntimeImagePayloadContext,
+        image_payload_metadata,
+        normalize_image_payload_intensity,
+    )
+    from openhcs.processing.backends.cellprofiler.intensity import rescale_intensity
+
+    raw = np.array([[0, 65535], [32768, 1]], dtype=np.uint16)
+    payload = RuntimeImagePayloadContext(
+        raw,
+        None,
+        ImagePayloadMetadata.for_array(raw),
+    ).payload()
+    normalized = normalize_image_payload_intensity(payload, dtype=np.float32)
+
+    rescaled = rescale_intensity.__wrapped__(
+        normalized,
+        rescale_method="stretch",
+        automatic_low="custom",
+        automatic_high="custom",
+        source_low=0.0,
+        source_high=1.0,
+        dest_low=0.0,
+        dest_high=1.0,
+    )
+
+    assert image_payload_metadata(rescaled).unit_interval_intensity_scale == 65535
+
+
+def test_rescale_intensity_nonidentity_clears_unit_interval_scale_metadata() -> None:
+    from openhcs.core.runtime_values import (
+        ImagePayloadMetadata,
+        RuntimeImagePayloadContext,
+        image_payload_metadata,
+        normalize_image_payload_intensity,
+    )
+    from openhcs.processing.backends.cellprofiler.intensity import rescale_intensity
+
+    raw = np.array([[0, 65535], [32768, 1]], dtype=np.uint16)
+    payload = RuntimeImagePayloadContext(
+        raw,
+        None,
+        ImagePayloadMetadata.for_array(raw),
+    ).payload()
+    normalized = normalize_image_payload_intensity(payload, dtype=np.float32)
+
+    rescaled = rescale_intensity.__wrapped__(
+        normalized,
+        rescale_method="manual_io_range",
+        automatic_low="custom",
+        automatic_high="custom",
+        source_low=0.0,
+        source_high=1.0,
+        dest_low=0.0,
+        dest_high=0.5,
+    )
+
+    assert image_payload_metadata(rescaled).unit_interval_intensity_scale is None
+
+
+def test_resize_nearest_preserves_unit_interval_scale_metadata() -> None:
+    from openhcs.core.runtime_values import (
+        ImagePayloadMetadata,
+        RuntimeImagePayloadContext,
+        image_payload_metadata,
+        normalize_image_payload_intensity,
+    )
+    from openhcs.processing.backends.cellprofiler.image_geometry import resize_volumetric
+
+    raw = np.arange(2 * 4 * 4, dtype=np.uint16).reshape((2, 4, 4))
+    payload = RuntimeImagePayloadContext(
+        raw,
+        None,
+        ImagePayloadMetadata.for_array(raw),
+    ).payload()
+    normalized = normalize_image_payload_intensity(payload, dtype=np.float32)
+
+    resized = resize_volumetric.__wrapped__(
+        normalized,
+        resize_method="by_factor",
+        resizing_factor_x=1.0,
+        resizing_factor_y=1.0,
+        resizing_factor_z=1.0,
+        interpolation="nearest_neighbor",
+    )
+
+    assert image_payload_metadata(resized).unit_interval_intensity_scale == 65535
+
+
+def test_resize_interpolation_clears_unit_interval_scale_metadata() -> None:
+    from openhcs.core.runtime_values import (
+        ImagePayloadMetadata,
+        RuntimeImagePayloadContext,
+        image_payload_metadata,
+        normalize_image_payload_intensity,
+    )
+    from openhcs.processing.backends.cellprofiler.image_geometry import resize_volumetric
+
+    raw = np.arange(2 * 4 * 4, dtype=np.uint16).reshape((2, 4, 4))
+    payload = RuntimeImagePayloadContext(
+        raw,
+        None,
+        ImagePayloadMetadata.for_array(raw),
+    ).payload()
+    normalized = normalize_image_payload_intensity(payload, dtype=np.float32)
+
+    resized = resize_volumetric.__wrapped__(
+        normalized,
+        resize_method="by_factor",
+        resizing_factor_x=1.0,
+        resizing_factor_y=1.0,
+        resizing_factor_z=1.0,
+        interpolation="bilinear",
+    )
+
+    assert image_payload_metadata(resized).unit_interval_intensity_scale is None
 
 
 def test_cellprofiler_backend_provider_rejects_raw_strings() -> None:
@@ -1083,6 +1284,39 @@ def test_object_intensity_inner_edges_match_cellprofiler_boundary_semantics() ->
     )
 
 
+def test_object_intensity_3d_batch_matches_single_image_backend() -> None:
+    from openhcs.processing.backends.cellprofiler.intensity import (
+        ObjectIntensityMeasurementRows,
+        ObjectIntensityPreparedLabels,
+        object_intensity_backend,
+    )
+
+    rng = np.random.default_rng(42)
+    image_a = rng.random((4, 6, 5), dtype=np.float32)
+    image_b = rng.random((4, 6, 5), dtype=np.float32)
+    image_b[1, 2, 3] = np.nan
+    labels = np.zeros((4, 6, 5), dtype=np.int32)
+    labels[:, 1:4, 1:3] = 1
+    labels[1:4, 3:5, 2:5] = 2
+
+    prepared = ObjectIntensityPreparedLabels.from_source(labels, labels)
+    backend = object_intensity_backend()
+
+    singles = tuple(
+        backend.measure_prepared(image, prepared)
+        for image in (image_a, image_b)
+    )
+    batch = backend.measure_prepared_batch((image_a, image_b), prepared)
+
+    assert tuple(
+        list(ObjectIntensityMeasurementRows.from_arrays(arrays, slice_index=index))
+        for index, arrays in enumerate(singles)
+    ) == tuple(
+        list(ObjectIntensityMeasurementRows.from_arrays(arrays, slice_index=index))
+        for index, arrays in enumerate(batch)
+    )
+
+
 def test_numba_declumping_smoothing_matches_native_provider() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -1136,7 +1370,7 @@ def test_numba_seed_shrink_matches_centrosome_provider() -> None:
     np.testing.assert_array_equal(numba, centrosome)
 
 
-def test_legacy_fast_shape_zernike_backend_matches_centrosome_provider() -> None:
+def test_legacy_fast_shape_zernike_backend_matches_native_reference_values() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
@@ -1156,17 +1390,48 @@ def test_legacy_fast_shape_zernike_backend_matches_centrosome_provider() -> None
         max_order=5,
         backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
     )
-    centrosome_indexes, centrosome_values = shape_zernike_moments(
-        labels,
-        measured_labels,
-        max_order=5,
-        backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    expected_indexes = (
+        (0, 0), (1, 1), (2, 0), (2, 2), (3, 1), (3, 3),
+        (4, 0), (4, 2), (4, 4), (5, 1), (5, 3), (5, 5),
+    )
+    expected_values = np.array(
+        [
+            [
+                8.7665673571929248e-01,
+                5.1817387788033623e-18,
+                8.1438057416546292e-02,
+                6.2276161553829500e-02,
+                9.5546542074512310e-18,
+                1.1816182429749623e-17,
+                1.4842616057596269e-02,
+                1.3271968855734138e-02,
+                1.0279885936186994e-01,
+                2.3173440302102131e-18,
+                6.9520320906306388e-18,
+                3.4760160453153194e-18,
+            ],
+            [
+                9.5492965855137191e-01,
+                1.7669748230352868e-17,
+                3.9788735772973635e-02,
+                6.6261555863823256e-18,
+                4.4174370575882171e-18,
+                6.2471993977707561e-18,
+                1.4920775914865186e-02,
+                0.0,
+                1.6164173907770615e-01,
+                4.4174370575882171e-18,
+                8.8348741151764342e-18,
+                0.0,
+            ],
+        ],
+        dtype=np.float64,
     )
 
-    assert legacy_fast_indexes == centrosome_indexes
+    assert legacy_fast_indexes == expected_indexes
     np.testing.assert_allclose(
         legacy_fast_values,
-        centrosome_values,
+        expected_values,
         atol=1e-12,
         rtol=1e-12,
     )
@@ -1191,21 +1456,52 @@ def test_shape_zernike_backend_uses_declared_measured_label_domain() -> None:
         max_order=5,
         backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
     )
-    centrosome_indexes, centrosome_values = shape_zernike_moments(
-        labels,
-        measured_labels,
-        max_order=5,
-        backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    expected_indexes = (
+        (0, 0), (1, 1), (2, 0), (2, 2), (3, 1), (3, 3),
+        (4, 0), (4, 2), (4, 4), (5, 1), (5, 3), (5, 5),
+    )
+    expected_values = np.array(
+        [
+            [
+                8.7665673571929248e-01,
+                5.1817387788033623e-18,
+                8.1438057416546292e-02,
+                6.2276161553829500e-02,
+                9.5546542074512310e-18,
+                1.1816182429749623e-17,
+                1.4842616057596269e-02,
+                1.3271968855734138e-02,
+                1.0279885936186994e-01,
+                2.3173440302102131e-18,
+                6.9520320906306388e-18,
+                3.4760160453153194e-18,
+            ],
+            [
+                9.9471839432434572e-01,
+                1.7669748230352868e-17,
+                2.0320210464905799e-16,
+                6.6261555863823256e-18,
+                4.4174370575882171e-18,
+                6.2471993977707561e-18,
+                2.4867959858108645e-02,
+                0.0,
+                1.6164173907770615e-01,
+                4.4174370575882171e-18,
+                8.8348741151764342e-18,
+                0.0,
+            ],
+        ],
+        dtype=np.float64,
     )
 
-    assert legacy_fast_indexes == centrosome_indexes
-    assert legacy_fast_values.shape == centrosome_values.shape == (
+    assert legacy_fast_indexes == expected_indexes
+    assert legacy_fast_values.shape == expected_values.shape == (
         measured_labels.size,
         len(legacy_fast_indexes),
     )
     np.testing.assert_allclose(
         legacy_fast_values,
-        centrosome_values,
+        expected_values,
         atol=1e-12,
         rtol=1e-12,
     )
@@ -1230,17 +1526,32 @@ def test_legacy_fast_shape_zernike_backend_zeros_pixels_outside_unit_circle() ->
         max_order=5,
         backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
     )
-    centrosome_indexes, centrosome_values = shape_zernike_moments(
-        labels,
-        measured_labels,
-        max_order=5,
-        backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    expected_indexes = (
+        (0, 0), (1, 1), (2, 0), (2, 2), (3, 1), (3, 3),
+        (4, 0), (4, 2), (4, 4), (5, 1), (5, 3), (5, 5),
+    )
+    expected_values = np.array(
+        [[
+            8.4882636315677540e-01,
+            0.0,
+            1.5719006725125445e-01,
+            0.0,
+            8.0949153702017381e-18,
+            3.9266107178561947e-18,
+            1.5719006725125440e-01,
+            0.0,
+            4.5410463872584711e-02,
+            0.0,
+            0.0,
+            1.4724790191960730e-18,
+        ]],
+        dtype=np.float64,
     )
 
-    assert legacy_fast_indexes == centrosome_indexes
+    assert legacy_fast_indexes == expected_indexes
     np.testing.assert_allclose(
         legacy_fast_values,
-        centrosome_values,
+        expected_values,
         atol=1e-12,
         rtol=1e-12,
     )
@@ -1270,29 +1581,88 @@ def test_legacy_fast_intensity_zernike_backend_matches_centrosome_provider() -> 
             backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
         )
     )
-    (
-        centrosome_indexes,
-        centrosome_magnitudes,
-        centrosome_phases,
-    ) = intensity_zernike_moments(
-        image,
-        labels,
-        measured_labels,
-        max_order=5,
-        backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    expected_indexes = (
+        (0, 0), (1, 1), (2, 0), (2, 2), (3, 1), (3, 3),
+        (4, 0), (4, 2), (4, 4), (5, 1), (5, 3), (5, 5),
+    )
+    expected_magnitudes = np.array(
+        [
+            [
+                3.0313588850174222e-01,
+                4.6978525057005845e-02,
+                2.8160164505626334e-02,
+                2.1534243445478957e-02,
+                1.0291546017873580e-02,
+                2.1351940583848830e-02,
+                5.1323732801961414e-03,
+                4.5892649965774759e-03,
+                3.5546437162839790e-02,
+                3.5442769227822337e-03,
+                1.0492107771464218e-02,
+                6.7019059354025646e-03,
+            ],
+            [
+                7.3519163763066209e-01,
+                4.6267235714220228e-02,
+                3.0632984901277447e-02,
+                1.2455695750587118e-17,
+                1.1566808928554946e-03,
+                1.5036851607121574e-02,
+                1.1487369337979092e-02,
+                6.5420519111823968e-18,
+                1.2444650116144018e-01,
+                5.4942342410636167e-03,
+                1.5759777165156256e-02,
+                1.5181436718728502e-02,
+            ],
+        ],
+        dtype=np.float64,
+    )
+    expected_phases = np.array(
+        [
+            [
+                1.5707963267948966,
+                1.4947527675157795,
+                -1.5707963267948966,
+                -1.5707963267948966,
+                -1.5878522420194257,
+                -1.5516140276398370,
+                -1.5707963267948966,
+                -1.5707963267948966,
+                -1.5707963267948966,
+                1.5460903029579192,
+                -1.5198993446615918,
+                -1.7406165821130795,
+            ],
+            [
+                1.5707963267948966,
+                1.5152978215491800,
+                1.5707963267948966,
+                -1.1902899496825317,
+                1.5152978215491757,
+                -1.5152978215491801,
+                -1.5707963267948966,
+                2.3561944901923450,
+                -1.5707963267948966,
+                1.5152978215491790,
+                -1.5152978215491801,
+                -1.6262948320406134,
+            ],
+        ],
+        dtype=np.float64,
     )
 
-    assert legacy_fast_indexes == centrosome_indexes
+    assert legacy_fast_indexes == expected_indexes
     np.testing.assert_allclose(
         legacy_fast_magnitudes,
-        centrosome_magnitudes,
+        expected_magnitudes,
         atol=1e-12,
         rtol=1e-12,
     )
-    meaningful_phase = centrosome_magnitudes > 1e-12
+    meaningful_phase = expected_magnitudes > 1e-12
     np.testing.assert_allclose(
         legacy_fast_phases[meaningful_phase],
-        centrosome_phases[meaningful_phase],
+        expected_phases[meaningful_phase],
         atol=1e-12,
         rtol=1e-12,
     )

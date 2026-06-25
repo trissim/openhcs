@@ -17,6 +17,11 @@ class ObjectMeasurementColumnarRows(ColumnarRows, ABC):
 
     slice_index: int | None
 
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        """OpenHCS object-measurement carriers are built on their label domain."""
+        return True
+
     def __len__(self) -> int:
         return self.row_count()
 

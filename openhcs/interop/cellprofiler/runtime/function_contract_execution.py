@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 import os
@@ -15,11 +16,13 @@ from openhcs.core.aligned_image_payload import (
     aligned_image_stack_kwargs,
     project_singleton_stack_image_domain,
 )
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout, ImageStackLayoutUnstackRequest
 from openhcs.core.measurement_lookup_dialect import runtime_measurement_lookup_dialect
 from openhcs.core.memory import detect_memory_type, stack_slices
+from openhcs.core.runtime_output_matching import RuntimeOutputRole
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
     Pure2DSliceBatchExecutor,
@@ -29,6 +32,7 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_semantics import RuntimePlaneAxis
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjection,
     RuntimeProjectionAxis,
@@ -86,8 +90,115 @@ _CELLPROFILER_RUNTIME_CALLABLE_POLICY = RuntimeCallablePolicy(
     kwarg_policy=RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED,
 )
 
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerFunctionOutputAggregationContract:
+    """Contract-derived aggregation behavior for one CellProfiler invocation."""
+
+    main_output_replaces_runtime_flow: bool = True
+    declared_output_specs: tuple[ArtifactSpec, ...] = ()
+
+    @classmethod
+    def from_main_flow_replacement(
+        cls,
+        replaces_main_flow: bool,
+        declared_output_specs: tuple[ArtifactSpec, ...] = (),
+    ) -> "CellProfilerFunctionOutputAggregationContract":
+        return cls(
+            main_output_replaces_runtime_flow=replaces_main_flow,
+            declared_output_specs=declared_output_specs,
+        )
+
+    @property
+    def main_output_spec(self) -> ArtifactSpec | None:
+        if not self.declared_output_specs:
+            return (
+                ArtifactSpec("<main>", ArtifactKind.IMAGE)
+                if self.main_output_replaces_runtime_flow
+                else None
+            )
+        first_spec = self.declared_output_specs[0]
+        if RuntimeOutputRole.for_spec(first_spec) is RuntimeOutputRole.MAIN_FLOW:
+            return first_spec
+        return None
+
+    @property
+    def auxiliary_output_specs(self) -> tuple[ArtifactSpec, ...]:
+        if not self.declared_output_specs:
+            return ()
+        if self.main_output_spec == self.declared_output_specs[0]:
+            return self.declared_output_specs[1:]
+        return self.declared_output_specs
+
+    def aggregate_main_outputs(
+        self,
+        slice_outputs: CellProfilerRuntimeValueSequence,
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> CellProfilerRuntimeValue:
+        if self.main_output_spec is not None:
+            return self.aggregate_declared_outputs(
+                slice_outputs,
+                memory_type,
+                self.main_output_spec,
+                plane_axis=plane_axis,
+            )
+        return RuntimeSliceAlignedValues(slices=tuple(slice_outputs))
+
+    def aggregate_auxiliary_outputs(
+        self,
+        auxiliary_groups: tuple[list[CellProfilerRuntimeValue], ...],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> tuple[CellProfilerRuntimeValue, ...]:
+        return tuple(
+            self.aggregate_declared_outputs(
+                values,
+                memory_type,
+                self.auxiliary_spec(index),
+                plane_axis=plane_axis,
+            )
+            for index, values in enumerate(auxiliary_groups)
+        )
+
+    def auxiliary_spec(self, index: int) -> ArtifactSpec | None:
+        specs = self.auxiliary_output_specs
+        if index >= len(specs):
+            return None
+        return specs[index]
+
+    def aggregate_declared_outputs(
+        self,
+        slice_outputs: CellProfilerRuntimeValueSequence,
+        memory_type: str,
+        spec: ArtifactSpec | None,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> CellProfilerRuntimeValue:
+        return CellProfilerPure2DOutputAggregator.aggregate(
+            slice_outputs,
+            memory_type,
+            plane_axis=plane_axis,
+        )
+
+
+DEFAULT_CELLPROFILER_OUTPUT_AGGREGATION_CONTRACT = (
+    CellProfilerFunctionOutputAggregationContract()
+)
+
+
 class CellProfilerFunctionContractExecutor:
     """Apply OpenHCS processing contracts after CellProfiler input resolution."""
+
+    def __init__(
+        self,
+        output_aggregation_contract: CellProfilerFunctionOutputAggregationContract = (
+            DEFAULT_CELLPROFILER_OUTPUT_AGGREGATION_CONTRACT
+        ),
+    ) -> None:
+        self.output_aggregation_contract = output_aggregation_contract
 
     def execute(
         self,
@@ -97,7 +208,11 @@ class CellProfilerFunctionContractExecutor:
         *,
         force_full_stack: bool = False,
         execution_mode: ImagePayloadExecutionMode | None = None,
+        output_aggregation_contract: CellProfilerFunctionOutputAggregationContract = (
+            DEFAULT_CELLPROFILER_OUTPUT_AGGREGATION_CONTRACT
+        ),
     ) -> CellProfilerRuntimeValue:
+        executor = self.with_output_aggregation_contract(output_aggregation_contract)
         function_name = CallableContract.from_callable(func).function_name
         mode_started_at = time.perf_counter()
         mode = requested_image_execution_mode(
@@ -123,7 +238,7 @@ class CellProfilerFunctionContractExecutor:
             CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT
         ):
             result = strategy.execute(
-                self,
+                executor,
                 func,
                 image,
                 kwargs,
@@ -135,6 +250,58 @@ class CellProfilerFunctionContractExecutor:
             mode=mode.value,
         )
         return result
+
+    def with_output_aggregation_contract(
+        self,
+        output_aggregation_contract: CellProfilerFunctionOutputAggregationContract,
+    ) -> "CellProfilerFunctionContractExecutor":
+        if output_aggregation_contract == self.output_aggregation_contract:
+            return self
+        return type(self)(output_aggregation_contract)
+
+    def execute_pure_2d_slice_batch(
+        self,
+        func: CellProfilerFunction,
+        slices_2d: tuple[CellProfilerRuntimeValue, ...],
+        kwargs: CellProfilerKwargs,
+        execute_slice: Callable[
+            [
+                CellProfilerFunction,
+                CellProfilerRuntimeValue,
+                CellProfilerKwargs,
+                int,
+                int,
+            ],
+            CellProfilerRuntimeValue,
+        ],
+    ) -> tuple[list[CellProfilerRuntimeValue], float]:
+        """Execute a pure-2D slice batch through the callable-owned batch contract."""
+        slice_request = RuntimePure2DSliceBatchRequest(
+            func=func,
+            slices_2d=slices_2d,
+            kwargs=kwargs,
+            execute_slice=execute_slice,
+        )
+        if slice_request.slice_count <= 0:
+            return [], 0.0
+
+        declared_batch_executor = CallableContract.from_callable(
+            func
+        ).runtime_batch_executor(RuntimeBatchExecutionDomain.PURE_2D_SLICES)
+        batch_executor = (
+            declared_batch_executor
+            if callable(declared_batch_executor)
+            else Pure2DSliceBatchExecutor.default_executor()
+        )
+        slice_started_at = time.perf_counter()
+        if batch_executor is not None and slice_request.slice_count > 1:
+            slice_results = list(batch_executor(slice_request))
+        else:
+            slice_results = [
+                slice_request.execute_one(slice_index)
+                for slice_index in range(slice_request.slice_count)
+            ]
+        return slice_results, time.perf_counter() - slice_started_at
 
     def execute_pure_3d(
         self,
@@ -223,34 +390,25 @@ class CellProfilerFunctionContractExecutor:
                 **self.slice_pure_2d_kwargs(slice_kwargs, slice_index, slice_count),
             )
 
-        request = RuntimePure2DSliceBatchRequest(
-            func=func,
-            slices_2d=tuple(slices),
-            kwargs=kwargs,
-            execute_slice=execute_full_stack_slice,
-        )
-        slice_results = tuple(
-            request.execute_one(slice_index)
-            for slice_index in range(request.slice_count)
+        slice_results, _slice_execute_seconds = self.execute_pure_2d_slice_batch(
+            func,
+            tuple(slices),
+            kwargs,
+            execute_full_stack_slice,
         )
         result_batch = Pure2DSliceResultBatch.from_results(slice_results)
-        stacked_main_output = CellProfilerPure2DOutputAggregator.aggregate(
+        stacked_main_output = self.output_aggregation_contract.aggregate_main_outputs(
             result_batch.main_outputs,
             memory_type,
             plane_axis=aggregation_plane_axis,
         )
         if not result_batch.auxiliary_groups:
             return stacked_main_output
-        return (
-            stacked_main_output,
-            *(
-                CellProfilerPure2DOutputAggregator.aggregate(
-                    values,
-                    memory_type,
-                    plane_axis=aggregation_plane_axis,
-                )
-                for values in result_batch.auxiliary_groups
-            ),
+        return (stacked_main_output, *self.output_aggregation_contract.aggregate_auxiliary_outputs(
+            result_batch.auxiliary_groups,
+            memory_type,
+            plane_axis=aggregation_plane_axis,
+        ),
         )
 
     def _execute_aligned_multi_image_stack(
@@ -284,37 +442,28 @@ class CellProfilerFunctionContractExecutor:
                 ).call()
             )
 
-        request = RuntimePure2DSliceBatchRequest(
-            func=func,
-            slices_2d=tuple(image.slices),
-            kwargs=kwargs,
-            execute_slice=execute_aligned_stack_slice,
-        )
-        slice_results = tuple(
-            request.execute_one(slice_index)
-            for slice_index in range(request.slice_count)
+        slice_results, _slice_execute_seconds = self.execute_pure_2d_slice_batch(
+            func,
+            tuple(image.slices),
+            kwargs,
+            execute_aligned_stack_slice,
         )
         result_batch = Pure2DSliceResultBatch.from_results(slice_results)
         memory_type = detect_memory_type(
             image_payload_data(result_batch.main_outputs[0])
         )
-        stacked_main_output = CellProfilerPure2DOutputAggregator.aggregate(
+        stacked_main_output = self.output_aggregation_contract.aggregate_main_outputs(
             result_batch.main_outputs,
             memory_type,
             plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         )
         if not result_batch.auxiliary_groups:
             return stacked_main_output
-        return (
-            stacked_main_output,
-            *(
-                CellProfilerPure2DOutputAggregator.aggregate(
-                    values,
-                    memory_type,
-                    plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
-                )
-                for values in result_batch.auxiliary_groups
-            ),
+        return (stacked_main_output, *self.output_aggregation_contract.aggregate_auxiliary_outputs(
+            result_batch.auxiliary_groups,
+            memory_type,
+            plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        ),
         )
 
     def execute_pure_2d(
@@ -369,31 +518,12 @@ class CellProfilerFunctionContractExecutor:
         )
 
         slice_count = len(slices_2d)
-        slice_execute_seconds = 0.0
-        declared_batch_executor = CallableContract.from_callable(
-            func
-        ).runtime_batch_executor(RuntimeBatchExecutionDomain.PURE_2D_SLICES)
-        batch_executor = (
-            declared_batch_executor
-            if callable(declared_batch_executor)
-            else Pure2DSliceBatchExecutor.default_executor()
+        slice_results, slice_execute_seconds = self.execute_pure_2d_slice_batch(
+            func,
+            tuple(slices_2d),
+            kwargs,
+            _execute_pure_2d_slice,
         )
-        slice_request = RuntimePure2DSliceBatchRequest(
-            func=func,
-            slices_2d=tuple(slices_2d),
-            kwargs=kwargs,
-            execute_slice=_execute_pure_2d_slice,
-        )
-        if batch_executor is not None and slice_count > 1:
-            slice_started_at = time.perf_counter()
-            slice_results = batch_executor(slice_request)
-            slice_execute_seconds = time.perf_counter() - slice_started_at
-        else:
-            slice_results = []
-            for slice_index in range(slice_request.slice_count):
-                slice_started_at = time.perf_counter()
-                slice_results.append(slice_request.execute_one(slice_index))
-                slice_execute_seconds += time.perf_counter() - slice_started_at
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_pure_2d_slice_execute",
             slice_execute_seconds,
@@ -402,7 +532,7 @@ class CellProfilerFunctionContractExecutor:
         )
         aggregate_started_at = time.perf_counter()
         result_batch = Pure2DSliceResultBatch.from_results(slice_results)
-        stacked_main_output = CellProfilerPure2DOutputAggregator.aggregate(
+        stacked_main_output = self.output_aggregation_contract.aggregate_main_outputs(
             result_batch.main_outputs,
             memory_type,
             plane_axis=aggregation_plane_axis,
@@ -412,13 +542,10 @@ class CellProfilerFunctionContractExecutor:
         else:
             result = (
                 stacked_main_output,
-                *(
-                    CellProfilerPure2DOutputAggregator.aggregate(
-                        values,
-                        memory_type,
-                        plane_axis=aggregation_plane_axis,
-                    )
-                    for values in result_batch.auxiliary_groups
+                *self.output_aggregation_contract.aggregate_auxiliary_outputs(
+                    result_batch.auxiliary_groups,
+                    memory_type,
+                    plane_axis=aggregation_plane_axis,
                 ),
             )
         CellProfilerRuntimeProfileLogger.log_module_profile(

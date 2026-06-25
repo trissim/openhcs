@@ -19,6 +19,7 @@ from openhcs.core.source_workspace_projection import (
     VirtualWorkspaceSourceProjection,
 )
 from openhcs.core.aligned_image_payload import (
+    ImagePayloadBundleContext,
     stack_image_payload_context,
 )
 from openhcs.core.step_dependencies import StepInputDependency
@@ -97,6 +98,53 @@ def test_stack_payload_context_promotes_single_channel_slice_metadata() -> None:
         {"well": "A01", "site": 1, "channel": 1},
         {"well": "A01", "site": 2, "channel": 1},
     )
+
+
+def test_bundle_payload_context_preserves_source_binding_plane_metadata() -> None:
+    first = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.tif",),
+                component_metadata=(
+                    {"well": "A01", "site": 1, "channel": 1},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
+    second = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w2_z001_t001.tif",),
+                component_metadata=(
+                    {"well": "A01", "site": 1, "channel": 2},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
+
+    bundle = ImagePayloadBundleContext.from_payloads((first, second)).compose()
+    metadata = image_payload_metadata(bundle)
+
+    assert metadata.source_image_provenance_planes.paths == (
+        "/input/A01_s001_w1_z001_t001.tif",
+        "/input/A01_s001_w2_z001_t001.tif",
+    )
+    assert tuple(
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
+        {"well": "A01", "site": 1, "channel": 1},
+        {"well": "A01", "site": 1, "channel": 2},
+    )
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": 1,
+        "extension": ".tif",
+    }
 
 
 def test_step_output_manifest_scopes_previous_step_inputs(tmp_path: Path) -> None:
@@ -435,6 +483,56 @@ def test_function_output_path_uses_payload_identity_without_input_path(
     assert output_path.name == "A14_s001_w5_z001_t001.tif"
 
 
+def test_function_output_identity_completes_partial_payload_metadata_from_fallback_path() -> None:
+    parser = SourceSchemaFilenameParser()
+    metadata = ImagePayloadMetadata(
+        source_component_metadata={
+            "well": "Sequence1",
+            "site": 1,
+            "z_index": 1,
+            "channel": 1,
+            "extension": ".tif",
+        },
+    )
+
+    identity = FunctionOutputIdentityAuthority.identity_from_metadata(
+        parser,
+        metadata,
+        fallback_identity_path="Sequence1_s001_w1_z001_t000.tif",
+    )
+
+    assert identity is not None
+    assert (
+        FunctionOutputPathAuthority.filename_for_identity(parser, identity)
+        == "Sequence1_s001_w1_z001_t000.tif"
+    )
+
+
+def test_function_output_identity_uses_fallback_path_extension_for_payload_identity() -> None:
+    parser = SourceSchemaFilenameParser()
+    metadata = ImagePayloadMetadata(
+        source_component_metadata={
+            "well": "A01",
+            "site": 1,
+            "z_index": 1,
+            "timepoint": 1,
+            "channel": 2,
+        },
+    )
+
+    identity = FunctionOutputIdentityAuthority.identity_from_metadata(
+        parser,
+        metadata,
+        fallback_identity_path="A01_s001_w1_z001_t001.png",
+    )
+
+    assert identity is not None
+    assert (
+        FunctionOutputPathAuthority.filename_for_identity(parser, identity)
+        == "A01_s001_w2_z001_t001.png"
+    )
+
+
 def test_function_output_path_uses_input_identity_for_multi_plane_carrier(
     tmp_path: Path,
 ) -> None:
@@ -555,6 +653,46 @@ def test_function_output_path_uses_declared_source_stack_identity(
     }
     assert identity.filename_component_values is not None
     assert identity.filename_component_values["z_index"] == 1
+
+
+def test_declared_source_stack_identity_uses_fallback_path_extension(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((3, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A01_s001_w1_z001_t001.png",
+                    "/source/A01_s001_w2_z001_t001.jpg",
+                    "/source/A01_s001_w3_z001_t001.jpg",
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+    request = FunctionOutputPathRequest(
+        parser=SourceSchemaFilenameParser(),
+        output_dir=tmp_path,
+        output_payload=payload,
+        input_path="A01_s001_w2_z001_t001.png",
+        source_identity_stack_axes=frozenset({"channel"}),
+    )
+
+    identity = FunctionOutputIdentityAuthority.identity(request)
+    output_path = FunctionOutputPathAuthority.output_path_for_identity(
+        request,
+        identity,
+    )
+
+    assert output_path.name == "A01_s001_w1_z001_t001.png"
+    assert identity.extension == ".png"
+    assert identity.component_values == {
+        "well": "A01",
+        "site": 1,
+        "z_index": 1,
+        "timepoint": 1,
+    }
 
 
 def test_declared_main_flow_output_context_qualifies_output_filename(

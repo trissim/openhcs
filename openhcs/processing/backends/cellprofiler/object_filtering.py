@@ -395,12 +395,15 @@ class FormFactorDerivedMeasurementValuesStrategy(DerivedMeasurementValuesStrateg
     """FormFactor can be derived from area/perimeter label geometry."""
 
     feature = ObjectShapeMeasurementFeature.FORM_FACTOR
+    minimum_value: ClassVar[float] = 0.0
+    maximum_value: ClassVar[float] = 1.0
 
     def values(self, labels: np.ndarray) -> np.ndarray:
         label_ids = np.arange(1, int(labels.max()) + 1, dtype=np.int32)
         if label_ids.size == 0:
             return np.array([], dtype=float)
-        return form_factor_values(labels.astype(np.int32, copy=False), label_ids)
+        values = form_factor_values(labels.astype(np.int32, copy=False), label_ids)
+        return np.clip(values, type(self).minimum_value, type(self).maximum_value)
 
 
 class FilterObjectsMeasurementValuesSource(ABC, metaclass=AutoRegisterMeta):

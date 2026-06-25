@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, TypeAlias, cast
 
@@ -47,6 +47,7 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MeasurementTable,
     ObjectLabelPayload,
+    ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
     ObjectLabelValue,
     ObjectRelationship,
@@ -62,7 +63,10 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
     project_image_mask_to_data_domain,
 )
-from openhcs.core.source_image_provenance import SourceComponentMetadata
+from openhcs.core.source_image_provenance import (
+    SourceComponentMetadata,
+    SourceIdentityStackAxisProjection,
+)
 
 SINGLE_OBSERVED_ROW_LAYOUT_COUNT = 1
 RuntimeProjectionPrimitive: TypeAlias = str | bytes | int | float | bool | None
@@ -84,6 +88,119 @@ RuntimeProjectionData: TypeAlias = (
     | RuntimeProjectionSequence
 )
 
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProjectionSourceIdentityRequest:
+    """Nominal request for runtime-slice projection with source identity rules."""
+
+    value: RuntimeProjectionData
+    source_description: str
+    source_identity_stack_projection: SourceIdentityStackAxisProjection = field(
+        default_factory=SourceIdentityStackAxisProjection.empty
+    )
+
+    def value_for_projection(self, slice_count: int) -> RuntimeProjectionData:
+        """Return the value with declared source-identity stack axes projected."""
+        if self.source_identity_stack_projection.is_empty:
+            return self.value
+        metadata = image_payload_metadata(
+            self.value
+        ).with_indexed_source_plane_provenance(slice_count)
+        if metadata.source_image_provenance_planes.has_values:
+            return RuntimeImagePayloadContext(
+                image_payload_data(self.value),
+                image_payload_mask(self.value),
+                metadata,
+            ).payload()
+        provenance_planes = self.source_identity_stack_projection.provenance_planes(
+            source_path=metadata.source_path,
+            source_component_metadata=metadata.source_component_metadata,
+            plane_count=slice_count,
+        )
+        if not provenance_planes.has_values:
+            return self.value
+        return RuntimeImagePayloadContext(
+            image_payload_data(self.value),
+            image_payload_mask(self.value),
+            metadata.with_source_provenance(
+                metadata.source_provenance.with_source_image_provenance_planes(
+                    provenance_planes
+                )
+            ),
+        ).payload()
+
+    def slice_description(self, slice_index: int) -> str:
+        """Return the diagnostic description for one projected runtime slice."""
+        return f"{self.source_description} runtime slice {slice_index}"
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProjectionPlaneMetadata:
+    """Plane identity carried by one runtime-slice-projected payload item."""
+
+    plane_indices: tuple[int, ...]
+    plane_shape: tuple[int, ...]
+    source_plane_indices: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.plane_indices:
+            raise ValueError(
+                "RuntimeProjectionPlaneMetadata.plane_indices cannot be empty."
+            )
+        if len(self.plane_indices) != len(self.plane_shape):
+            raise ValueError(
+                "RuntimeProjectionPlaneMetadata plane index rank must match "
+                "plane shape rank."
+            )
+        if any(index < 0 for index in self.plane_indices):
+            raise ValueError(
+                "RuntimeProjectionPlaneMetadata.plane_indices cannot be negative."
+            )
+        if any(size <= 0 for size in self.plane_shape):
+            raise ValueError(
+                "RuntimeProjectionPlaneMetadata.plane_shape values must be positive."
+            )
+        if any(index >= size for index, size in zip(self.plane_indices, self.plane_shape)):
+            raise ValueError(
+                "RuntimeProjectionPlaneMetadata.plane_indices must be within "
+                f"plane_shape, got {self.plane_indices!r} for {self.plane_shape!r}."
+            )
+        if any(index < 0 for index in self.source_plane_indices):
+            raise ValueError(
+                "RuntimeProjectionPlaneMetadata.source_plane_indices cannot be negative."
+            )
+
+    @classmethod
+    def from_runtime_axis(
+        cls,
+        value: "RuntimeProjectionData",
+        context: "RuntimeProjectionAxis",
+    ) -> "RuntimeProjectionPlaneMetadata | None":
+        """Return display-plane metadata for a projected runtime axis."""
+        if context.extent == 1:
+            return None
+        return cls(
+            plane_indices=(context.slice_index,),
+            plane_shape=(context.extent,),
+            source_plane_indices=(
+                RuntimeSliceProjection.source_plane_indices_for_slice(value, context)
+                or ()
+            ),
+        )
+
+    @property
+    def roi_metadata(self) -> dict[str, tuple[int, ...]]:
+        """Return the metadata payload understood by PolyStore ROI archives."""
+        return {
+            "plane_indices": self.plane_indices,
+            "plane_shape": self.plane_shape,
+        }
+
+    @property
+    def carries_source_plane_identity(self) -> bool:
+        """Return whether the projected plane already selected source identity."""
+        return bool(self.source_plane_indices)
+
+
 class RuntimeProjectionSourceIdentityRequirement(str, Enum):
     """Source-identity requirement for runtime-slice projected payloads."""
 
@@ -92,54 +209,65 @@ class RuntimeProjectionSourceIdentityRequirement(str, Enum):
 
     def project_payload_items(
         self,
-        value: "RuntimeProjectionData",
-        *,
-        source_description: str,
+        request: RuntimeProjectionSourceIdentityRequest,
     ) -> tuple["RuntimeProjectedPayloadItem", ...]:
         """Return runtime-slice-projected payload items under this identity policy."""
+        value = request.value
         slice_count = RuntimeSliceProjection.slice_count_from_values((value,))
         if slice_count is None:
             return (
                 RuntimeProjectedPayloadItem(
                     value=value,
-                    source_description=source_description,
+                    source_description=request.source_description,
                 ),
             )
         if slice_count == 1:
+            context = RuntimeProjectionAxis(
+                slice_index=0,
+                extent=slice_count,
+            )
             return (
                 RuntimeProjectedPayloadItem(
-                    value=RuntimeSliceProjection.value_for_slice(
-                        value,
-                        RuntimeProjectionAxis(
-                            slice_index=0,
-                            extent=slice_count,
-                        ),
+                    value=RuntimeSliceProjection.value_for_slice(value, context),
+                    source_description=request.slice_description(0),
+                    runtime_plane_metadata=(
+                        RuntimeProjectionPlaneMetadata.from_runtime_axis(
+                            value,
+                            context,
+                        )
                     ),
-                    source_description=f"{source_description} runtime slice 0",
                 ),
             )
+        projection_value = request.value_for_projection(slice_count)
         RuntimeProjectionSourceIdentityRequirementStrategy.for_requirement(
             self
         ).validate_stack_value(
-            value,
+            projection_value,
             slice_count,
-            source_description=source_description,
+            source_description=request.source_description,
         )
-        return tuple(
-            RuntimeProjectedPayloadItem(
-                value=RuntimeSliceProjection.value_for_slice(
-                    value,
-                    RuntimeProjectionAxis(
-                        slice_index=slice_index,
-                        extent=slice_count,
-                    ),
-                ),
-                source_description=(
-                    f"{source_description} runtime slice {slice_index}"
-                ),
+        items: list[RuntimeProjectedPayloadItem] = []
+        for slice_index in range(slice_count):
+            context = RuntimeProjectionAxis(
+                slice_index=slice_index,
+                extent=slice_count,
             )
-            for slice_index in range(slice_count)
-        )
+            items.append(
+                RuntimeProjectedPayloadItem(
+                    value=RuntimeSliceProjection.value_for_slice(
+                        projection_value,
+                        context,
+                    ),
+                    source_description=request.slice_description(slice_index),
+                    runtime_plane_metadata=(
+                        RuntimeProjectionPlaneMetadata.from_runtime_axis(
+                            projection_value,
+                            context,
+                        )
+                    ),
+                )
+            )
+        return tuple(items)
 
 class RuntimeProjectionSourceIdentityError(ValueError):
     """Raised when runtime-slice projection cannot preserve source identity."""
@@ -324,6 +452,7 @@ class RuntimeProjectedPayloadItem:
 
     value: RuntimeProjectionData
     source_description: str
+    runtime_plane_metadata: RuntimeProjectionPlaneMetadata | None = None
 
     @property
     def data(self) -> RuntimeProjectionData:
@@ -355,6 +484,7 @@ def validate_source_plane_component_metadata(
     """Require one source component-metadata record per projected slice."""
     plane_metadata = (
         image_payload_metadata(value)
+        .with_indexed_source_plane_provenance(slice_count)
         .source_image_provenance_planes
         .component_metadata
     )
@@ -595,6 +725,14 @@ class ObjectLabelValueRuntimeSliceProjectionStrategy(
     """Projection strategy for native object-label values."""
 
     value_type = ObjectLabelValue
+
+    def slice_count_for_value(
+        self,
+        value: RuntimeProjectionData,
+    ) -> int | None:
+        return ObjectLabelRuntimeSliceStackContract.runtime_slice_count(
+            cast(ObjectLabelValue, value)
+        )
 
     def value_for_slice(
         self,
@@ -1072,7 +1210,7 @@ class RuntimeSliceProjection:
         context: RuntimeProjectionAxis,
     ) -> tuple[int, ...] | None:
         """Return source plane indexes represented by one object-label projection."""
-        array = image_payload_data(value)
+        array = object_label_dense_array(value)
         if is_color_image_slice(array) or is_color_image_stack(array):
             return None
         if not isinstance(array, np.ndarray) or array.ndim < 3:
@@ -1080,6 +1218,35 @@ class RuntimeSliceProjection:
         if array.ndim > 3 and context.axis_matches(int(array.shape[0])):
             planes_per_slice = int(np.prod(array.shape[1:-2]))
             return context.contiguous_plane_indices(planes_per_slice)
+        stack = cls.grayscale_plane_stack_view(
+            array,
+            slice_count=context.extent,
+            flatten_high_rank=True,
+        )
+        if stack is None:
+            return None
+        if context.axis_matches(int(stack.shape[0])):
+            return (context.slice_index,)
+        if context.axis_groups_runtime_positions(int(stack.shape[0])):
+            return context.grouped_axis_indices(int(stack.shape[0]))
+        if context.axis_repeats_over_runtime_positions(int(stack.shape[0])):
+            return (context.repeated_axis_index(int(stack.shape[0])),)
+        return None
+
+    @classmethod
+    def source_plane_indices_for_slice(
+        cls,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> tuple[int, ...] | None:
+        """Return source-plane indexes represented by one runtime slice."""
+        if isinstance(value, ObjectLabelValue):
+            return cls.object_label_plane_indices_for_slice(value, context)
+        metadata = image_payload_metadata(value).with_indexed_source_plane_provenance(
+            context.extent
+        )
+        if not metadata.has_plane_specific_values:
+            return None
         stack = context.grayscale_stack_view(value, flatten_high_rank=True)
         if stack is None:
             return None
@@ -1098,17 +1265,27 @@ class RuntimeSliceProjection:
         context: RuntimeProjectionAxis,
     ) -> RuntimeProjectionData:
         """Default projection for image-like array payloads."""
-        metadata = image_payload_metadata(value)
+        metadata = image_payload_metadata(value).with_indexed_source_plane_provenance(
+            context.extent
+        )
         mask = image_payload_mask(value)
         if mask is not None or metadata.has_values:
             data = cls.value_for_slice(
                 image_payload_data(value),
                 context,
             )
+            source_plane_indices = cls.source_plane_indices_for_slice(
+                value,
+                context,
+            )
             return RuntimeImagePayloadContext(
                 data,
                 project_image_mask_to_data_domain(mask, data),
-                metadata.for_source_plane(context.slice_index),
+                metadata.for_runtime_plane_projection(
+                    source_plane_indices=source_plane_indices,
+                    runtime_plane_index=context.slice_index,
+                    runtime_plane_count=context.extent,
+                ),
             ).payload()
         axis_sliced = cls.first_axis_slice_if_aligned(
             value,

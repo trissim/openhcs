@@ -110,6 +110,19 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
     assert plan.source_identity_stack_axes == frozenset({"z_index"})
 
 
+def test_execution_plan_preserves_step_local_source_identity_stack_axes():
+    compiled_plan = _compiled_plan(
+        source_identity_stack_axes=frozenset({"channel", "z_index"}),
+        step_source_identity_stack_axes=frozenset({"z_index"}),
+    )
+    context = ContextStub(compiled_plan)
+
+    plan = FunctionStepExecutionPlan.from_context(context, 2)
+
+    assert plan.source_identity_stack_axes == frozenset({"channel", "z_index"})
+    assert plan.step_source_identity_stack_axes == frozenset({"z_index"})
+
+
 def test_function_step_execution_does_not_prepare_callables_in_hot_path(monkeypatch):
     from openhcs.core.steps import function_execution
 

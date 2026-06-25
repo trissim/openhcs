@@ -8,6 +8,7 @@ via PyImageJ. Inherits from ZMQServer ABC for ping/pong handshake and dual-chann
 import logging
 import time
 import threading
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -15,6 +16,7 @@ from typing import ClassVar, TypeAlias
 
 import numpy as np
 
+from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.receivers.core import (
     DebouncedBatchEngine,
@@ -924,20 +926,33 @@ class FijiControlMessageResponse(ViewerControlReplyPayload):
     shutdown_requested: bool = False
 
 
-class FijiControlMessagePlan:
+class FijiControlMessagePlan(ABC, metaclass=AutoRegisterMeta):
     """Executable behavior for one Fiji control message type."""
 
+    __registry_key__ = "wire_value"
+    __skip_if_no_key__ = True
+
+    wire_value: ClassVar[str | None] = None
+
+    @classmethod
+    def for_message_type(cls, message_type: str | None) -> "FijiControlMessagePlan | None":
+        if message_type is None:
+            return None
+        plan_type = cls.__registry__.get(message_type)
+        if plan_type is None:
+            return None
+        return plan_type()
+
+    @abstractmethod
     def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
-        raise NotImplementedError
+        """Return the response for one Fiji viewer control request."""
 
 
-@dataclass(frozen=True, slots=True)
 class FijiShutdownControlPlan(FijiControlMessagePlan):
     """Acknowledge shutdown and ask the server loop to stop."""
 
-    wire_value: str
-
     def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
+        del windows
         logger.info(
             "🔬 FIJI SERVER: %s requested, will close after sending acknowledgment",
             self.wire_value,
@@ -952,8 +967,22 @@ class FijiShutdownControlPlan(FijiControlMessagePlan):
         )
 
 
+class FijiGracefulShutdownControlPlan(FijiShutdownControlPlan):
+    """Registered graceful Fiji shutdown control plan."""
+
+    wire_value = "shutdown"
+
+
+class FijiForceShutdownControlPlan(FijiShutdownControlPlan):
+    """Registered force Fiji shutdown control plan."""
+
+    wire_value = "force_shutdown"
+
+
 class FijiClearStateControlPlan(FijiControlMessagePlan):
     """Clear Fiji dimension/window metadata without shutting down."""
+
+    wire_value = "clear_state"
 
     def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
         logger.info(
@@ -970,9 +999,27 @@ class FijiClearStateControlPlan(FijiControlMessagePlan):
         )
 
 
+class FijiSettleControlPlan(FijiControlMessagePlan):
+    """Acknowledge viewer-settle requests for the synchronous Fiji path."""
+
+    wire_value = ViewerControlMessageType.SETTLE.value
+
+    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
+        del windows
+        return FijiControlMessageResponse(
+            ViewerControlReplyHeader(
+                ViewerProtocolStatus.SUCCESS,
+                response_type="settle_ack",
+                message="Fiji viewer has no queued debounced layer updates.",
+            ),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class FijiUnsupportedStateControlPlan(FijiControlMessagePlan):
     """Fail loudly for viewer-state polling until Fiji has a state projector."""
+
+    wire_value = ViewerControlMessageType.STATE.value
 
     def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
         del windows
@@ -989,37 +1036,6 @@ class FijiUnsupportedStateControlPlan(FijiControlMessagePlan):
         )
 
 
-class FijiControlMessageKind(Enum):
-    """Control messages accepted by the Fiji viewer server."""
-
-    SHUTDOWN = ("shutdown", FijiShutdownControlPlan("shutdown"))
-    FORCE_SHUTDOWN = ("force_shutdown", FijiShutdownControlPlan("force_shutdown"))
-    CLEAR_STATE = ("clear_state", FijiClearStateControlPlan())
-    STATE = (
-        ViewerControlMessageType.STATE.value,
-        FijiUnsupportedStateControlPlan(),
-    )
-
-    def __init__(self, wire_value: str, plan: FijiControlMessagePlan) -> None:
-        self.wire_value = wire_value
-        self.plan = plan
-
-    @classmethod
-    def from_message(
-        cls,
-        message: Mapping[str, FijiWireValue],
-    ) -> "FijiControlMessageKind | None":
-        message_type = message.get("type")
-        if message_type is None:
-            return None
-        return FIJI_CONTROL_MESSAGE_BY_WIRE_VALUE.get(str(message_type))
-
-
-FIJI_CONTROL_MESSAGE_BY_WIRE_VALUE: Mapping[str, FijiControlMessageKind] = {
-    kind.wire_value: kind for kind in FijiControlMessageKind
-}
-
-
 @dataclass(frozen=True, slots=True)
 class FijiControlMessageAuthority:
     """Handle Fiji control messages without leaking control literals into server."""
@@ -1030,12 +1046,14 @@ class FijiControlMessageAuthority:
         self,
         message: Mapping[str, FijiWireValue],
     ) -> FijiControlMessageResponse:
-        kind = FijiControlMessageKind.from_message(message)
-        if kind is None:
+        plan = FijiControlMessagePlan.for_message_type(
+            None if "type" not in message else str(message["type"])
+        )
+        if plan is None:
             return FijiControlMessageResponse(
                 ViewerControlReplyHeader(ViewerProtocolStatus.SUCCESS)
             )
-        return kind.plan.response(self.windows)
+        return plan.response(self.windows)
 
 
 @dataclass(frozen=True, slots=True)

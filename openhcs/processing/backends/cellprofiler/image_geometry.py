@@ -309,13 +309,16 @@ class ResizeGeometry:
         pixels = image_payload_data(image)
         output_pixels = self.resize_pixels(pixels)
         mask = image_mask_for_data_domain(source_payload=image, data=pixels)
+        metadata = image_payload_metadata(image).without_spatial_domain()
+        if self.interpolation_order != 0:
+            metadata = metadata.without_unit_interval_intensity_scale()
         return RuntimeImagePayloadContext(
             output_pixels,
             mask=self.resize_mask(
                 mask,
                 input_shape=tuple(np.asarray(pixels).shape),
             ),
-            metadata=image_payload_metadata(image).without_spatial_domain(),
+            metadata=metadata,
         ).payload()
 
 

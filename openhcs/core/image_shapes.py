@@ -222,15 +222,26 @@ def image_spatial_shape_yx(value: Any) -> tuple[int, int] | None:
     array_shape = ArrayShape.from_value(value)
     if array_shape is None or array_shape.ndim < 2:
         return None
+    spatial_axes = image_spatial_axis_indices(value)
+    if spatial_axes is None:
+        return None
+    return tuple(int(array_shape.shape[axis]) for axis in spatial_axes)
+
+
+def image_spatial_axis_indices(value: np.ndarray) -> tuple[int, int] | None:
+    """Return the array axes that carry image Y/X coordinates."""
+    array_shape = ArrayShape.from_value(value)
+    if array_shape is None or array_shape.ndim < 2:
+        return None
     if ColorImageShapeRole.matches_slice_shape(array_shape):
-        return tuple(int(axis) for axis in array_shape.shape[:2])
+        return 0, 1
     if ColorImageShapeRole.matches_stack_shape(array_shape):
-        return tuple(int(axis) for axis in array_shape.shape[1:3])
+        return 1, 2
     if ColorVolumeShapeRole.matches_slice_shape(array_shape):
-        return tuple(int(axis) for axis in array_shape.shape[-3:-1])
+        return array_shape.ndim - 3, array_shape.ndim - 2
     if ColorVolumeShapeRole.matches_stack_shape(array_shape):
-        return tuple(int(axis) for axis in array_shape.shape[-3:-1])
-    return tuple(int(axis) for axis in array_shape.shape[-2:])
+        return array_shape.ndim - 3, array_shape.ndim - 2
+    return array_shape.ndim - 2, array_shape.ndim - 1
 
 
 def trailing_spatial_target_shape(

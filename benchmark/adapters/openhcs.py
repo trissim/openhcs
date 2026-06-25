@@ -28,6 +28,7 @@ from benchmark.converter.runtime_pipeline import execute_pipeline_direct
 from benchmark.converter.execution_validation import (
     CPPipeExecutionValidation,
     CPPipeExecutionValidationError,
+    CPPipeInfrastructureProfile,
     validate_cppipe_execution,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
@@ -270,6 +271,35 @@ class OpenHCSRunRequest:
     @property
     def axis_selection(self) -> OpenHCSAxisSelection:
         return OpenHCSAxisSelection.from_pipeline_params(self.pipeline_params)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSPipelineGenerationPolicy:
+    """Compiler artifact policy for one converted CellProfiler benchmark run."""
+
+    prune_dead_unmaterialized_artifact_steps: bool
+    materialize_skipped_save_images: bool
+    materialize_terminal_images: bool
+
+    @classmethod
+    def from_request(
+        cls,
+        request: OpenHCSRunRequest,
+        infrastructure: CPPipeInfrastructureProfile,
+    ) -> "OpenHCSPipelineGenerationPolicy":
+        no_external_exports = (
+            not infrastructure.exports_tables
+            and not infrastructure.exports_images
+        )
+        return cls(
+            prune_dead_unmaterialized_artifact_steps=(
+                not request.compare_image_outputs
+            ),
+            materialize_skipped_save_images=request.compare_image_outputs,
+            materialize_terminal_images=(
+                request.compare_image_outputs or no_external_exports
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +547,10 @@ class OpenHCSAdapter(ToolAdapter):
         else:
             try:
                 with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
+                    generation_policy = OpenHCSPipelineGenerationPolicy.from_request(
+                        request,
+                        CPPipeInfrastructureProfile.from_cppipe_path(cppipe_path),
+                    )
                     ingestion = prepare_cellprofiler_source_schema_workspace(
                         CellProfilerSourceSchemaWorkspaceRequest(
                             source_root=request.dataset_path,
@@ -528,12 +562,14 @@ class OpenHCSAdapter(ToolAdapter):
                                 request.axis_selection.source_schema_selection()
                             ),
                             prune_dead_unmaterialized_artifact_steps=(
-                                not request.compare_image_outputs
+                                generation_policy.prune_dead_unmaterialized_artifact_steps
                             ),
                             materialize_skipped_save_images=(
-                                request.compare_image_outputs
+                                generation_policy.materialize_skipped_save_images
                             ),
-                            materialize_terminal_images=request.compare_image_outputs,
+                            materialize_terminal_images=(
+                                generation_policy.materialize_terminal_images
+                            ),
                         )
                     )
             except CellProfilerPipelinePreparationError as exc:

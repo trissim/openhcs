@@ -1227,6 +1227,59 @@ def test_order_matched_source_artifact_bindings_do_not_add_execution_anchors() -
     assert filtered == ["A01_s001_w1_z001_t001_A.png"]
 
 
+def test_order_matched_source_anchor_filter_ignores_non_stack_image_operands() -> None:
+    bindings = (
+        NamedSourceBinding(
+            alias="origDNA",
+            selector=SourceSelector(
+                metadata=(MetadataSelector("ChannelNumber", "2"),),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+        NamedSourceBinding(
+            alias="origMemb",
+            selector=SourceSelector(
+                metadata=(MetadataSelector("ChannelNumber", "0"),),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+            participates_in_image_stack=False,
+        ),
+        NamedSourceBinding(
+            alias="origMito",
+            selector=SourceSelector(
+                metadata=(MetadataSelector("ChannelNumber", "1"),),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+            participates_in_image_stack=False,
+        ),
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: bindings},
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={},
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"ChannelNumber": "0"},
+            "A01_s001_w2_z001_t001.tif": {"ChannelNumber": "1"},
+            "A01_s001_w3_z001_t001.tif": {"ChannelNumber": "2"},
+        },
+    )
+
+    filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
+        [
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w3_z001_t001.tif",
+        ],
+        bindings=plan.bindings_for_group(None),
+        source_context=source_context,
+    )
+
+    assert filtered == ["A01_s001_w3_z001_t001.tif"]
+
+
 def test_expand_A01_schema_workspace_wells_preserves_disambiguating_suffixes(
     tmp_path: Path,
 ) -> None:
@@ -1332,6 +1385,7 @@ def test_expand_A01_schema_workspace_wells_replaces_source_well_metadata(
             "z_index": "1",
             "timepoint": "1",
             "extension": ".tif",
+            ORIGINAL_SOURCE_METADATA_FIELD: {"ChannelNumber": "1"},
         },
         "W002_s001_w1_z001_t001.tif": {
             "well": "W002",
@@ -1340,6 +1394,7 @@ def test_expand_A01_schema_workspace_wells_replaces_source_well_metadata(
             "z_index": "1",
             "timepoint": "1",
             "extension": ".tif",
+            ORIGINAL_SOURCE_METADATA_FIELD: {"ChannelNumber": "1"},
         },
     }
 

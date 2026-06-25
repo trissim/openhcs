@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Iterable, TypeAlias
@@ -11,6 +12,7 @@ from metaclass_registry import AutoRegisterMeta
 from polystore.exceptions import MetadataNotFoundError
 from polystore.streaming.viewer_transport import (
     IndexedViewerStreamSourceMetadata,
+    PathMappedViewerStreamSourceMetadata,
     ViewerStreamBackendKwargs,
     ViewerStreamMessageContext,
     ViewerStreamProducer,
@@ -21,16 +23,20 @@ from zmqruntime.viewer_protocol import (
     ViewerComponentMetadataPayload,
 )
 
-from openhcs.constants.constants import get_multiprocessing_axis
+from openhcs.constants.constants import AllComponents, get_multiprocessing_axis
 from openhcs.core.context.processing_context import ProcessingContext
 
 from openhcs.core.source_image_provenance import SourceComponentMetadata
-from openhcs.core.source_matching import source_metadata_value
+from openhcs.core.source_matching import (
+    source_component_metadata_raw_value,
+    source_metadata_value,
+)
 from openhcs.core.streaming_config_factory import (
     StreamingViewerSurface,
 )
 from openhcs.runtime.viewer_component_system import (
     ComponentValue,
+    ViewerComponentValueParser,
     ViewerComponentAxisSemantics,
     ViewerComponentAxisSemanticsAuthority,
     ViewerComponentLayout,
@@ -61,6 +67,77 @@ class StreamComponentMessageExtraPayload(ViewerComponentMetadataPayload):
             component_value_domain=component_axis_semantics.to_wire_mapping(),
         )
 
+
+@dataclass(frozen=True, slots=True)
+class StreamViewerComponentMetadataProjector:
+    """Project source metadata onto the viewer's declared component axes."""
+
+    component_order: tuple[str, ...]
+
+    def project_required(
+        self,
+        *,
+        index: int,
+        metadata: StreamComponentMetadata,
+    ) -> dict[str, ComponentValue]:
+        if metadata is None:
+            raise ValueError(
+                "Viewer streaming requires source component metadata for "
+                f"item {index}."
+            )
+        return self.project(metadata)
+
+    def project(
+        self,
+        metadata: SourceComponentMetadata,
+    ) -> dict[str, ComponentValue]:
+        projected: dict[str, ComponentValue] = {}
+        for component in self.component_order:
+            value = self.component_value(metadata, component)
+            if value is not None:
+                projected[component] = value
+        return projected
+
+    def component_value(
+        self,
+        metadata: SourceComponentMetadata,
+        component: str,
+    ) -> ComponentValue:
+        component_identity = AllComponents.from_value(component)
+        if component_identity is None:
+            value = metadata.get(component)
+        else:
+            value = source_component_metadata_raw_value(metadata, component_identity)
+        if value is None:
+            return None
+        return ViewerComponentValueParser.parse(
+            value,
+            context=f"Viewer source metadata component {component!r}",
+        )
+
+    def indexed_source_metadata(
+        self,
+        values: tuple[StreamComponentMetadata, ...],
+    ) -> ViewerStreamSourceMetadata:
+        return IndexedViewerStreamSourceMetadata(
+            metadata_by_index=tuple(
+                self.project_required(index=index, metadata=metadata)
+                for index, metadata in enumerate(values)
+            )
+        )
+
+    def path_mapped_source_metadata(
+        self,
+        metadata_by_path: Mapping[str, StreamComponentMetadata],
+    ) -> ViewerStreamSourceMetadata:
+        return PathMappedViewerStreamSourceMetadata(
+            metadata_by_path={
+                path: self.project_required(index=index, metadata=metadata)
+                for index, (path, metadata) in enumerate(metadata_by_path.items())
+            }
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class StreamSourceComponentMetadataItems:
     """Source component metadata observed by one viewer streaming operation."""
@@ -81,25 +158,13 @@ class StreamSourceComponentMetadataItems:
             if metadata is not None
         )
 
-    def viewer_source_metadata(self) -> ViewerStreamSourceMetadata:
-        return IndexedViewerStreamSourceMetadata(
-            metadata_by_index=tuple(
-                self.required_mapping(index, metadata)
-                for index, metadata in enumerate(self.values)
-            )
-        )
-
-    @staticmethod
-    def required_mapping(
-        index: int,
-        metadata: StreamComponentMetadata,
-    ) -> dict[str, ComponentValue]:
-        if metadata is None:
-            raise ValueError(
-                "Viewer streaming requires source component metadata for "
-                f"item {index}."
-            )
-        return dict(metadata)
+    def viewer_source_metadata(
+        self,
+        component_order: tuple[str, ...],
+    ) -> ViewerStreamSourceMetadata:
+        return StreamViewerComponentMetadataProjector(
+            component_order
+        ).indexed_source_metadata(self.values)
 
     def include_observed_values(
         self,
@@ -487,9 +552,19 @@ class StreamComponentMessageExtraAuthority:
         images_dir: str | None = None,
     ) -> ViewerStreamBackendKwargs:
         if source_metadata is None:
-            source_metadata = self.source_metadata_items.viewer_source_metadata()
+            source_metadata = self.source_metadata_items.viewer_source_metadata(
+                self.layout.component_order
+            )
         return self.viewer_surface.viewer_backend_kwargs(
             producer=producer,
             source_metadata=source_metadata,
             message_context=self.message_context(images_dir=images_dir),
         )
+
+    def path_mapped_source_metadata(
+        self,
+        metadata_by_path: Mapping[str, StreamComponentMetadata],
+    ) -> ViewerStreamSourceMetadata:
+        return StreamViewerComponentMetadataProjector(
+            self.layout.component_order
+        ).path_mapped_source_metadata(metadata_by_path)

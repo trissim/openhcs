@@ -852,6 +852,7 @@ def correct_illumination_calculate(
     return request.calculate_payload(metadata)
 
 
+@processing_prepare(correct_illumination_calculate)
 def _prepare_correct_illumination_calculate() -> None:
     """Compile common illumination kernels outside measured step execution."""
     image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
@@ -860,6 +861,18 @@ def _prepare_correct_illumination_calculate() -> None:
         smoothing_method=SmoothingMethod.FIT_POLYNOMIAL,
         filter_size_method=FilterSizeMethod.AUTOMATIC,
         rescale_option=RescaleOption.YES,
+    )
+    convex_hull_image = np.linspace(
+        0.0,
+        1.0,
+        32 * 32,
+        dtype=np.float32,
+    ).reshape((32, 32))
+    correct_illumination_calculate.__wrapped__(
+        convex_hull_image,
+        smoothing_method=SmoothingMethod.CONVEX_HULL,
+        filter_size_method=FilterSizeMethod.AUTOMATIC,
+        rescale_option=RescaleOption.NO,
     )
     background = np.zeros((64, 64), dtype=np.float32)
     background[::8, ::8] = 1.0
@@ -886,13 +899,6 @@ def _prepare_correct_illumination_calculate() -> None:
         manual_filter_size=96,
         rescale_option=RescaleOption.NO,
     )
-
-
-correct_illumination_calculate.__openhcs_prepare__ = (
-    _prepare_correct_illumination_calculate
-)
-
-
 @numpy
 def correct_illumination_apply(
     image: ImagePayloadMetadataInput,
@@ -1594,7 +1600,7 @@ class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = True
+    is_default_backend = False
 
     def smooth_background_plane(
         self,
@@ -1687,11 +1693,11 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
-    is_default_backend = False
+    is_default_backend = True
 
     def prepare_backend(self) -> None:
         """Compile exact convex-hull smoothing kernels during compiler preparation."""
-        image = np.arange(16, dtype=np.float32).reshape((4, 4))
+        image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape((32, 32))
         mask = np.ones(image.shape, dtype=np.bool_)
         morphology = MorphologyBackendStrategy.for_memory_type()
         self.smooth_background_plane(
@@ -1892,6 +1898,258 @@ def _exact_level_set_convex_hull_smoothing_numba(
     minimum = np.float32(0.0)
     maximum = np.float32(0.0)
     found_valid = False
+    valid_pixel_count = 0
+    for y in range(height):
+        for x in range(width):
+            if not valid_mask[y, x]:
+                continue
+            valid_pixel_count += 1
+            value = image[y, x]
+            if not found_valid:
+                minimum = value
+                maximum = value
+                found_valid = True
+            else:
+                if value < minimum:
+                    minimum = value
+                if value > maximum:
+                    maximum = value
+
+    output = np.empty((height, width), dtype=np.float32)
+    for y in range(height):
+        for x in range(width):
+            output[y, x] = minimum if valid_mask[y, x] else np.float32(0.0)
+    if (not found_valid) or maximum <= minimum:
+        return output
+
+    row_count2 = height * 2 + 1
+    min_col_by_row = np.empty(row_count2, dtype=np.int64)
+    max_col_by_row = np.empty(row_count2, dtype=np.int64)
+    point_capacity = max(2, row_count2 * 2)
+    point_x = np.empty(point_capacity, dtype=np.int64)
+    point_y = np.empty(point_capacity, dtype=np.int64)
+    hull_x = np.empty(point_capacity * 2, dtype=np.int64)
+    hull_y = np.empty(point_capacity * 2, dtype=np.int64)
+
+    bucket_counts = np.zeros(thresholds.size, dtype=np.int64)
+    active_pixel_count = _count_convex_hull_threshold_buckets(
+        image,
+        valid_mask,
+        thresholds,
+        bucket_counts,
+    )
+    if active_pixel_count == 0:
+        return output
+
+    bucket_offsets = np.empty(thresholds.size + 1, dtype=np.int64)
+    offset = 0
+    for bucket_index in range(thresholds.size):
+        bucket_offsets[bucket_index] = offset
+        offset += bucket_counts[bucket_index]
+        bucket_counts[bucket_index] = 0
+    bucket_offsets[thresholds.size] = offset
+
+    bucket_rows = np.empty(active_pixel_count, dtype=np.int64)
+    bucket_cols = np.empty(active_pixel_count, dtype=np.int64)
+    _fill_convex_hull_threshold_buckets(
+        image,
+        valid_mask,
+        thresholds,
+        bucket_offsets,
+        bucket_counts,
+        bucket_rows,
+        bucket_cols,
+    )
+
+    assigned = np.zeros((height, width), dtype=np.bool_)
+    for row_index in range(row_count2):
+        min_col_by_row[row_index] = 9223372036854775807
+        max_col_by_row[row_index] = -9223372036854775807
+
+    assigned_count = 0
+    for level_index in range(thresholds.size - 1, -1, -1):
+        start = bucket_offsets[level_index]
+        end = bucket_offsets[level_index] + bucket_counts[level_index]
+        if start == end:
+            continue
+        changed_extrema = False
+        for bucket_position in range(start, end):
+            y = bucket_rows[bucket_position]
+            x = bucket_cols[bucket_position]
+            if _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y - 1, 2 * x):
+                changed_extrema = True
+            if _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y + 1, 2 * x):
+                changed_extrema = True
+            if _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x - 1):
+                changed_extrema = True
+            if _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x + 1):
+                changed_extrema = True
+        if not changed_extrema:
+            continue
+
+        point_count = _emit_diamond_extreme_points(
+            min_col_by_row,
+            max_col_by_row,
+            point_x,
+            point_y,
+        )
+        if point_count == 0:
+            continue
+        hull_count = _monotone_chain_hull(
+            point_x,
+            point_y,
+            point_count,
+            hull_x,
+            hull_y,
+        )
+        assigned_count += _paint_convex_hull(
+            output,
+            assigned,
+            False,
+            valid_mask,
+            thresholds[level_index],
+            hull_x,
+            hull_y,
+            hull_count,
+        )
+        if assigned_count >= valid_pixel_count:
+            break
+    return output
+
+
+@njit(cache=True)
+def _count_convex_hull_threshold_buckets(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    thresholds: np.ndarray,
+    bucket_counts: np.ndarray,
+) -> int:
+    height, width = image.shape
+    active_pixel_count = 0
+    for y in range(height):
+        for x in range(width):
+            if not valid_mask[y, x]:
+                continue
+            bucket_index = _last_threshold_index_not_greater_than(
+                thresholds,
+                image[y, x],
+            )
+            if bucket_index < 0:
+                continue
+            bucket_counts[bucket_index] += 1
+            active_pixel_count += 1
+    return active_pixel_count
+
+
+@njit(cache=True)
+def _fill_convex_hull_threshold_buckets(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    thresholds: np.ndarray,
+    bucket_offsets: np.ndarray,
+    bucket_counts: np.ndarray,
+    bucket_rows: np.ndarray,
+    bucket_cols: np.ndarray,
+) -> None:
+    height, width = image.shape
+    for y in range(height):
+        for x in range(width):
+            if not valid_mask[y, x]:
+                continue
+            bucket_index = _last_threshold_index_not_greater_than(
+                thresholds,
+                image[y, x],
+            )
+            if bucket_index < 0:
+                continue
+            bucket_position = bucket_offsets[bucket_index] + bucket_counts[bucket_index]
+            bucket_rows[bucket_position] = y
+            bucket_cols[bucket_position] = x
+            bucket_counts[bucket_index] += 1
+
+
+@njit(cache=True)
+def _last_threshold_index_not_greater_than(
+    thresholds: np.ndarray,
+    value: np.float32,
+) -> int:
+    low = 0
+    high = thresholds.size
+    while low < high:
+        middle = (low + high) // 2
+        if thresholds[middle] <= value:
+            low = middle + 1
+        else:
+            high = middle
+    return low - 1
+
+
+@njit(cache=True)
+def _emit_diamond_extreme_points(
+    min_col_by_row: np.ndarray,
+    max_col_by_row: np.ndarray,
+    point_x: np.ndarray,
+    point_y: np.ndarray,
+) -> int:
+    point_count = 0
+    for row_index in range(max_col_by_row.size):
+        max_col = max_col_by_row[row_index]
+        if max_col < -9223372036854775800:
+            continue
+        row2 = row_index - 1
+        min_col = min_col_by_row[row_index]
+        point_x[point_count] = row2
+        point_y[point_count] = min_col
+        point_count += 1
+        if max_col != min_col:
+            point_x[point_count] = row2
+            point_y[point_count] = max_col
+            point_count += 1
+    return point_count
+
+
+@njit(cache=True)
+def _collect_diamond_extreme_points(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    threshold: np.float32,
+    min_col_by_row: np.ndarray,
+    max_col_by_row: np.ndarray,
+    point_x: np.ndarray,
+    point_y: np.ndarray,
+) -> int:
+    height, width = image.shape
+    row_count2 = height * 2 + 1
+    for row_index in range(row_count2):
+        min_col_by_row[row_index] = 9223372036854775807
+        max_col_by_row[row_index] = -9223372036854775807
+
+    for y in range(height):
+        for x in range(width):
+            if valid_mask[y, x] and image[y, x] >= threshold:
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y - 1, 2 * x)
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y + 1, 2 * x)
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x - 1)
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x + 1)
+
+    return _emit_diamond_extreme_points(
+        min_col_by_row,
+        max_col_by_row,
+        point_x,
+        point_y,
+    )
+
+
+@njit(cache=True)
+def _exact_level_set_convex_hull_smoothing_reference_numba(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    thresholds: np.ndarray,
+) -> np.ndarray:
+    height, width = image.shape
+    minimum = np.float32(0.0)
+    maximum = np.float32(0.0)
+    found_valid = False
     for y in range(height):
         for x in range(width):
             if not valid_mask[y, x]:
@@ -1922,6 +2180,7 @@ def _exact_level_set_convex_hull_smoothing_numba(
     point_y = np.empty(point_capacity, dtype=np.int64)
     hull_x = np.empty(point_capacity * 2, dtype=np.int64)
     hull_y = np.empty(point_capacity * 2, dtype=np.int64)
+    assigned = np.ones((height, width), dtype=np.bool_)
     for level_index in range(thresholds.size):
         threshold = thresholds[level_index]
         point_count = _collect_diamond_extreme_points(
@@ -1944,6 +2203,8 @@ def _exact_level_set_convex_hull_smoothing_numba(
         )
         _paint_convex_hull(
             output,
+            assigned,
+            True,
             valid_mask,
             threshold,
             hull_x,
@@ -1954,58 +2215,21 @@ def _exact_level_set_convex_hull_smoothing_numba(
 
 
 @njit(cache=True)
-def _collect_diamond_extreme_points(
-    image: np.ndarray,
-    valid_mask: np.ndarray,
-    threshold: np.float32,
-    min_col_by_row: np.ndarray,
-    max_col_by_row: np.ndarray,
-    point_x: np.ndarray,
-    point_y: np.ndarray,
-) -> int:
-    height, width = image.shape
-    row_count2 = height * 2 + 1
-    for row_index in range(row_count2):
-        min_col_by_row[row_index] = 9223372036854775807
-        max_col_by_row[row_index] = -9223372036854775807
-
-    for y in range(height):
-        for x in range(width):
-            if valid_mask[y, x] and image[y, x] >= threshold:
-                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y - 1, 2 * x)
-                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y + 1, 2 * x)
-                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x - 1)
-                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x + 1)
-
-    point_count = 0
-    for row_index in range(row_count2):
-        max_col = max_col_by_row[row_index]
-        if max_col < -9223372036854775800:
-            continue
-        row2 = row_index - 1
-        min_col = min_col_by_row[row_index]
-        point_x[point_count] = row2
-        point_y[point_count] = min_col
-        point_count += 1
-        if max_col != min_col:
-            point_x[point_count] = row2
-            point_y[point_count] = max_col
-            point_count += 1
-    return point_count
-
-
-@njit(cache=True)
 def _add_diamond_vertex(
     min_col_by_row: np.ndarray,
     max_col_by_row: np.ndarray,
     row2: int,
     col2: int,
-) -> None:
+) -> bool:
     row_index = row2 + 1
+    changed = False
     if col2 < min_col_by_row[row_index]:
         min_col_by_row[row_index] = col2
+        changed = True
     if col2 > max_col_by_row[row_index]:
         max_col_by_row[row_index] = col2
+        changed = True
+    return changed
 
 
 @njit(cache=True)
@@ -2076,17 +2300,19 @@ def _monotone_chain_hull(
 @njit(cache=True)
 def _paint_convex_hull(
     output: np.ndarray,
+    assigned: np.ndarray,
+    overwrite_assigned: bool,
     valid_mask: np.ndarray,
     threshold: np.float32,
     hull_x: np.ndarray,
     hull_y: np.ndarray,
     hull_count: int,
-) -> None:
+) -> int:
     if hull_count <= 0:
-        return
+        return 0
     if hull_count == 1:
         if hull_x[0] % 2 != 0 or hull_y[0] % 2 != 0:
-            return
+            return 0
         y = hull_x[0] // 2
         x = hull_y[0] // 2
         if (
@@ -2095,9 +2321,13 @@ def _paint_convex_hull(
             and x >= 0
             and x < valid_mask.shape[1]
             and valid_mask[y, x]
+            and (overwrite_assigned or not assigned[y, x])
         ):
             output[y, x] = threshold
-        return
+            was_unassigned = not assigned[y, x]
+            assigned[y, x] = True
+            return 1 if was_unassigned else 0
+        return 0
 
     min_row2 = hull_x[0]
     max_row2 = hull_x[0]
@@ -2116,8 +2346,10 @@ def _paint_convex_hull(
             max_col2 = col2
 
     if hull_count == 2:
-        _paint_line_hull(
+        return _paint_line_hull(
             output,
+            assigned,
+            overwrite_assigned,
             valid_mask,
             threshold,
             hull_x[0],
@@ -2129,16 +2361,6 @@ def _paint_convex_hull(
             min_col2,
             max_col2,
         )
-        return
-
-    area2 = 0
-    for index in range(hull_count):
-        next_index = index + 1
-        if next_index == hull_count:
-            next_index = 0
-        area2 += hull_x[index] * hull_y[next_index]
-        area2 -= hull_x[next_index] * hull_y[index]
-    positive_orientation = area2 >= 0
 
     image_height, image_width = output.shape
     min_y = max(0, _ceil_div2(min_row2))
@@ -2146,34 +2368,100 @@ def _paint_convex_hull(
     min_x = max(0, _ceil_div2(min_col2))
     max_x = min(image_width - 1, _floor_div2(max_col2))
 
+    return _paint_polygon_hull_scanlines(
+        output,
+        assigned,
+        overwrite_assigned,
+        valid_mask,
+        threshold,
+        hull_x,
+        hull_y,
+        hull_count,
+        min_y,
+        max_y,
+        min_x,
+        max_x,
+    )
+
+
+@njit(cache=True)
+def _paint_polygon_hull_scanlines(
+    output: np.ndarray,
+    assigned: np.ndarray,
+    overwrite_assigned: bool,
+    valid_mask: np.ndarray,
+    threshold: np.float32,
+    hull_x: np.ndarray,
+    hull_y: np.ndarray,
+    hull_count: int,
+    min_y: int,
+    max_y: int,
+    min_x: int,
+    max_x: int,
+) -> int:
+    assigned_delta = 0
     for y in range(min_y, max_y + 1):
         query_row2 = y * 2
-        for x in range(min_x, max_x + 1):
+        left_col2 = 0.0
+        right_col2 = 0.0
+        found_intersection = False
+        for index in range(hull_count):
+            next_index = index + 1
+            if next_index == hull_count:
+                next_index = 0
+
+            row0 = hull_x[index]
+            col0 = hull_y[index]
+            row1 = hull_x[next_index]
+            col1 = hull_y[next_index]
+            if row0 == row1:
+                if query_row2 != row0:
+                    continue
+                edge_left = float(min(col0, col1))
+                edge_right = float(max(col0, col1))
+                if not found_intersection:
+                    left_col2 = edge_left
+                    right_col2 = edge_right
+                    found_intersection = True
+                else:
+                    if edge_left < left_col2:
+                        left_col2 = edge_left
+                    if edge_right > right_col2:
+                        right_col2 = edge_right
+                continue
+
+            row_min = min(row0, row1)
+            row_max = max(row0, row1)
+            if query_row2 < row_min or query_row2 > row_max:
+                continue
+
+            row_fraction = (query_row2 - row0) / (row1 - row0)
+            intersection_col2 = col0 + row_fraction * (col1 - col0)
+            if not found_intersection:
+                left_col2 = intersection_col2
+                right_col2 = intersection_col2
+                found_intersection = True
+            else:
+                if intersection_col2 < left_col2:
+                    left_col2 = intersection_col2
+                if intersection_col2 > right_col2:
+                    right_col2 = intersection_col2
+
+        if not found_intersection:
+            continue
+
+        scan_min_x = max(min_x, int(np.ceil(left_col2 / 2.0 - 1e-9)))
+        scan_max_x = min(max_x, int(np.floor(right_col2 / 2.0 + 1e-9)))
+        for x in range(scan_min_x, scan_max_x + 1):
             if not valid_mask[y, x]:
                 continue
-            query_col2 = x * 2
-            inside = True
-            for index in range(hull_count):
-                next_index = index + 1
-                if next_index == hull_count:
-                    next_index = 0
-                cross = _cross_points(
-                    hull_x[index],
-                    hull_y[index],
-                    hull_x[next_index],
-                    hull_y[next_index],
-                    query_row2,
-                    query_col2,
-                )
-                if positive_orientation:
-                    if cross < 0:
-                        inside = False
-                        break
-                elif cross > 0:
-                    inside = False
-                    break
-            if inside:
-                output[y, x] = threshold
+            if (not overwrite_assigned) and assigned[y, x]:
+                continue
+            output[y, x] = threshold
+            if not assigned[y, x]:
+                assigned_delta += 1
+            assigned[y, x] = True
+    return assigned_delta
 
 
 @njit(cache=True)
@@ -2193,6 +2481,8 @@ def _floor_div2(value: int) -> int:
 @njit(cache=True)
 def _paint_line_hull(
     output: np.ndarray,
+    assigned: np.ndarray,
+    overwrite_assigned: bool,
     valid_mask: np.ndarray,
     threshold: np.float32,
     x0: int,
@@ -2203,23 +2493,29 @@ def _paint_line_hull(
     max_row2: int,
     min_col2: int,
     max_col2: int,
-) -> None:
+) -> int:
     dx = x1 - x0
     dy = y1 - y0
     length2 = dx * dx + dy * dy
     if length2 == 0:
-        if valid_mask[y0, x0]:
+        if valid_mask[y0, x0] and (overwrite_assigned or not assigned[y0, x0]):
             output[y0, x0] = threshold
-        return
+            was_unassigned = not assigned[y0, x0]
+            assigned[y0, x0] = True
+            return 1 if was_unassigned else 0
+        return 0
     image_height, image_width = output.shape
     min_y = max(0, _ceil_div2(min_row2))
     max_y = min(image_height - 1, _floor_div2(max_row2))
     min_x = max(0, _ceil_div2(min_col2))
     max_x = min(image_width - 1, _floor_div2(max_col2))
+    assigned_delta = 0
     for y in range(min_y, max_y + 1):
         query_row2 = y * 2
         for x in range(min_x, max_x + 1):
             if not valid_mask[y, x]:
+                continue
+            if (not overwrite_assigned) and assigned[y, x]:
                 continue
             query_col2 = x * 2
             dot = (query_row2 - x0) * dx + (query_col2 - y0) * dy
@@ -2228,6 +2524,10 @@ def _paint_line_hull(
             cross = dx * (query_col2 - y0) - dy * (query_row2 - x0)
             if cross == 0:
                 output[y, x] = threshold
+                if not assigned[y, x]:
+                    assigned_delta += 1
+                assigned[y, x] = True
+    return assigned_delta
 
 
 @njit(cache=True)

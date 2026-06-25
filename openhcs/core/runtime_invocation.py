@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+import inspect
+from types import MappingProxyType
 from typing import ClassVar, Generic, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -78,11 +80,46 @@ class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
 
     registry_key: ClassVar[str] = "batch_invocation"
 
+    func: Callable[..., object]
     image: object
     kwargs: Mapping[str, object]
     batch_index: int
     batch_count: int
     semantic_group_key: tuple[Hashable, ...] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "kwargs",
+            MappingProxyType(
+                {
+                    **runtime_callable_defaults(self.func),
+                    **dict(self.kwargs),
+                }
+            ),
+        )
+
+
+def runtime_callable_defaults(func: Callable[..., object]) -> Mapping[str, object]:
+    """Return callable defaults visible to runtime batch executors."""
+    try:
+        callable_signature = inspect.signature(func)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"Runtime batch function {func!r} must expose an inspectable signature."
+        ) from exc
+    defaults: dict[str, object] = {}
+    for parameter in callable_signature.parameters.values():
+        if parameter.default is inspect.Parameter.empty:
+            continue
+        if parameter.kind in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
+            continue
+        defaults[parameter.name] = parameter.default
+    return MappingProxyType(defaults)
 
 
 def requested_image_execution_mode(

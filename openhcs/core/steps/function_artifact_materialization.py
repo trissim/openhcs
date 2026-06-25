@@ -28,8 +28,12 @@ from openhcs.core.runtime_values import (
 from openhcs.core.source_image_provenance import (
     SourceImageIdentity,
 )
-from openhcs.core.source_matching import with_source_component_metadata
+from openhcs.core.source_matching import (
+    source_component_metadata_value,
+    with_source_component_metadata,
+)
 from openhcs.core.steps.function_output_identity import (
+    FunctionOutputComponentIdentityAuthority,
     FunctionOutputIdentity,
     FunctionOutputIdentityAuthority,
     FunctionOutputParserContext,
@@ -48,6 +52,7 @@ from openhcs.core.steps.stream_component_semantics import (
 from openhcs.core.streaming_config_factory import StreamingViewerSurface
 from openhcs.processing.materialization.core import (
     BackendKwargs,
+    MaterializationSpec,
     RawBackendKwargs,
     ViewerStreamBackendCallKwargs,
 )
@@ -65,12 +70,34 @@ class ArtifactMaterializationBackendPlan:
     persistent_backend_kwargs: BackendKwargs
     streaming_viewer_surfaces: Mapping[str, StreamingViewerSurface]
 
-    @property
-    def backends(self) -> list[str]:
+    def backends_for(
+        self,
+        *,
+        filemanager: "FileManager",
+        stream_output_paths: tuple[str, ...],
+    ) -> list[str]:
         return [
             *self.persistent_backend_kwargs,
-            *self.streaming_viewer_surfaces,
+            *self.streamable_viewer_surfaces(
+                filemanager=filemanager,
+                stream_output_paths=stream_output_paths,
+            ),
         ]
+
+    def streamable_viewer_surfaces(
+        self,
+        *,
+        filemanager: "FileManager",
+        stream_output_paths: tuple[str, ...],
+    ) -> Mapping[str, StreamingViewerSurface]:
+        return {
+            backend: viewer_surface
+            for backend, viewer_surface in self.streaming_viewer_surfaces.items()
+            if any(
+                filemanager._get_backend(backend).supports_file_path(path)
+                for path in stream_output_paths
+            )
+        }
 
     def backend_kwargs(
         self,
@@ -78,7 +105,9 @@ class ArtifactMaterializationBackendPlan:
         artifact_source_identity: SourceImageIdentity | None,
         producer_identity: StreamProducerIdentity,
         context: "ProcessingContext",
+        filemanager: "FileManager",
         images_dir: str,
+        stream_output_paths: tuple[str, ...],
     ) -> BackendKwargs:
         result: BackendKwargs = {}
         for backend, kwargs in self.persistent_backend_kwargs.items():
@@ -99,7 +128,10 @@ class ArtifactMaterializationBackendPlan:
             (artifact_component_metadata,)
         )
         producer = ViewerStreamProducer.from_identity(producer_identity)
-        for backend, viewer_surface in self.streaming_viewer_surfaces.items():
+        for backend, viewer_surface in self.streamable_viewer_surfaces(
+            filemanager=filemanager,
+            stream_output_paths=stream_output_paths,
+        ).items():
             stream_backend_kwargs = StreamComponentMessageExtraAuthority.from_context(
                 viewer_surface,
                 context=context,
@@ -181,9 +213,21 @@ class AnalysisOutputDescriptorAuthority:
         dict_key: str | None = None,
         artifact_path: str | None = None,
         record: StoredRuntimeValue | None = None,
+        materialization_spec: MaterializationSpec | None = None,
     ) -> ArtifactAnalysisOutputDescriptor:
         """Build analysis output identity from the artifact's source metadata."""
-        record_source = cls.record_source_descriptor(context, plan, record)
+        record_source = None
+        if record is not None:
+            if materialization_spec is None:
+                raise ValueError(
+                    "Artifact record descriptor requires a materialization spec."
+                )
+            record_source = cls.record_source_descriptor(
+                context,
+                plan,
+                record,
+                materialization_spec,
+            )
         if record_source is not None:
             return ArtifactAnalysisOutputDescriptor(
                 filename=(
@@ -217,7 +261,8 @@ class AnalysisOutputDescriptorAuthority:
                 source_identity=None,
             )
 
-        if dict_key:
+        group_by_component = cls.group_by_component(plan)
+        if dict_key and group_by_component is not None:
             parser_context = FunctionOutputParserContext.from_processing_context(
                 context
             )
@@ -226,8 +271,11 @@ class AnalysisOutputDescriptorAuthority:
                 metadata = parser_context.parse_path_metadata(path)
                 if (
                     metadata
-                    and "channel" in metadata
-                    and str(metadata["channel"]) == str(dict_key)
+                    and cls.group_key_matches_metadata(
+                        metadata,
+                        group_by_component,
+                        dict_key,
+                    )
                 ):
                     filtered_paths.append(path)
 
@@ -260,37 +308,112 @@ class AnalysisOutputDescriptorAuthority:
             ),
         )
 
+    @staticmethod
+    def group_by_component(
+        plan: FunctionStepExecutionPlan,
+    ) -> AllComponents | None:
+        if plan.group_by_value is None:
+            return None
+        return AllComponents.from_value(str(plan.group_by_value))
+
+    @staticmethod
+    def group_key_matches_metadata(
+        metadata: Mapping[str, object],
+        component: AllComponents,
+        group_key: str,
+    ) -> bool:
+        value = source_component_metadata_value(metadata, component)
+        if value is None:
+            return False
+        return (
+            FunctionOutputComponentIdentityAuthority.coerce_component_value(
+                component,
+                value,
+            )
+            == FunctionOutputComponentIdentityAuthority.coerce_component_value(
+                component,
+                group_key,
+            )
+        )
+
+    @classmethod
+    def record_metadata_with_runtime_plane_group(
+        cls,
+        plan: FunctionStepExecutionPlan,
+        record: StoredRuntimeValue,
+        metadata: ImagePayloadMetadata,
+    ) -> ImagePayloadMetadata:
+        """Attach group-projected runtime-plane identity to record metadata."""
+        if not plan.group_projects_runtime_plane:
+            return metadata
+        group_by_value = plan.group_by_value
+        if group_by_value is None:
+            return metadata
+        component_metadata = dict(metadata.source_component_metadata or {})
+        component_metadata[group_by_value] = record.key.scope.group_key
+        return metadata.with_source_provenance(
+            metadata.source_provenance.with_source_component_metadata(
+                component_metadata
+            ),
+        )
+
     @classmethod
     def record_source_descriptor(
         cls,
         context: "ProcessingContext",
         plan: FunctionStepExecutionPlan,
-        record: StoredRuntimeValue | None,
+        record: StoredRuntimeValue,
+        materialization_spec: MaterializationSpec,
     ) -> ArtifactRecordSourceDescriptor | None:
         """Return source filename stem and identity for one artifact record."""
         metadata = cls.record_payload_metadata(record)
         if metadata is None:
             return None
-        parser_context = FunctionOutputParserContext.from_processing_context(context)
-        identity = FunctionOutputIdentityAuthority.identity_from_metadata(
-            parser_context.parser,
+        metadata = cls.record_metadata_with_runtime_plane_group(
+            plan,
+            record,
             metadata,
-            source_identity_stack_axes=plan.source_identity_stack_axes,
         )
-        if identity is not None:
-            filename_stem = Path(
-                FunctionOutputPathAuthority.filename_for_identity(
-                    parser_context.parser,
-                    identity,
-                )
-            ).stem
-            return ArtifactRecordSourceDescriptor(
-                filename_stem=filename_stem,
-                source_identity=cls.record_source_identity_from_metadata(
-                    metadata,
-                    identity,
-                ),
+        parser_context = FunctionOutputParserContext.from_processing_context(context)
+        use_filename_identity = materialization_spec.uses_filename_source_identity(
+            record.value.data
+        )
+        if use_filename_identity:
+            identity = FunctionOutputIdentityAuthority.filename_identity_from_metadata(
+                parser_context.parser,
+                metadata,
+                fallback_identity_path=record.path,
             )
+        else:
+            identity = FunctionOutputIdentityAuthority.identity_from_metadata(
+                parser_context.parser,
+                metadata,
+                fallback_identity_path=record.path,
+                source_identity_stack_axes=plan.source_identity_stack_axes,
+            )
+        if identity is not None:
+            try:
+                filename_stem = Path(
+                    FunctionOutputPathAuthority.filename_for_identity(
+                        parser_context.parser,
+                        identity,
+                    )
+                ).stem
+            except ValueError:
+                logger.debug(
+                    "Artifact record metadata identity is not filename-complete; "
+                    "falling back to planned output lineage.",
+                    exc_info=True,
+                )
+            else:
+                return ArtifactRecordSourceDescriptor(
+                    filename_stem=filename_stem,
+                    source_identity=cls.record_source_identity_from_metadata(
+                        metadata,
+                        identity,
+                        use_filename_identity=use_filename_identity,
+                    ),
+                )
         source_path = metadata.source_provenance.scalar_source_identity.path
         if source_path is None:
             return None
@@ -299,6 +422,7 @@ class AnalysisOutputDescriptorAuthority:
             source_identity=cls.record_source_identity_from_metadata(
                 metadata,
                 identity,
+                use_filename_identity=use_filename_identity,
             ),
         )
 
@@ -307,6 +431,8 @@ class AnalysisOutputDescriptorAuthority:
         cls,
         metadata: ImagePayloadMetadata,
         identity: FunctionOutputIdentity | None,
+        *,
+        use_filename_identity: bool = False,
     ) -> SourceImageIdentity | None:
         """Return scalar source identity with parser-resolved component metadata."""
         source_identity = metadata.source_provenance.scalar_source_identity
@@ -315,7 +441,12 @@ class AnalysisOutputDescriptorAuthority:
                 component_metadata = {}
             else:
                 component_metadata = dict(metadata.source_component_metadata)
-            for key, value in identity.component_metadata().items():
+            identity_metadata = (
+                identity.filename_component_metadata()
+                if use_filename_identity
+                else identity.component_metadata()
+            )
+            for key, value in identity_metadata.items():
                 component = AllComponents.from_value(str(key))
                 if component is None:
                     component_metadata[str(key)] = value
@@ -426,11 +557,6 @@ def materialize_artifact_outputs(
     from openhcs.processing.materialization import materialize
 
     backend_plan = target_plan.backend_plan(plan, context)
-    backends = backend_plan.backends
-
-    if not backends:
-        return
-
     analysis_output_dir = plan.artifact_analysis_output_dir
     images_dir = plan.artifact_images_dir
     store = context.runtime_value_store
@@ -451,7 +577,7 @@ def materialize_artifact_outputs(
             filemanager.ensure_directory(
                 Path(record.path).parent, record.backend
             )
-            data = record.value.data
+            data = record.value.materialization_payload()
             mat_spec = resolve_artifact_materialization_spec(
                 output_plan,
                 record.value,
@@ -466,8 +592,16 @@ def materialize_artifact_outputs(
                 dict_key,
                 artifact_path=record.path,
                 record=record,
+                materialization_spec=mat_spec,
             )
             analysis_path = analysis_output_dir / output_descriptor.filename
+            stream_output_paths = mat_spec.candidate_paths(str(analysis_path))
+            backends = backend_plan.backends_for(
+                filemanager=filemanager,
+                stream_output_paths=stream_output_paths,
+            )
+            if not backends:
+                continue
             materialize(
                 mat_spec,
                 data,
@@ -487,8 +621,11 @@ def materialize_artifact_outputs(
                         )
                     ),
                     context=context,
+                    filemanager=filemanager,
                     images_dir=images_dir,
+                    stream_output_paths=stream_output_paths,
                 ),
                 context=context,
                 artifact_source_identity=output_descriptor.source_identity,
+                source_identity_stack_axes=plan.step_source_identity_stack_axes,
             )

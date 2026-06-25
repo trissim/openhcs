@@ -144,6 +144,7 @@ bin/
 local/
 
 # Development artifacts and temporary files
+.nra-cache/
 *_PLAN.md
 *_REVIEW.md
 *_SUMMARY.md
@@ -155,10 +156,13 @@ PR_*.md
 duck_typing_*.md
 measure_peak_memory.py
 test_caching_*.py
+openhcs_zmq_probe_*.py
 *-fail.txt
 *_output.txt
 *_logs.txt
 win_logs.txt
+/.zgroup
+benchmark/results/napari_streaming_validator/
 
 # Guardrails for accidental root artifacts
 /*.pdf

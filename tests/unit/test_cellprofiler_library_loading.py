@@ -55,6 +55,7 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationImagePairContext,
     ColocalizationObjectLabelContext,
     costes_backend,
+    measure_colocalization_objects_batch,
     object_colocalization_threshold_reductions,
     thresholded_colocalization_metrics,
 )
@@ -911,6 +912,7 @@ def test_colocalization_threshold_batch_aligns_aligned_image_stack_context() -> 
     )
     request = RuntimeBatchInvocationRequest(
         source_image_name=None,
+        func=lambda image, **kwargs: (image, kwargs),
         image=aligned,
         kwargs={
             "labels": np.ones((2, 2), dtype=np.int32),
@@ -933,6 +935,98 @@ def test_colocalization_threshold_batch_aligns_aligned_image_stack_context() -> 
     )
     assert isinstance(
         kwargs["object_label_context"].value_for_slice(0),
+        ColocalizationObjectLabelContext,
+    )
+
+
+def test_colocalization_threshold_batch_caches_semantic_label_context() -> None:
+    image = np.stack(
+        (
+            np.ones((2, 2), dtype=np.float32),
+            np.full((2, 2), 0.5, dtype=np.float32),
+        ),
+        axis=0,
+    )
+    labels = ObjectLabelPayload(
+        labels=np.array(
+            (
+                (1, 1),
+                (0, 2),
+            ),
+            dtype=np.int64,
+        ),
+        domain=ObjectLabelDomain(declared_object_count=2),
+    )
+    request = RuntimeBatchInvocationRequest(
+        source_image_name=None,
+        func=lambda image, **kwargs: (image, kwargs),
+        image=image,
+        kwargs={
+            "labels": labels,
+            "channel_1": 0,
+            "channel_2": 1,
+        },
+        batch_index=0,
+        batch_count=2,
+    )
+    batch = ColocalizationCostesThresholdBatch()
+    image_pair_context = batch.image_pair_context(request)
+
+    first = batch.object_label_context(request, image_pair_context)
+    second = batch.object_label_context(request, image_pair_context)
+
+    assert second is first
+
+
+def test_measure_colocalization_objects_batch_uses_contract_execution() -> None:
+    image = np.stack(
+        (
+            np.array(((0.1, 0.2), (0.3, 0.4)), dtype=np.float32),
+            np.array(((0.4, 0.3), (0.2, 0.1)), dtype=np.float32),
+        ),
+        axis=0,
+    )
+    labels = ObjectLabelPayload(
+        labels=np.array(((1, 1), (0, 2)), dtype=np.int32),
+        domain=ObjectLabelDomain(declared_object_count=2),
+    )
+    request = RuntimeBatchInvocationRequest(
+        source_image_name=None,
+        func=measure_colocalization_objects,
+        image=image,
+        kwargs={
+            "labels": labels,
+            "channel_1": 0,
+            "channel_2": 1,
+            "do_costes": False,
+        },
+        batch_index=0,
+        batch_count=1,
+    )
+
+    captured_requests: list[RuntimeBatchInvocationRequest] = []
+
+    def execute_request(
+        _func: object,
+        executed_request: RuntimeBatchInvocationRequest,
+    ) -> object:
+        captured_requests.append(executed_request)
+        return executed_request.image, executed_request.kwargs
+
+    output, executed_kwargs = measure_colocalization_objects_batch(
+        measure_colocalization_objects,
+        (request,),
+        execute_request,
+    )[0]
+
+    assert captured_requests
+    assert output is image
+    assert isinstance(
+        executed_kwargs["image_pair_context"],
+        ColocalizationImagePairContext,
+    )
+    assert isinstance(
+        executed_kwargs["object_label_context"],
         ColocalizationObjectLabelContext,
     )
 
@@ -1319,17 +1413,18 @@ def test_identify_primary_objects_applies_threshold_smoothing_to_binary_mask(
 ) -> None:
     calls = {}
 
-    def fake_threshold(pixel_data, **kwargs):
-        calls["threshold_smoothing_scale"] = kwargs["threshold_smoothing_scale"]
-        calls["smooth_threshold_application"] = kwargs[
-            "smooth_threshold_application"
-        ]
-        return np.zeros_like(pixel_data, dtype=bool), 0.1, 0.1
+    def fake_threshold_tuple(self, **_kwargs):
+        settings = self.settings.normalized()
+        calls["threshold_smoothing_scale"] = settings.threshold_smoothing_scale
+        calls["smooth_threshold_application"] = (
+            settings.smooth_threshold_application
+        )
+        return np.zeros_like(self.image, dtype=bool), 0.1, 0.1
 
     monkeypatch.setattr(
-        thresholding_backend,
-        "cellprofiler_threshold",
-        fake_threshold,
+        thresholding_backend.CellProfilerThresholdRequest,
+        "threshold_tuple",
+        fake_threshold_tuple,
     )
 
     identify_primary_objects(
@@ -1377,7 +1472,7 @@ def test_identify_primary_objects_threshold_diagnostics_use_pre_fill_binary(
     threshold_binary[3, 3] = False
     captured = {}
 
-    def fake_threshold(pixel_data, **kwargs):
+    def fake_threshold_tuple(self, **_kwargs):
         return threshold_binary.copy(), 0.5, 0.5
 
     def fake_diagnostics(image, binary, **kwargs):
@@ -1389,9 +1484,9 @@ def test_identify_primary_objects_threshold_diagnostics_use_pre_fill_binary(
         )
 
     monkeypatch.setattr(
-        thresholding_backend,
-        "cellprofiler_threshold",
-        fake_threshold,
+        thresholding_backend.CellProfilerThresholdRequest,
+        "threshold_tuple",
+        fake_threshold_tuple,
     )
     monkeypatch.setattr(
         thresholding_backend,
@@ -3521,7 +3616,7 @@ def test_correct_illumination_exact_convex_hull_matches_native_reference():
     np.testing.assert_array_equal(accelerated, reference)
 
 
-def test_correct_illumination_convex_hull_default_uses_centrosome_backend():
+def test_correct_illumination_convex_hull_default_uses_exact_numba_backend():
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
@@ -3542,7 +3637,7 @@ def test_correct_illumination_convex_hull_default_uses_centrosome_backend():
         filter_size_method="Manually",
         manual_filter_size=3,
         rescale_option="No",
-        convex_hull_backend_provider=CellProfilerBackendProvider.CENTROSOME,
+        convex_hull_backend_provider=CellProfilerBackendProvider.NUMBA,
         dtype_config=DtypeConfig(),
     )
 

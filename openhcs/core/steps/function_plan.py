@@ -60,6 +60,7 @@ class FunctionStepExecutionPlan:
     materialized_output: MaterializedOutputPlan | None
     streaming_configs: tuple[StreamingConfig, ...]
     source_identity_stack_axes: frozenset[str]
+    step_source_identity_stack_axes: frozenset[str]
     compiled_function_pattern: CompiledFunctionPattern
     artifact_inputs_by_group: Mapping[Any, ArtifactInputPlans]
     artifact_outputs_by_group: Mapping[Any, ArtifactOutputPlans]
@@ -142,6 +143,9 @@ class FunctionStepExecutionPlan:
             materialized_output=compiled_plan.materialized_output,
             streaming_configs=tuple(compiled_plan.streaming_configs.values()),
             source_identity_stack_axes=compiled_plan.source_identity_stack_axes,
+            step_source_identity_stack_axes=(
+                compiled_plan.step_source_identity_stack_axes
+            ),
             compiled_function_pattern=_require_value(
                 compiled_plan.compiled_function_pattern,
                 "compiled_function_pattern",

@@ -17,13 +17,20 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
     RuntimeArrayPayload,
+    RuntimeValue,
+    RuntimeValueSchema,
     SourceImageProvenancePlanes,
     image_payload_metadata,
     RuntimeImagePayloadContext,
     normalize_artifact_value,
 )
+from openhcs.core.source_metadata import (
+    SOURCE_PLANE_COUNT_FIELD,
+    SOURCE_PLANE_INDEX_FIELD,
+)
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.steps.function_artifact_materialization import (
+    AnalysisOutputDescriptorAuthority,
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
@@ -34,7 +41,13 @@ from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
     StreamingViewerSurface,
 )
-from openhcs.processing.materialization import CsvOptions, JsonOptions, ROIOptions, csv_only
+from openhcs.processing.materialization import (
+    CsvOptions,
+    JsonOptions,
+    ROIOptions,
+    csv_only,
+    tiff_stack,
+)
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 
@@ -155,6 +168,9 @@ class FileManagerStub:
         self.memory = {}
         self.directories = set()
 
+    def _get_backend(self, backend):
+        return BackendStub(backend)
+
     def exists(self, path, backend):
         return path in self.memory
 
@@ -163,6 +179,19 @@ class FileManagerStub:
 
     def load(self, path, backend):
         return self.memory[path]
+
+
+class BackendStub:
+    requires_filesystem_validation = False
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    def supports_file_path(self, path):
+        if self.backend != "napari_stream":
+            return True
+        name = Path(path).name.lower()
+        return name.endswith((".tif", ".tiff", ".png", ".jpg", ".jpeg", ".roi.zip"))
 
 
 class ArrayLike(RuntimeArrayPayload):
@@ -181,6 +210,7 @@ def _plan(
     streaming_configs=(),
     memory_paths=(),
     source_identity_stack_axes=frozenset(),
+    group_by_value=None,
 ):
     return SimpleNamespace(
         artifact_outputs={output_plan.name: output_plan},
@@ -195,7 +225,12 @@ def _plan(
         output_dir=Path("/tmp/output"),
         input_dir=Path("/tmp/input"),
         read_backend="memory",
-        group_by_value=None,
+        group_by_value=group_by_value,
+        group_projects_runtime_plane=(
+            group_by_value is not None
+            and group_by_value in source_identity_stack_axes
+        ),
+        step_source_identity_stack_axes=source_identity_stack_axes,
         source_identity_stack_axes=source_identity_stack_axes,
     )
 
@@ -405,6 +440,67 @@ def test_materialize_artifact_outputs_uses_runtime_store_payload(
     ]
 
 
+def test_materialize_artifact_outputs_attaches_image_schema_provenance(monkeypatch):
+    output_plan = ArtifactOutputPlan(
+        name="converted_image",
+        path="/memory/converted_image.pkl",
+        kind=ArtifactKind.IMAGE,
+        materialization=tiff_stack(),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        RuntimeValue.from_output_plan(
+            output_plan,
+            np.zeros((3, 5, 7), dtype=np.float32),
+            axis_id="A01",
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.IMAGE,
+                source_component_metadata={
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "3",
+                    "z_index": "1",
+                    SOURCE_PLANE_INDEX_FIELD: "0",
+                    SOURCE_PLANE_COUNT_FIELD: "3",
+                },
+            ),
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(_spec, data, path, *_args, **_kwargs):
+        materialized.append((data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, source_identity_stack_axes=frozenset({"z_index", "channel"})),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert len(materialized) == 1
+    data, path = materialized[0]
+    assert path == "/analysis/A01_s001_w3_z001_t001_converted_image_step7.roi.zip"
+    assert isinstance(data, ImageMetadataPayload)
+    assert dict(image_payload_metadata(data).source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "3",
+        "z_index": "1",
+        SOURCE_PLANE_INDEX_FIELD: "0",
+        SOURCE_PLANE_COUNT_FIELD: "3",
+    }
+
+
 def test_materialize_artifact_outputs_requires_runtime_store_record():
     output_plan = ArtifactOutputPlan(
         name="positions",
@@ -505,6 +601,59 @@ def test_materialize_artifact_outputs_defaults_measurements_to_existing_csv_spec
     assert spec.outputs[0].filename_suffix == ".csv"
     assert data == [{"object_id": 1, "area": 42}]
     assert path == "/analysis/A01_measurements_step7.roi.zip"
+
+
+def test_materialize_tabular_artifact_does_not_build_viewer_stream_kwargs(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/measurements.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            output_plan,
+            [{"object_id": 1, "area": 42}],
+            axis_id="A01",
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, streaming_configs=(streaming_config_stub(),)),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    spec, data, path, backends, backend_kwargs = materialized[0]
+    assert isinstance(spec.outputs[0], CsvOptions)
+    assert data == [{"object_id": 1, "area": 42}]
+    assert path == "/analysis/A01_measurements_step7.roi.zip"
+    assert backends == ["disk"]
+    assert "napari_stream" not in backend_kwargs
 
 
 def test_materialize_artifact_outputs_uses_actual_group_records(monkeypatch):
@@ -634,6 +783,67 @@ def test_materialize_artifact_outputs_uses_group_measurement_source_identity(
     assert [data for _spec, data, _path in materialized] == [
         [{"site": "1", "object_id": 1, "area": 42}],
         [{"site": "2", "object_id": 2, "area": 84}],
+    ]
+
+
+def test_materialize_artifact_outputs_uses_group_axis_for_partial_record_identity(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/measurements.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+        group_keys=("2",),
+        paths_by_group={
+            "2": "/memory/site2_measurements.pkl",
+        },
+    )
+    group_plan = output_plan.for_group("2")
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            group_plan,
+            MeasurementTable(
+                name="measurements",
+                rows=[{"site": "2", "object_id": 1, "area": 42}],
+                source_component_metadata={"site": "2"},
+            ),
+            axis_id="A01",
+        ),
+        path=group_plan.path,
+        backend="memory",
+    )
+    monkeypatch.setattr(
+        AnalysisOutputDescriptorAuthority,
+        "produced_memory_paths",
+        classmethod(
+            lambda cls, _context, _plan: [
+                "/memory/A01_s001_w5_z001_t001.TIF",
+                "/memory/A01_s002_w5_z001_t001.TIF",
+            ]
+        ),
+    )
+    materialized = []
+
+    def fake_materialize(spec, data, path, *_args, **_kwargs):
+        materialized.append((spec, data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, group_by_value="site"),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert [path for _spec, _data, path in materialized] == [
+        "/analysis/A01_s002_w5_z001_t001_measurements_step7.roi.zip",
     ]
 
 
@@ -809,7 +1019,6 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
             "channel": "1",
             "z_index": "1",
             "timepoint": "1",
-            "extension": ".TIF",
         },
     )
     assert stream_request.message_extra["component_value_domain"] == {
@@ -899,7 +1108,6 @@ def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streamin
             "channel": "3",
             "z_index": "1",
             "timepoint": "1",
-            "extension": ".TIF",
         },
     )
     assert stream_request.message_extra == {
@@ -972,8 +1180,72 @@ def test_materialize_artifact_outputs_streams_payload_component_metadata(
     assert path == "/analysis/01_POS002_D_Nuclei_step7.roi.zip"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.source.metadata.metadata_by_index == (
-        {"well": "01", "site": "POS002", "channel": "D", "extension": ".TIF"},
+        {"well": "01", "site": "POS002", "channel": "D"},
     )
+
+
+def test_materialize_artifact_outputs_uses_runtime_plane_group_identity(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="AdjacentImage",
+        path="/memory/AdjacentImage.pkl",
+        kind=ArtifactKind.IMAGE,
+        materialization=csv_only(),
+        group_keys=("11",),
+        paths_by_group={
+            "11": "/memory/A01_w11_AdjacentImage_step7.pkl",
+        },
+    )
+    group_plan = output_plan.for_group("11")
+    payload = ImageMetadataPayload(
+        data=np.ones((8, 12, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "z_index": "1",
+                "extension": ".tif",
+            },
+            source_image_names=("OrigColor",),
+        ),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(group_plan, payload, axis_id="A01"),
+        path=group_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(_spec, data, path, *_args, **_kwargs):
+        materialized.append((data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(
+            output_plan,
+            group_by_value="timepoint",
+            source_identity_stack_axes=frozenset({"timepoint"}),
+        ),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert materialized == [
+        (
+            payload,
+            "/analysis/A01_s001_w1_z001_t011_AdjacentImage_step7.roi.zip",
+        )
+    ]
 
 
 def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
@@ -1035,13 +1307,11 @@ def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.source.metadata.metadata_by_index == (
         {
-            "OpenHCSImageType": "Grayscale image",
             "well": "A01",
             "site": "2",
             "channel": "3",
             "z_index": "1",
             "timepoint": "1",
-            "extension": ".TIF",
         },
     )
 
@@ -1127,6 +1397,197 @@ def test_materialize_artifact_outputs_uses_source_stack_identity_for_streaming(
             "site": "1",
             "channel": "1",
             "timepoint": "1",
-            "extension": ".TIF",
+        },
+    )
+
+
+def test_materialize_rgb_artifact_streams_filename_channel_identity(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="RGBImage",
+        path="/memory/RGBImage.pkl",
+        kind=ArtifactKind.IMAGE,
+        materialization=tiff_stack(),
+    )
+    streaming_config = streaming_config_stub()
+    rgb_payload = ImageMetadataPayload(
+        data=np.ones((5, 7, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w3_z001_t001.TIF",
+                    "/input/A01_s001_w2_z001_t001.TIF",
+                    "/input/A01_s001_w1_z001_t001.TIF",
+                ),
+                component_metadata=(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "3",
+                        "z_index": "1",
+                        "timepoint": "1",
+                    },
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "2",
+                        "z_index": "1",
+                        "timepoint": "1",
+                    },
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "1",
+                        "timepoint": "1",
+                    },
+                ),
+            ),
+        ),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, rgb_payload, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(
+            output_plan,
+            streaming_configs=(streaming_config,),
+            source_identity_stack_axes=frozenset({"channel"}),
+        ),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s001_w3_z001_t001_RGBImage_step7.roi.zip"
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "1",
+            "timepoint": "1",
+        },
+    )
+
+
+def test_materialize_rgb_artifact_keeps_scalar_filename_identity_for_mixed_provenance(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="OrigOverlay",
+        path="/memory/OrigOverlay.pkl",
+        kind=ArtifactKind.IMAGE,
+        materialization=tiff_stack(),
+    )
+    streaming_config = streaming_config_stub()
+    rgb_payload = ImageMetadataPayload(
+        data=np.ones((5, 7, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s001_w2_z001_t001.TIF",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "2",
+                "z_index": "1",
+                "timepoint": "1",
+            },
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w3_z001_t001.TIF",
+                    "/input/A01_s001_w2_z001_t001.TIF",
+                ),
+                component_metadata=(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "3",
+                        "z_index": "1",
+                        "timepoint": "1",
+                    },
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "2",
+                        "z_index": "1",
+                        "timepoint": "1",
+                    },
+                ),
+            ),
+        ),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, rgb_payload, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(
+            output_plan,
+            streaming_configs=(streaming_config,),
+            source_identity_stack_axes=frozenset({"site"}),
+        ),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s001_w2_z001_t001_OrigOverlay_step7.roi.zip"
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "z_index": "1",
+            "timepoint": "1",
         },
     )

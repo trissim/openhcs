@@ -12,7 +12,7 @@ import logging
 import operator
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence, Sized
-from dataclasses import dataclass, field, is_dataclass
+from dataclasses import dataclass, field, is_dataclass, replace
 from functools import singledispatch
 from pathlib import Path
 from typing import ClassVar, TYPE_CHECKING, TypeAlias
@@ -22,13 +22,15 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
 
-from openhcs.core.artifacts import ArtifactMaterializationPayload
-from openhcs.core.image_shapes import ColorImageShapeRole
+from openhcs.constants.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind, ArtifactMaterializationPayload
+from openhcs.core.image_shapes import ColorImageShapeRole, image_spatial_shape_yx
 from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
 from openhcs.processing.materialization.options import (
     CsvOptions,
     FileOutputOptions,
     JsonOptions,
+    MaterializedFilenameIdentity,
     ROIOptions,
     SourceOptions,
     TabularExtractionOptions,
@@ -44,8 +46,17 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
+    SourceIdentityStackAxisProjection,
     SourceImageIdentity,
+    SourceImageProvenance,
+    SourcePlaneIndexedMetadata,
 )
+from openhcs.core.source_matching import (
+    source_component_metadata_raw_value,
+    source_component_metadata_value,
+    with_source_component_metadata,
+)
+from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.registry_strategies import (
     AlwaysMatchesContextMixin,
     MostDerivedContextStrategyMixin,
@@ -56,10 +67,16 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_slice_projection import (
     RuntimeProjectedPayloadItem,
+    RuntimeProjectionPlaneMetadata,
+    RuntimeProjectionSourceIdentityRequest,
     RuntimeProjectionSourceIdentityRequirement,
+)
+from openhcs.core.steps.stream_component_semantics import (
+    StreamViewerComponentMetadataProjector,
 )
 if TYPE_CHECKING:
     from polystore.filemanager import FileManager
+    from polystore.roi import ROI
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.microscopes.microscope_interfaces import FilenameParser
 
@@ -184,6 +201,7 @@ BackendKwargs: TypeAlias = dict[str, BackendKwargsValue]
 NormalizedBackendKwargs: TypeAlias = dict[str, "BackendCallKwargs"]
 BackendKwargsInput = BackendKwargs | BackendKwargsAbsent
 PrimaryPathSelector = Callable[[list["Output"]], str]
+CandidatePathSelector = Callable[[FileOutputOptions, str], tuple[str, ...]]
 
 @dataclass(frozen=True)
 class Output:
@@ -222,6 +240,22 @@ class Output:
     @property
     def viewer_stream_requires_source_metadata(self) -> bool:
         return not isinstance(self.content, str)
+
+    def with_source_identity_fallback(
+        self,
+        fallback: SourceImageIdentity | None,
+    ) -> "Output":
+        if fallback is None:
+            return self
+        if self.source_identity is None:
+            source_identity = fallback
+        else:
+            source_identity = self.source_identity.with_missing_from(fallback)
+        return type(self)(
+            path=self.path,
+            content=self.content,
+            source_identity=source_identity,
+        )
 
 class SourceSegmentAuthority:
     """Resolve one source selector segment against mappings or named fields."""
@@ -356,6 +390,34 @@ class MaterializationInputItem(RuntimeProjectedPayloadItem):
     @property
     def data(self) -> MaterializationValue:
         return runtime_array_operand(image_payload_data(self.value))
+
+    @property
+    def runtime_plane(self) -> RuntimeProjectionPlaneMetadata | None:
+        """Return runtime display-plane identity for this materialized item."""
+        return self.runtime_plane_metadata
+
+class ROIMaterializationSourceSpatialDomain:
+    """Resolve the source-spatial domain used by ROI extraction."""
+
+    def domain_for_item(self, item: MaterializationInputItem) -> SourceSpatialDomain:
+        metadata_domain = item.metadata.source_spatial_domain.with_value_name(
+            "ROI materialization source image",
+        )
+        if metadata_domain.source_shape_yx is not None:
+            return metadata_domain
+        local_shape_yx = image_spatial_shape_yx(item.data)
+        if local_shape_yx is None:
+            return metadata_domain
+        return SourceSpatialDomain(
+            origin_yx=(
+                metadata_domain.origin_yx
+                if metadata_domain.origin_yx is not None
+                else (0, 0)
+            ),
+            source_shape_yx=local_shape_yx,
+            fill_value=metadata_domain.fill_value,
+            value_name=metadata_domain.value_name,
+        )
 
 @dataclass(frozen=True, slots=True)
 class SourcePlaneProjectionContract:
@@ -953,13 +1015,16 @@ class MaterializationInput:
                 MaterializationInputItem(
                     value=item.value,
                     source_description=item.source_description,
+                    runtime_plane_metadata=item.runtime_plane_metadata,
                 )
                 for source_payload in source_payloads
                 for item in (
                     RuntimeProjectionSourceIdentityRequirement.OPTIONAL
                 ).project_payload_items(
-                    source_payload,
-                    source_description="materialization payload",
+                    RuntimeProjectionSourceIdentityRequest(
+                        value=source_payload,
+                        source_description="materialization payload",
+                    )
                 )
             ),
             unprojected_items=tuple(
@@ -1017,6 +1082,48 @@ class PathHelper:
     def with_suffix(self, suffix: str) -> str:
         return str(self.parent / f"{self.name}{suffix}")
 
+class MaterializationCandidatePathAuthority:
+    """Project writer options to the output paths a backend may see."""
+
+    @staticmethod
+    def single_output(options: FileOutputOptions, base_path: str) -> tuple[str, ...]:
+        return (PathHelper(base_path, options).with_suffix(options.filename_suffix),)
+
+class ROICandidatePathAuthority:
+    """Candidate paths emitted by ROI materialization."""
+
+    @staticmethod
+    def paths(options: FileOutputOptions, base_path: str) -> tuple[str, ...]:
+        if not isinstance(options, ROIOptions):
+            raise TypeError(
+                "ROICandidatePathAuthority requires ROIOptions, "
+                f"got {options.__class__.__name__}."
+            )
+        paths = PathHelper(base_path, options)
+        return (
+            paths.with_suffix(options.roi_suffix),
+            paths.with_suffix(options.summary_suffix),
+        )
+
+class TiffStackCandidatePathAuthority:
+    """Candidate paths emitted by TIFF stack materialization."""
+
+    @staticmethod
+    def paths(options: FileOutputOptions, base_path: str) -> tuple[str, ...]:
+        if not isinstance(options, TiffStackOptions):
+            raise TypeError(
+                "TiffStackCandidatePathAuthority requires TiffStackOptions, "
+                f"got {options.__class__.__name__}."
+            )
+        paths = PathHelper(base_path, options)
+        return (
+            str(
+                paths.parent
+                / f"{paths.name}{options.slice_pattern.format(index=0)}"
+            ),
+            paths.with_suffix(options.summary_suffix),
+        )
+
 class WriteModePathPolicy(ABC, metaclass=AutoRegisterMeta):
     """Apply existing-path policy for one write mode."""
 
@@ -1060,8 +1167,11 @@ class ViewerStreamBackendCallKwargs(BackendCallKwargs):
                 "Viewer stream materialization requires output metadata with "
                 "source_component_metadata."
             )
+        projected_metadata = StreamViewerComponentMetadataProjector(
+            self.values.stream_request.display_semantics.component_order
+        ).project(component_metadata)
         return self.values.with_single_item_component_metadata(
-            component_metadata,
+            projected_metadata,
         ).to_kwargs()
 
 EMPTY_BACKEND_CALL_KWARGS = RawBackendKwargs()
@@ -1087,7 +1197,15 @@ class BackendSaver:
         output: Output,
     ) -> None:
         for backend in self.backends:
-            self._prepare_path(backend, output.path)
+            backend_instance = self.filemanager._get_backend(backend)
+            if not backend_instance.supports_file_path(output.path):
+                logger.info(
+                    "Skipping backend %s for unsupported materialization path %s",
+                    backend,
+                    output.path,
+                )
+                continue
+            self._prepare_path(backend, backend_instance, output.path)
             if backend in self.backend_kwargs:
                 kwargs_payload = self.backend_kwargs[backend]
             else:
@@ -1095,8 +1213,7 @@ class BackendSaver:
             kwargs = kwargs_payload.to_filemanager_kwargs(output)
             self.filemanager.save(output.content, output.path, backend, **kwargs)
 
-    def _prepare_path(self, backend: str, path: str) -> None:
-        backend_instance = self.filemanager._get_backend(backend)
+    def _prepare_path(self, backend: str, backend_instance, path: str) -> None:
         if not backend_instance.requires_filesystem_validation:
             return
 
@@ -1120,6 +1237,7 @@ class MaterializationContext:
     extra_inputs: dict
     context: "ProcessingContext | None" = None
     artifact_source_identity: SourceImageIdentity | None = None
+    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
     write_mode: WriteMode = WriteMode.OVERWRITE
 
     def paths(self, options: FileOutputOptions) -> PathHelper:
@@ -1140,6 +1258,7 @@ class WriterSpec:
     options_type: type
     write: "WriterFunction"
     primary_path: PrimaryPathSelector
+    candidate_paths: CandidatePathSelector
 
 WriterFunction = Callable
 _WRITERS_BY_OPTIONS: dict[type, WriterSpec] = {}
@@ -1176,6 +1295,7 @@ def writer_for(
     fmt: MaterializationFormat,
     *,
     primary_path: PrimaryPathSelector | None = None,
+    candidate_paths: CandidatePathSelector | None = None,
 ):
     """Register a writer for a given options type.
 
@@ -1189,11 +1309,15 @@ def writer_for(
         selected_primary_path = primary_path
         if selected_primary_path is None:
             selected_primary_path = PrimaryPathAuthority.first_output_path
+        selected_candidate_paths = candidate_paths
+        if selected_candidate_paths is None:
+            selected_candidate_paths = MaterializationCandidatePathAuthority.single_output
         _WRITERS_BY_OPTIONS[options_type] = WriterSpec(
             format=fmt,
             options_type=options_type,
             write=fn,
             primary_path=selected_primary_path,
+            candidate_paths=selected_candidate_paths,
         )
         return fn
 
@@ -1845,6 +1969,7 @@ _ROI_MATERIALIZATION_TARGETS = ROIMaterializationTargetAuthority()
     ROIOptions,
     MaterializationFormat.ROI_ZIP,
     primary_path=ROIPrimaryPathAuthority.primary_path,
+    candidate_paths=ROICandidatePathAuthority.paths,
 )
 def _write_roi_zip(
     data: MaterializationValue,
@@ -1878,12 +2003,11 @@ def _write_roi_zip(
     outs: list[Output] = []
     total_roi_count = 0
     roi_paths: list[str] = []
+    source_domain_authority = ROIMaterializationSourceSpatialDomain()
     for target in targets:
         target_rois: list = []
         for item in target.items:
-            source_domain = item.metadata.source_spatial_domain.with_value_name(
-                "ROI materialization source image",
-            )
+            source_domain = source_domain_authority.domain_for_item(item)
             rois = extract_rois_from_labeled_mask(
                 item.data,
                 min_area=options.min_area,
@@ -1891,7 +2015,10 @@ def _write_roi_zip(
                 spatial_origin_yx=source_domain.origin_yx,
                 source_spatial_shape_yx=source_domain.source_shape_yx,
             )
-            target_rois.extend(rois)
+            target_rois.extend(
+                roi_with_runtime_plane_metadata(roi, item)
+                for roi in rois
+            )
 
         total_roi_count += len(target_rois)
         if target_rois:
@@ -1913,6 +2040,35 @@ def _write_roi_zip(
         summary += "No ROIs extracted (all regions below min_area threshold)\n"
     outs.append(Output(path=summary_path, content=summary))
     return outs
+
+def roi_with_runtime_plane_metadata(
+    roi: "ROI",
+    item: MaterializationInputItem,
+) -> "ROI":
+    """Attach runtime display-plane metadata to a projected 2D ROI."""
+    runtime_plane = item.runtime_plane
+    if runtime_plane is None:
+        return roi
+    if "plane_indices" in roi.metadata or "plane_shape" in roi.metadata:
+        existing = {
+            "plane_indices": roi.metadata.get("plane_indices"),
+            "plane_shape": roi.metadata.get("plane_shape"),
+        }
+        if existing != runtime_plane.roi_metadata:
+            raise ValueError(
+                "Projected ROI already carries conflicting plane metadata: "
+                f"{existing!r} != {runtime_plane.roi_metadata!r}."
+            )
+        return roi
+    from polystore.roi import ROI
+
+    return ROI(
+        shapes=roi.shapes,
+        metadata={
+            **roi.metadata,
+            **runtime_plane.roi_metadata,
+        },
+    )
 
 class TiffStackSlicePayloadAuthority:
     """Own how TIFF stack materialization expands payloads into saved slices."""
@@ -1942,13 +2098,67 @@ class TiffStackSlicePayloadAuthority:
             return True
         return not ColorImageShapeRole.matches_slice(data)
 
-@writer_for(TiffStackOptions, MaterializationFormat.TIFF_STACK)
+
+@singledispatch
+def materialization_emits_source_identity_stack_planes(
+    options: FileOutputOptions,
+    data: MaterializationValue,
+) -> bool:
+    """Return whether one writer emits source-stack identity as separate outputs."""
+    del options, data
+    return False
+
+
+@materialization_emits_source_identity_stack_planes.register(TiffStackOptions)
+def tiff_stack_emits_source_identity_stack_planes(
+    options: TiffStackOptions,
+    data: MaterializationValue,
+) -> bool:
+    materialization_input = MaterializationInput.from_value(data, options)
+    metadata_input = MaterializationInput.from_runtime_slice_projected_value(
+        data,
+        options,
+    )
+    slices = TiffStackSlicePayloadAuthority.slices(
+        materialization_input.data,
+        options,
+    )
+    return len(slices) > 1 and len(metadata_input.items) == len(slices)
+
+
+@singledispatch
+def materialization_uses_filename_source_identity(
+    options: FileOutputOptions,
+    data: MaterializationValue,
+) -> bool:
+    """Return whether stream identity should follow the materialized filename."""
+    del options, data
+    return False
+
+
+@materialization_uses_filename_source_identity.register(TiffStackOptions)
+def tiff_stack_uses_filename_source_identity(
+    options: TiffStackOptions,
+    data: MaterializationValue,
+) -> bool:
+    return not materialization_emits_source_identity_stack_planes(options, data)
+
+
+@writer_for(
+    TiffStackOptions,
+    MaterializationFormat.TIFF_STACK,
+    candidate_paths=TiffStackCandidatePathAuthority.paths,
+)
 def _write_tiff_stack(
     data: MaterializationValue,
     options: TiffStackOptions,
     ctx: MaterializationContext,
 ) -> list[Output]:
     materialization_input = MaterializationInput.from_value(data, options)
+    metadata_input = MaterializationInput.from_runtime_slice_projected_value(
+        data,
+        options,
+    )
     data = materialization_input.data
     paths = ctx.paths(options)
     base_name = paths.name
@@ -1960,8 +2170,10 @@ def _write_tiff_stack(
     slices = TiffStackSlicePayloadAuthority.slices(data, options)
 
     slice_metadata = _TIFF_STACK_SLICE_METADATA.metadata_for_slices(
-        materialization_input,
+        metadata_input,
         len(slices),
+        source_identity_stack_axes=ctx.source_identity_stack_axes,
+        artifact_source_identity=ctx.artifact_source_identity,
     )
 
     outs: list[Output] = []
@@ -2031,11 +2243,219 @@ class TiffArrayAuthority:
         return str(np.shape(value))
 
 @dataclass(frozen=True, slots=True)
+class RuntimePlaneStackAxisMetadataProjection:
+    """Project scalar source identity across declared runtime stack axes."""
+
+    source_identity_stack_axes: frozenset[str]
+    artifact_source_identity: SourceImageIdentity | None = None
+
+    def metadata_for_item(
+        self,
+        item: MaterializationInputItem,
+    ) -> ImagePayloadMetadata:
+        metadata = self.metadata_with_artifact_source_identity(item.metadata)
+        runtime_plane = item.runtime_plane
+        if runtime_plane is None or not self.source_identity_stack_axes:
+            return metadata
+        if runtime_plane.carries_source_plane_identity:
+            return metadata
+
+        axes = self.ordered_axes()
+        if len(axes) != len(runtime_plane.plane_indices):
+            raise ValueError(
+                "TIFF stack output declares source identity stack axes "
+                f"{axes!r}, but runtime plane metadata has "
+                f"{len(runtime_plane.plane_indices)} coordinate(s)."
+            )
+
+        component_metadata = metadata.source_component_metadata
+        if component_metadata is None:
+            raise ValueError(
+                "TIFF stack output declares source identity stack axes "
+                f"{axes!r}, but slice metadata has no scalar "
+                "source_component_metadata."
+            )
+
+        projected_metadata = SourceIdentityStackAxisProjection(
+            self.source_identity_stack_axes
+        ).project_component_metadata(
+            component_metadata,
+            runtime_plane.plane_indices,
+        )
+
+        return metadata.with_source_provenance(
+            metadata.source_provenance.with_source_component_metadata(
+                projected_metadata,
+            )
+        )
+
+    def metadata_with_artifact_source_identity(
+        self,
+        metadata: ImagePayloadMetadata,
+    ) -> ImagePayloadMetadata:
+        if self.artifact_source_identity is None:
+            return metadata
+        artifact_provenance = SourceImageProvenance(
+            source_path=self.artifact_source_identity.path,
+            source_component_metadata=self.artifact_source_identity.component_metadata,
+        )
+        return metadata.with_source_provenance(
+            metadata.source_provenance.with_missing_from(artifact_provenance)
+        )
+
+    def ordered_axes(self) -> tuple[str, ...]:
+        return SourceIdentityStackAxisProjection(
+            self.source_identity_stack_axes
+        ).ordered_axes()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneStackAxesProjectionSelection:
+    """Select declared stack axes that still need runtime-plane projection."""
+
+    source_identity_stack_axes: frozenset[str]
+    items: tuple[MaterializationInputItem, ...]
+    artifact_source_identity: SourceImageIdentity | None = None
+
+    def axes(self) -> frozenset[str]:
+        ordered_axes = RuntimePlaneStackAxisMetadataProjection(
+            self.source_identity_stack_axes
+        ).ordered_axes()
+        if not ordered_axes:
+            return frozenset()
+        runtime_rank = self.runtime_plane_rank()
+        if runtime_rank == 0:
+            return frozenset()
+        if self.runtime_planes_carry_source_identity():
+            return frozenset()
+        if any(self.axis_varies(axis) for axis in ordered_axes):
+            return frozenset()
+        indexed_source_plane_axis = self.indexed_source_plane_axis(ordered_axes)
+        if indexed_source_plane_axis is not None:
+            return frozenset((indexed_source_plane_axis,))
+        if runtime_rank != len(ordered_axes):
+            raise ValueError(
+                "TIFF stack output cannot map runtime plane metadata with "
+                f"rank {runtime_rank} onto declared source identity stack axes "
+                f"{ordered_axes!r}; slice metadata does not already vary across "
+                "any declared axis."
+            )
+        return self.source_identity_stack_axes
+
+    def runtime_plane_rank(self) -> int:
+        ranks = tuple(
+            len(item.runtime_plane.plane_indices)
+            for item in self.items
+            if item.runtime_plane is not None
+        )
+        if not ranks:
+            return 0
+        first = ranks[0]
+        if any(rank != first for rank in ranks):
+            raise ValueError(
+                "TIFF stack materialization received inconsistent runtime "
+                f"plane metadata ranks: {ranks!r}."
+            )
+        return first
+
+    def runtime_plane_shape(self) -> tuple[int, ...]:
+        shapes = tuple(
+            item.runtime_plane.plane_shape
+            for item in self.items
+            if item.runtime_plane is not None
+        )
+        if not shapes:
+            return ()
+        first = shapes[0]
+        if any(shape != first for shape in shapes):
+            raise ValueError(
+                "TIFF stack materialization received inconsistent runtime "
+                f"plane metadata shapes: {shapes!r}."
+            )
+        return first
+
+    def runtime_planes_carry_source_identity(self) -> bool:
+        states = tuple(
+            item.runtime_plane.carries_source_plane_identity
+            for item in self.items
+            if item.runtime_plane is not None
+        )
+        if not states:
+            return False
+        if any(state != states[0] for state in states):
+            raise ValueError(
+                "TIFF stack materialization received mixed source-plane "
+                f"runtime metadata states: {states!r}."
+            )
+        return states[0]
+
+    def axis_varies(self, axis: str) -> bool:
+        component = SourceIdentityStackAxisProjection.component_for_axis(axis)
+        values = tuple(
+            source_component_metadata_value(metadata, component)
+            for metadata in self.item_component_metadata()
+        )
+        return len(frozenset(values)) > 1
+
+    def indexed_source_plane_axis(
+        self,
+        ordered_axes: tuple[str, ...],
+    ) -> str | None:
+        runtime_shape = self.runtime_plane_shape()
+        if len(runtime_shape) != 1:
+            return None
+        source_plane_axis = SourcePlaneIndexedMetadata.projected_component().value
+        if source_plane_axis not in ordered_axes:
+            return None
+        metadata_values = self.item_component_metadata()
+        if not metadata_values:
+            return None
+        for metadata in metadata_values:
+            indexed_metadata = SourcePlaneIndexedMetadata.from_metadata(
+                metadata,
+                expected_plane_count=runtime_shape[0],
+            )
+            if indexed_metadata is None:
+                indexed_metadata = (
+                    SourcePlaneIndexedMetadata.from_declared_runtime_stack_origin(
+                        metadata,
+                        source_plane_count=runtime_shape[0],
+                    )
+                )
+            if indexed_metadata is None:
+                return None
+        return source_plane_axis
+
+    def item_component_metadata(self) -> tuple[SourceComponentMetadata, ...]:
+        metadata_values = tuple(
+            self.effective_item_metadata(item).source_component_metadata
+            for item in self.items
+        )
+        if any(metadata is None for metadata in metadata_values):
+            return ()
+        return tuple(
+            metadata
+            for metadata in metadata_values
+            if metadata is not None
+        )
+
+    def effective_item_metadata(
+        self,
+        item: MaterializationInputItem,
+    ) -> ImagePayloadMetadata:
+        return RuntimePlaneStackAxisMetadataProjection(
+            frozenset(),
+            self.artifact_source_identity,
+        ).metadata_with_artifact_source_identity(item.metadata)
+
+@dataclass(frozen=True, slots=True)
 class TiffStackSliceMetadataRequest:
     """Input facts needed to align metadata to emitted TIFF slices."""
 
     materialization_input: MaterializationInput
     slice_count: int
+    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
+    artifact_source_identity: SourceImageIdentity | None = None
 
     @property
     def input_item_count(self) -> int:
@@ -2096,7 +2516,19 @@ class PreslicedTiffStackSliceMetadataPolicy(UnknownTiffStackSliceMetadataPolicy)
         self,
         request: TiffStackSliceMetadataRequest,
     ) -> tuple[ImagePayloadMetadata, ...]:
-        return tuple(item.metadata for item in request.materialization_input.items)
+        source_identity_stack_axes = RuntimePlaneStackAxesProjectionSelection(
+            request.source_identity_stack_axes,
+            request.materialization_input.items,
+            request.artifact_source_identity,
+        ).axes()
+        projector = RuntimePlaneStackAxisMetadataProjection(
+            source_identity_stack_axes,
+            request.artifact_source_identity,
+        )
+        return tuple(
+            projector.metadata_for_item(item)
+            for item in request.materialization_input.items
+        )
 
 class SinglePayloadTiffStackSliceMetadataPolicy(UnknownTiffStackSliceMetadataPolicy):
     """One stacked payload is being split into emitted TIFF slices."""
@@ -2150,10 +2582,15 @@ class TiffStackSliceMetadataAuthority:
         self,
         materialization_input: MaterializationInput,
         slice_count: int,
+        *,
+        source_identity_stack_axes: frozenset[str] = frozenset(),
+        artifact_source_identity: SourceImageIdentity | None = None,
     ) -> tuple[ImagePayloadMetadata, ...]:
         request = TiffStackSliceMetadataRequest(
             materialization_input=materialization_input,
             slice_count=slice_count,
+            source_identity_stack_axes=source_identity_stack_axes,
+            artifact_source_identity=artifact_source_identity,
         )
         policy = TiffStackSliceMetadataPolicy.for_context(
             request,
@@ -2219,6 +2656,41 @@ class MaterializationSpec(ArtifactMaterializationPayload):
         """Return declared tabular field names from the primary writer first."""
         return tabular_field_names_from_options(self.outputs, primary=self.primary)
 
+    def candidate_paths(self, base_path: str) -> tuple[str, ...]:
+        """Return all paths this materialization spec may emit for backend routing."""
+        return tuple(
+            path
+            for output_options in self.outputs
+            for path in _WRITERS_BY_OPTIONS[
+                output_options.__class__
+            ].candidate_paths(output_options, base_path)
+        )
+
+    def emits_source_identity_stack_planes(self, data: MaterializationValue) -> bool:
+        """Return whether any writer emits source-stack identity as output planes."""
+        return any(
+            materialization_emits_source_identity_stack_planes(output_options, data)
+            for output_options in self.outputs
+        )
+
+    def uses_filename_source_identity(self, data: MaterializationValue) -> bool:
+        """Return whether any writer routes stream identity by materialized filename."""
+        return any(
+            materialization_uses_filename_source_identity(output_options, data)
+            for output_options in self.outputs
+        )
+
+    def uses_source_identity_filename_for_artifact_kind(
+        self,
+        artifact_kind: ArtifactKind,
+    ) -> bool:
+        """Return whether this spec materializes files by source identity."""
+        return artifact_kind.materialization_uses_source_identity_filename and any(
+            output_options.filename_identity
+            is MaterializedFilenameIdentity.SOURCE_IDENTITY
+            for output_options in self.outputs
+        )
+
 def tabular_field_names_from_options(
     options: Sequence[FileOutputOptions],
     *,
@@ -2281,6 +2753,7 @@ def materialize(
     extra_inputs: dict | None = None,
     *,
     artifact_source_identity: SourceImageIdentity | None = None,
+    source_identity_stack_axes: frozenset[str] = frozenset(),
     write_mode: WriteMode = WriteMode.OVERWRITE,
 ) -> str:
     """Materialize data to one or more backends."""
@@ -2301,6 +2774,7 @@ def materialize(
         extra_inputs=effective_extra_inputs,
         context=context,
         artifact_source_identity=artifact_source_identity,
+        source_identity_stack_axes=source_identity_stack_axes,
         write_mode=write_mode,
     )
 
@@ -2310,7 +2784,9 @@ def materialize(
         writer = _WRITERS_BY_OPTIONS[opt.__class__]
         outs = writer.write(data, opt, ctx)
         for out in outs:
-            ctx.saver.save(out)
+            ctx.saver.save(
+                out.with_source_identity_fallback(ctx.artifact_source_identity)
+            )
         if i == spec.primary:
             primary_path = writer.primary_path(outs)
 

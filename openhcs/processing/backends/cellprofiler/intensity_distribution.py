@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import hashlib
 import logging
 import time
 from types import MappingProxyType
-from typing import Any
 
 import numpy as np
 import scipy.sparse
@@ -64,7 +63,10 @@ from openhcs.processing.backends.cellprofiler.granularity import (
 from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
     ObjectMeasurementColumnarRows,
 )
-from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
+from openhcs.processing.backends.cellprofiler.shape import (
+    ShapeMeasurementBackendStrategy,
+    shape_measurement_backend,
+)
 from openhcs.processing.backends.cellprofiler.secondary import (
     SecondaryPropagationBackendStrategy,
     secondary_propagation_backend,
@@ -493,12 +495,12 @@ class IntensityDistributionMeasurementRequest:
 class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumnarRows):
     """Columnar radial intensity-distribution rows."""
 
-    radial_arrays: Any
+    radial_arrays: RadialDistributionArrays
     object_ids: tuple[int, ...]
     bin_count: int
     slice_index: int | None = None
     row_identity: MeasurementObjectRowIdentity | None = None
-    _columns: Mapping[str, Sequence[Any]] = field(
+    _columns: Mapping[str, np.ndarray] = field(
         init=False,
         repr=False,
         compare=False,
@@ -581,7 +583,7 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
                 )
                 row_index += 3
 
-        columns: dict[str, Sequence[Any]] = {
+        columns: dict[str, np.ndarray] = {
             "object_label": object_labels,
             "feature_name": feature_names,
             "result_value": result_values,
@@ -601,7 +603,7 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
         self._columns = MappingProxyType(columns)
 
     @property
-    def columns(self) -> Mapping[str, Sequence[Any]]:
+    def columns(self) -> Mapping[str, np.ndarray]:
         return self._columns
 
 
@@ -643,11 +645,20 @@ class RadialDistributionBackendStrategy(
     __registry_key__ = "backend_key"
     __skip_if_no_key__ = True
     center_propagation_backend_provider = CellProfilerBackendProvider.NUMBA
+    shape_geometry_backend_provider: BackendProviderInput = (
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    )
 
     def center_propagation_backend(self) -> SecondaryPropagationBackendStrategy:
         """Return the propagation backend used for center-distance geometry."""
         return secondary_propagation_backend(
             backend_provider=self.center_propagation_backend_provider,
+        )
+
+    def shape_geometry_backend(self) -> ShapeMeasurementBackendStrategy:
+        """Return the shape backend used for label-only radial geometry."""
+        return shape_measurement_backend(
+            backend_provider=self.shape_geometry_backend_provider,
         )
 
     @abstractmethod
@@ -766,9 +777,7 @@ class RadialDistributionBackendStrategy(
                 centers_i_int[valid_centers],
                 centers_j_int[valid_centers],
             ]
-        shape_backend = shape_measurement_backend(
-            backend_provider=CellProfilerBackendProvider.CENTROSOME,
-        )
+        shape_backend = self.shape_geometry_backend()
         phase_started_at = time.perf_counter()
         colors = shape_backend.color_labels(labels_array)
         runtime_profiler.log(
@@ -812,9 +821,7 @@ class RadialDistributionBackendStrategy(
             return cached
 
         object_count = int(labels_array.max()) if labels_array.size else 0
-        shape_backend = shape_measurement_backend(
-            backend_provider=CellProfilerBackendProvider.CENTROSOME,
-        )
+        shape_backend = self.shape_geometry_backend()
         phase_started_at = time.perf_counter()
         d_to_edge = shape_backend.distance_to_edge(labels_array)
         runtime_profiler.log(
@@ -1228,7 +1235,7 @@ def measure_object_intensity_distribution(
     zernike_backend_provider: BackendProviderInput = (
         DEFAULT_CELLPROFILER_BACKEND_SELECTION
     ),
-) -> tuple[np.ndarray, list[Any]]:
+) -> tuple[np.ndarray, ColumnarRows]:
     """Measure CellProfiler-compatible object intensity distribution rows."""
     total_started_at = time.perf_counter()
     profiler = IntensityDistributionProfiler(

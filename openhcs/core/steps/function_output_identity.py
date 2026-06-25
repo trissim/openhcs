@@ -57,6 +57,17 @@ class FunctionOutputIdentity:
             metadata["extension"] = self.extension
         return metadata
 
+    def filename_component_metadata(self) -> SourceComponentMetadata:
+        """Return parser-compatible metadata used to construct the output filename."""
+        metadata = dict(
+            self.filename_component_values
+            if self.filename_component_values is not None
+            else self.component_values
+        )
+        if self.extension is not None:
+            metadata["extension"] = self.extension
+        return metadata
+
     def with_filename_qualifier(self, qualifier: str) -> "FunctionOutputIdentity":
         """Return this identity qualified by a declared output surface name."""
         return replace(self, filename_qualifier=FilenameQualifier.from_value(qualifier))
@@ -264,7 +275,7 @@ class FunctionOutputIdentityAuthority:
         payload_identity = cls.identity_from_metadata(
             request.parser,
             metadata,
-            input_path=request.input_path,
+            fallback_identity_path=request.input_path,
             source_identity_stack_axes=request.source_identity_stack_axes,
         )
         if payload_identity is not None:
@@ -283,7 +294,7 @@ class FunctionOutputIdentityAuthority:
         parser: FilenameParser,
         metadata: ImagePayloadMetadata,
         *,
-        input_path: str | None = None,
+        fallback_identity_path: str | None = None,
         source_identity_stack_axes: frozenset[str] = frozenset(),
     ) -> FunctionOutputIdentity | None:
         """Return parser-backed identity carried by image payload metadata."""
@@ -294,8 +305,9 @@ class FunctionOutputIdentityAuthority:
                     parser,
                     metadata,
                     source_identity_stack_axes,
+                    fallback_identity_path=fallback_identity_path,
                 )
-            if input_path is not None:
+            if fallback_identity_path is not None:
                 return None
             raise ValueError(
                 "FunctionStep output slice carries multi-plane source "
@@ -317,17 +329,17 @@ class FunctionOutputIdentityAuthority:
             return cls._complete_identity_from_paths(
                 parser,
                 identity,
-                (
                     (
-                        metadata.source_path,
-                        "payload source path",
+                        (
+                            metadata.source_path,
+                            "payload source path",
+                        ),
+                        (
+                            fallback_identity_path,
+                            "fallback parsed filename",
+                        ),
                     ),
-                    (
-                        input_path,
-                        "input parsed filename",
-                    ),
-                ),
-            )
+                )
 
         if provenance_planes.count == 1:
             plane = provenance_planes.plane(0)
@@ -351,8 +363,8 @@ class FunctionOutputIdentityAuthority:
                             "single-plane payload provenance path",
                         ),
                         (
-                            input_path,
-                            "input parsed filename",
+                            fallback_identity_path,
+                            "fallback parsed filename",
                         ),
                     ),
                 )
@@ -368,6 +380,70 @@ class FunctionOutputIdentityAuthority:
                 parser,
                 metadata.source_path,
                 source="payload source path",
+            )
+        return None
+
+    @classmethod
+    def filename_identity_from_metadata(
+        cls,
+        parser: FilenameParser,
+        metadata: ImagePayloadMetadata,
+        *,
+        fallback_identity_path: str | None = None,
+    ) -> FunctionOutputIdentity | None:
+        """Return the identity that should name a filename-addressed output."""
+        identity = cls._identity_from_metadata(
+            metadata.source_component_metadata,
+            extension=FunctionOutputExtensionAuthority.first(
+                FunctionOutputExtensionAuthority.from_metadata(
+                    metadata.source_component_metadata
+                ),
+                FunctionOutputExtensionAuthority.from_path(metadata.source_path),
+            ),
+            source="payload component metadata",
+        )
+        if identity is not None:
+            return cls._complete_identity_from_paths(
+                parser,
+                identity,
+                (
+                    (
+                        metadata.source_path,
+                        "payload source path",
+                    ),
+                    (
+                        fallback_identity_path,
+                        "fallback parsed filename",
+                    ),
+                ),
+            )
+
+        for path, source in (
+            (
+                metadata.source_path,
+                "payload source path",
+            ),
+            (
+                fallback_identity_path,
+                "fallback parsed filename",
+            ),
+        ):
+            if path is None:
+                continue
+            parsed_identity = cls._parsed_path_identity(
+                parser,
+                path,
+                source=source,
+            )
+            if parsed_identity is not None:
+                return parsed_identity
+
+        provenance_planes = metadata.source_image_provenance_planes
+        if provenance_planes.count:
+            return cls._source_stack_plane_identity(
+                parser,
+                provenance_planes.plane(0),
+                0,
             )
         return None
 
@@ -392,7 +468,10 @@ class FunctionOutputIdentityAuthority:
             component_values.update(identity.component_values)
             return FunctionOutputIdentity(
                 component_values=component_values,
-                extension=identity.extension,
+                extension=FunctionOutputExtensionAuthority.first(
+                    identity.extension,
+                    parsed_identity.extension,
+                ),
                 source=f"{identity.source} over {parsed_identity.source}",
             )
         return identity
@@ -422,6 +501,8 @@ class FunctionOutputIdentityAuthority:
         parser: FilenameParser,
         metadata: ImagePayloadMetadata,
         source_identity_stack_axes: frozenset[str],
+        *,
+        fallback_identity_path: str | None,
     ) -> FunctionOutputIdentity:
         provenance_planes = metadata.source_image_provenance_planes
         plane_identities = tuple(
@@ -439,6 +520,7 @@ class FunctionOutputIdentityAuthority:
         extension = cls._source_stack_extension(
             plane_identities,
             source_identity_stack_axes,
+            fallback_identity_path=fallback_identity_path,
         )
         filename_component_values = dict(plane_identities[0].component_values)
         return FunctionOutputIdentity(
@@ -546,7 +628,15 @@ class FunctionOutputIdentityAuthority:
     def _source_stack_extension(
         plane_identities: tuple[FunctionOutputIdentity, ...],
         source_identity_stack_axes: frozenset[str],
+        *,
+        fallback_identity_path: str | None,
     ) -> str | None:
+        fallback_extension = FunctionOutputExtensionAuthority.from_path(
+            fallback_identity_path
+        )
+        if fallback_extension is not None:
+            return fallback_extension
+
         extensions = tuple(
             identity.extension
             for identity in plane_identities

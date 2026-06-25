@@ -11,12 +11,16 @@ from openhcs.runtime.viewer_protocol import (
     ViewerComponentValueOrdering,
 )
 from openhcs.runtime.napari_streaming_handlers import (
+    NapariAggregateAxisBinding,
+    NapariAggregateAxisBindingAuthority,
+    NapariAggregateAxisBindingSet,
     NapariBatchProcessorStore,
     NapariAxisPresentation,
     NapariComponentGroupStore,
     NapariDimensionLayerState,
     NapariImageLayerPresentationPolicy,
     NapariLayerBatchDebouncePolicy,
+    NapariPendingLayerUpdate,
     NapariLayerUpdateAuthority,
     NapariLayerRouteStateStore,
     NapariShapeLabelRasterizer,
@@ -126,6 +130,8 @@ def test_napari_viewer_state_projection_reports_shape_payload_occupancy():
     assert summary["payload_type"] == "list"
     assert summary["item_count"] == 2
     assert summary["nonzero_count"] == 2
+    assert summary["shape_payload_count"] == 2
+    assert summary["missing_source_spatial_shape_count"] == 2
 
 
 def test_napari_viewer_state_projection_reports_empty_shape_payloads_as_zero():
@@ -142,6 +148,33 @@ def test_napari_viewer_state_projection_reports_empty_shape_payloads_as_zero():
     assert summary["payload_type"] == "list"
     assert summary["item_count"] == 0
     assert summary["nonzero_count"] == 0
+
+
+def test_napari_viewer_state_projection_reports_shape_spatial_evidence():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    summary = napari_viewer_server.NapariViewerStateProjection.payload_summary_for(
+        _layer_item(
+            {"well": "A14", "site": 1, "channel": 1},
+            data=[
+                {
+                    "type": "polygon",
+                    "coordinates": [[1, 2], [3, 4], [5, 6]],
+                    "metadata": {"source_spatial_shape_yx": (16, 16)},
+                },
+            ],
+            stream_layer_data_type=StreamingDataType.SHAPES,
+        )
+    )
+
+    assert summary["source_spatial_shapes_yx"] == ((16, 16),)
+    assert summary["shape_coordinate_count"] == 3
+    assert summary["shape_out_of_source_bounds_count"] == 0
+    assert summary["shape_coordinate_bounds_yx"] == {
+        "min_yx": (1.0, 2.0),
+        "max_yx": (5.0, 6.0),
+        "coordinate_count": 3,
+    }
 
 
 class _FakeLayerList(list):
@@ -379,6 +412,7 @@ def test_napari_display_pipeline_labels_payload_local_image_planes():
 
     assert axis_labels == ("well", "plane", "y", "x")
     assert policy.axis_labels(np.zeros((4, 16, 16, 3))) == ("plane",)
+    assert policy.axis_labels(np.zeros((4, 16, 16, 3)), (0,)) == ()
     assert policy.axis_labels(np.zeros((16, 16, 3))) == ()
 
 
@@ -489,6 +523,39 @@ def test_napari_display_pipeline_projects_route_axes_locally():
     assert second.axis_offsets == (3, 0)
     assert second.scalar_component_values == {}
     assert second.translate() == (3.0, 0.0, 0.0, 0.0)
+
+
+def test_napari_display_pipeline_projects_aggregate_payload_axes_into_route_domain():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
+    component_value_domain = _component_value_domain(
+        {"channel": [1], "z_index": [1, 2]}
+    )
+    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
+        ViewerMappingDisplayConfigInput(
+            {
+                "component_modes": {"channel": "stack", "z_index": "stack"},
+                "component_order": ["z_index", "channel"],
+            }
+        ),
+        component_value_domain,
+    )
+
+    projection = pipeline.display_axis_projection(
+        "z-stack",
+        component_axis_semantics,
+        [
+            _layer_item({"channel": 1}, data=np.ones((2, 4, 4))),
+        ],
+        NapariAggregateAxisBindingSet(
+            (NapariAggregateAxisBinding("z_index", 0, (1, 2)),)
+        ),
+    )
+
+    assert projection.projected_axis_components == ("z_index",)
+    assert projection.component_values == {"z_index": [1, 2]}
+    assert projection.scalar_component_values == {"channel": [1]}
+    assert projection.translate() == (0.0, 0.0, 0.0)
 
 
 def test_napari_axis_projector_validates_declared_domain_and_drops_route_singletons():
@@ -1358,14 +1425,19 @@ def test_napari_layer_route_state_store_keeps_layer_labels_and_timers_together()
             ),
         ),
     )
-    store.set_pending_update("nuclei", timer)
+    pending_update = NapariPendingLayerUpdate.from_semantics(
+        timer=timer,
+        data_type=StreamingDataType.IMAGE,
+        semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+    )
+    store.set_pending_update("nuclei", pending_update)
 
     assert store.has_layer("nuclei")
     assert store.layer("nuclei") is layer
     assert store.dimension_state_for("nuclei").labels == {"channel": ["Ch 1"]}
     assert store.cancel_pending_update("nuclei")
     assert timer.stopped
-    assert store.pop_pending_update("nuclei") is timer
+    assert store.pop_pending_update("nuclei") is pending_update
     assert store.dimension_state_for("missing").labels == {}
 
 
@@ -1482,6 +1554,36 @@ def test_napari_image_stack_builder_preserves_route_local_collapsed_channels():
     assert image.shape == (2, 2, 2)
     assert np.all(image[0] == 1)
     assert np.all(image[1] == 2)
+
+
+def test_napari_image_stack_builder_consumes_aggregate_payload_axis_as_stack_component():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    image = napari_viewer_server._build_nd_image_array(
+        [
+            _layer_item(
+                {"channel": 1},
+                data=np.stack(
+                    [
+                        np.full((2, 2), 3, dtype=np.uint16),
+                        np.full((2, 2), 7, dtype=np.uint16),
+                    ]
+                ),
+            )
+        ],
+        _axis_projection(
+            ["z_index"],
+            {"z_index": [1, 2]},
+            scalar_component_values={"channel": [1]},
+        ),
+        NapariAggregateAxisBindingSet(
+            (NapariAggregateAxisBinding("z_index", 0, (1, 2)),)
+        ),
+    )
+
+    assert image.shape == (2, 2, 2)
+    assert np.all(image[0] == 3)
+    assert np.all(image[1] == 7)
 
 
 def test_napari_image_stack_builder_rejects_unrouted_axis_values():
@@ -1701,6 +1803,95 @@ def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
     assert labels[1, 0, 1] == 2
     assert labels[1, 1, 1] == 2
     assert labels[1, 2, 1] == 2
+
+
+def test_napari_shape_label_rasterizer_consumes_plane_metadata_as_stack_component():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    labels = rasterizer.rasterize(
+        layer_items=[
+            _layer_item(
+                {"channel": 1},
+                [
+                    {
+                        "type": "polygon",
+                        "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                        "metadata": {
+                            "source_spatial_shape_yx": (3, 3),
+                            "plane_indices": (0,),
+                            "plane_shape": (2,),
+                        },
+                    },
+                    {
+                        "type": "path",
+                        "coordinates": [[0, 1], [1, 1], [2, 1]],
+                        "metadata": {
+                            "source_spatial_shape_yx": (3, 3),
+                            "plane_indices": (1,),
+                            "plane_shape": (2,),
+                        },
+                    },
+                ],
+                stream_layer_data_type=StreamingDataType.SHAPES,
+            )
+        ],
+        axis_projection=_axis_projection(
+            ["z_index"],
+            {"z_index": [1, 2]},
+            scalar_component_values={"channel": [1]},
+        ),
+        aggregate_axis_bindings=NapariAggregateAxisBindingSet(
+            (NapariAggregateAxisBinding("z_index", 0, (1, 2)),)
+        ),
+    )
+
+    assert labels.shape == (2, 3, 3)
+    assert np.count_nonzero(labels[0] == 1) > 0
+    assert labels[1, 0, 1] == 2
+    assert labels[1, 1, 1] == 2
+    assert labels[1, 2, 1] == 2
+
+
+def test_napari_shape_label_rasterizer_rejects_mixed_aggregate_plane_metadata():
+    component_value_domain = _component_value_domain(
+        {"channel": [1], "z_index": [1, 2]}
+    )
+    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
+        ViewerMappingDisplayConfigInput(
+            {
+                "component_modes": {"channel": "stack", "z_index": "stack"},
+                "component_order": ["z_index", "channel"],
+            }
+        ),
+        component_value_domain,
+    )
+
+    with pytest.raises(ValueError, match="mixes plane-indexed and unindexed"):
+        NapariAggregateAxisBindingAuthority.bindings(
+            [
+                _layer_item(
+                    {"channel": 1},
+                    [
+                        {
+                            "type": "polygon",
+                            "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                            "metadata": {
+                                "source_spatial_shape_yx": (3, 3),
+                                "plane_indices": (0,),
+                                "plane_shape": (2,),
+                            },
+                        },
+                        {
+                            "type": "path",
+                            "coordinates": [[0, 1], [1, 1], [2, 1]],
+                            "metadata": {"source_spatial_shape_yx": (3, 3)},
+                        },
+                    ],
+                    stream_layer_data_type=StreamingDataType.SHAPES,
+                )
+            ],
+            component_axis_semantics,
+        )
 
 
 def test_napari_shape_label_rasterizer_rejects_missing_source_canvas_shape_metadata():

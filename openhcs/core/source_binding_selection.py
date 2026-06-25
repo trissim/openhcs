@@ -290,6 +290,18 @@ class SourceBindingCandidateMatcher:
             if binding.required and binding.requires_selector_resolution
         )
 
+    @classmethod
+    def execution_anchor_bindings(
+        cls,
+        bindings: Sequence[NamedSourceBinding],
+    ) -> tuple[NamedSourceBinding, ...]:
+        """Return selector bindings that may choose execution anchor files."""
+        return tuple(
+            binding
+            for binding in cls.selector_bindings(bindings)
+            if binding.participates_in_execution_anchoring
+        )
+
     @staticmethod
     def matches(
         candidate: SourceCandidatePath,
@@ -512,11 +524,11 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
     ) -> SourceAnchorPatternSelection:
-        selector_bindings = self._selector_bindings(bindings)
-        if not selector_bindings:
+        anchor_bindings = self._anchor_bindings(bindings)
+        if not anchor_bindings:
             return SourceAnchorPatternSelection.selected(
                 pattern_list,
-                reason="no selector bindings participate in anchor resolution",
+                reason="no selector bindings participate in execution anchoring",
             )
 
         compatible = [
@@ -528,14 +540,14 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
                     binding=binding,
                     source_context=source_context,
                 )
-                for binding in selector_bindings
+                for binding in anchor_bindings
             )
         ]
         if compatible:
             return SourceAnchorPatternSelection.selected(compatible)
         if self._metadata_selector_fields_are_unavailable(
             pattern_list,
-            bindings=selector_bindings,
+            bindings=anchor_bindings,
             source_context=source_context,
         ):
             return SourceAnchorPatternSelection.deferred_to_runtime(
@@ -572,6 +584,12 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         bindings: Sequence[NamedSourceBinding],
     ) -> tuple[NamedSourceBinding, ...]:
         return SourceBindingCandidateMatcher.selector_bindings(bindings)
+
+    @staticmethod
+    def _anchor_bindings(
+        bindings: Sequence[NamedSourceBinding],
+    ) -> tuple[NamedSourceBinding, ...]:
+        return SourceBindingCandidateMatcher.execution_anchor_bindings(bindings)
 
     @staticmethod
     def _pattern_matches_source_binding(
@@ -623,12 +641,7 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
             source_context=source_context,
         )
         compatible = list(selection.patterns)
-        selector_bindings = self._selector_bindings(bindings)
-        anchor_bindings = tuple(
-            binding
-            for binding in selector_bindings
-            if binding.participates_in_execution_anchoring
-        )
+        anchor_bindings = self._anchor_bindings(bindings)
         if len(anchor_bindings) < 2:
             return compatible
 
@@ -1367,6 +1380,11 @@ class SourceBindingRuntimeContextRequest:
         pipeline_source_universe = SourceUniverseStrategy.universe(
             pipeline_start_request
         )
+        source_metadata_by_path = (
+            self.context.runtime_source_binding_context_cache.normalized_source_metadata(
+                step_input_request.source_metadata_by_path
+            )
+        )
         return SourceBindingRuntimeContext(
             step_input_files=step_input_universe.files,
             current_step_input_files=self.current_step_input_files(
@@ -1377,7 +1395,8 @@ class SourceBindingRuntimeContextRequest:
             step_input_source_backend=self.plan.read_backend,
             step_input_storage_backend=Backend.MEMORY.value,
             step_input_source_paths=step_input_request.step_input_source_paths,
-            source_metadata_by_path=step_input_request.source_metadata_by_path,
+            source_metadata_by_path=source_metadata_by_path,
+            source_metadata_is_normalized=True,
             pipeline_input_files=pipeline_source_universe.files,
             pipeline_input_backend=pipeline_source_universe.backend.value,
         )

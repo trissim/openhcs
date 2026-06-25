@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Hashable
 from dataclasses import InitVar, dataclass, field
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, ClassVar, Mapping, TypeVar
@@ -848,7 +850,20 @@ class SourceBindingRuntimeContext:
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
     source_binding_context: InitVar["SourceBindingRuntimeContext | None"] = None
+    source_metadata_is_normalized: InitVar[bool] = False
     _source_metadata_identity: SourceMetadataIdentity | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _pipeline_input_files_identity: tuple[str, ...] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _source_order_identity: tuple[Hashable, ...] | None = field(
         default=None,
         init=False,
         repr=False,
@@ -868,6 +883,7 @@ class SourceBindingRuntimeContext:
     def __post_init__(
         self,
         source_binding_context: "SourceBindingRuntimeContext | None",
+        source_metadata_is_normalized: bool,
     ) -> None:
         if source_binding_context is not None:
             object.__setattr__(
@@ -920,6 +936,26 @@ class SourceBindingRuntimeContext:
                 "pipeline_input_backend",
                 source_binding_context.pipeline_input_backend,
             )
+            object.__setattr__(
+                self,
+                "_source_metadata_identity",
+                source_binding_context._source_metadata_identity,
+            )
+            object.__setattr__(
+                self,
+                "_pipeline_input_files_identity",
+                source_binding_context._pipeline_input_files_identity,
+            )
+            object.__setattr__(
+                self,
+                "_source_order_identity",
+                source_binding_context._source_order_identity,
+            )
+            object.__setattr__(
+                self,
+                "_virtual_source_paths_by_identity",
+                source_binding_context._virtual_source_paths_by_identity,
+            )
         object.__setattr__(self, "step_input_files", tuple(self.step_input_files))
         object.__setattr__(
             self,
@@ -952,13 +988,21 @@ class SourceBindingRuntimeContext:
             )
         object.__setattr__(self, "step_input_source_paths", step_input_source_paths)
 
-        object.__setattr__(
-            self,
-            "source_metadata_by_path",
-            SourceBindingRuntimeMetadataNormalizer(
-                self.source_metadata_by_path
-            ).normalized(),
-        )
+        if source_binding_context is None:
+            if source_metadata_is_normalized:
+                if not isinstance(self.source_metadata_by_path, MappingProxyType):
+                    raise TypeError(
+                        "Normalized SourceBindingRuntimeContext metadata must be "
+                        "MappingProxyType."
+                    )
+            else:
+                object.__setattr__(
+                    self,
+                    "source_metadata_by_path",
+                    SourceBindingRuntimeMetadataNormalizer(
+                        self.source_metadata_by_path
+                    ).normalized(),
+                )
         object.__setattr__(
             self,
             "pipeline_input_files",
@@ -987,6 +1031,28 @@ class SourceBindingRuntimeContext:
         return cached
 
     @property
+    def pipeline_input_files_identity(self) -> tuple[str, ...]:
+        """Return sorted pipeline input files for source-order cache identities."""
+        cached = self._pipeline_input_files_identity
+        if cached is None:
+            cached = tuple(sorted(self.pipeline_input_files))
+            object.__setattr__(self, "_pipeline_input_files_identity", cached)
+        return cached
+
+    @property
+    def source_order_identity(self) -> tuple[Hashable, ...]:
+        """Return source-order mapping identity shared by runtime source caches."""
+        cached = self._source_order_identity
+        if cached is None:
+            cached = (
+                self.step_input_dir,
+                tuple(sorted(self.step_input_source_paths.items())),
+                tuple(sorted(self.virtual_source_paths_by_identity.items())),
+            )
+            object.__setattr__(self, "_source_order_identity", cached)
+        return cached
+
+    @property
     def virtual_source_paths_by_identity(self) -> Mapping[str, tuple[str, ...]]:
         """Return virtual source paths grouped by normalized physical identity."""
 
@@ -1010,6 +1076,7 @@ class SourceBindingRuntimeContext:
         return cached
 
     @staticmethod
+    @lru_cache(maxsize=8192)
     def source_path_identities(source_path: str) -> tuple[str, ...]:
         """Return path identities for stored and resolved source-path spellings."""
         path = Path(source_path)

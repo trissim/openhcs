@@ -98,9 +98,9 @@
 <polygon fill="#546e7a" stroke="#546e7a" stroke-width="1.6" points="527.35,-48.63 534.85,-46 527.35,-43.38 527.35,-48.63"/>
 <text xml:space="preserve" text-anchor="middle" x="483.62" y="-49.05" font-family="Helvetica,sans-Serif" font-size="11.00">resolve</text>
 </g>
-<!-- audit -->
+<!-- change_audit -->
 <g id="node7" class="node">
-<title>audit</title>
+<title>change_audit</title>
 <path fill="#fff3e0" stroke="#e65100" stroke-width="1.3" d="M716.5,-201C716.5,-201 552,-201 552,-201 546,-201 540,-195 540,-189 540,-189 540,-135 540,-135 540,-129 546,-123 552,-123 552,-123 716.5,-123 716.5,-123 722.5,-123 728.5,-129 728.5,-135 728.5,-135 728.5,-189 728.5,-189 728.5,-195 722.5,-201 716.5,-201"/>
 <text xml:space="preserve" text-anchor="start" x="548" y="-184.7" font-family="Helvetica,sans-Serif" font-size="14.00"> &#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="563" y="-184.7" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Inspectable change</text>
@@ -109,9 +109,9 @@
 <text xml:space="preserve" text-anchor="start" x="548" y="-142.7" font-family="Helvetica,sans-Serif" font-size="14.00"> &#160;&#160;&#160;generated code diff</text>
 <text xml:space="preserve" text-anchor="start" x="568.25" y="-128.7" font-family="Helvetica,sans-Serif" font-size="14.00"> &#160;&#160;&#160;reproducible rerun &#160;</text>
 </g>
-<!-- state&#45;&gt;audit -->
+<!-- state&#45;&gt;change_audit -->
 <g id="edge6" class="edge">
-<title>state&#45;&gt;audit</title>
+<title>state&#45;&gt;change_audit</title>
 <path fill="none" stroke="#546e7a" stroke-width="1.6" d="M430.4,-74.97C461.06,-88.12 497.97,-103.96 531.85,-118.5"/>
 <polygon fill="#546e7a" stroke="#546e7a" stroke-width="1.6" points="530.7,-120.86 538.63,-121.4 532.77,-116.03 530.7,-120.86"/>
 <text xml:space="preserve" text-anchor="middle" x="483.62" y="-110.53" font-family="Helvetica,sans-Serif" font-size="11.00">provenance</text>
@@ -133,16 +133,16 @@
 <polygon fill="#546e7a" stroke="#546e7a" stroke-width="1.6" points="808.83,-48.63 816.33,-46 808.83,-43.38 808.83,-48.63"/>
 <text xml:space="preserve" text-anchor="middle" x="775.12" y="-49.05" font-family="Helvetica,sans-Serif" font-size="11.00">compile</text>
 </g>
-<!-- audit&#45;&gt;gui -->
+<!-- change_audit&#45;&gt;gui -->
 <g id="edge7" class="edge">
-<title>audit&#45;&gt;gui</title>
+<title>change_audit&#45;&gt;gui</title>
 <path fill="none" stroke="#546e7a" stroke-width="1.6" d="M539.66,-158.99C442.18,-155.86 290.54,-150.98 194.4,-147.89"/>
 <polygon fill="#546e7a" stroke="#546e7a" stroke-width="1.6" points="194.7,-145.28 187.12,-147.66 194.53,-150.52 194.7,-145.28"/>
 <text xml:space="preserve" text-anchor="middle" x="361.88" y="-158.24" font-family="Helvetica,sans-Serif" font-size="11.00">display</text>
 </g>
-<!-- audit&#45;&gt;code -->
+<!-- change_audit&#45;&gt;code -->
 <g id="edge8" class="edge">
-<title>audit&#45;&gt;code</title>
+<title>change_audit&#45;&gt;code</title>
 <path fill="none" stroke="#546e7a" stroke-width="1.6" d="M539.43,-178.43C530.08,-180.01 520.73,-181.55 511.75,-183 408.69,-199.62 290.71,-217.12 208.34,-229.09"/>
 <polygon fill="#546e7a" stroke="#546e7a" stroke-width="1.6" points="208.16,-226.46 201.12,-230.14 208.92,-231.66 208.16,-226.46"/>
 <text xml:space="preserve" text-anchor="middle" x="361.88" y="-219.25" font-family="Helvetica,sans-Serif" font-size="11.00">serialize</text>

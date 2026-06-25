@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar, Generic, Self, TypeVar
@@ -11,13 +11,20 @@ from typing import Any, ClassVar, Generic, Self, TypeVar
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.source_metadata import (
+    SOURCE_PLANE_COUNT_FIELD,
+    SOURCE_PLANE_INDEX_FIELD,
+    SourceMetadataMapping,
+)
 from openhcs.core.source_matching import (
     source_component_metadata_raw_value,
     source_component_metadata_value,
+    source_metadata_value,
+    with_source_component_metadata,
 )
 
 
-SourceComponentMetadata = Mapping[str, Any]
+SourceComponentMetadata = SourceMetadataMapping
 SourceImageProvenancePlanePathValues = tuple[str | None, ...]
 SourceImageProvenancePlaneMetadataValues = tuple[SourceComponentMetadata | None, ...]
 SourceProvenanceIdentity = tuple[str | None, tuple[tuple[str, str], ...] | None]
@@ -279,6 +286,12 @@ class SourceImageProvenancePlanes:
             return self.planes[index]
         return SourceImageProvenancePlane()
 
+    def select(self, indices: Sequence[int]) -> "SourceImageProvenancePlanes":
+        """Return provenance planes selected by source-plane index."""
+        return type(self)(
+            tuple(self.plane(int(index)) for index in indices)
+        )
+
     def with_missing_from(
         self,
         fallback: "SourceImageProvenancePlanes",
@@ -377,11 +390,45 @@ class SourceImageProvenance:
             source_image_names=self.source_image_names_for_plane(plane_index),
         )
 
+    def for_source_planes(self, plane_indices: Sequence[int]) -> "SourceImageProvenance":
+        """Return provenance represented by a grouped set of source planes."""
+        normalized_indices = tuple(int(index) for index in plane_indices)
+        if len(normalized_indices) == 1:
+            return self.for_source_plane(normalized_indices[0])
+        return type(self)(
+            source_path=self.source_identity.path,
+            source_component_metadata=self.source_identity.component_metadata,
+            source_image_provenance_planes=(
+                self.source_image_provenance_planes.select(normalized_indices)
+                .with_missing_from(
+                    SourceImageProvenancePlanes.from_components(
+                        paths=(self.source_identity.path,) * len(normalized_indices),
+                        component_metadata=(
+                            self.source_identity.component_metadata,
+                        ) * len(normalized_indices),
+                    )
+                )
+            ),
+            source_image_names=self.source_image_names_for_planes(normalized_indices),
+        )
+
     def source_image_names_for_plane(self, plane_index: int) -> tuple[str, ...]:
         """Return source-image aliases represented by a selected provenance plane."""
         if len(self.source_image_names) <= plane_index:
             return self.source_image_names
         return (self.source_image_names[plane_index],)
+
+    def source_image_names_for_planes(
+        self,
+        plane_indices: Sequence[int],
+    ) -> tuple[str, ...]:
+        """Return aliases represented by selected provenance planes."""
+        normalized_indices = tuple(int(index) for index in plane_indices)
+        if not normalized_indices:
+            return ()
+        if len(self.source_image_names) <= max(normalized_indices):
+            return self.source_image_names
+        return tuple(self.source_image_names[index] for index in normalized_indices)
 
     def identity(self) -> SourceProvenanceIdentity:
         return self.source_identity.identity
@@ -461,9 +508,272 @@ class SourceImageProvenance:
             source_image_names=value,
         )
 
+    def with_common_scalar_identity_from_planes(self) -> Self:
+        """Return provenance whose scalar identity is common to all planes."""
+        if not self.source_image_provenance_planes.has_values:
+            return self
+        return type(self)(
+            source_path=common_source_path(
+                self.source_image_provenance_planes.paths
+            ),
+            source_component_metadata=common_source_component_metadata(
+                self.source_image_provenance_planes.component_metadata
+            ),
+            source_image_provenance_planes=self.source_image_provenance_planes,
+            source_image_names=self.source_image_names,
+        )
+
     @property
     def source_component_identity(self) -> tuple[tuple[str, str], ...] | None:
         return self.source_identity.identity[1]
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePlaneIndexedMetadata:
+    """Source metadata for one indexed plane inside a single source image."""
+
+    scalar_metadata: SourceComponentMetadata
+    scalar_plane_index: int
+    source_plane_count: int
+
+    @staticmethod
+    def projected_component() -> AllComponents:
+        """Return the component represented by indexed source-plane metadata."""
+        return AllComponents.Z_INDEX
+
+    @classmethod
+    def from_metadata(
+        cls,
+        metadata: SourceComponentMetadata,
+        *,
+        expected_plane_count: int,
+    ) -> "SourcePlaneIndexedMetadata | None":
+        index_value = source_metadata_value(metadata, SOURCE_PLANE_INDEX_FIELD)
+        count_value = source_metadata_value(metadata, SOURCE_PLANE_COUNT_FIELD)
+        if index_value is None and count_value is None:
+            return None
+        if index_value is None or count_value is None:
+            raise ValueError(
+                "Source-plane metadata must carry both "
+                f"{SOURCE_PLANE_INDEX_FIELD!r} and {SOURCE_PLANE_COUNT_FIELD!r}."
+            )
+        indexed_metadata = cls(
+            scalar_metadata=metadata,
+            scalar_plane_index=cls.parse_source_plane_value(
+                index_value,
+                field_name=SOURCE_PLANE_INDEX_FIELD,
+            ),
+            source_plane_count=cls.parse_source_plane_value(
+                count_value,
+                field_name=SOURCE_PLANE_COUNT_FIELD,
+            ),
+        )
+        if indexed_metadata.source_plane_count != expected_plane_count:
+            return None
+        indexed_metadata.validate_scalar_plane_index()
+        return indexed_metadata
+
+    @classmethod
+    def from_scalar_origin(
+        cls,
+        metadata: SourceComponentMetadata,
+        *,
+        source_plane_count: int,
+    ) -> "SourcePlaneIndexedMetadata | None":
+        index_value = source_metadata_value(metadata, SOURCE_PLANE_INDEX_FIELD)
+        count_value = source_metadata_value(metadata, SOURCE_PLANE_COUNT_FIELD)
+        if index_value is None and count_value is None:
+            return None
+        if (index_value is None) != (count_value is None):
+            raise ValueError(
+                "Source-plane metadata must carry both "
+                f"{SOURCE_PLANE_INDEX_FIELD!r} and {SOURCE_PLANE_COUNT_FIELD!r}."
+            )
+        scalar_plane_index = (
+            0
+            if index_value is None
+            else cls.parse_source_plane_value(
+                index_value,
+                field_name=SOURCE_PLANE_INDEX_FIELD,
+            )
+        )
+        declared_count = (
+            source_plane_count
+            if count_value is None
+            else cls.parse_source_plane_value(
+                count_value,
+                field_name=SOURCE_PLANE_COUNT_FIELD,
+            )
+        )
+        if declared_count != source_plane_count:
+            raise ValueError(
+                "Volumetric source metadata plane count disagrees with image "
+                f"shape: {declared_count} != {source_plane_count}."
+            )
+        indexed_metadata = cls(
+            scalar_metadata=metadata,
+            scalar_plane_index=scalar_plane_index,
+            source_plane_count=source_plane_count,
+        )
+        indexed_metadata.validate_scalar_plane_index()
+        return indexed_metadata
+
+    @classmethod
+    def from_declared_runtime_stack_origin(
+        cls,
+        metadata: SourceComponentMetadata,
+        *,
+        source_plane_count: int,
+    ) -> "SourcePlaneIndexedMetadata | None":
+        indexed_metadata = cls.from_scalar_origin(
+            metadata,
+            source_plane_count=source_plane_count,
+        )
+        if indexed_metadata is not None:
+            return indexed_metadata
+        scalar_axis_value = source_component_metadata_value(
+            metadata,
+            cls.projected_component(),
+        )
+        if scalar_axis_value is None:
+            return None
+        indexed_metadata = cls(
+            scalar_metadata=metadata,
+            scalar_plane_index=0,
+            source_plane_count=source_plane_count,
+        )
+        indexed_metadata.validate_scalar_plane_index()
+        return indexed_metadata
+
+    @staticmethod
+    def parse_source_plane_value(value: str, *, field_name: str) -> int:
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"Source-plane metadata field {field_name!r} must be numeric, "
+                f"got {value!r}."
+            ) from exc
+
+    def validate_scalar_plane_index(self) -> None:
+        if not 0 <= self.scalar_plane_index < self.source_plane_count:
+            raise ValueError(
+                "Source-plane metadata index is outside the declared plane "
+                f"domain: {self.scalar_plane_index} for "
+                f"{self.source_plane_count} planes."
+            )
+
+    def component_metadata(self) -> tuple[SourceComponentMetadata, ...]:
+        return tuple(
+            self.component_metadata_for_plane(plane_index)
+            for plane_index in range(self.source_plane_count)
+        )
+
+    def component_metadata_for_plane(
+        self,
+        plane_index: int,
+    ) -> SourceComponentMetadata:
+        metadata = {
+            **dict(self.scalar_metadata),
+            SOURCE_PLANE_INDEX_FIELD: str(plane_index),
+            SOURCE_PLANE_COUNT_FIELD: str(self.source_plane_count),
+        }
+        return MappingProxyType(
+            with_source_component_metadata(
+                metadata,
+                AllComponents.Z_INDEX,
+                self.z_index_for_plane(plane_index),
+            )
+        )
+
+    def z_index_for_plane(self, plane_index: int) -> int:
+        scalar_z_index = source_component_metadata_value(
+            self.scalar_metadata,
+            AllComponents.Z_INDEX,
+        )
+        if scalar_z_index is None:
+            return plane_index + 1
+        try:
+            first_z_index = int(scalar_z_index) - self.scalar_plane_index
+        except ValueError as exc:
+            raise ValueError(
+                "Source-plane metadata z_index must be numeric when expanding "
+                f"indexed plane provenance, got {scalar_z_index!r}."
+            ) from exc
+        return first_z_index + plane_index
+
+    def common_component_metadata(self) -> SourceComponentMetadata | None:
+        return common_source_component_metadata(self.component_metadata())
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePlaneIndexedProvenanceExpansion:
+    """Expand scalar indexed source metadata into per-plane source provenance."""
+
+    provenance: SourceImageProvenance
+    expected_plane_count: int | None
+
+    def expanded(self) -> SourceImageProvenance:
+        if self.expected_plane_count is None:
+            return self.provenance
+        if self.provenance.source_image_provenance_planes.has_values:
+            return self.provenance
+        metadata = self.provenance.source_component_metadata
+        if metadata is None:
+            return self.provenance
+        indexed_metadata = SourcePlaneIndexedMetadata.from_metadata(
+            metadata,
+            expected_plane_count=self.expected_plane_count,
+        )
+        if indexed_metadata is None:
+            return self.provenance
+        return SourceImageProvenance(
+            source_path=self.provenance.source_path,
+            source_component_metadata=indexed_metadata.common_component_metadata(),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(self.provenance.source_path,) * self.expected_plane_count,
+                component_metadata=indexed_metadata.component_metadata(),
+            ),
+            source_image_names=self.provenance.source_image_names,
+        )
+
+
+def common_source_component_metadata(
+    metadata_by_plane: Sequence[SourceComponentMetadata | None],
+) -> SourceComponentMetadata | None:
+    """Return source metadata values shared by every source plane."""
+    metadata_values = tuple(
+        dict(metadata) for metadata in metadata_by_plane if metadata is not None
+    )
+    if len(metadata_values) != len(metadata_by_plane):
+        return None
+    if not metadata_values:
+        return None
+    common_keys = set(metadata_values[0])
+    for metadata in metadata_values[1:]:
+        common_keys.intersection_update(metadata)
+    common_metadata = {
+        key: metadata_values[0][key]
+        for key in common_keys
+        if all(
+            metadata[key] == metadata_values[0][key]
+            for metadata in metadata_values
+        )
+    }
+    if not common_metadata:
+        return None
+    return MappingProxyType(common_metadata)
+
+
+def common_source_path(paths: Sequence[str | None]) -> str | None:
+    """Return the source path shared by every plane, if one exists."""
+    path_values = tuple(path for path in paths if path is not None)
+    if len(path_values) != len(paths) or not path_values:
+        return None
+    first = path_values[0]
+    if all(path == first for path in path_values):
+        return first
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -638,3 +948,117 @@ SourceImageProvenanceFields.source_image_names = SourceImageProvenanceAlias(
     lambda provenance: provenance.source_image_names,
     SourceImageProvenance.with_source_image_names,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceIdentityStackAxisProjection:
+    """Project scalar source identity over declared runtime stack axes."""
+
+    axes: frozenset[str]
+
+    @classmethod
+    def empty(cls) -> "SourceIdentityStackAxisProjection":
+        return cls(frozenset())
+
+    @classmethod
+    def from_axes(
+        cls,
+        axes: Iterable[str],
+    ) -> "SourceIdentityStackAxisProjection":
+        return cls(frozenset(axes))
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.axes
+
+    def ordered_axes(self) -> tuple[str, ...]:
+        component_order = AllComponents.ordered_names()
+        ordered_known = tuple(axis for axis in component_order if axis in self.axes)
+        ordered_unknown = tuple(sorted(self.axes.difference(ordered_known)))
+        return ordered_known + ordered_unknown
+
+    def project_component_metadata(
+        self,
+        metadata: SourceComponentMetadata,
+        plane_indices: Sequence[int],
+    ) -> SourceComponentMetadata:
+        axes = self.ordered_axes()
+        if len(axes) != len(plane_indices):
+            raise ValueError(
+                "Source identity stack axis projection cannot map "
+                f"{len(plane_indices)} runtime coordinate(s) onto declared axes "
+                f"{axes!r}."
+            )
+        projected_metadata = metadata
+        for axis, plane_index in zip(axes, plane_indices, strict=True):
+            component = self.component_for_axis(axis)
+            projected_metadata = with_source_component_metadata(
+                projected_metadata,
+                component,
+                self.projected_axis_value(
+                    projected_metadata,
+                    component,
+                    plane_index,
+                ),
+            )
+        return projected_metadata
+
+    def provenance_planes(
+        self,
+        *,
+        source_path: str | None,
+        source_component_metadata: SourceComponentMetadata | None,
+        plane_count: int,
+    ) -> SourceImageProvenancePlanes:
+        if source_component_metadata is None:
+            return SourceImageProvenancePlanes()
+        if plane_count <= 0:
+            return SourceImageProvenancePlanes()
+        if len(self.ordered_axes()) != 1:
+            return SourceImageProvenancePlanes()
+        return SourceImageProvenancePlanes.from_components(
+            paths=(source_path,) * plane_count,
+            component_metadata=tuple(
+                self.project_component_metadata(
+                    source_component_metadata,
+                    (plane_index,),
+                )
+                for plane_index in range(plane_count)
+            ),
+        )
+
+    @staticmethod
+    def component_for_axis(axis: str) -> AllComponents:
+        component = AllComponents.from_value(axis)
+        if component is None:
+            raise ValueError(
+                "Source identity stack axis is not an OpenHCS component: "
+                f"{axis!r}."
+            )
+        return component
+
+    @staticmethod
+    def projected_axis_value(
+        metadata: SourceComponentMetadata,
+        component: AllComponents,
+        plane_index: int,
+    ) -> int:
+        current = source_component_metadata_raw_value(metadata, component)
+        if current is None:
+            raise ValueError(
+                "Source identity stack axis projection requires scalar "
+                f"{component.value!r} metadata."
+            )
+        if isinstance(current, bool):
+            raise ValueError(
+                "Source identity stack axis "
+                f"{component.value!r} must be numeric, got bool."
+            )
+        try:
+            base_value = int(current)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Source identity stack axis "
+                f"{component.value!r} must be numeric, got {current!r}."
+            ) from exc
+        return base_value + plane_index

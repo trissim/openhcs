@@ -139,6 +139,7 @@ def object_colocalization_threshold_reductions(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
 ]:
     total_first_threshold = np.zeros(object_count, dtype=np.float64)
     total_second_threshold = np.zeros(object_count, dtype=np.float64)
@@ -147,6 +148,7 @@ def object_colocalization_threshold_reductions(
     threshold_sum1_sq = np.zeros(object_count, dtype=np.float64)
     threshold_sum2_sq = np.zeros(object_count, dtype=np.float64)
     threshold_product_sum = np.zeros(object_count, dtype=np.float64)
+    threshold_counts = np.zeros(object_count, dtype=np.float64)
     total_first_costes = np.zeros(object_count, dtype=np.float64)
     total_second_costes = np.zeros(object_count, dtype=np.float64)
     costes_sum1 = np.zeros(object_count, dtype=np.float64)
@@ -162,6 +164,7 @@ def object_colocalization_threshold_reductions(
         if second_above:
             total_second_threshold[label_index] += second_value
         if first_above and second_above:
+            threshold_counts[label_index] += 1.0
             threshold_sum1[label_index] += first_value
             threshold_sum2[label_index] += second_value
             threshold_sum1_sq[label_index] += first_value * first_value
@@ -192,11 +195,43 @@ def object_colocalization_threshold_reductions(
         threshold_sum1_sq,
         threshold_sum2_sq,
         threshold_product_sum,
+        threshold_counts,
         total_first_costes,
         total_second_costes,
         costes_sum1,
         costes_sum2,
     )
+
+
+@njit(cache=True)
+def object_colocalization_rwc_reductions(
+    first_pixels: np.ndarray,
+    second_pixels: np.ndarray,
+    object_labels: np.ndarray,
+    threshold_1: np.ndarray,
+    threshold_2: np.ndarray,
+    first_ranks: np.ndarray,
+    second_ranks: np.ndarray,
+    max_rank: int,
+    object_count: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    weighted_first = np.zeros(object_count, dtype=np.float64)
+    weighted_second = np.zeros(object_count, dtype=np.float64)
+    rank_scale = float(max_rank)
+    for index in range(object_labels.size):
+        label_index = int(object_labels[index]) - 1
+        first_value = float(first_pixels[index])
+        second_value = float(second_pixels[index])
+        if not (
+            first_value >= threshold_1[label_index]
+            and second_value >= threshold_2[label_index]
+        ):
+            continue
+        rank_delta = abs(int(first_ranks[index]) - int(second_ranks[index]))
+        weight = (rank_scale - float(rank_delta)) / rank_scale
+        weighted_first[label_index] += first_value * weight
+        weighted_second[label_index] += second_value * weight
+    return weighted_first, weighted_second
 
 
 @njit(cache=True)
@@ -317,4 +352,3 @@ def _thresholded_colocalization_metrics_with_ranks_numba(
         rwc2 = weighted_second_total / second_threshold_total
 
     return manders_m1, manders_m2, rwc1, rwc2, overlap, k1, k2
-

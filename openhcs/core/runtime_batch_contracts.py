@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from typing import ClassVar, Generic, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.runtime_invocation import runtime_callable_defaults
 from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjection,
     RuntimeSliceProjectionStrategy,
@@ -71,7 +71,7 @@ class RuntimePure2DSliceBatchRequest(
             "kwargs",
             MappingProxyType(
                 {
-                    **_runtime_batch_callable_defaults(self.func),
+                    **runtime_callable_defaults(self.func),
                     **dict(self.kwargs),
                 }
             ),
@@ -124,29 +124,6 @@ class RuntimeBatchExecutor(ABC, metaclass=AutoRegisterMeta):
         ],
     ) -> list[RuntimeSliceResultT]:
         """Execute one runtime batch domain."""
-
-
-def _runtime_batch_callable_defaults(func: Callable) -> Mapping[str, object]:
-    """Return callable defaults visible to runtime batch executors."""
-    try:
-        signature = inspect.signature(func)
-    except (TypeError, ValueError) as exc:
-        raise TypeError(
-            f"Runtime batch function {func!r} must expose an inspectable signature."
-        ) from exc
-    defaults: dict[str, object] = {}
-    for parameter in signature.parameters.values():
-        if parameter.default is inspect.Parameter.empty:
-            continue
-        if parameter.kind in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        defaults[parameter.name] = parameter.default
-    return MappingProxyType(defaults)
-
 
 @dataclass(frozen=True, slots=True)
 class RuntimeBatchCallableFamily:

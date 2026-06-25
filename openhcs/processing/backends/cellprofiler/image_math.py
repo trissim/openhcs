@@ -35,6 +35,7 @@ from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enu
 
 ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
 ImageMathMask = RuntimeArrayData | None
+ImageMathOperandPixels = np.ndarray | tuple[np.ndarray, ...]
 
 
 def meaningful_image_math_mask(mask: ImageMathMask) -> ImageMathMask:
@@ -520,7 +521,7 @@ class ImageMathPreparedOperands:
 
     source_image: ImagePayloadMetadataInput
     source_payloads: tuple[ImagePayloadMetadataInput, ...]
-    operand_pixels: np.ndarray
+    operand_pixels: ImageMathOperandPixels
     operand_masks: tuple[ImageMathMask, ...]
     factors: tuple[float, ...]
 
@@ -539,7 +540,7 @@ class ImageMathPreparedOperands:
         if operation_strategy.single_image:
             operand_count = 1
         else:
-            operand_count = operand_pixels.shape[0]
+            operand_count = cls._operand_count(operand_pixels)
         return cls(
             source_image=image,
             source_payloads=source_payloads,
@@ -551,7 +552,10 @@ class ImageMathPreparedOperands:
                 operand_count,
                 mask_policy,
             ),
-            factors=cls._factors_for_operands(factors, operand_pixels.shape[0]),
+            factors=cls._factors_for_operands(
+                factors,
+                cls._operand_count(operand_pixels),
+            ),
         )
 
     @staticmethod
@@ -570,16 +574,34 @@ class ImageMathPreparedOperands:
         image: RuntimeArrayData,
         source_payloads: tuple[ImagePayloadMetadataInput, ...],
         image_operands: tuple[ImagePayloadMetadataInput, ...],
-    ) -> np.ndarray:
+    ) -> ImageMathOperandPixels:
         if image_operands:
-            operand_pixels = np.stack(
-                tuple(image_payload_data(payload) for payload in source_payloads)
+            return tuple(
+                np.asarray(image_payload_data(payload))
+                for payload in source_payloads
             )
-        else:
-            operand_pixels = image_payload_data(image)
+        operand_pixels = np.asarray(image_payload_data(image))
         if operand_pixels.ndim == 2:
             return operand_pixels[np.newaxis, :, :]
         return operand_pixels
+
+    @staticmethod
+    def _operand_count(operand_pixels: ImageMathOperandPixels) -> int:
+        if isinstance(operand_pixels, tuple):
+            return len(operand_pixels)
+        return int(operand_pixels.shape[0])
+
+    def operand_pixel(self, index: int) -> np.ndarray:
+        """Return one logical operand without forcing stacked copies."""
+        if isinstance(self.operand_pixels, tuple):
+            return self.operand_pixels[index]
+        return self.operand_pixels[index]
+
+    def initial_output_pixels(self) -> np.ndarray:
+        """Return the data passed to the operation's output initializer."""
+        if isinstance(self.operand_pixels, tuple):
+            return self.operand_pixels[0]
+        return self.operand_pixels
 
     @staticmethod
     def _operand_masks(
@@ -605,7 +627,7 @@ class ImageMathPreparedOperands:
     @property
     def image_count(self) -> int:
         """Return the number of operand planes presented to ImageMath."""
-        return self.operand_pixels.shape[0]
+        return self._operand_count(self.operand_pixels)
 
     def output_value(
         self,
@@ -657,7 +679,7 @@ def image_math(
     else:
         operand_count = prepared_operands.image_count
     for index in range(operand_count):
-        pixel = prepared_operands.operand_pixels[index].astype(np.float64)
+        pixel = prepared_operands.operand_pixel(index).astype(np.float64)
         factor = prepared_operands.factors[index]
         if not operation_strategy.binary_output and factor != 1.0:
             pixel = pixel * factor
@@ -665,7 +687,7 @@ def image_math(
 
     output_pixel_data = operation_strategy.apply(
         operation_strategy.prepare_initial_output(
-            prepared_operands.operand_pixels,
+            prepared_operands.initial_output_pixels(),
             pixel_data,
             prepared_operands.factors,
         ),

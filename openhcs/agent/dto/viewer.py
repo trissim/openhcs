@@ -35,11 +35,32 @@ class ViewerWindowStateRequest(ExecutionConnectionProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class ViewerWindowValidationRequest(ExecutionConnectionProjection):
+class ViewerWindowValidationPolicy:
+    """Validation contract applied to a viewer state observation."""
+
     expected_layer_count: int | None = None
     required_axis_labels: tuple[str, ...] = ()
     require_nonzero_payloads: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerWindowValidationRequest(ExecutionConnectionProjection):
+    validation_policy: ViewerWindowValidationPolicy = field(
+        default_factory=ViewerWindowValidationPolicy
+    )
     timeout_ms: int = 5000
+
+    @property
+    def expected_layer_count(self) -> int | None:
+        return self.validation_policy.expected_layer_count
+
+    @property
+    def required_axis_labels(self) -> tuple[str, ...]:
+        return self.validation_policy.required_axis_labels
+
+    @property
+    def require_nonzero_payloads(self) -> bool:
+        return self.validation_policy.require_nonzero_payloads
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +135,13 @@ class ViewerWindowLayerValidationSummary(ViewerWindowLayerDescriptor):
     zero_payload_count: int
     missing_nonzero_count: int
     coordinate_gap_count: int = 0
+    expected_coordinate_count: int = 0
+    routed_coordinate_count: int = 0
+    payload_coordinate_count: int = 0
+    missing_payload_coordinate_count: int = 0
+    duplicate_payload_coordinate_count: int = 0
+    payload_without_coordinate_count: int = 0
+    spatial_mismatch_count: int = 0
     missing_required_axis_labels: tuple[str, ...] = ()
     valid: bool = False
 
@@ -133,11 +161,27 @@ class ViewerWindowValidationSummaryResult(
     nonzero_payload_count: int = 0
     zero_payload_count: int = 0
     missing_nonzero_count: int = 0
-    expected_layer_count: int | None = None
-    required_axis_labels: tuple[str, ...] = ()
-    require_nonzero_payloads: bool = True
+    missing_payload_coordinate_count: int = 0
+    duplicate_payload_coordinate_count: int = 0
+    payload_without_coordinate_count: int = 0
+    spatial_mismatch_count: int = 0
+    validation_policy: ViewerWindowValidationPolicy = field(
+        default_factory=ViewerWindowValidationPolicy
+    )
     layer_summaries: tuple[ViewerWindowLayerValidationSummary, ...] = ()
     state: ViewerWindowStateResult | None = None
+
+    @property
+    def expected_layer_count(self) -> int | None:
+        return self.validation_policy.expected_layer_count
+
+    @property
+    def required_axis_labels(self) -> tuple[str, ...]:
+        return self.validation_policy.required_axis_labels
+
+    @property
+    def require_nonzero_payloads(self) -> bool:
+        return self.validation_policy.require_nonzero_payloads
 
 
 def viewer_window_snapshot_error(
@@ -187,16 +231,12 @@ def viewer_window_validation_error(
     *,
     connection: ExecutionConnectionSpec,
     error: AgentError,
-    expected_layer_count: int | None,
-    required_axis_labels: tuple[str, ...],
-    require_nonzero_payloads: bool,
+    validation_policy: ViewerWindowValidationPolicy,
 ) -> ViewerWindowValidationSummaryResult:
     return ViewerWindowValidationSummaryResult(
         schema_version=SCHEMA_VERSION,
         connection=connection,
         valid=False,
         errors=(error,),
-        expected_layer_count=expected_layer_count,
-        required_axis_labels=required_axis_labels,
-        require_nonzero_payloads=require_nonzero_payloads,
+        validation_policy=validation_policy,
     )

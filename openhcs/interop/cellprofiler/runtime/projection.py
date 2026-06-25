@@ -10,7 +10,7 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.aligned_image_payload import project_singleton_stack_image_domain
-from openhcs.core.image_shapes import is_color_image_slice
+from openhcs.core.image_shapes import is_color_image_slice, is_image_stack
 from openhcs.core.runtime_semantics import (
     RuntimePlaneAxis,
     RuntimePlaneAxisValueProjection,
@@ -209,7 +209,7 @@ class RuntimePlaneImagePayloadStack:
 
     @property
     def is_projectable(self) -> bool:
-        return self.array.ndim >= 3 and self.plane_count > 1
+        return is_image_stack(self.array) and self.plane_count > 1
 
     @property
     def plane_count(self) -> int:
@@ -242,18 +242,6 @@ class RuntimePlaneImagePayloadPlaneSelection(RuntimePlanePayloadProjectionReques
             SourceImagePlaneAxisRequest(self.payload)
         ).axis()
         if axis is not None:
-            if (
-                axis is RuntimePlaneAxis.SOURCE_BINDING
-                and self.context.current_image_context.has_image
-                and not RuntimePlaneCurrentImagePayloadPlaneIndex(
-                    context=self.context,
-                    plane_count=self.plane_count,
-                ).current_image_is_planar()
-            ):
-                return RuntimePlaneImagePayloadPlaneSelectionResult(
-                    selected_plane_index=RuntimePlaneSelectedPlaneIndex(None),
-                    source_context=RuntimePlaneImagePayloadSourceContext.PAYLOAD_PLANE,
-                )
             return RuntimePlaneImagePayloadPlaneSelectionResult(
                 selected_plane_index=RuntimePlaneSelectedPlaneIndex(
                     RuntimePlaneImagePayloadPlaneIndex(
@@ -425,12 +413,7 @@ class CurrentSourceImagePayloadProjection(CurrentSourcePlaneProjectionBase):
         return image_payload_data(payload)
 
     def is_projectable_stack(self, data: ImagePayloadValue) -> bool:
-        return (
-            isinstance(data, np.ndarray)
-            and data.ndim >= 3
-            and not is_color_image_slice(data)
-            and data.shape[0] > 1
-        )
+        return isinstance(data, np.ndarray) and is_image_stack(data) and data.shape[0] > 1
 
     @staticmethod
     def project_mask_plane(

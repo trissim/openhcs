@@ -52,7 +52,7 @@ class CellProfilerMeasurementImageResolver:
         func: CellProfilerFunction,
         adapter: CellProfilerRuntimeAdapter,
         current_image: CellProfilerRuntimeValue,
-        image_request: "CellProfilerImageRequest",
+        image_request: "CellProfilerImageRequest | None",
     ) -> tuple["CellProfilerMeasurementImage", ...]:
         executor = self.executor
         image_inputs = self.primary_image_inputs(func)
@@ -67,15 +67,21 @@ class CellProfilerMeasurementImageResolver:
         if not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
             executor.module_name
         ):
+            if image_request is None:
+                raise ValueError(
+                    f"{executor.module_name} requires a composed measurement image "
+                    "request."
+                )
             return (self.composed_measurement_image(image_request, image_inputs),)
 
-        projected_images = self.measurement_images_from_image_request(
-            image_request,
-            image_inputs,
-            reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
-        )
-        if projected_images is not None:
-            return projected_images
+        if image_request is not None:
+            projected_images = self.measurement_images_from_image_request(
+                image_request,
+                image_inputs,
+                reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+            )
+            if projected_images is not None:
+                return projected_images
 
         return self.resolved_measurement_images(
             func,
@@ -177,13 +183,14 @@ class CellProfilerMeasurementImageResolver:
     ) -> tuple["CellProfilerMeasurementImage", ...] | None:
         """Return per-source measurement images from the already resolved image request."""
         source_aliases = ArtifactSpecCollection(image_inputs).names()
-        if not image_request.owns_source_axis(source_aliases):
+        payloads_by_name = image_request.source_payloads_for_names(source_aliases)
+        if payloads_by_name is None:
             return None
         return tuple(
             CellProfilerMeasurementImage(
                 source_image_name=spec.name,
                 source_aliases=source_aliases,
-                payload=image_request.source_axis_payload(spec.name),
+                payload=payloads_by_name[spec.name],
                 reference_domain=reference_domain,
             )
             for spec in image_inputs

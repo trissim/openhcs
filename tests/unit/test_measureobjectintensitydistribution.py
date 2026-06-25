@@ -303,29 +303,25 @@ def test_intensity_zernike_uses_compact_rows_for_noncontiguous_domains():
         repetition=0,
     )
 
-    for provider in (
-        CellProfilerBackendProvider.CENTROSOME,
-        CellProfilerBackendProvider.LEGACY_FAST,
-    ):
-        rows = IntensityZernikeMeasurementRowsRequest(
-            image=image,
-            labels=labels,
-            max_order=0,
-            include_phase=True,
-            object_ids=(5,),
-            backend_provider=provider,
-        ).rows()
-        values = [
-            value
-            for feature, value in zip(
-                columnar_row_values(rows, "feature_name"),
-                columnar_row_values(rows, "result_value"),
-                strict=True,
-            )
-            if feature == phase_feature
-        ]
+    rows = IntensityZernikeMeasurementRowsRequest(
+        image=image,
+        labels=labels,
+        max_order=0,
+        include_phase=True,
+        object_ids=(5,),
+        backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
+    ).rows()
+    values = [
+        value
+        for feature, value in zip(
+            columnar_row_values(rows, "feature_name"),
+            columnar_row_values(rows, "result_value"),
+            strict=True,
+        )
+        if feature == phase_feature
+    ]
 
-        np.testing.assert_allclose(values, [np.pi / 2.0])
+    np.testing.assert_allclose(values, [np.pi / 2.0])
 
 
 def test_intensity_zernike_phase_export_values_zero_undefined_phase():
@@ -354,7 +350,7 @@ def test_intensity_zernike_phase_export_values_zero_undefined_phase():
     assert values_by_feature[phase_feature] == 0.0
 
 
-def test_numba_propagation_result_matches_centrosome_distances():
+def test_numba_propagation_result_matches_native_reference_values():
     image = np.arange(64, dtype=np.float64).reshape((8, 8)) / 64.0
     labels = np.zeros((8, 8), dtype=np.int32)
     labels[2, 2] = 1
@@ -363,15 +359,110 @@ def test_numba_propagation_result_matches_centrosome_distances():
     mask = np.ones((8, 8), dtype=bool)
     mask[4, 1:6] = False
 
-    reference = secondary_propagation_backend(
-        backend_provider=CellProfilerBackendProvider.CENTROSOME,
-    ).propagate_result(image, labels, mask, 1)
     accelerated = secondary_propagation_backend(
         backend_provider=CellProfilerBackendProvider.NUMBA,
     ).propagate_result(image, labels, mask, 1)
+    expected_labels = np.array(
+        [
+            [1, 1, 1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 1, 2, 2, 2, 2],
+            [1, 0, 0, 0, 0, 0, 2, 2],
+            [3, 3, 3, 3, 3, 3, 3, 3],
+            [3, 3, 3, 3, 3, 3, 3, 3],
+            [3, 3, 3, 3, 3, 3, 3, 3],
+        ],
+        dtype=np.int32,
+    )
+    expected_distances = np.array(
+        [
+            [
+                3.5446316437742986,
+                3.1478426279923740,
+                2.7551993223490370,
+                2.9730769398448230,
+                3.1478426279923740,
+                2.7551993223490370,
+                2.9730769398448230,
+                3.3094569581569550,
+            ],
+            [
+                2.8767489184090140,
+                1.8978426279923740,
+                1.5051993223490370,
+                1.7230769398448231,
+                1.8978426279923740,
+                1.5051993223490370,
+                1.7230769398448231,
+                2.7274618573440854,
+            ],
+            [
+                2.0142242070027950,
+                1.0098392895035329,
+                0.0,
+                1.0098392895035329,
+                1.0098392895035329,
+                0.0,
+                1.0098392895035329,
+                2.0142242070027950,
+            ],
+            [
+                2.7274618573440854,
+                1.7230769398448231,
+                1.5051993223490370,
+                1.8978426279923740,
+                1.7230769398448231,
+                1.5051993223490370,
+                1.8978426279923740,
+                2.8767489184090140,
+            ],
+            [
+                3.4733559354623790,
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0,
+                3.4030419503414110,
+                3.7647522568978546,
+            ],
+            [
+                4.8964274974160790,
+                3.9175212069994396,
+                2.9076819174959070,
+                1.8978426279923740,
+                1.5051993223490370,
+                1.7230769398448231,
+                2.7329162293483558,
+                3.7373011468476180,
+            ],
+            [
+                4.0339027860098610,
+                3.0295178685105990,
+                2.0196785790070657,
+                1.0098392895035329,
+                0.0,
+                1.0098392895035329,
+                2.0196785790070657,
+                3.0240634965063280,
+            ],
+            [
+                4.6034256353538440,
+                3.5990407178545816,
+                2.5892014283510490,
+                1.5793621388475159,
+                1.2500000000000000,
+                1.6712907857775678,
+                2.6811300752811010,
+                3.6664675947889904,
+            ],
+        ],
+        dtype=np.float64,
+    )
 
-    np.testing.assert_array_equal(accelerated.labels, reference.labels)
-    np.testing.assert_allclose(accelerated.distances, reference.distances)
+    np.testing.assert_array_equal(accelerated.labels, expected_labels)
+    np.testing.assert_allclose(accelerated.distances, expected_distances)
 
 
 def test_numba_self_centered_radial_distribution_matches_native_reference():

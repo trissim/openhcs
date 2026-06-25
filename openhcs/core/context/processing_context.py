@@ -19,6 +19,8 @@ from openhcs.core.debug import (
     NO_OP_DEBUG_EVENT_SINK,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
+from openhcs.core.runtime_source_binding_cache import RuntimeSourceBindingContextCache
 from openhcs.core.axis_filter import StepAxisFilterMap
 
 
@@ -84,6 +86,8 @@ class ProcessingContext:
         else:
             self.step_plans = dict(step_plans)
         self.runtime_value_store = RuntimeValueStore()
+        self.runtime_image_stack_cache = RuntimeImageStackCache()
+        self.runtime_source_binding_context_cache = RuntimeSourceBindingContextCache()
         self.axis_id = axis_id
         self.global_config = global_config
         self.filemanager = filemanager

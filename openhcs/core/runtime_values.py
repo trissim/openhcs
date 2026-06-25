@@ -37,8 +37,11 @@ from openhcs.core.source_image_provenance import (
     SourceImageProvenancePlaneCountRequirement,
     SourceImageProvenancePlaneMetadataValues,
     SourceImageProvenancePlanes,
+    SourcePlaneIndexedMetadata,
+    SourcePlaneIndexedProvenanceExpansion,
     SourceProvenanceInitValues,
 )
+from openhcs.core.source_metadata import SourceMetadataValue
 from openhcs.core.source_spatial_domain import (
     SourceSpatialDomain,
     SourceSpatialDomainFields,
@@ -47,6 +50,7 @@ from openhcs.core.image_shapes import (
     image_spatial_shape_yx,
     is_color_image_slice,
     is_color_image_stack,
+    is_image_stack,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.runtime_semantics import (
@@ -324,6 +328,19 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
         )
 
     @property
+    def has_plane_specific_values(self) -> bool:
+        """Return whether selecting a payload plane can change metadata."""
+        return any(
+            (
+                bool(self.source_plane_intensity_scales),
+                bool(self.source_plane_dtypes),
+                bool(self.source_plane_unit_interval_intensity_scales),
+                self.source_image_provenance_planes.has_values,
+                len(self.source_image_names) > 1,
+            )
+        )
+
+    @property
     def source_image_paths(self) -> tuple[str, ...]:
         """Return provenance image paths, falling back to the scalar source path."""
         paths = self.source_image_provenance_paths
@@ -372,6 +389,22 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
                 return int(plane_scale)
         return self.unit_interval_intensity_scale
 
+    def common_unit_interval_intensity_scale(self) -> int | None:
+        """Return the common unit-interval quantization proof for this payload."""
+        if self.source_plane_unit_interval_intensity_scales:
+            present = tuple(
+                int(scale)
+                for scale in self.source_plane_unit_interval_intensity_scales
+                if scale is not None
+            )
+            if not present:
+                return None
+            first = present[0]
+            if all(scale == first for scale in present):
+                return first
+            return None
+        return self.unit_interval_intensity_scale
+
     def payload_with(self, data: Any, mask: Any | None = None) -> Any:
         """Return image payload data carrying this metadata."""
         if mask is None and self.has_values:
@@ -396,6 +429,62 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
             physical_border_edges_yx=self.physical_border_edges_yx,
             mask_defines_border=self.mask_defines_border,
             source_image_names=source_provenance.source_image_names,
+        )
+
+    def with_indexed_source_plane_provenance(
+        self,
+        expected_plane_count: int | None,
+    ) -> "ImagePayloadMetadata":
+        """Expand scalar source-plane metadata into per-plane provenance."""
+        source_provenance = SourcePlaneIndexedProvenanceExpansion(
+            self.source_provenance,
+            expected_plane_count=expected_plane_count,
+        ).expanded()
+        if source_provenance == self.source_provenance:
+            return self
+        return self.with_source_provenance(source_provenance)
+
+    def for_runtime_plane_projection(
+        self,
+        *,
+        source_plane_indices: tuple[int, ...] | None,
+        runtime_plane_index: int,
+        runtime_plane_count: int | None = None,
+    ) -> "ImagePayloadMetadata":
+        """Return metadata for one runtime plane projected from source planes."""
+        metadata = self.with_indexed_source_plane_provenance(runtime_plane_count)
+        if source_plane_indices is None:
+            return metadata.for_source_plane(runtime_plane_index)
+        if len(source_plane_indices) == 1:
+            return metadata.for_source_plane(source_plane_indices[0])
+        if metadata.has_plane_specific_values:
+            raise ValueError(
+                "Cannot assign one image metadata record to a runtime plane "
+                "that represents multiple source planes: "
+                f"{source_plane_indices!r}."
+            )
+        return metadata
+
+    def for_grouped_source_plane_projection(
+        self,
+        *,
+        source_plane_indices: tuple[int, ...] | None,
+        runtime_plane_index: int,
+        runtime_plane_count: int | None = None,
+    ) -> "ImagePayloadMetadata":
+        """Return metadata for a runtime plane that may group source planes."""
+        metadata = self.with_indexed_source_plane_provenance(runtime_plane_count)
+        if source_plane_indices is None or len(source_plane_indices) <= 1:
+            return metadata.for_runtime_plane_projection(
+                source_plane_indices=source_plane_indices,
+                runtime_plane_index=runtime_plane_index,
+                runtime_plane_count=None,
+            )
+        return replace(
+            metadata,
+            source_provenance=metadata.source_provenance.for_source_planes(
+                source_plane_indices
+            ),
         )
 
     def with_unit_interval_intensity_scale(
@@ -765,8 +854,13 @@ class DerivedImagePayloadSourceMetadata:
     data: RuntimeArrayData
 
     def metadata(self) -> ImagePayloadMetadata:
-        output_metadata = image_payload_metadata(self.data)
-        source_metadata = image_payload_metadata(self.source_payload)
+        output_metadata = self.output_metadata()
+        source_metadata = self.source_metadata()
+        if self.output_scalar_source_owns_scalar_output(
+            output_metadata,
+            source_metadata,
+        ):
+            return output_metadata.with_source_spatial_context_from(source_metadata)
         if self.source_planes_should_replace_output(source_metadata):
             return DerivedImagePayloadPlaneSourceReplacement(
                 output_metadata=output_metadata,
@@ -777,9 +871,38 @@ class DerivedImagePayloadSourceMetadata:
                 output_metadata=output_metadata,
                 source_metadata=source_metadata,
             ).metadata()
-        if self.output_scalar_source_owns_provenance(output_metadata):
-            return output_metadata.with_source_spatial_context_from(source_metadata)
         return output_metadata.with_source_context_from(source_metadata)
+
+    def output_metadata(self) -> ImagePayloadMetadata:
+        """Return output metadata adjusted to the derived output shape."""
+        return self.metadata_with_expanded_indexed_source(
+            image_payload_metadata(self.data)
+        )
+
+    def source_metadata(self) -> ImagePayloadMetadata:
+        """Return source metadata adjusted to the derived output shape."""
+        return self.metadata_with_expanded_indexed_source(
+            image_payload_metadata(self.source_payload)
+        )
+
+    def metadata_with_expanded_indexed_source(
+        self,
+        metadata: ImagePayloadMetadata,
+    ) -> ImagePayloadMetadata:
+        return metadata.with_indexed_source_plane_provenance(self.output_plane_count())
+
+    def output_scalar_source_owns_scalar_output(
+        self,
+        output_metadata: ImagePayloadMetadata,
+        source_metadata: ImagePayloadMetadata,
+    ) -> bool:
+        """Return whether the output already declares the scalar source identity."""
+        if self.output_plane_count() is not None:
+            return False
+        output_identity = output_metadata.source_provenance.scalar_source_identity
+        if not output_identity.addressable:
+            return False
+        return source_metadata.source_provenance.source_plane_count > 1
 
     def source_planes_should_replace_output(
         self,
@@ -795,26 +918,22 @@ class DerivedImagePayloadSourceMetadata:
         self,
         source_metadata: ImagePayloadMetadata,
     ) -> bool:
-        if self.output_plane_count() is not None:
+        output_plane_count = self.output_plane_count()
+        if output_plane_count not in (None, 1):
             return False
         source_provenance = source_metadata.source_provenance
         if source_provenance.source_plane_count > 1:
             return False
         return source_provenance.scalar_source_identity.addressable
 
-    def output_scalar_source_owns_provenance(
-        self,
-        output_metadata: ImagePayloadMetadata,
-    ) -> bool:
-        if self.output_plane_count() is not None:
-            return False
-        return output_metadata.source_provenance.scalar_source_identity.addressable
-
     def output_plane_count(self) -> int | None:
         data = np.asarray(image_payload_data(self.data))
         if data.ndim < 3 or is_color_image_slice(data):
             return None
-        return int(data.shape[0])
+        plane_count = int(data.shape[0])
+        if plane_count <= SINGLETON_AXIS_LENGTH:
+            return None
+        return plane_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -1000,7 +1119,38 @@ class ImagePayloadSequence:
 
     @property
     def source_plane_metadata(self) -> tuple[ImagePayloadMetadata, ...]:
-        return tuple(metadata.for_source_plane(0) for metadata in self.source_metadata)
+        return tuple(
+            self.source_plane_metadata_for_payload(payload, metadata)
+            for payload, metadata in zip(
+                self.payloads,
+                self.source_metadata,
+                strict=True,
+            )
+        )
+
+    def source_plane_metadata_for_payload(
+        self,
+        payload: ImagePayloadMetadataInput,
+        metadata: ImagePayloadMetadata,
+    ) -> ImagePayloadMetadata:
+        """Return metadata represented by one composed source payload."""
+        if self.payload_preserves_source_plane_axis(payload, metadata):
+            return metadata
+        return metadata.for_source_plane(0)
+
+    def payload_preserves_source_plane_axis(
+        self,
+        payload: ImagePayloadMetadataInput,
+        metadata: ImagePayloadMetadata,
+    ) -> bool:
+        """Return whether a singleton payload still carries all source planes."""
+        source_plane_count = metadata.source_provenance.source_plane_count
+        return (
+            len(self.payloads) == 1
+            and source_plane_count > 1
+            and is_image_stack(image_payload_data(payload))
+            and int(np.shape(image_payload_data(payload))[0]) == source_plane_count
+        )
 
     @property
     def data_payloads(self) -> tuple[RuntimeArrayData, ...]:
@@ -1022,9 +1172,20 @@ class ImagePayloadSequence:
         return tuple(np.asarray(mask, dtype=bool) for mask in masks)
 
 
+class ImagePayloadMetadataCompositionMode(Enum):
+    """Source-provenance topology for composed image metadata."""
+
+    STACK = "stack"
+    BUNDLE = "bundle"
+
+
 @dataclass(slots=True)
 class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
     """Compose source-image metadata for a stack assembled from payload slices."""
+
+    mode: ImagePayloadMetadataCompositionMode = (
+        ImagePayloadMetadataCompositionMode.STACK
+    )
 
     def metadata(self) -> ImagePayloadMetadata:
         metadata_by_payload = self.source_metadata
@@ -1046,15 +1207,10 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
                 metadata.source_dtype
                 for metadata in source_metadata_by_payload
             ),
-            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
-                paths=tuple(
-                    metadata.source_path
-                    for metadata in source_metadata_by_payload
-                ),
-                component_metadata=tuple(
-                    metadata.source_component_metadata
-                    for metadata in source_metadata_by_payload
-                ),
+            source_image_provenance_planes=(
+                self.composed_source_provenance_planes(
+                    source_metadata_by_payload
+                )
             ),
             source_plane_unit_interval_intensity_scales=tuple(
                 metadata.unit_interval_intensity_scale
@@ -1082,34 +1238,75 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
             ),
         )
 
-    @classmethod
+    def composed_source_provenance_planes(
+        self,
+        source_metadata_by_payload: tuple[ImagePayloadMetadata, ...],
+    ) -> SourceImageProvenancePlanes:
+        if self.mode is ImagePayloadMetadataCompositionMode.BUNDLE:
+            return self.bundle_source_provenance_planes(source_metadata_by_payload)
+        if len(source_metadata_by_payload) == 1:
+            provenance_planes = (
+                source_metadata_by_payload[0].source_image_provenance_planes
+            )
+            if provenance_planes.has_values:
+                return provenance_planes
+        return SourceImageProvenancePlanes.from_components(
+            paths=tuple(
+                metadata.source_path
+                for metadata in source_metadata_by_payload
+            ),
+            component_metadata=tuple(
+                metadata.source_component_metadata
+                for metadata in source_metadata_by_payload
+            ),
+        )
+
+    @staticmethod
+    def bundle_source_provenance_planes(
+        source_metadata_by_payload: tuple[ImagePayloadMetadata, ...],
+    ) -> SourceImageProvenancePlanes:
+        """Compose per-payload provenance for same-slice image bundles."""
+        paths: list[str | None] = []
+        component_metadata: list[SourceComponentMetadata | None] = []
+        for metadata in source_metadata_by_payload:
+            provenance_planes = metadata.source_image_provenance_planes
+            if provenance_planes.has_values:
+                paths.extend(provenance_planes.paths)
+                component_metadata.extend(provenance_planes.component_metadata)
+                continue
+            if (
+                metadata.source_path is not None
+                or metadata.source_component_metadata is not None
+            ):
+                paths.append(metadata.source_path)
+                component_metadata.append(metadata.source_component_metadata)
+        return SourceImageProvenancePlanes.from_components(
+            paths=tuple(paths),
+            component_metadata=tuple(component_metadata),
+        )
+
     def common_source_component_metadata(
-        cls,
+        self,
         values: Iterable[ImagePayloadMetadata],
     ) -> SourceComponentMetadata | None:
-        """Return source metadata shared by every source plane in a composed stack."""
+        """Return source metadata shared by the composed payload."""
         metadata_values = tuple(values)
         metadata_by_plane = tuple(
             dict(metadata.source_component_metadata)
             for metadata in metadata_values
             if metadata.source_component_metadata is not None
         )
-        common_metadata: dict[str, Any] = {}
+        common_metadata: dict[str, SourceMetadataValue] = {}
         if metadata_by_plane:
-            common_keys = set(metadata_by_plane[0])
-            for metadata in metadata_by_plane[1:]:
-                common_keys.intersection_update(metadata)
-            common_metadata.update(
-                {
-                    key: metadata_by_plane[0][key]
-                    for key in common_keys
-                    if all(
-                        metadata[key] == metadata_by_plane[0][key]
-                        for metadata in metadata_by_plane
-                    )
-                }
-            )
-        extension = cls.common_metadata_value(
+            common_keys = self.source_component_common_keys(metadata_by_plane)
+            for key in common_keys:
+                common_value = self.source_component_common_value(
+                    key,
+                    metadata_by_plane,
+                )
+                if common_value is not None:
+                    common_metadata[key] = common_value
+        extension = self.common_metadata_value(
             "".join(Path(metadata.source_path).suffixes)
             for metadata in metadata_values
             if metadata.source_path is not None
@@ -1119,6 +1316,36 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
         if not common_metadata:
             return None
         return MappingProxyType(common_metadata)
+
+    def source_component_common_keys(
+        self,
+        metadata_by_plane: tuple[dict[str, SourceMetadataValue], ...],
+    ) -> set[str]:
+        """Return component keys eligible for scalar identity composition."""
+        if self.mode is ImagePayloadMetadataCompositionMode.BUNDLE:
+            return set().union(*(metadata.keys() for metadata in metadata_by_plane))
+        common_keys = set(metadata_by_plane[0])
+        for metadata in metadata_by_plane[1:]:
+            common_keys.intersection_update(metadata)
+        return common_keys
+
+    def source_component_common_value(
+        self,
+        key: str,
+        metadata_by_plane: tuple[dict[str, SourceMetadataValue], ...],
+    ) -> SourceMetadataValue | None:
+        """Return a non-conflicting declared component value."""
+        values = tuple(
+            metadata[key]
+            for metadata in metadata_by_plane
+            if key in metadata
+        )
+        if not values:
+            return None
+        first = values[0]
+        if all(value == first for value in values):
+            return first
+        return None
 
     @staticmethod
     def common_metadata_value(
@@ -1239,6 +1466,12 @@ class ImagePayloadSourceMetadataRequest:
             if resolved_source_path is not None
             else self.source_context.source_path
         )
+        source_component_metadata = self.source_context.source_identity.component_metadata
+        source_image_provenance_planes = SourceImageVolumetricPlaneProvenance(
+            image=self.image,
+            source_path=resolved_path_text,
+            source_component_metadata=source_component_metadata,
+        ).planes()
         if source_dtype is None:
             array_metadata = ImagePayloadMetadata.for_array(
                 image_payload_data(self.image),
@@ -1246,9 +1479,8 @@ class ImagePayloadSourceMetadataRequest:
             )
             return replace(
                 array_metadata,
-                source_component_metadata=(
-                    self.source_context.source_identity.component_metadata
-                ),
+                source_component_metadata=source_component_metadata,
+                source_image_provenance_planes=source_image_provenance_planes,
                 source_spatial_domain=SourceSpatialDomain(
                     origin_yx=spatial_origin_yx,
                     source_shape_yx=source_spatial_shape_yx,
@@ -1258,14 +1490,79 @@ class ImagePayloadSourceMetadataRequest:
             intensity_scale=source_metadata.intensity_scale,
             source_dtype=str(source_dtype),
             source_path=resolved_path_text,
-            source_component_metadata=(
-                self.source_context.source_identity.component_metadata
-            ),
+            source_component_metadata=source_component_metadata,
+            source_image_provenance_planes=source_image_provenance_planes,
             source_spatial_domain=SourceSpatialDomain(
                 origin_yx=spatial_origin_yx,
                 source_shape_yx=source_spatial_shape_yx,
             ),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceImageVolumetricPlaneProvenance:
+    """Per-plane source identity for a single non-color volumetric image file."""
+
+    image: ImagePayloadMetadataInput
+    source_path: str | None
+    source_component_metadata: SourceComponentMetadata | None
+
+    def planes(self) -> SourceImageProvenancePlanes:
+        plane_count = self.plane_count()
+        if plane_count is None or self.source_component_metadata is None:
+            return SourceImageProvenancePlanes()
+        indexed_metadata = SourcePlaneIndexedMetadata.from_scalar_origin(
+            self.source_component_metadata,
+            source_plane_count=plane_count,
+        )
+        if indexed_metadata is None:
+            return SourceImageProvenancePlanes()
+        return SourceImageProvenancePlanes.from_components(
+            paths=(self.source_path,) * plane_count,
+            component_metadata=indexed_metadata.component_metadata(),
+        )
+
+    def plane_count(self) -> int | None:
+        array = np.asarray(image_payload_data(self.image))
+        if array.ndim != 3:
+            return None
+        if is_color_image_slice(array) or is_color_image_stack(array):
+            return None
+        plane_count = int(array.shape[0])
+        if plane_count <= SINGLETON_AXIS_LENGTH:
+            return None
+        return plane_count
+
+@dataclass(frozen=True, slots=True)
+class RuntimeImageSourceIdentityCompleteness:
+    """Validate that an image payload has enough source identity for its shape."""
+
+    payload: ImagePayloadMetadataInput
+
+    def complete(self) -> bool:
+        metadata = image_payload_metadata(self.payload)
+        plane_count = self.stack_plane_count()
+        if plane_count is None:
+            return (
+                metadata.source_provenance.addressable
+                or metadata.source_provenance.source_image_provenance_planes.has_values
+            )
+        plane_metadata = (
+            metadata.source_provenance.source_image_provenance_planes.component_metadata
+        )
+        return (
+            len(plane_metadata) == plane_count
+            and not any(item is None for item in plane_metadata)
+        )
+
+    def stack_plane_count(self) -> int | None:
+        data = image_payload_data(self.payload)
+        if not is_image_stack(data):
+            return None
+        plane_count = int(np.shape(data)[0])
+        if plane_count <= SINGLETON_AXIS_LENGTH:
+            return None
+        return plane_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -1570,11 +1867,33 @@ class ObjectLabelVariantData:
     ) -> "ObjectLabelVariantData":
         """Project every present variant onto one runtime slice."""
         return self.project(
-            lambda labels: DenseObjectLabelSliceStackRequest(
+            lambda labels: self.project_label_data_runtime_slice(
                 labels,
+                slice_index=slice_index,
                 slice_count=slice_count,
-            ).slice_or_original(slice_index)
+            )
         )
+
+    @staticmethod
+    def project_label_data_runtime_slice(
+        labels: ObjectLabelData,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> ObjectLabelData:
+        """Project one object-label variant through nominal slice semantics."""
+        projected = ObjectLabelDataRuntimeSliceStackContract.runtime_slice(
+            labels,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            slice_index=slice_index,
+            slice_count=slice_count,
+        )
+        if projected is not None:
+            return projected
+        return DenseObjectLabelSliceStackRequest(
+            labels,
+            slice_count=slice_count,
+        ).slice_or_original(slice_index)
 
     def first_plane(self) -> "ObjectLabelVariantData":
         """Collapse a singleton leading label plane for every present variant."""
@@ -1922,7 +2241,11 @@ class ObjectLabelValue(
         plane_indices: tuple[int, ...] | None = None,
     ) -> "ObjectLabelValueConstructionContext":
         """Return metadata/domain context for one runtime-slice projection."""
-        slice_metadata = image_payload_metadata(self).for_source_plane(slice_index)
+        slice_metadata = image_payload_metadata(self).for_grouped_source_plane_projection(
+            source_plane_indices=plane_indices,
+            runtime_plane_index=slice_index,
+            runtime_plane_count=slice_count,
+        )
         return ObjectLabelValueConstructionContext.from_value(
             self,
             domain=self.runtime_slice_domain(
@@ -2034,6 +2357,12 @@ def object_label_source_context_provenance(
     merged = label_provenance.with_missing_from(
         image_payload_metadata(image).source_provenance
     )
+    if (
+        SourceImageObjectLabelDomainRequest(image=image, labels=label)
+        .plane_semantics()
+        is not None
+    ):
+        return merged.with_common_scalar_identity_from_planes()
     if not (
         label_provenance.addressable
         and label_provenance.source_plane_count == 0
@@ -2369,6 +2698,11 @@ class ColumnarRows(ABC, metaclass=AutoRegisterMeta):
     def columns(self) -> Any:
         ...
 
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        """Return whether this payload already spans its declared object domain."""
+        return False
+
     def column_values(self, column: str) -> Sequence[object]:
         """Return one named column from this nominal columnar payload."""
         columns = self.columns
@@ -2407,6 +2741,7 @@ class SparseIJVLabelRows(ColumnarRows):
     """Sparse object-label table with CellProfiler-compatible y/x/label columns."""
 
     data: Any
+    slice_count: int | None = None
 
     @property
     def column_layout(self) -> "SparseIJVColumnLayout":
@@ -2419,6 +2754,26 @@ class SparseIJVLabelRows(ColumnarRows):
                 "SparseIJVLabelRows.data must be an N x 3 y/x/label table "
                 "or an N x 4 slice/y/x/label table."
             )
+        if self.slice_count is None:
+            return
+        normalized_count = int(self.slice_count)
+        if normalized_count < 0:
+            raise ValueError("SparseIJVLabelRows.slice_count cannot be negative.")
+        if not self.has_slice_index:
+            if normalized_count != SINGLETON_AXIS_LENGTH:
+                raise ValueError(
+                    "SparseIJVLabelRows without a slice_index column must have "
+                    "slice_count=1."
+                )
+            object.__setattr__(self, "slice_count", normalized_count)
+            return
+        observed_count = self._observed_runtime_slice_count(array)
+        if normalized_count < observed_count:
+            raise ValueError(
+                "SparseIJVLabelRows.slice_count cannot be smaller than the "
+                f"encoded slice indexes: {normalized_count} < {observed_count}."
+            )
+        object.__setattr__(self, "slice_count", normalized_count)
 
     @property
     def columns(self) -> Mapping[str, Any]:
@@ -2513,7 +2868,8 @@ class SparseIJVLabelRows(ColumnarRows):
         return cls(
             _np.vstack(arrays).astype(_np.int32, copy=False)
             if arrays
-            else _np.zeros((0, 4), dtype=_np.int32)
+            else _np.zeros((0, 4), dtype=_np.int32),
+            slice_count=len(values),
         )
 
     def as_yx_label_array(self) -> Any:
@@ -2573,10 +2929,17 @@ class SparseIJVLabelRows(ColumnarRows):
         """Return the encoded runtime-slice count, including empty stacks."""
         if not self.has_slice_index:
             return SINGLETON_AXIS_LENGTH
+        if self.slice_count is not None:
+            return self.slice_count
         slice_indices = self.slice_indices()
         if not slice_indices:
             return 0
         return max(slice_indices) + SINGLETON_AXIS_LENGTH
+
+    def _observed_runtime_slice_count(self, array: np.ndarray) -> int:
+        if not array.size:
+            return 0
+        return int(np.max(array[:, self.slice_column])) + SINGLETON_AXIS_LENGTH
 
     def _dense_spatial_shape(
         self,
@@ -2935,6 +3298,21 @@ class RuntimeValue:
     @property
     def kind(self) -> ArtifactKind:
         return self.key.kind
+
+    def materialization_payload(self):
+        """Return the payload that materializers should receive for this value."""
+        if self.kind is not ArtifactKind.IMAGE:
+            return self.data
+        payload_metadata = image_payload_metadata(self.data)
+        metadata = payload_metadata.with_source_provenance(
+            self.schema.source_provenance.with_missing_from(
+                payload_metadata.source_provenance
+            )
+        )
+        return metadata.payload_with(
+            image_payload_data(self.data),
+            image_payload_mask(self.data),
+        )
 
 
 @dataclass(slots=True, kw_only=True)
@@ -3478,6 +3856,32 @@ class ObjectLabelDataRuntimeSliceStackContract(
             return None
         return strategy.label_data_runtime_slice_count(labels)
 
+    @classmethod
+    def runtime_slice(
+        cls,
+        labels: ObjectLabelData,
+        *,
+        plane_axis: RuntimePlaneAxis,
+        slice_index: int,
+        slice_count: int,
+    ) -> ObjectLabelData | None:
+        """Return one runtime slice when label data declares the runtime axis."""
+        if plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            return None
+        strategy = cls.for_nominal_value(labels)
+        if strategy is None:
+            return None
+        if not strategy.label_data_preserves_runtime_slice_stack(
+            labels,
+            slice_count=slice_count,
+        ):
+            return None
+        return strategy.label_data_runtime_slice(
+            labels,
+            slice_index=slice_index,
+            slice_count=slice_count,
+        )
+
     @abstractmethod
     def label_data_preserves_runtime_slice_stack(
         self,
@@ -3494,6 +3898,16 @@ class ObjectLabelDataRuntimeSliceStackContract(
     ) -> int | None:
         """Return the runtime-slice count carried by this label representation."""
 
+    @abstractmethod
+    def label_data_runtime_slice(
+        self,
+        labels: ObjectLabelData,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> ObjectLabelData:
+        """Return one projected runtime slice from this label representation."""
+
 
 class SparseIJVLabelRowsRuntimeSliceStackContract(
     ObjectLabelDataRuntimeSliceStackContract
@@ -3508,13 +3922,14 @@ class SparseIJVLabelRowsRuntimeSliceStackContract(
         *,
         slice_count: int,
     ) -> bool:
-        del slice_count
         if not isinstance(labels, SparseIJVLabelRows):
             raise TypeError(
                 "SparseIJVLabelRowsRuntimeSliceStackContract requires "
                 f"SparseIJVLabelRows, got {type(labels).__name__}."
             )
-        return labels.has_slice_index
+        return labels.has_slice_index and (
+            labels.label_data_runtime_slice_count() == int(slice_count)
+        )
 
     def label_data_runtime_slice_count(
         self,
@@ -3528,6 +3943,21 @@ class SparseIJVLabelRowsRuntimeSliceStackContract(
         if not labels.has_slice_index:
             return None
         return labels.label_data_runtime_slice_count()
+
+    def label_data_runtime_slice(
+        self,
+        labels: ObjectLabelData,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> ObjectLabelData:
+        if not isinstance(labels, SparseIJVLabelRows):
+            raise TypeError(
+                "SparseIJVLabelRowsRuntimeSliceStackContract requires "
+                f"SparseIJVLabelRows, got {type(labels).__name__}."
+            )
+        del slice_count
+        return labels.slice(slice_index)
 
 
 class DenseArrayLabelRuntimeSliceStackContract(
@@ -3562,6 +3992,21 @@ class DenseArrayLabelRuntimeSliceStackContract(
         if labels.ndim < 3:
             return None
         return int(labels.shape[0])
+
+    def label_data_runtime_slice(
+        self,
+        labels: ObjectLabelData,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> ObjectLabelData:
+        if not isinstance(labels, np.ndarray):
+            raise TypeError(
+                "DenseArrayLabelRuntimeSliceStackContract requires ndarray, "
+                f"got {type(labels).__name__}."
+            )
+        del slice_count
+        return labels[slice_index]
 
 
 class ObjectLabelDataPlaneStackContract(
@@ -4624,6 +5069,15 @@ class SourceImageObjectLabelBuildRequest:
 
     def construction_context(self) -> ObjectLabelValueConstructionContext:
         metadata = self.metadata
+        source_spatial_domain = metadata.object_label_source_spatial_domain()
+        source_shape_yx = image_payload_spatial_shape_yx(self.image)
+        if source_shape_yx is not None:
+            source_spatial_domain = source_spatial_domain.with_missing_from(
+                SourceSpatialDomain(
+                    origin_yx=(0, 0),
+                    source_shape_yx=source_shape_yx,
+                )
+            )
         semantics = SourceImageObjectLabelDomainRequest(
             image=self.image,
             labels=self.labels,
@@ -4649,7 +5103,7 @@ class SourceImageObjectLabelBuildRequest:
         return ObjectLabelValueConstructionContext(
             domain=label_domain,
             source_provenance=metadata.source_provenance,
-            source_spatial_domain=metadata.object_label_source_spatial_domain(),
+            source_spatial_domain=source_spatial_domain,
             plane_axis=plane_axis,
         )
 
@@ -5813,6 +6267,29 @@ class RuntimeSliceAlignedPayloadNormalizationStrategy(
     ) -> SliceAlignedPayloadT | None:
         """Return an aggregate payload, or ``None`` when slices are not owned."""
 
+    def runtime_value(
+        self,
+        value: RuntimeSliceAlignedValueSet[SliceAlignedValueT],
+        output_plan: ArtifactOutputPlan,
+        *,
+        axis_id: str,
+    ) -> RuntimeValue | None:
+        """Return the aggregate runtime value with kind-owned schema metadata."""
+        payload = self.normalize(value)
+        if payload is None:
+            return None
+        return RuntimeValue.from_output_plan(
+            output_plan,
+            payload,
+            axis_id=axis_id,
+            schema=self.runtime_schema(payload),
+        )
+
+    def runtime_schema(self, payload: SliceAlignedPayloadT) -> RuntimeValueSchema:
+        """Return schema for an aggregate payload produced by this strategy."""
+        del payload
+        return RuntimeValueSchema(kind=self.kind)
+
 
 class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
     RuntimeSliceAlignedPayloadNormalizationStrategy[ObjectLabelValue, ObjectLabelValue]
@@ -5837,6 +6314,16 @@ class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
             slices,
             detect_memory_type(slices[0].labels),
             force_plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        )
+
+    def runtime_schema(self, payload: ObjectLabelValue) -> RuntimeValueSchema:
+        """Preserve aggregate object-label provenance in the stored schema."""
+        return RuntimeValueSchema(
+            kind=ArtifactKind.OBJECT_LABELS,
+            label_representation=payload.representation,
+            label_variants=ObjectLabelVariantData.from_value(payload).present_variants,
+            object_name=None,
+            source_provenance=payload.source_provenance,
         )
 
 
@@ -6799,14 +7286,13 @@ def _normalize_slice_aligned_value(
         output_plan
     )
     if payload_strategy is not None:
-        payload = payload_strategy.normalize(value)
-        if payload is not None:
-            return RuntimeValue.from_output_plan(
-                output_plan,
-                payload,
-                axis_id=axis_id,
-                schema=RuntimeValueSchema(kind=output_plan.kind),
-            )
+        runtime_value = payload_strategy.runtime_value(
+            value,
+            output_plan,
+            axis_id=axis_id,
+        )
+        if runtime_value is not None:
+            return runtime_value
 
     slice_values: list[Any] = []
     slice_schemas: list[RuntimeValueSchema] = []

@@ -9,6 +9,7 @@ from weakref import WeakKeyDictionary
 
 from polystore.streaming.identity import StreamProducerIdentity
 
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.path_pattern_matching import PathPatternTemplateMatcher
@@ -61,6 +62,14 @@ class ProducedOutputSemantics(FunctionOutputIdentity):
     producer_identity: StreamProducerIdentity
     output_path: str
     relative_output_path: str
+
+    @property
+    def streams_as_image_payload(self) -> bool:
+        """Return whether direct viewer image streaming owns this output."""
+        artifact_kind = self.producer_identity.artifact_kind
+        if artifact_kind is None:
+            return True
+        return ArtifactKind(artifact_kind) is ArtifactKind.IMAGE
 
     @classmethod
     def from_output(

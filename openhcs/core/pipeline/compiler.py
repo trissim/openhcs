@@ -559,9 +559,12 @@ class PipelineCompiler:
                 snapshot.variable_components,
                 snapshot.name,
             )
+            current_plan.step_source_identity_stack_axes = (
+                snapshot.source_identity_stack_axis_values
+            )
             current_plan.source_identity_stack_axes = (
                 session.source_identity_stack_axes
-                | snapshot.source_identity_stack_axis_values
+                | current_plan.step_source_identity_stack_axes
             )
             current_plan.input_source = snapshot.input_source
             current_plan.sequential_processing = snapshot.processing_config

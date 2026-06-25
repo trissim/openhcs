@@ -31,7 +31,10 @@ from openhcs.core.runtime_adapters import (
     RuntimeAdapterSpec,
     runtime_adapter_spec_from_callable,
 )
-from openhcs.core.runtime_batch_contracts import RuntimeBatchCallableFamily
+from openhcs.core.runtime_batch_contracts import (
+    RuntimeBatchCallableFamily,
+    RuntimeBatchExecutionDomain,
+)
 
 
 ArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
@@ -178,7 +181,7 @@ class CallableContract(ArtifactPlanKeySelector):
     function_name: str
     module_name: str | None
     metadata: CallableMetadata = dataclasses.field(default_factory=CallableMetadata)
-    runtime_batch_executors: Mapping[object, object] | None = None
+    runtime_batch_executors: Mapping[RuntimeBatchExecutionDomain, Callable] | None = None
 
     def __reduce__(
         self,
@@ -310,8 +313,8 @@ class CallableContract(ArtifactPlanKeySelector):
 
     def runtime_batch_executor(
         self,
-        domain: Any,
-    ) -> Any | None:
+        domain: RuntimeBatchExecutionDomain,
+    ) -> Callable | None:
         """Return the declared runtime batch executor for one domain."""
         if self.runtime_batch_executors is None:
             return None

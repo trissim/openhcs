@@ -192,6 +192,11 @@ class MeasurementRowsAxisProjection(
 
     @property
     @abstractmethod
+    def row_count(self) -> int:
+        """Return the number of measurement rows represented by this projection."""
+
+    @property
+    @abstractmethod
     def columns(self) -> Mapping[str, Sequence[Any]]:
         """Return column vectors when the underlying rows are columnar."""
 
@@ -286,6 +291,10 @@ class SequenceMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
     @property
     def has_rows(self) -> bool:
         return bool(self.rows)
+
+    @property
+    def row_count(self) -> int:
+        return len(self.rows)
 
     @property
     def columns(self) -> Mapping[str, Sequence[Any]]:
@@ -437,19 +446,42 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
 
     value_type = ColumnarRows
     rows: ColumnarRows
+    _columns: Mapping[str, Sequence[Any]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        columns = self.rows.columns
+        if isinstance(columns, Mapping) and all(
+            isinstance(column, str)
+            for column in columns
+        ):
+            object.__setattr__(self, "_columns", columns)
+            return
+        object.__setattr__(
+            self,
+            "_columns",
+            MappingProxyType(
+                {
+                    str(column): columnar_row_values(self.rows, str(column))
+                    for column in self.rows.columns
+                }
+            ),
+        )
 
     @property
     def has_rows(self) -> bool:
         return self.rows.row_count() > 0
 
     @property
+    def row_count(self) -> int:
+        return self.rows.row_count()
+
+    @property
     def columns(self) -> Mapping[str, Sequence[Any]]:
-        return MappingProxyType(
-            {
-                str(column): columnar_row_values(self.rows, str(column))
-                for column in self.rows.columns
-            }
-        )
+        return self._columns
 
     @property
     def has_axis(self) -> bool:
@@ -852,6 +884,14 @@ class ConcatenatedColumnarRows(MeasurementColumnarRowsView):
 
     def __len__(self) -> int:
         return sum(columnar_row_count(row_batch) for row_batch in self.row_batches)
+
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        """Return whether every concatenated batch covers its declared domain."""
+        return bool(self.row_batches) and all(
+            row_batch.covers_declared_object_measurement_domain
+            for row_batch in self.row_batches
+        )
 
     def row_mappings(self) -> tuple[Mapping[str, object], ...]:
         return tuple(

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 import logging
 import time
-from typing import Any
 
 import numpy as np
 import scipy.ndimage
@@ -55,6 +54,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     CellProfilerBackendAuthority,
+)
+from openhcs.processing.backends.cellprofiler.label_geometry import (
+    feret_diameters_from_labels,
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.granularity import (
@@ -213,7 +215,8 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         )
         phase_started_at = time.perf_counter()
         fast_region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-            labels
+            labels,
+            include_advanced=self.calculate_advanced,
         )
         runtime_profiler.log(
             "moss_region_properties",
@@ -222,7 +225,9 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
             objects=int(fast_region_props.label.size),
         )
         phase_started_at = time.perf_counter()
-        props = fast_region_props.as_regionprops_table_subset()
+        props = fast_region_props.as_regionprops_table_subset(
+            include_advanced=self.calculate_advanced,
+        )
         runtime_profiler.log(
             "moss_regionprops_table_subset",
             time.perf_counter() - phase_started_at,
@@ -575,7 +580,7 @@ def measure_object_size_shape(
     shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     slice_index: int | None = None,
-) -> tuple[np.ndarray, list[dict[str, Any]]]:
+) -> tuple[np.ndarray, list[dict[str, object]]]:
     """Measure CellProfiler AreaShape rows for labeled objects."""
     total_started_at = time.perf_counter()
     label_array = object_label_dense_array(labels, dtype=np.int32)
@@ -622,6 +627,13 @@ def prepare_measure_object_size_shape() -> None:
     labels = np.zeros((32, 32), dtype=np.int32)
     labels[8:24, 8:24] = 1
     measure_object_size_shape.__wrapped__(image, labels)
+    image_3d = np.linspace(0.0, 1.0, 8 * 16 * 16, dtype=np.float32).reshape(
+        (8, 16, 16)
+    )
+    labels_3d = np.zeros(image_3d.shape, dtype=np.int32)
+    labels_3d[1:4, 3:9, 3:9] = 1
+    labels_3d[4:7, 7:14, 7:14] = 2
+    measure_object_size_shape.__wrapped__(image_3d, labels_3d)
 
 
 measure_object_size_shape.__openhcs_prepare__ = prepare_measure_object_size_shape
@@ -937,181 +949,6 @@ class ShapeMeasurementBackendStrategy(
         """Return Zernike polynomial values at normalized coordinates."""
 
 
-class CentrosomeNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy):
-    """Centrosome-backed NumPy shape measurements."""
-
-    backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.CENTROSOME,
-    )
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = False
-
-    def form_factor_values(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> np.ndarray:
-        import centrosome.cpmorphology
-
-        labels_array = np.asarray(labels, dtype=np.int32)
-        label_ids_array = np.asarray(label_ids, dtype=np.int32)
-        if label_ids_array.size == 0:
-            return np.array([], dtype=float)
-        areas = np.bincount(
-            labels_array.ravel(),
-            minlength=int(label_ids_array[-1]) + 1,
-        )[label_ids_array]
-        perimeters = np.asarray(
-            centrosome.cpmorphology.calculate_perimeters(
-                labels_array,
-                label_ids_array,
-            ),
-            dtype=float,
-        )
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return 4.0 * np.pi * areas.astype(float) / perimeters**2
-
-    def radius_features(
-        self,
-        object_images: np.ndarray,
-        object_count: int,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        import centrosome.cpmorphology
-
-        max_radius = np.zeros(object_count)
-        mean_radius = np.zeros(object_count)
-        median_radius = np.zeros(object_count)
-        for index, object_image in enumerate(object_images):
-            mini_image = np.pad(object_image, 1)
-            distances = scipy.ndimage.distance_transform_edt(mini_image)
-            max_radius[index] = _first_scalar(
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.maximum(distances, mini_image)
-                )
-            )
-            mean_radius[index] = _first_scalar(
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.mean(distances, mini_image)
-                )
-            )
-            median_radius[index] = _first_scalar(
-                centrosome.cpmorphology.median_of_labels(
-                    distances,
-                    mini_image.astype("int"),
-                    [1],
-                )
-            )
-        return max_radius, mean_radius, median_radius
-
-    def radius_features_from_labels(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return radius features via one full-image distance-to-edge pass."""
-        distances = self.distance_to_edge(labels)
-        return _radius_features_from_distance_image_numba(
-            np.asarray(labels, dtype=np.int32),
-            np.asarray(distances, dtype=np.float64),
-            np.asarray(label_ids, dtype=np.int32),
-        )
-
-    def feret_diameters(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        import centrosome.cpmorphology
-
-        chulls, chull_counts = centrosome.cpmorphology.convex_hull(
-            labels,
-            label_ids,
-        )
-        return centrosome.cpmorphology.feret_diameter(
-            chulls,
-            chull_counts,
-            label_ids,
-        )
-
-    def minimum_enclosing_circle(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        import centrosome.cpmorphology
-
-        return centrosome.cpmorphology.minimum_enclosing_circle(
-            np.asarray(labels, dtype=np.int32),
-            np.asarray(label_ids, dtype=np.int32),
-        )
-
-    def distance_to_edge(self, labels: np.ndarray) -> np.ndarray:
-        import centrosome.cpmorphology
-
-        return centrosome.cpmorphology.distance_to_edge(
-            np.asarray(labels, dtype=np.int32)
-        )
-
-    def maximum_position_of_labels(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        import centrosome.cpmorphology
-
-        centers_i, centers_j = centrosome.cpmorphology.maximum_position_of_labels(
-            np.asarray(image),
-            np.asarray(labels, dtype=np.int32),
-            np.asarray(label_ids, dtype=np.int32),
-        )
-        return centers_i, centers_j
-
-    def color_labels(self, labels: np.ndarray) -> np.ndarray:
-        import centrosome.cpmorphology
-
-        return centrosome.cpmorphology.color_labels(
-            np.asarray(labels, dtype=np.int32)
-        )
-
-    def propagate(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        mask: np.ndarray,
-        regularization_factor: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        import centrosome.propagate
-
-        return centrosome.propagate.propagate(
-            np.asarray(image, dtype=np.float64),
-            np.asarray(labels, dtype=np.int32),
-            np.asarray(mask, dtype=bool),
-            regularization_factor,
-        )
-
-    def zernike_indexes(self, max_order: int) -> np.ndarray:
-        import centrosome.zernike
-
-        return centrosome.zernike.get_zernike_indexes(int(max_order))
-
-    def construct_zernike_polynomials(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        zernike_indexes: np.ndarray,
-    ) -> np.ndarray:
-        import centrosome.zernike
-
-        return centrosome.zernike.construct_zernike_polynomials(
-            x,
-            y,
-            zernike_indexes,
-        )
-
-
 class NumbaShapeMeasurementMixin(ABC):
     """Shared Numba-backed shape leaves reused by concrete backend policies."""
 
@@ -1120,10 +957,23 @@ class NumbaShapeMeasurementMixin(ABC):
         image = np.arange(9, dtype=np.float64).reshape((3, 3))
         label_ids = np.array([1, 2], dtype=np.int32)
         object_images = np.stack((labels == 1, labels == 2), axis=0)
+        self.form_factor_values(labels, label_ids)
         self.radius_features(object_images, 2)
         self.radius_features_from_labels(labels, label_ids)
+        self.feret_diameters(labels, label_ids)
         self.distance_to_edge(labels)
         self.maximum_position_of_labels(image, labels, label_ids)
+        self.color_labels(labels)
+
+    def form_factor_values(
+        self,
+        labels: np.ndarray,
+        label_ids: np.ndarray,
+    ) -> np.ndarray:
+        return _form_factor_values_from_labels(
+            np.asarray(labels, dtype=np.int32),
+            np.asarray(label_ids, dtype=np.int32),
+        )
 
     def radius_features(
         self,
@@ -1164,18 +1014,31 @@ class NumbaShapeMeasurementMixin(ABC):
         labels: np.ndarray,
         label_ids: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        return _maximum_position_of_labels_numba(
-            np.ascontiguousarray(np.asarray(image, dtype=np.float64)),
-            np.ascontiguousarray(np.asarray(labels, dtype=np.int32)),
-            np.ascontiguousarray(np.asarray(label_ids, dtype=np.int32)),
+        return _maximum_position_of_labels_scipy_select(
+            np.asarray(image),
+            np.asarray(labels, dtype=np.int32),
+            np.asarray(label_ids, dtype=np.int32),
         )
+
+    def color_labels(self, labels: np.ndarray) -> np.ndarray:
+        return _color_labels_numpy(np.asarray(labels, dtype=np.int32))
+
+    def feret_diameters(
+        self,
+        labels: np.ndarray,
+        label_ids: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return feret_diameters_from_labels(labels, label_ids)
+
+    def zernike_indexes(self, max_order: int) -> np.ndarray:
+        return _zernike_indexes_numpy(int(max_order))
 
 
 class LegacyFastNumpyShapeMeasurementBackendStrategy(
     NumbaShapeMeasurementMixin,
-    CentrosomeNumpyShapeMeasurementBackendStrategy
+    ShapeMeasurementBackendStrategy,
 ):
-    """Mixed legacy-fast shape backend with explicit centrosome exact leaves."""
+    """Default NumPy shape backend with native leaves and explicit gaps."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
@@ -1187,6 +1050,39 @@ class LegacyFastNumpyShapeMeasurementBackendStrategy(
 
     def prepare_backend(self) -> None:
         self.prepare_numba_shape_leaves()
+
+    def minimum_enclosing_circle(
+        self,
+        labels: np.ndarray,
+        label_ids: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        raise NotImplementedError(
+            "Default shape measurements do not provide minimum enclosing circles. "
+            "Use the dedicated Zernike backend."
+        )
+
+    def propagate(
+        self,
+        image: np.ndarray,
+        labels: np.ndarray,
+        mask: np.ndarray,
+        regularization_factor: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        raise NotImplementedError(
+            "Default shape measurements do not own propagation. Use "
+            "SecondaryPropagationBackendStrategy."
+        )
+
+    def construct_zernike_polynomials(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        zernike_indexes: np.ndarray,
+    ) -> np.ndarray:
+        raise NotImplementedError(
+            "Default shape measurements do not own Zernike polynomial "
+            "construction. Use the Zernike backend family."
+        )
 
 
 class NumbaNumpyShapeMeasurementBackendStrategy(
@@ -1216,26 +1112,6 @@ class NumbaNumpyShapeMeasurementBackendStrategy(
         self.surface_areas_3d(labels_3d, regions_3d)
         self.zernike_indexes(2)
 
-    def form_factor_values(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> np.ndarray:
-        raise NotImplementedError(
-            "Pure Numba form-factor values are not implemented yet. "
-            "Select LEGACY_FAST or CENTROSOME explicitly for this leaf."
-        )
-
-    def feret_diameters(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        raise NotImplementedError(
-            "Pure Numba Feret diameters are not implemented yet. "
-            "Select LEGACY_FAST or CENTROSOME explicitly for this leaf."
-        )
-
     def minimum_enclosing_circle(
         self,
         labels: np.ndarray,
@@ -1243,13 +1119,7 @@ class NumbaNumpyShapeMeasurementBackendStrategy(
     ) -> tuple[np.ndarray, np.ndarray]:
         raise NotImplementedError(
             "Pure Numba minimum enclosing circle is not implemented yet. "
-            "Select LEGACY_FAST or CENTROSOME explicitly for this leaf."
-        )
-
-    def color_labels(self, labels: np.ndarray) -> np.ndarray:
-        raise NotImplementedError(
-            "Pure Numba label coloring is not implemented yet. "
-            "Select LEGACY_FAST or CENTROSOME explicitly for this leaf."
+            "Use the Zernike backend family."
         )
 
     def propagate(
@@ -1261,11 +1131,8 @@ class NumbaNumpyShapeMeasurementBackendStrategy(
     ) -> tuple[np.ndarray, np.ndarray]:
         raise NotImplementedError(
             "Pure Numba propagation is not implemented yet. "
-            "Select CENTROSOME explicitly for this leaf."
+            "Use SecondaryPropagationBackendStrategy."
         )
-
-    def zernike_indexes(self, max_order: int) -> np.ndarray:
-        return _zernike_indexes_numpy(int(max_order))
 
     def construct_zernike_polynomials(
         self,
@@ -1614,6 +1481,41 @@ def _zernike_indexes_numpy(max_order: int) -> np.ndarray:
             if (n_value - m_value) % 2 == 0:
                 indexes.append((n_value, m_value))
     return np.asarray(indexes, dtype=np.int64)
+
+
+def _form_factor_values_from_labels(
+    labels: np.ndarray,
+    label_ids: np.ndarray,
+) -> np.ndarray:
+    label_array = np.asarray(labels, dtype=np.int32)
+    label_id_array = np.asarray(label_ids, dtype=np.int32)
+    if label_id_array.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if label_array.ndim != 2:
+        raise ValueError(
+            f"Form-factor values require 2-D labels, got {label_array.ndim}D."
+        )
+
+    properties = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        label_array,
+        include_advanced=False,
+    )
+    max_label = int(max(label_id_array.max(initial=0), properties.label.max(initial=0)))
+    areas_by_label = np.zeros(max_label + 1, dtype=np.float64)
+    perimeters_by_label = np.zeros(max_label + 1, dtype=np.float64)
+    if properties.label.size:
+        areas_by_label[properties.label.astype(np.int32, copy=False)] = properties.area
+        perimeters_by_label[properties.label.astype(np.int32, copy=False)] = (
+            properties.perimeter
+        )
+
+    valid = (label_id_array > 0) & (label_id_array <= max_label)
+    areas = np.zeros(label_id_array.size, dtype=np.float64)
+    perimeters = np.zeros(label_id_array.size, dtype=np.float64)
+    areas[valid] = areas_by_label[label_id_array[valid]]
+    perimeters[valid] = perimeters_by_label[label_id_array[valid]]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return 4.0 * np.pi * areas / perimeters**2
 
 
 def _first_scalar(value: object) -> float:
@@ -2008,8 +1910,176 @@ def _maximum_position_of_labels_numba(
     return centers_i, centers_j
 
 
+def _maximum_position_of_labels_scipy_select(
+    image: np.ndarray,
+    labels: np.ndarray,
+    label_ids: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return maximum positions using scipy.ndimage's labeled tie semantics."""
+    image_array = np.asarray(image)
+    label_array = np.asarray(labels, dtype=np.int32)
+    label_id_array = np.asarray(label_ids, dtype=np.int32)
+    if image_array.shape != label_array.shape:
+        raise ValueError(
+            "Maximum-position image and labels must have matching shapes; got "
+            f"{image_array.shape!r} and {label_array.shape!r}."
+        )
+    if image_array.ndim != 2:
+        raise ValueError(
+            f"Maximum-position labels must be 2D, got {image_array.ndim}D."
+        )
+    if label_id_array.size == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    max_label = int(np.max(label_array)) if label_array.size else 0
+    positions = np.arange(image_array.size, dtype=np.int64)
+    order = np.asarray(image_array).ravel().argsort()
+    sorted_labels = label_array.ravel()[order]
+    sorted_positions = positions[order]
+    max_positions = np.zeros(max_label + 2, dtype=np.int64)
+    valid_sorted = (sorted_labels >= 0) & (sorted_labels <= max_label)
+    valid_sorted_labels = sorted_labels[valid_sorted]
+    valid_sorted_positions = sorted_positions[valid_sorted]
+    max_positions[valid_sorted_labels] = valid_sorted_positions
+    safe_label_ids = np.zeros(label_id_array.shape, dtype=np.int64)
+    present = (label_id_array >= 0) & (label_id_array <= max_label)
+    safe_label_ids[present] = label_id_array[present]
+    selected_positions = max_positions[safe_label_ids]
+    centers_i = (selected_positions // image_array.shape[1]).astype(np.float64)
+    centers_j = (selected_positions % image_array.shape[1]).astype(np.float64)
+    return centers_i, centers_j
+
+
+def _color_labels_numpy(labels: np.ndarray) -> np.ndarray:
+    """Return CP-compatible non-touching label color classes."""
+    label_array = np.asarray(labels, dtype=np.int32)
+    if label_array.size == 0:
+        return np.zeros(label_array.shape, dtype=int)
+    neighbor_counts, neighbor_starts, neighbor_labels = _find_label_neighbors_numpy(
+        label_array,
+    )
+    colors_by_label = np.zeros(neighbor_counts.size + 1, dtype=int)
+    if neighbor_counts.size == 0:
+        return colors_by_label[label_array]
+
+    isolated_labels = neighbor_counts == 0
+    if np.all(isolated_labels):
+        return (label_array != 0).astype(int)
+    colors_by_label[1:][isolated_labels] = 1
+
+    connected_counts = neighbor_counts[~isolated_labels]
+    connected_starts = neighbor_starts[~isolated_labels]
+    connected_labels = np.flatnonzero(~isolated_labels) + 1
+    sort_order = np.lexsort((-connected_counts,))
+    connected_counts = connected_counts[sort_order]
+    connected_starts = connected_starts[sort_order]
+    connected_labels = connected_labels[sort_order]
+
+    for index in range(connected_counts.size):
+        start = int(connected_starts[index])
+        end = start + int(connected_counts[index])
+        neighbor_colors = np.unique(colors_by_label[neighbor_labels[start:end]])
+        if neighbor_colors.size == 1 and neighbor_colors[0] == 0:
+            colors_by_label[connected_labels[index]] = 1
+            continue
+        if neighbor_colors[0] == 0:
+            neighbor_colors = neighbor_colors[1:]
+        expected_colors = np.arange(1, neighbor_colors.size + 1)
+        missing_color_positions = expected_colors[neighbor_colors != expected_colors]
+        if missing_color_positions.size:
+            colors_by_label[connected_labels[index]] = int(missing_color_positions[0])
+        else:
+            colors_by_label[connected_labels[index]] = int(neighbor_colors.size + 1)
+    return colors_by_label[label_array]
+
+
+def _find_label_neighbors_numpy(
+    labels: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return per-label 8-connected neighboring label lists."""
+    label_array = np.asarray(labels, dtype=np.int32)
+    if label_array.size == 0:
+        return (
+            np.zeros(0, dtype=int),
+            np.zeros(0, dtype=int),
+            np.zeros(0, dtype=int),
+        )
+    max_label = int(np.max(label_array))
+    padded = np.zeros(np.asarray(label_array.shape) + 2, dtype=np.int32)
+    padded[1:-1, 1:-1] = label_array
+    adjacent_y, adjacent_x = np.argwhere(_adjacent_label_mask_numpy(padded)).transpose()
+    if adjacent_y.size == 0:
+        return (
+            np.zeros(max_label, dtype=int),
+            np.zeros(max_label, dtype=int),
+            np.zeros(0, dtype=int),
+        )
+
+    repeated_labels = np.hstack([padded[adjacent_y, adjacent_x]] * 8)
+    neighbor_values = np.zeros(adjacent_y.size * 8, dtype=int)
+    offset = 0
+    for dy, dx in (
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, -1),
+        (0, 1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+    ):
+        neighbor_values[offset : offset + adjacent_y.size] = padded[
+            adjacent_y + dy,
+            adjacent_x + dx,
+        ]
+        offset += adjacent_y.size
+
+    sort_order = np.lexsort((neighbor_values, repeated_labels))
+    repeated_labels = repeated_labels[sort_order]
+    neighbor_values = neighbor_values[sort_order]
+    first_occurrence = np.ones(repeated_labels.size, dtype=bool)
+    first_occurrence[1:] = (repeated_labels[1:] != repeated_labels[:-1]) | (
+        neighbor_values[1:] != neighbor_values[:-1]
+    )
+    repeated_labels = repeated_labels[first_occurrence]
+    neighbor_values = neighbor_values[first_occurrence]
+    keep = (repeated_labels != neighbor_values) & (neighbor_values != 0)
+    repeated_labels = repeated_labels[keep]
+    neighbor_values = neighbor_values[keep]
+
+    neighbor_counts = np.bincount(repeated_labels, minlength=max_label + 1)[1:].astype(
+        int,
+    )
+    neighbor_starts = np.cumsum(neighbor_counts)
+    if neighbor_starts.size:
+        neighbor_starts[1:] = neighbor_starts[:-1]
+        neighbor_starts[0] = 0
+    return neighbor_counts, neighbor_starts, neighbor_values
+
+
+def _adjacent_label_mask_numpy(labels: np.ndarray) -> np.ndarray:
+    """Return foreground labels touching a different 8-connected label."""
+    label_array = labels.astype(np.int32, copy=False)
+    high = int(label_array.max()) + 1 if label_array.size else 1
+    image_with_high_background = label_array.copy()
+    image_with_high_background[label_array == 0] = high
+    footprint = np.ones((3, 3), dtype=bool)
+    minimum_label = scipy.ndimage.minimum_filter(
+        image_with_high_background,
+        footprint=footprint,
+        mode="constant",
+        cval=high,
+    )
+    maximum_label = scipy.ndimage.maximum_filter(
+        label_array,
+        footprint=footprint,
+        mode="constant",
+        cval=0,
+    )
+    return (minimum_label != maximum_label) & (label_array > 0)
+
+
 __all__ = [
-    "CentrosomeNumpyShapeMeasurementBackendStrategy",
     "LegacyFastNumpyShapeMeasurementBackendStrategy",
     "NumbaNumpyShapeMeasurementBackendStrategy",
     "ShapeMeasurementBackendStrategy",

@@ -13,6 +13,7 @@ from openhcs.processing.materialization.core import MaterializationSpec
 from openhcs.processing.materialization.options import (
     CsvOptions,
     JsonOptions,
+    MaterializedFilenameIdentity,
     ROIOptions,
     TextOptions,
     TiffStackOptions,
@@ -256,6 +257,9 @@ def tiff_stack(
     slice_pattern: str = "_slice_{index:03d}.tif",
     summary_suffix: str = "_summary.txt",
     empty_summary: str = "No images generated (empty data)\n",
+    filename_identity: MaterializedFilenameIdentity = (
+        MaterializedFilenameIdentity.SOURCE_IDENTITY
+    ),
     allowed_backends: Optional[List[str]] = None,
 ) -> MaterializationSpec:
     return MaterializationSpec(
@@ -266,6 +270,7 @@ def tiff_stack(
             slice_pattern=slice_pattern,
             summary_suffix=summary_suffix,
             empty_summary=empty_summary,
+            filename_identity=filename_identity,
         ),
         allowed_backends=allowed_backends,
     )

@@ -799,7 +799,8 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert "SourceBindingMatchPlan(" in generated.code
     assert "SourceBindingOrigin.PIPELINE_START" in generated.code
     assert "input_source=InputSource.PIPELINE_START" in generated.code
-    assert "variable_components=[VariableComponents.CHANNEL]" in generated.code
+    assert "variable_components=[]" in generated.code
+    assert "group_by=GroupBy.SITE" in generated.code
     assert "group_by=GroupBy.SITE" in generated.code
 
 
@@ -1296,6 +1297,57 @@ def test_straightenworms_declares_step_source_identity_axis_for_source_images():
     )
 
 
+def test_correct_illumination_all_scope_allows_single_channel_schema():
+    setup_modules = [
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "1"),
+                ("Select the rule criteria", 'and (file does contain "")'),
+                ("Name to assign these images", "OrigGreen"),
+                ("Select the image type", "Grayscale image"),
+                ("Image set matching method", "Order"),
+            ],
+        ),
+    ]
+    processing_modules = [
+        _module_with_records(
+            5,
+            "CorrectIlluminationCalculate",
+            [
+                ("Select the input image", "OrigGreen"),
+                ("Name the output image", "IllumGreen"),
+                (
+                    "Calculate function for each image individually, or based on all images?",
+                    "All: First cycle",
+                ),
+            ],
+        ),
+    ]
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="single_channel_illumination_all_scope",
+        source_cppipe=Path("source.cppipe"),
+        modules=processing_modules,
+        skipped_modules=setup_modules,
+    )
+
+    step_match = re.search(
+        r'name="CorrectIlluminationCalculate",\n(?P<body>.*?)\n    \),',
+        generated.code,
+        re.S,
+    )
+
+    assert step_match is not None
+    assert "variable_components=[VariableComponents.SITE]" in step_match.group("body")
+    assert "group_by=GroupBy.NONE" in step_match.group("body")
+    assert (
+        "source_identity_stack_axes=(AllComponents.SITE,)"
+        in step_match.group("body")
+    )
+
+
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
     names_and_types_module = _module_with_records(
         2,
@@ -1427,7 +1479,7 @@ def test_compile_image_schema_supports_order_based_matching():
     assert schema.assignment_for_alias("Actin") is not None
 
 
-def test_ordered_image_set_axis_is_not_source_alias_axis():
+def test_ordered_image_set_axis_separates_sample_and_alias_axes():
     names_and_types_module = _module_with_records(
         3,
         "NamesAndTypes",
@@ -1448,8 +1500,9 @@ def test_ordered_image_set_axis_is_not_source_alias_axis():
     schema = compile_image_schema([names_and_types_module])
     semantics = SourceProcessingComponentSemantics(schema)
 
-    assert semantics.image_set_components() == (AllComponents.SITE,)
-    assert semantics.source_alias_components() == ()
+    assert semantics.sample_group_component() is AllComponents.SITE
+    assert semantics.image_set_components() == (AllComponents.CHANNEL,)
+    assert semantics.source_alias_components() == (AllComponents.CHANNEL,)
 
 
 def test_cellprofiler_image_schema_resolves_legacy_orig_color_aliases():

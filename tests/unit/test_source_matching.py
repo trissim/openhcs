@@ -8,6 +8,7 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.source_matching import (
     ORIGINAL_SOURCE_METADATA_FIELD,
+    source_component_metadata_raw_value,
     source_component_metadata_values,
     merge_source_metadata,
     source_component_metadata_value,
@@ -85,6 +86,13 @@ def test_source_component_metadata_value_matches_alias_fields():
 
     assert source_component_metadata_value(metadata, AllComponents.CHANNEL) == "01"
     assert source_component_metadata_value(metadata, AllComponents.SITE) == "A"
+
+
+def test_source_component_metadata_value_prefers_canonical_field_over_alias():
+    metadata = {"ChannelNumber": "00", "channel": "3"}
+
+    assert source_component_metadata_value(metadata, AllComponents.CHANNEL) == "3"
+    assert source_component_metadata_raw_value(metadata, AllComponents.CHANNEL) == "3"
 
 
 def test_source_component_metadata_values_include_native_and_alias_fields():

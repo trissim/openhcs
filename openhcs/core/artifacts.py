@@ -183,6 +183,13 @@ CROP_MASK_ARTIFACT_SIDECAR = ArtifactSidecarSpec(ArtifactSidecarRole.CROP_MASK)
 class ArtifactMaterializationPayload(ABC):
     """Nominal marker for rich artifact materialization metadata."""
 
+    def uses_source_identity_filename_for_artifact_kind(
+        self,
+        artifact_kind: ArtifactKind,
+    ) -> bool:
+        """Return whether this materialization names files by source identity."""
+        return artifact_kind.materialization_uses_source_identity_filename
+
 
 @dataclass(frozen=True)
 class ArtifactSpec:
@@ -203,6 +210,14 @@ class ArtifactSpec:
                 self.required,
                 self.sidecar_role,
             )
+        )
+
+    def materialization_uses_source_identity_filename(self) -> bool:
+        """Return whether this spec's materialized files require source identity."""
+        if self.materialization is None:
+            return self.kind.materialization_uses_source_identity_filename
+        return self.materialization.uses_source_identity_filename_for_artifact_kind(
+            self.kind
         )
 
 
@@ -415,6 +430,14 @@ class ArtifactOutputPlan(ArtifactPlan):
     producer_step_index: int | str | None = None
     producer_step_scope_id: str | None = None
     producer_step_name: str | None = None
+
+    def materialization_uses_source_identity_filename(self) -> bool:
+        """Return whether this output's materialized files require source identity."""
+        if self.materialization is None:
+            return self.kind.materialization_uses_source_identity_filename
+        return self.materialization.uses_source_identity_filename_for_artifact_kind(
+            self.kind
+        )
 
     def for_group(self, group_key: str | None) -> "ArtifactOutputPlan":
         """Return a group-specific output plan with the finalized path."""

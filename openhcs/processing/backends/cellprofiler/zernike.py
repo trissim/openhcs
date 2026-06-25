@@ -39,6 +39,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
 )
+from openhcs.processing.backends.cellprofiler.label_geometry import (
+    minimum_enclosing_circle_from_labels,
+)
 from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
     ObjectMeasurementColumnarRows,
 )
@@ -370,161 +373,8 @@ class ShapeZernikeBackendStrategy(
         return zernike_numbers or (), tuple(rows)
 
 
-class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
-    """Centrosome-backed NumPy implementation matching legacy semantics."""
-
-    backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.CENTROSOME,
-    )
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = False
-
-    def shape_zernike_moments(
-        self,
-        labels: np.ndarray,
-        measured_labels: np.ndarray,
-        *,
-        max_order: int,
-    ) -> ShapeZernikeMoments:
-        import centrosome.zernike
-
-        labels_array = np.asarray(labels)
-        measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
-        zernike_numbers_array = centrosome.zernike.get_zernike_indexes(
-            int(max_order) + 1
-        )
-        zernike_numbers = tuple(
-            (int(n), int(m))
-            for n, m in zernike_numbers_array
-        )
-        zernike_values = centrosome.zernike.zernike(
-            zernike_numbers_array,
-            labels_array,
-            measured_label_ids,
-        )
-        return zernike_numbers, np.asarray(zernike_values)
-
-    def intensity_zernike_moments(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        measured_labels: np.ndarray,
-        *,
-        max_order: int,
-    ) -> IntensityZernikeMoments:
-        import centrosome.cpmorphology
-        import centrosome.zernike
-        from scipy import ndimage as ndi
-
-        image_array = np.asarray(image, dtype=np.float64)
-        labels_array = np.asarray(labels, dtype=np.int32)
-        object_ids = np.asarray(measured_labels, dtype=np.int32)
-        zernike_numbers_array = centrosome.zernike.get_zernike_indexes(
-            int(max_order) + 1
-        )
-        zernike_numbers = tuple((int(n), int(m)) for n, m in zernike_numbers_array)
-        if object_ids.size == 0 or zernike_numbers_array.size == 0:
-            return (
-                zernike_numbers,
-                np.zeros((object_ids.size, len(zernike_numbers)), dtype=float),
-                np.zeros((object_ids.size, len(zernike_numbers)), dtype=float),
-            )
-
-        centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
-            labels_array,
-            object_ids,
-        )
-        y_coords, x_coords = np.nonzero(labels_array > 0)
-        if y_coords.size:
-            label_values = labels_array[y_coords, x_coords]
-            label_to_row = np.zeros(int(labels_array.max(initial=0)) + 1, dtype=np.int32)
-            valid_object_ids = object_ids[
-                (object_ids > 0) & (object_ids < label_to_row.size)
-            ]
-            label_to_row[valid_object_ids] = np.arange(
-                1,
-                valid_object_ids.size + 1,
-                dtype=np.int32,
-            )
-            label_rows = label_to_row[label_values]
-            valid = (
-                (label_rows > 0)
-                & np.isfinite(radii[label_rows - 1])
-                & (radii[label_rows - 1] > 0)
-            )
-            y_coords = y_coords[valid]
-            x_coords = x_coords[valid]
-            label_values = label_values[valid]
-            label_rows = label_rows[valid]
-        else:
-            label_rows = np.zeros(0, dtype=np.int32)
-
-        if not y_coords.size:
-            return (
-                zernike_numbers,
-                np.full((object_ids.size, len(zernike_numbers)), np.nan),
-                np.full((object_ids.size, len(zernike_numbers)), np.nan),
-            )
-
-        label_indexes = label_rows - 1
-        yx = (
-            np.column_stack((y_coords, x_coords)).astype(np.float64)
-            - centers[label_indexes]
-        ) / radii[label_indexes, np.newaxis]
-        polynomials = centrosome.zernike.construct_zernike_polynomials(
-            yx[:, 1],
-            yx[:, 0],
-            zernike_numbers_array,
-        )
-        areas = ndi.sum(
-            np.ones(label_values.shape, dtype=np.int32),
-            labels=label_values,
-            index=object_ids,
-        )
-        pixel_values = image_array[y_coords, x_coords]
-        magnitudes = np.empty((object_ids.size, zernike_numbers_array.shape[0]))
-        phases = np.empty((object_ids.size, zernike_numbers_array.shape[0]))
-        for zernike_index in range(zernike_numbers_array.shape[0]):
-            real_sum = ndi.sum(
-                pixel_values * polynomials[:, zernike_index].real,
-                labels=label_values,
-                index=object_ids,
-            )
-            imag_sum = ndi.sum(
-                pixel_values * polynomials[:, zernike_index].imag,
-                labels=label_values,
-                index=object_ids,
-            )
-            with np.errstate(divide="ignore", invalid="ignore"):
-                magnitudes[:, zernike_index] = (
-                    np.sqrt(real_sum * real_sum + imag_sum * imag_sum) / areas
-                )
-            phases[:, zernike_index] = np.arctan2(real_sum, imag_sum)
-        ZernikeIntensityDebugTrace.from_intensity_measurement(
-            backend_provider=self.backend_provider,
-            image=image_array,
-            labels=labels_array,
-            max_order=max_order,
-            object_ids=object_ids,
-            zernike_numbers=zernike_numbers,
-            centers=centers,
-            radii=radii,
-            areas=areas,
-            y_coords=y_coords,
-            x_coords=x_coords,
-            label_values=label_values,
-            pixel_values=pixel_values,
-            magnitudes=magnitudes,
-            phases=phases,
-        ).write_if_enabled()
-
-        return zernike_numbers, magnitudes, phases
-
-
 class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
-    """Mixed legacy-fast Zernike backend with explicit centrosome exact leaves."""
+    """Default native Zernike backend using shared label geometry."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
@@ -540,8 +390,6 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         object_ids: np.ndarray,
     ) -> _ZernikeLabelGeometry:
         """Return exact cached label geometry shared by shape/intensity Zernikes."""
-        import centrosome.cpmorphology
-
         total_started_at = time.perf_counter()
         labels_array = np.ascontiguousarray(labels, dtype=np.int32)
         object_ids_array = np.ascontiguousarray(object_ids, dtype=np.int32)
@@ -563,7 +411,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             return entry
 
         circle_started_at = time.perf_counter()
-        centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
+        centers, radii = minimum_enclosing_circle_from_labels(
             labels_array,
             object_ids_array,
         )
@@ -998,7 +846,6 @@ def _zernike_indexes_array(max_order: int) -> np.ndarray:
 
 
 __all__ = public_names_from_objects(
-    CentrosomeNumpyShapeZernikeBackendStrategy,
     IntensityZernikeMeasurementRowsRequest,
     LegacyFastNumpyShapeZernikeBackendStrategy,
     ShapeZernikeBackendStrategy,

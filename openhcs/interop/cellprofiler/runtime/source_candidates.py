@@ -81,6 +81,10 @@ CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE: ProcessLocalBoundedCache[
     tuple[Hashable, ...],
     SourceOrderCacheValue,
 ] = ProcessLocalBoundedCache(max_entries=512)
+SOURCE_CANDIDATE_MATCH_PROCESS_CACHE: ProcessLocalBoundedCache[
+    tuple[Hashable, ...],
+    tuple["ParsedSourceCandidate", ...],
+] = ProcessLocalBoundedCache(max_entries=4096)
 
 @dataclass(frozen=True, slots=True)
 class SourceCandidateRuntimeCache:
@@ -96,7 +100,11 @@ class SourceCandidateRuntimeCache:
         if cached is not None:
             return cached
         started_at = time.perf_counter()
-        candidates = _parse_source_candidates(self.file_paths, self.adapter)
+        candidates = _parse_source_candidates(
+            self.file_paths,
+            self.adapter,
+            universe=self.universe(),
+        )
         cache.store_value(cache_key, candidates)
         AdapterProfileLog.source_candidates(
             SourceCandidateProfileEvent(
@@ -113,20 +121,47 @@ class SourceCandidateRuntimeCache:
         parser = RequireProcessingContextBoundaryPolicy(
             self.adapter
         ).context.microscope_handler.parser
+        universe = self.universe()
         candidate_path_identity = tuple(
             path_resolution.cache_identity(context)
             for file_path in self.file_paths
-            for path_resolution in SourceCandidatePathProjection(
-                file_path,
-                self.adapter,
-            ).paths()
+            for path_resolution in universe.path_projection(file_path).paths()
         )
         return (
             tuple(self.file_paths),
-            context.step_input_dir,
             candidate_path_identity,
             self.adapter.source_binding_plan.metadata_rules,
             parser.semantic_identity(),
+        )
+
+    def universe(self) -> "SourceCandidateRuntimeUniverse":
+        """Return the path-projection universe for this source-candidate request."""
+        return SourceCandidateRuntimeUniverse(
+            adapter=self.adapter,
+            file_paths=self.file_paths,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceCandidateRuntimeUniverse:
+    """Path-projection semantics for one parsed source-candidate universe."""
+
+    adapter: "CellProfilerRuntimeAdapter"
+    file_paths: tuple[str, ...]
+
+    @property
+    def projects_virtual_paths(self) -> bool:
+        context = self.adapter.source_binding_context
+        return not (
+            bool(context.pipeline_input_files)
+            and self.file_paths == context.pipeline_input_files
+        )
+
+    def path_projection(self, file_path: str) -> "SourceCandidatePathProjection":
+        return SourceCandidatePathProjection(
+            file_path,
+            self.adapter,
+            include_virtual_paths=self.projects_virtual_paths,
         )
 
 @dataclass(frozen=True, slots=True)
@@ -427,7 +462,7 @@ class CellProfilerImageNumberResolver:
             "image_number_map",
             SourceCandidateRuntimeCache(self.adapter, pipeline_paths).cache_key(),
             axis_scope.component_values,
-            _source_order_identity(self.adapter),
+            cellprofiler_source_order_identity(self.adapter),
         )
         cache = CELLPROFILER_IMAGE_NUMBER_MAP_PROCESS_CACHE
         cached = cache.cached_value(cache_key)
@@ -733,8 +768,31 @@ class SourceBindingMatchCandidateUniverse:
             or not self.target_candidates
         ):
             return self.target_candidates
-        return SourceCandidateMatcher.match_plan_candidates(
-            self.match_plan_request(alias, match_scope)
+        cache_key = self.image_set_candidates_cache_key(alias, match_scope)
+        cache = SOURCE_CANDIDATE_MATCH_PROCESS_CACHE
+        cached = cache.cached_value(cache_key)
+        if cached is not None:
+            return cached
+        return cache.store_value(
+            cache_key,
+            SourceCandidateMatcher.match_plan_candidates(
+                self.match_plan_request(alias, match_scope)
+            ),
+        )
+
+    def image_set_candidates_cache_key(
+        self,
+        alias: str,
+        match_scope: "SourceBindingImageSetMatchScope",
+    ) -> tuple[Hashable, ...]:
+        """Return the semantic identity for one image-set match-plan request."""
+        return (
+            "source_image_set_match",
+            alias,
+            match_scope,
+            tuple(candidate.candidate_identity for candidate in self.step_input_candidates),
+            tuple(candidate.candidate_identity for candidate in self.target_candidates),
+            tuple(candidate.candidate_identity for candidate in self.pipeline_candidates),
         )
 
     def axis_scoped_candidates(
@@ -965,6 +1023,60 @@ class SourceMetadataMatchConstraint:
         )
 
 @dataclass(frozen=True, slots=True)
+class SourceCandidateSelectorResolution:
+    """Effective source selector semantics for matching and cache identity."""
+
+    component_selectors: Mapping[str, str]
+    inherited_component_items: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def from_binding(
+        cls,
+        binding: NamedSourceBinding,
+        inherit_components: Mapping[str, str],
+    ) -> "SourceCandidateSelectorResolution":
+        component_selectors = MappingProxyType({
+            selector.component.value: selector.value
+            for selector in binding.selector.components
+        })
+        explicit_metadata_fields = {
+            selector.field for selector in binding.selector.metadata
+        }
+        explicit_selector_components = {
+            component
+            for field_name in (
+                *component_selectors,
+                *explicit_metadata_fields,
+            )
+            for component in (source_metadata_component(field_name),)
+            if component is not None
+        }
+        effective_components = (
+            {
+                **{
+                    name: value
+                    for name, value in inherit_components.items()
+                    if name not in component_selectors
+                    and name not in explicit_metadata_fields
+                    and source_metadata_component(name)
+                    not in explicit_selector_components
+                },
+                **component_selectors,
+            }
+            if binding.selector.inherit_current_scope
+            else component_selectors
+        )
+        inherited_component_items = tuple(sorted(
+            (str(name), str(value))
+            for name, value in effective_components.items()
+            if name not in component_selectors
+        ))
+        return cls(
+            component_selectors=component_selectors,
+            inherited_component_items=inherited_component_items,
+        )
+
+@dataclass(frozen=True, slots=True)
 class ParsedSourceCandidateIdentity:
     """Identity for collapsing aliases without collapsing distinct source files."""
 
@@ -1026,6 +1138,8 @@ class MatchedSourceCandidatesRequest(SourceBindingRequestBase):
 def _parse_source_candidates(
     file_paths: tuple[str, ...],
     adapter: CellProfilerRuntimeAdapter,
+    *,
+    universe: SourceCandidateRuntimeUniverse,
 ) -> tuple[ParsedSourceCandidate, ...]:
     parser = RequireProcessingContextBoundaryPolicy(
         adapter
@@ -1033,10 +1147,7 @@ def _parse_source_candidates(
     metadata_resolver = SourceCandidateMetadataResolver(adapter=adapter, parser=parser)
     candidates: list[ParsedSourceCandidate] = []
     for file_path in file_paths:
-        for path_resolution in SourceCandidatePathProjection(
-            file_path,
-            adapter,
-        ).paths():
+        for path_resolution in universe.path_projection(file_path).paths():
             metadata = metadata_resolver.metadata(path_resolution)
             candidates.append(
                 ParsedSourceCandidate(
@@ -1060,6 +1171,7 @@ class SourceCandidatePathProjection:
 
     source_path: str
     adapter: CellProfilerRuntimeAdapter
+    include_virtual_paths: bool = True
 
     def paths(self) -> tuple["SourceCandidatePathResolution", ...]:
         context = self.adapter.source_binding_context
@@ -1094,6 +1206,8 @@ class SourceCandidatePathProjection:
         )
 
     def explicit_virtual_paths(self) -> tuple[str, ...]:
+        if not self.include_virtual_paths:
+            return ()
         context = self.adapter.source_binding_context
         return tuple(
             key
@@ -1105,6 +1219,8 @@ class SourceCandidatePathProjection:
         )
 
     def virtual_paths_for_resolved_path(self, resolved_path: str) -> tuple[str, ...]:
+        if not self.include_virtual_paths:
+            return ()
         context = self.adapter.source_binding_context
         return context.virtual_source_paths_by_identity.get(
             source_path_identity_key(resolved_path),
@@ -1329,15 +1445,11 @@ def _candidate_path_metadata_cache_key(
         parser.semantic_identity(),
     )
 
-def _source_order_identity(
+def cellprofiler_source_order_identity(
     adapter: CellProfilerRuntimeAdapter,
 ) -> tuple[Hashable, ...]:
-    context = adapter.source_binding_context
-    return (
-        context.step_input_dir,
-        tuple(sorted(context.step_input_source_paths.items())),
-        tuple(sorted(context.virtual_source_paths_by_identity.items())),
-    )
+    """Return source-order identity fields shared by CP image-number caches."""
+    return adapter.source_binding_context.source_order_identity
 
 def _merge_missing_source_metadata(
     metadata: MutableParsedSourceMetadata,
@@ -1405,54 +1517,50 @@ class SourceCandidateMatcher:
         binding: NamedSourceBinding,
         inherit_components: Mapping[str, str],
     ) -> tuple[ParsedSourceCandidate, ...]:
+        selector_resolution = SourceCandidateSelectorResolution.from_binding(
+            binding,
+            inherit_components,
+        )
+        cache_key = cls.match_candidates_cache_key(
+            candidates=candidates,
+            binding=binding,
+            selector_resolution=selector_resolution,
+        )
+        cache = SOURCE_CANDIDATE_MATCH_PROCESS_CACHE
+        cached = cache.cached_value(cache_key)
+        if cached is not None:
+            return cached
         cls.validate_metadata_selectors(candidates, binding)
-        component_selectors = {
-            selector.component.value: selector.value
-            for selector in binding.selector.components
-        }
-        explicit_metadata_fields = {
-            selector.field for selector in binding.selector.metadata
-        }
-        explicit_selector_components = {
-            component
-            for field_name in (
-                *component_selectors,
-                *explicit_metadata_fields,
-            )
-            for component in (source_metadata_component(field_name),)
-            if component is not None
-        }
-        effective_components = (
-            {
-                **{
-                    name: value
-                    for name, value in inherit_components.items()
-                    if name not in component_selectors
-                    and name not in explicit_metadata_fields
-                    and source_metadata_component(name)
-                    not in explicit_selector_components
-                },
-                **component_selectors,
-            }
-            if binding.selector.inherit_current_scope
-            else component_selectors
-        )
-        inherited_component_items = tuple(
-            (name, value)
-            for name, value in effective_components.items()
-            if name not in component_selectors
-        )
 
-        return tuple(
+        matched = tuple(
             candidate
             for candidate in candidates
-            if cls.matches_explicit_components(candidate, component_selectors)
+            if cls.matches_explicit_components(
+                candidate,
+                selector_resolution.component_selectors,
+            )
             and cls.matches_inherited_scope(
                 candidate,
-                inherited_component_items,
+                selector_resolution.inherited_component_items,
             )
             and cls.matches_metadata(candidate, binding.selector.metadata)
             and source_filters_match(candidate.resolved_path, binding.selector.filters)
+        )
+        return cache.store_value(cache_key, matched)
+
+    @staticmethod
+    def match_candidates_cache_key(
+        *,
+        candidates: tuple[ParsedSourceCandidate, ...],
+        binding: NamedSourceBinding,
+        selector_resolution: SourceCandidateSelectorResolution,
+    ) -> tuple[Hashable, ...]:
+        """Return the semantic identity for one selector/candidate match."""
+        return (
+            "source_candidate_match",
+            tuple(candidate.candidate_identity for candidate in candidates),
+            binding.selector,
+            selector_resolution.inherited_component_items,
         )
 
     @staticmethod

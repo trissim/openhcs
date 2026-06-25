@@ -74,21 +74,29 @@ def watershed_connected_components(labels_like: np.ndarray) -> np.ndarray:
 
 def watershed_regionprops_stats(labels: np.ndarray) -> tuple[int, float]:
     """Return object count and mean area over skimage-supported spatial labels."""
-    from skimage.measure import regionprops
-
     labels_array = np.asarray(labels)
     spatial_rank = min(labels_array.ndim, 3)
     if labels_array.ndim == spatial_rank:
-        props = regionprops(labels_array)
+        areas = watershed_label_areas(labels_array)
     else:
-        props = []
         leading_shape = labels_array.shape[: labels_array.ndim - spatial_rank]
+        area_batches: list[np.ndarray] = []
         for leading_index in np.ndindex(leading_shape):
-            props.extend(regionprops(labels_array[leading_index]))
-    return (
-        len(props),
-        float(np.mean([prop.area for prop in props]) if props else 0.0),
-    )
+            batch_areas = watershed_label_areas(labels_array[leading_index])
+            if batch_areas.size:
+                area_batches.append(batch_areas)
+        areas = np.concatenate(area_batches) if area_batches else np.asarray(())
+    return int(areas.size), float(np.mean(areas) if areas.size else 0.0)
+
+
+def watershed_label_areas(labels: np.ndarray) -> np.ndarray:
+    """Return positive-label voxel counts for one spatial label domain."""
+    positive_labels = np.asarray(labels).reshape(-1)
+    positive_labels = positive_labels[positive_labels > 0]
+    if positive_labels.size == 0:
+        return np.asarray((), dtype=np.int64)
+    counts = np.bincount(positive_labels.astype(np.int64, copy=False))
+    return counts[counts > 0]
 
 
 def watershed_profile_enabled() -> bool:
@@ -1323,6 +1331,40 @@ def watershed(
     )
 
     return image, stats, labels.astype(np.int32)
+
+
+def prepare_watershed() -> None:
+    """Warm the CellProfiler watershed module paths before timed execution."""
+    image = np.zeros((8, 16, 16), dtype=np.float32)
+    image[2:6, 4:12, 4:12] = 1.0
+
+    markers = np.zeros(image.shape, dtype=np.int32)
+    markers[3, 6, 6] = 1
+    markers[4, 10, 10] = 2
+
+    watershed.__wrapped__(
+        image,
+        use_advanced_settings=False,
+        watershed_method=WatershedMethod.DISTANCE,
+        declump_method=WatershedDeclumpMethod.SHAPE,
+        footprint=4,
+        downsample=2,
+        runtime_family=WatershedRuntimeFamily.CELLPROFILER4,
+    )
+    watershed.__wrapped__(
+        image,
+        markers=markers,
+        mask=image,
+        use_advanced_settings=False,
+        watershed_method=WatershedMethod.MARKERS,
+        declump_method=WatershedDeclumpMethod.SHAPE,
+        footprint=4,
+        downsample=1,
+        runtime_family=WatershedRuntimeFamily.CELLPROFILER4,
+    )
+
+
+watershed.__openhcs_prepare__ = prepare_watershed
 
 
 @dataclass(frozen=True, slots=True)

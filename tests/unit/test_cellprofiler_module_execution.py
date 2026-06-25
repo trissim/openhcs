@@ -61,7 +61,7 @@ from openhcs.core.measurement_image_alignment import (
     MeasurementLabelSourceAlignmentStrategy,
     PreparedMeasurementObjectLabels,
 )
-from openhcs.constants.constants import MemoryType
+from openhcs.constants.constants import AllComponents, MemoryType
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
@@ -94,6 +94,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     AlignMeasurementFeature,
     CalculateMathInputPolicy,
     CellProfilerFunctionContractExecutor,
+    CellProfilerFunctionOutputAggregationContract,
     CellProfilerRuntimeCallable,
     CellProfilerPrimaryImageInputPolicy,
     CellProfilerInvocationExecutionModePolicy,
@@ -154,7 +155,9 @@ from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import
     DefaultObjectMeasurementRowPolicy,
 )
 from openhcs.interop.cellprofiler.runtime.output_contexts import (
+    CellProfilerImageOutputContextStrategy,
     CellProfilerImageOutputSourcePayloadPolicy,
+    DefaultImageOutputSourcePayloadPolicy,
     CellProfilerObjectLabelOutputContextStrategy,
 )
 from openhcs.interop.cellprofiler.runtime.output_value_resolution import (
@@ -255,6 +258,7 @@ from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     RelationshipSemantics,
     RuntimePlaneAxis,
+    RuntimePlaneProjection,
     RuntimePlaneAxisProjector,
     SpatialGridOrdering,
     object_label_parent_child_payload,
@@ -640,6 +644,73 @@ def test_special_object_label_input_preserves_runtime_slice_domain() -> None:
     )
 
 
+def test_special_object_label_payload_preserves_full_stack_context() -> None:
+    class ScopeAwareObjectAdapter(_RuntimeSliceObjectAdapter):
+        def __init__(self, objects: ObjectLabelSet) -> None:
+            super().__init__(objects=objects, slice_index=1)
+            object.__setattr__(self, "current_image_requests", [])
+
+        def get_objects(self, name: str, current_image=None) -> ObjectLabelSet:
+            del name
+            self.current_image_requests.append(current_image)
+            if current_image is None:
+                return self.objects
+            return ObjectLabelSet(
+                name=self.objects.name,
+                labels=self.objects.labels[0],
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PAYLOAD),
+                source_image_provenance_planes=SourceImageProvenancePlanes(),
+                source_component_metadata={
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "3",
+                    "z_index": "1",
+                },
+            )
+
+    labels = np.zeros((2, 4, 4), dtype=np.int32)
+    labels[0, 1:3, 1:3] = 1
+    labels[1, 0:2, 0:2] = 2
+    objects = ObjectLabelSet(
+        name="Nuclei",
+        labels=labels,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/plate/A01_s001_w3_z001_t001.tif",
+                "/plate/A01_s001_w3_z002_t001.tif",
+            ),
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "3", "z_index": "1"},
+                {"well": "A01", "site": "1", "channel": "3", "z_index": "2"},
+            ),
+        ),
+    )
+    adapter = ScopeAwareObjectAdapter(objects)
+    spec = ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS)
+    request = SpecialInputBindingRequest(
+        module_name="ConvertObjectsToImage",
+        adapter=adapter,
+        kwargs={},
+        current_image=np.zeros((4, 4), dtype=np.float32),
+        binding_scope=EMPTY_RUNTIME_ARTIFACT_BINDING_SCOPE,
+        parameter_names=("labels",),
+        special_input_specs=(spec,),
+        runtime_inputs=(spec,),
+    )
+
+    payload = request.object_label_payload(spec)
+
+    assert payload is objects
+    assert adapter.current_image_requests == [None]
+    assert payload.source_image_provenance_planes.paths == (
+        "/plate/A01_s001_w3_z001_t001.tif",
+        "/plate/A01_s001_w3_z002_t001.tif",
+    )
+
+
 def test_measurement_object_label_preparation_projects_runtime_slice_payload() -> None:
     labels = np.array(
         [
@@ -972,6 +1043,61 @@ def test_default_image_output_source_uses_unique_primary_image_input() -> None:
     metadata = image_payload_metadata(source_payload)
     assert metadata.source_component_metadata == {"channel": "5"}
     assert metadata.source_image_names == ("OrigMito",)
+
+
+def test_stack_image_output_with_scalar_metadata_uses_primary_source_payload() -> None:
+    current_payload = RuntimeImagePayloadContext(
+        np.zeros((2, 5, 6), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("frame0.tif", "frame1.tif"),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1", "timepoint": "0"},
+                    {"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+                ),
+            ),
+            source_image_names=("OrigColor",),
+        ),
+    ).payload()
+    output_value = RuntimeImagePayloadContext(
+        np.zeros((2, 5, 6), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            },
+        ),
+    ).payload()
+    runtime = _FakeCellProfilerRuntime(
+        {"OrigColor": _FakeRuntimeImage(current_payload)}
+    )
+    request = _cellprofiler_output_record_request(
+        module_name="ImageStackOutputModule",
+        inputs=(ArtifactSpec("OrigColor", ArtifactKind.IMAGE),),
+        outputs=(ArtifactSpec("AdjacentImage", ArtifactKind.IMAGE),),
+        adapter=runtime,
+        spec=ArtifactSpec("AdjacentImage", ArtifactKind.IMAGE),
+        output_value=output_value,
+        output_values={},
+        source=CellProfilerImageRequest(
+            payload=current_payload,
+            source_image_name="OrigColor",
+            image_count=2,
+            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        ),
+        current_image=current_payload,
+        func=lambda image: image,
+        call_kwargs={},
+    )
+
+    source_payload = CellProfilerImageOutputSourcePayloadPolicy.for_module(
+        request.module_name
+    ).source_payload(request)
+
+    assert source_payload is current_payload
 
 
 def test_single_image_output_main_flow_uses_recorded_primary_image_source() -> None:
@@ -1622,6 +1748,9 @@ class _FakeCellProfilerRuntime(RuntimePlaneAxisProjector):
     def source_axis_metadata_scope(self) -> SourceAxisMetadataScope:
         return SourceAxisMetadataScope(())
 
+    def runtime_slice_plane_index(self) -> int | None:
+        return None
+
     def source_candidates(
         self,
         file_paths: tuple[str, ...],
@@ -1687,6 +1816,16 @@ class _FakeCellProfilerRuntime(RuntimePlaneAxisProjector):
     def resolve_source_image(self, alias: str, current_image: object) -> np.ndarray:
         del current_image
         return self.images[alias].data
+
+    def image_payload_for_current_runtime_plane(
+        self,
+        payload: ObjectLabelValue,
+        *,
+        current_image: ObjectLabelValue | None,
+        match_current_source: bool = False,
+    ) -> ObjectLabelValue:
+        del current_image, match_current_source
+        return payload
 
     def get_image(
         self,
@@ -1779,6 +1918,183 @@ class _FakeCellProfilerRuntime(RuntimePlaneAxisProjector):
 
     def add_relationship(self, name: str, **kwargs: object) -> None:
         self.relationships.append((name, kwargs))
+
+
+def test_default_image_output_source_policy_maps_output_ordinal_to_primary_input() -> None:
+    red_payload = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/A01_s001_w1_z001_t001.png",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "z_index": "1",
+                "timepoint": "1",
+                "extension": ".png",
+            },
+        ),
+    ).payload()
+    green_payload = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/A01_s001_w2_z001_t001.png",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "2",
+                "z_index": "1",
+                "timepoint": "1",
+                "extension": ".png",
+            },
+        ),
+    ).payload()
+    output_value = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "z_index": "1",
+                "timepoint": "1",
+                "extension": ".png",
+            },
+        ),
+    ).payload()
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigRed": _FakeRuntimeImage(red_payload),
+            "OrigGreen": _FakeRuntimeImage(green_payload),
+        }
+    )
+
+    request = _cellprofiler_output_record_request(
+        module_name="Align",
+        inputs=(
+            ArtifactSpec("OrigRed", ArtifactKind.IMAGE),
+            ArtifactSpec("OrigGreen", ArtifactKind.IMAGE),
+        ),
+        outputs=(
+            ArtifactSpec("AlignedRed", ArtifactKind.IMAGE),
+            ArtifactSpec("AlignedGreen", ArtifactKind.IMAGE),
+        ),
+        spec=ArtifactSpec("AlignedGreen", ArtifactKind.IMAGE),
+        adapter=runtime,
+        output_value=output_value,
+        output_values={},
+        source_image_payload=np.stack(
+            (
+                image_payload_data(red_payload),
+                image_payload_data(green_payload),
+            )
+        ),
+        func=lambda image: image,
+        call_kwargs={},
+        current_image=object(),
+    )
+
+    source_payload = DefaultImageOutputSourcePayloadPolicy().source_payload(request)
+    assert source_payload is green_payload
+    recorded = CellProfilerImageOutputContextStrategy.for_value(
+        output_value
+    ).runtime_image_value(output_value, source_payload)
+    recorded_metadata = image_payload_metadata(recorded)
+    assert recorded_metadata.source_path == "/plate/A01_s001_w2_z001_t001.png"
+    assert recorded_metadata.source_component_metadata == {
+        "well": "A01",
+        "site": "1",
+        "channel": "2",
+        "z_index": "1",
+        "timepoint": "1",
+        "extension": ".png",
+    }
+
+
+def test_object_label_output_source_uses_unique_primary_image_input() -> None:
+    stain1_payload = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/A01_s001_w1_z001_t001.png",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "z_index": "1",
+                "timepoint": "1",
+            },
+            source_image_names=("Stain1",),
+        ),
+    ).payload()
+    stain2_payload = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/A01_s001_w2_z001_t001.png",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "2",
+                "z_index": "1",
+                "timepoint": "1",
+            },
+            source_image_names=("Stain2",),
+        ),
+    ).payload()
+    source_bundle = ImagePayloadBundleContext.from_payloads(
+        (stain1_payload, stain2_payload)
+    ).compose()
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "Stain1": _FakeRuntimeImage(
+                stain1_payload,
+                source_image_name="Stain1",
+            ),
+        }
+    )
+    request = _cellprofiler_output_record_request(
+        module_name="IdentifyPrimaryObjects",
+        inputs=(ArtifactSpec("Stain1", ArtifactKind.IMAGE),),
+        runtime_artifact_inputs=(ArtifactSpec("Stain1", ArtifactKind.IMAGE),),
+        outputs=(ArtifactSpec("Objects1", ArtifactKind.OBJECT_LABELS),),
+        spec=ArtifactSpec("Objects1", ArtifactKind.OBJECT_LABELS),
+        adapter=runtime,
+        output_value=np.ones((4, 5), dtype=np.int32),
+        output_values={},
+        source=CellProfilerImageRequest(
+            payload=source_bundle,
+            source_image_name="Stain1__Stain2",
+            source_aliases=("Stain1", "Stain2"),
+            image_count=2,
+            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        ),
+        current_image=source_bundle,
+        func=lambda image: image,
+        call_kwargs={},
+    )
+
+    source_payload = request.object_label_output_source_payload()
+    recorded = CellProfilerObjectLabelOutputContextStrategy.for_value(
+        request.output_value
+    ).runtime_object_label_value(
+        request.output_value,
+        source_payload,
+        request.object_label_output_domain_scope(),
+    )
+    recorded_metadata = image_payload_metadata(recorded)
+
+    assert recorded_metadata.source_path == "/plate/A01_s001_w1_z001_t001.png"
+    assert recorded_metadata.source_component_metadata == {
+        "well": "A01",
+        "site": "1",
+        "channel": "1",
+        "z_index": "1",
+        "timepoint": "1",
+    }
+    assert recorded_metadata.source_image_provenance_planes.paths == ()
 
 
 class _CalculateMathObjectOperandAdapter(_FakeCellProfilerRuntime):
@@ -1931,6 +2247,23 @@ def test_combine_objects_broadcasts_2d_labels_to_runtime_slice_domain() -> None:
     np.testing.assert_array_equal(primary, stacked_labels)
     np.testing.assert_array_equal(secondary[0], plane_labels)
     np.testing.assert_array_equal(secondary[1], plane_labels)
+
+    bound = CombineObjectsInputPolicy().bind(request)
+    assert (
+        bound["_cellprofiler_execution_mode_override"]
+        is ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+    )
+    aligned = bound["_cellprofiler_image_override"]
+    assert isinstance(aligned, AlignedImageStack)
+    assert len(aligned.slices) == 2
+    np.testing.assert_array_equal(
+        aligned.slices[0],
+        np.stack((stacked_labels[0], plane_labels), axis=0),
+    )
+    np.testing.assert_array_equal(
+        aligned.slices[1],
+        np.stack((stacked_labels[1], plane_labels), axis=0),
+    )
 
 
 def test_single_object_input_policy_preserves_native_label_contract() -> None:
@@ -2213,6 +2546,51 @@ def test_cellprofiler_contract_executor_projects_flat_grouped_label_kwargs():
     assert calls == [((4, 5), (4, 5), 0) for _ in range(3)]
     assert result_image.shape == image.shape
     np.testing.assert_array_equal(result_labels, expected_labels)
+
+
+def test_cellprofiler_contract_executor_preserves_non_flow_main_carrier_outputs():
+    calls: list[tuple[int, ...]] = []
+
+    def combine_like(image: np.ndarray):
+        slice_index = len(calls)
+        calls.append(image.shape)
+        main_carrier = np.arange(5, dtype=np.float32) + slice_index
+        measurements = [{"slice": slice_index}]
+        labels = np.full(image.shape, slice_index + 1, dtype=np.int32)
+        return main_carrier, measurements, labels
+
+    combine_like.__processing_contract__ = ProcessingContract.PURE_2D
+    stack = np.zeros((2, 5, 6), dtype=np.float32)
+
+    main_carrier, measurements, labels = CellProfilerFunctionContractExecutor().execute(
+        combine_like,
+        stack,
+        {},
+        output_aggregation_contract=(
+            CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
+                False
+            )
+        ),
+    )
+
+    assert calls == [(5, 6), (5, 6)]
+    assert isinstance(main_carrier, RuntimeSliceAlignedValues)
+    assert main_carrier.slice_count == 2
+    np.testing.assert_array_equal(
+        main_carrier.value_for_slice(0),
+        np.arange(5, dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        main_carrier.value_for_slice(1),
+        np.arange(5, dtype=np.float32) + 1,
+    )
+    assert measurements == [
+        {"slice": 0, "slice_index": 0},
+        {"slice": 1, "slice_index": 1},
+    ]
+    assert labels.shape == stack.shape
+    np.testing.assert_array_equal(labels[0], np.ones((5, 6), dtype=np.int32))
+    np.testing.assert_array_equal(labels[1], np.full((5, 6), 2, dtype=np.int32))
 
 
 def test_cellprofiler_contract_executor_stacks_singleton_plane_outputs():
@@ -3286,7 +3664,11 @@ def test_per_object_measurement_batch_preserves_measurement_image_major_order() 
 
 def test_object_intensity_measurement_image_batch_preserves_request_labels() -> None:
     from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+    from openhcs.processing.backends.cellprofiler._backend import (
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    )
     from openhcs.processing.backends.cellprofiler.intensity import (
+        measure_object_intensity,
         measure_object_intensity_measurement_image_batch,
     )
 
@@ -3305,6 +3687,7 @@ def test_object_intensity_measurement_image_batch_preserves_request_labels() -> 
     requests = (
         RuntimeBatchInvocationRequest(
             source_image_name="ImageA",
+            func=measure_object_intensity,
             image=np.asarray([[1.0]], dtype=np.float32),
             kwargs={"labels": labels_a},
             batch_index=0,
@@ -3313,6 +3696,7 @@ def test_object_intensity_measurement_image_batch_preserves_request_labels() -> 
         ),
         RuntimeBatchInvocationRequest(
             source_image_name="ImageB",
+            func=measure_object_intensity,
             image=np.asarray([[2.0]], dtype=np.float32),
             kwargs={"labels": labels_b},
             batch_index=1,
@@ -3328,11 +3712,15 @@ def test_object_intensity_measurement_image_batch_preserves_request_labels() -> 
         )
 
     outputs = measure_object_intensity_measurement_image_batch(
-        lambda image, **kwargs: (image, kwargs),
+        measure_object_intensity,
         requests,
         execute_request,
     )
 
+    assert (
+        requests[0].kwargs["object_intensity_backend_provider"]
+        is DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    )
     assert outputs == [("ImageA", 2), ("ImageB", 20)]
 
 
@@ -4012,10 +4400,13 @@ def test_illumination_apply_multi_image_outputs_replace_main_flow_with_declared_
         truncate_high=False,
     )
 
-    result_data = image_payload_data(result)
-    assert result_data.shape == (2, 4, 5)
-    np.testing.assert_allclose(result_data[0], 0.4)
-    np.testing.assert_allclose(result_data[1], 2.0)
+    assert isinstance(result, AlignedImageStack)
+    assert tuple(context.output_key for context in result.slice_contexts) == (
+        "CorrectedRed",
+        "CorrectedGreen",
+    )
+    np.testing.assert_allclose(image_payload_data(result.slices[0]), 0.4)
+    np.testing.assert_allclose(image_payload_data(result.slices[1]), 2.0)
     np.testing.assert_allclose(
         image_payload_data(runtime.images["CorrectedRed"].data),
         0.4,
@@ -4024,24 +4415,18 @@ def test_illumination_apply_multi_image_outputs_replace_main_flow_with_declared_
         image_payload_data(runtime.images["CorrectedGreen"].data),
         2.0,
     )
-    result_metadata = image_payload_metadata(result)
-    assert result_metadata.source_image_provenance_planes.paths == (
-        "/plate/A01_s001_w1_z001_t001.tif",
-        "/plate/A01_s001_w2_z001_t001.tif",
-    )
-    assert result_metadata.source_image_provenance_planes.component_metadata == (
-        {
-            "well": "A01",
-            "site": "1",
-            "channel": "1",
-        },
-        {
-            "well": "A01",
-            "site": "1",
-            "channel": "2",
-        },
-    )
-    assert result_metadata.source_image_names == ("OrigRed", "OrigGreen")
+    assert image_payload_metadata(result.slices[0]).source_component_metadata == {
+        "well": "A01",
+        "site": "1",
+        "channel": "1",
+    }
+    assert image_payload_metadata(result.slices[1]).source_component_metadata == {
+        "well": "A01",
+        "site": "1",
+        "channel": "2",
+    }
+    assert image_payload_metadata(result.slices[0]).source_image_names == ("OrigRed",)
+    assert image_payload_metadata(result.slices[1]).source_image_names == ("OrigGreen",)
 
 
 def test_illumination_apply_image_output_uses_original_input_source_payload() -> None:
@@ -4431,7 +4816,126 @@ def test_measurement_main_flow_composes_multiple_source_measurement_images():
     )
 
     assert image_payload_data(result).shape == (2, 4, 5)
-    assert image_payload_metadata(result).source_image_names == ("OrigDNA", "OrigRNA")
+    metadata = image_payload_metadata(result)
+    assert metadata.source_image_names == ("OrigDNA", "OrigRNA")
+    assert metadata.source_image_provenance_planes.count == 2
+    assert tuple(
+        dict(item) for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
+        {"well": "A01", "site": "1", "channel": "1"},
+        {"well": "A01", "site": "1", "channel": "2"},
+    )
+
+
+def test_object_label_measurement_images_bundle_source_metadata() -> None:
+    dna_payload = RuntimeImagePayloadContext(
+        np.full((4, 5), 1, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.tif",),
+                component_metadata=(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "1",
+                    },
+                ),
+            ),
+            source_image_names=("OrigDNA",),
+        ),
+    ).payload()
+    rna_payload = RuntimeImagePayloadContext(
+        np.full((4, 5), 2, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w2_z001_t001.tif",),
+                component_metadata=(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "2",
+                        "z_index": "1",
+                    },
+                ),
+            ),
+            source_image_names=("OrigRNA",),
+        ),
+    ).payload()
+
+    metadata = CellProfilerMeasurementImage.composed_source_metadata(
+        (
+            CellProfilerMeasurementImage(
+                source_image_name=None,
+                payload=dna_payload,
+                reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+            ),
+            CellProfilerMeasurementImage(
+                source_image_name=None,
+                payload=rna_payload,
+                reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+            ),
+        )
+    )
+
+    assert metadata is not None
+    assert metadata.source_image_provenance_planes.count == 2
+    assert tuple(
+        plane.source_identity.path
+        for plane in metadata.source_image_provenance_planes.planes
+    ) == (
+        "/input/A01_s001_w1_z001_t001.tif",
+        "/input/A01_s001_w2_z001_t001.tif",
+    )
+    assert dict(metadata.source_component_metadata) == {
+        "extension": ".tif",
+        "well": "A01",
+        "site": "1",
+        "z_index": "1",
+    }
+
+
+def test_source_measurement_images_stack_source_metadata() -> None:
+    dna_payload = RuntimeImagePayloadContext(
+        np.full((4, 5), 1, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.tif",),
+                component_metadata=({"well": "A01", "site": "1", "channel": "1"},),
+            ),
+            source_image_names=("OrigDNA",),
+        ),
+    ).payload()
+    rna_payload = RuntimeImagePayloadContext(
+        np.full((4, 5), 2, dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w2_z001_t001.tif",),
+                component_metadata=({"well": "A01", "site": "1", "channel": "2"},),
+            ),
+            source_image_names=("OrigRNA",),
+        ),
+    ).payload()
+
+    metadata = CellProfilerMeasurementImage.composed_source_metadata(
+        (
+            CellProfilerMeasurementImage(
+                source_image_name="OrigDNA",
+                payload=dna_payload,
+            ),
+            CellProfilerMeasurementImage(
+                source_image_name="OrigRNA",
+                payload=rna_payload,
+            ),
+        )
+    )
+
+    assert metadata is not None
+    assert metadata.source_image_provenance_planes.count == 2
 
 
 def test_measurement_main_flow_keeps_input_for_unaddressable_multiple_sources():
@@ -4650,6 +5154,22 @@ def test_side_effect_main_flow_keeps_current_image_without_source_identity():
     assert result is current_image
 
 
+def test_side_effect_main_flow_keeps_current_image_for_non_publishable_request():
+    current_image = np.zeros((4, 5), dtype=np.float32)
+
+    result = CELLPROFILER_SIDE_EFFECT_MAIN_FLOW.output_image(
+        current_image=current_image,
+        image_request=CellProfilerImageRequest(
+            source_image_name="Nuclei",
+            image_count=1,
+            payload=np.ones((4, 5), dtype=np.float32),
+            publishes_side_effect_main_flow=False,
+        ),
+    )
+
+    assert result is current_image
+
+
 def test_cellprofiler_main_flow_output_preserves_input_source_planes():
     input_image = RuntimeImagePayloadContext(
         np.zeros((2, 4, 5), dtype=np.float32),
@@ -4673,6 +5193,47 @@ def test_cellprofiler_main_flow_output_preserves_input_source_planes():
 
     metadata = image_payload_metadata(result)
     assert image_payload_data(result).shape == (2, 4, 5)
+    assert metadata.source_image_provenance_planes.paths == (
+        "/input/A01_s001_w3_z001_t001.TIF",
+        "/input/A01_s002_w3_z001_t001.TIF",
+    )
+    assert tuple(
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
+        {"well": "A01", "site": "1", "channel": "3"},
+        {"well": "A01", "site": "2", "channel": "3"},
+    )
+
+
+def test_cellprofiler_main_flow_output_replaces_scalar_output_source_on_stack():
+    input_image = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w3_z001_t001.TIF",
+                    "/input/A01_s002_w3_z001_t001.TIF",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "3"},
+                    {"well": "A01", "site": "2", "channel": "3"},
+                ),
+            )
+        ),
+    ).payload()
+    output_image = RuntimeImagePayloadContext(
+        np.ones((2, 4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={"well": "A01", "site": "1", "channel": "3"},
+        ),
+    ).payload()
+
+    result = cellprofiler_main_flow_output(input_image, output_image)
+
+    metadata = image_payload_metadata(result)
     assert metadata.source_image_provenance_planes.paths == (
         "/input/A01_s001_w3_z001_t001.TIF",
         "/input/A01_s002_w3_z001_t001.TIF",
@@ -7852,12 +8413,70 @@ def test_runtime_plane_projection_contract_projects_source_identity_image_inputs
     source_stack_contract = CurrentRuntimePlaneKwargProjectionContract(
         two_dimensional_identity,
         ImagePayloadExecutionMode.NATURAL,
-        source_identity_stack_axes=frozenset({"z_index"}),
     )
 
     assert not contract.projects_runtime_artifact_image_inputs()
     assert source_stack_contract.projects_runtime_artifact_image_inputs()
-    assert not source_stack_contract.projects_runtime_slice_kwargs()
+    assert source_stack_contract.projects_runtime_slice_kwargs()
+
+
+def test_module_image_request_projects_current_image_to_grouped_runtime_plane() -> None:
+    def two_dimensional_identity(image):
+        return image
+
+    two_dimensional_identity.__processing_contract__ = ProcessingContract.PURE_2D
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="IdentifyPrimaryObjects",
+            inputs=(),
+            outputs=(),
+        )
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_scope=RuntimeExecutionAxisScope.from_raw(
+            "A01",
+            component=AllComponents.SITE,
+            value="2",
+        ),
+        plane_projection=RuntimePlaneProjection.group(1, 2),
+    )
+    current_image = RuntimeImagePayloadContext(
+        np.stack(
+            [
+                np.full((5, 6), 11, dtype=np.float32),
+                np.full((5, 6), 29, dtype=np.float32),
+            ]
+        ),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("site1.png", "site2.png"),
+                component_metadata=(
+                    {AllComponents.SITE.value: "1"},
+                    {AllComponents.SITE.value: "2"},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
+    plan = SimpleNamespace(
+        func=two_dimensional_identity,
+        default_runtime_image_execution_mode=ImagePayloadExecutionMode.NATURAL,
+        primary_image_inputs=(),
+        object_label_inputs=(),
+        declared_input_collection=SimpleNamespace(of_kind=lambda kind: ()),
+        declared_input_specs=(),
+    )
+
+    image_request = executor._image_request(plan, current_image, adapter)
+
+    np.testing.assert_array_equal(
+        image_payload_data(image_request.payload),
+        np.full((5, 6), 29, dtype=np.float32),
+    )
+    metadata = image_payload_metadata(image_request.payload)
+    assert metadata.source_path == "site2.png"
+    assert metadata.source_component_metadata == {AllComponents.SITE.value: "2"}
 
 
 def test_module_executor_preserves_full_stack_runtime_image_input_scope() -> None:
@@ -8543,6 +9162,85 @@ def test_flexible_object_module_aggregates_sliced_relationship_payloads() -> Non
         label_id = int(np.max(object_labels[0]))
         return (
             image,
+            object_labels[0],
+            ParentChildRelationshipPayload(
+                parent_ids=(label_id,),
+                child_ids=(label_id,),
+            ),
+        )
+
+    attach_callable_contract_metadata(
+        filter_like,
+        declared_processing_contract="flexible",
+    )
+
+    executor.run(filter_like, image, cellprofiler_runtime=runtime, slice_by_slice=True)
+
+    assert runtime.relationships == [
+        (
+            "Cells_FilteredCells_relationships",
+            {
+                "parent_object_name": "Cells",
+                "child_object_name": "FilteredCells",
+                "parent_ids": (1, 2, 3),
+                "child_ids": (1, 2, 3),
+                "slice_indices": (0, 1, 2),
+                "slice_count": 3,
+                "source_path": None,
+                "source_component_metadata": None,
+                "source_image_provenance_planes": SourceImageProvenancePlanes(),
+            },
+        )
+    ]
+
+
+def test_flexible_filter_objects_aggregates_measurement_prefixed_relationships() -> None:
+    image = np.zeros((3, 6, 6), dtype=np.float32)
+    labels = np.zeros((3, 6, 6), dtype=np.int32)
+    labels[:, 2:5, 2:5] = np.arange(1, 4, dtype=np.int32)[:, None, None]
+    runtime = _FakeCellProfilerRuntime(
+        {"Carrier": _FakeRuntimeImage(image)},
+        objects={
+            "Cells": ObjectLabelSet(
+                name="Cells",
+                labels=labels,
+            )
+        },
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="FilterObjects",
+            inputs=(ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),),
+            runtime_artifact_inputs=(ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),),
+            outputs=(
+                ArtifactSpec("FilterObjects_measurements", ArtifactKind.MEASUREMENTS),
+                ArtifactSpec("FilteredCells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec(
+                    "Cells_FilteredCells_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+            ),
+        )
+    )
+
+    def filter_like(
+        image: np.ndarray,
+        object_labels: tuple[np.ndarray, ...] = (),
+    ) -> tuple[
+        np.ndarray,
+        FilterObjectsStats,
+        np.ndarray,
+        ParentChildRelationshipPayload,
+    ]:
+        label_id = int(np.max(object_labels[0]))
+        return (
+            image,
+            FilterObjectsStats(
+                slice_index=0,
+                objects_pre_filter=1,
+                objects_post_filter=1,
+                objects_removed=0,
+            ),
             object_labels[0],
             ParentChildRelationshipPayload(
                 parent_ids=(label_id,),

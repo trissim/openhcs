@@ -41,6 +41,7 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_values import (
     ColumnarRows,
+    ImagePayloadMetadataCompositionMode,
     MeasurementTable,
     ObjectLabelValue,
 )
@@ -309,6 +310,18 @@ class CellProfilerObjectMeasurementRowPolicy(
         """Return row-level source ownership for one measurement image."""
         if measurement_row_source_names_required(measurement_images):
             return measurement_image.source_image_name
+        return None
+
+    def source_metadata_composition_mode(
+        self,
+        measurement_images: tuple[CellProfilerMeasurementImage, ...],
+    ) -> ImagePayloadMetadataCompositionMode | None:
+        """Return source metadata topology for this policy's measurement rows."""
+        if any(
+            self.row_source_owner(measurement_image, measurement_images) is not None
+            for measurement_image in measurement_images
+        ):
+            return ImagePayloadMetadataCompositionMode.STACK
         return None
 
     def row_ownership(
@@ -1049,8 +1062,37 @@ class DenseEmittedObjectMeasurementRowsMixin:
         label_payload: CellProfilerRuntimeValue,
         func: CellProfilerFunction,
     ) -> MeasurementRowsInput:
-        del label_payload, func
-        return rows if isinstance(rows, ColumnarRows) else list(rows)
+        if isinstance(rows, ColumnarRows):
+            if rows.covers_declared_object_measurement_domain:
+                return rows
+            return super().complete_rows(
+                rows,
+                label_payload=label_payload,
+                func=func,
+            )
+        return list(rows)
+
+
+class DenseColumnarObjectMeasurementRowsMixin:
+    """Policy mixin for modules that emit complete rows only through carriers."""
+
+    def complete_rows(
+        self,
+        rows: MeasurementRowsInput,
+        *,
+        label_payload: CellProfilerRuntimeValue,
+        func: CellProfilerFunction,
+    ) -> MeasurementRowsInput:
+        if (
+            isinstance(rows, ColumnarRows)
+            and rows.covers_declared_object_measurement_domain
+        ):
+            return rows
+        return super().complete_rows(
+            rows,
+            label_payload=label_payload,
+            func=func,
+        )
 
 
 class MeasureObjectSizeShapeObjectMeasurementRowPolicy(
@@ -1593,11 +1635,17 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
 
     def project_rows(
         self,
-        rows: CellProfilerRuntimeValueSequence,
+        rows: MeasurementRowsInput,
         invocation: ObjectMeasurementInvocation,
-    ) -> list[CellProfilerRuntimeValue]:
+    ) -> MeasurementRowsInput:
         if invocation.source_pair is None:
-            return list(rows)
+            return rows if isinstance(rows, ColumnarRows) else list(rows)
+        if isinstance(rows, ColumnarRows):
+            return CellProfilerSourcePairFeature.project_columnar_rows_for_pair(
+                rows,
+                invocation.source_pair,
+                retain_field=type(self).identity_fields.__contains__,
+            )
         return [self.project_row(row, invocation.source_pair) for row in rows]
 
     def project_row(
@@ -1647,9 +1695,13 @@ class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPol
 
 
 for _row_policy_spec in (
-    CellProfilerModulePolicyLeafSpec(
+    CellProfilerModulePolicyMultiBaseLeafSpec(
         class_name=f"{_MEASURE_OBJECT_INTENSITY_MODULE}ObjectMeasurementRowPolicy",
         base_type=DeclaredObjectMeasurementRowPolicy,
+        base_types=(
+            DenseColumnarObjectMeasurementRowsMixin,
+            DeclaredObjectMeasurementRowPolicy,
+        ),
         module_name=_MEASURE_OBJECT_INTENSITY_MODULE,
         attributes={
             "missing_value_policy": (

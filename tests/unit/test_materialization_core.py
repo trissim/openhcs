@@ -24,12 +24,16 @@ from polystore.streaming.viewer_transport import (
 )
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
+from openhcs.constants.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.config import TransportMode
 from openhcs.core.measurement_row_materialization import MeasurementProjectedColumnarRows
+from openhcs.core.runtime_slice_projection import RuntimeProjectionPlaneMetadata
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 from openhcs.processing.materialization import (
     JsonOptions,
+    MaterializedFilenameIdentity,
     MaterializationSpec,
     ROIOptions,
     csv_only,
@@ -44,13 +48,19 @@ from openhcs.processing.materialization.core import (
     ROIMaterializationArchiveIdentity,
     ROIMaterializationTarget,
     ROIMaterializationTargetCoalescer,
+    RuntimePlaneStackAxesProjectionSelection,
     ViewerStreamBackendCallKwargs,
 )
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     ImagePayloadMetadata,
     ObjectLabelPayload,
+    RuntimeImagePayloadContext,
     SourceImageProvenancePlanes,
+)
+from openhcs.core.source_metadata import (
+    SOURCE_PLANE_COUNT_FIELD,
+    SOURCE_PLANE_INDEX_FIELD,
 )
 from openhcs.core.source_image_provenance import SourceImageIdentity
 
@@ -89,13 +99,41 @@ class _TestViewerMicroscopeHandler(ViewerMicroscopeHandlerABC):
 
 
 def _viewer_stream_backend_kwargs():
+    display_config = _TestViewerDisplayConfig()
     request = ViewerStreamRequest(
         viewer_transport=ViewerTransportEndpoint(
             host="localhost",
             port=5555,
             transport_mode=TransportMode.IPC,
         ),
-        display_config=_TestViewerDisplayConfig(),
+        display_config=display_config,
+        source=ViewerStreamSource(
+            identity=ViewerStreamSourceIdentity(
+                microscope_handler=_TestViewerMicroscopeHandler(),
+                plate_path="/tmp/test_plate",
+            ),
+            metadata=BatchViewerStreamSourceMetadata(
+                {"well": "A01", "site": 1, "channel": 1}
+            ),
+        ),
+        producer=ViewerStreamProducer.from_identity(
+            StreamProducerIdentity.fixed_output(
+                FixedStreamProducerIdentityKind.DIRECT,
+                "test",
+            )
+        ),
+    )
+    return ViewerStreamBackendCallKwargs(ViewerStreamBackendKwargs(request))
+
+
+def _viewer_stream_backend_kwargs_for_display(display_config):
+    request = ViewerStreamRequest(
+        viewer_transport=ViewerTransportEndpoint(
+            host="localhost",
+            port=5555,
+            transport_mode=TransportMode.IPC,
+        ),
+        display_config=display_config,
         source=ViewerStreamSource(
             identity=ViewerStreamSourceIdentity(
                 microscope_handler=_TestViewerMicroscopeHandler(),
@@ -132,6 +170,33 @@ def _stream_materialize(spec, data, path, filemanager, context=None):
     )
 
 
+@pytest.mark.unit
+def test_materialization_spec_candidate_paths_follow_registered_writers() -> None:
+    assert csv_only(suffix=".csv").candidate_paths("/tmp/A01_measurements.pkl") == (
+        "/tmp/A01_measurements.csv",
+    )
+    assert MaterializationSpec(ROIOptions()).candidate_paths(
+        "/tmp/A01_s001_w1_z001_t001_Nuclei_step3.roi.zip"
+    ) == (
+        "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
+        "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_segmentation_summary.txt",
+    )
+    assert tiff_stack().candidate_paths("/tmp/Overlay.pkl") == (
+        "/tmp/Overlay_slice_000.tif",
+        "/tmp/Overlay_summary.txt",
+    )
+
+
+@pytest.mark.unit
+def test_materialization_spec_declares_filename_identity() -> None:
+    assert tiff_stack().uses_source_identity_filename_for_artifact_kind(
+        ArtifactKind.IMAGE
+    )
+    assert not tiff_stack(
+        filename_identity=MaterializedFilenameIdentity.ARTIFACT_NAME
+    ).uses_source_identity_filename_for_artifact_kind(ArtifactKind.IMAGE)
+
+
 def _two_plane_roi_labels():
     labels = np.zeros((2, 8, 8), dtype=np.int32)
     labels[0, 1:4, 1:4] = 1
@@ -141,6 +206,9 @@ def _two_plane_roi_labels():
 
 class _RecordingBackend:
     requires_filesystem_validation = False
+
+    def supports_file_path(self, _path):
+        return True
 
 
 class _RecordingFileManager:
@@ -339,6 +407,9 @@ def test_tiff_stack_streaming_saves_per_slice_component_metadata() -> None:
     class _RecordingBackend:
         requires_filesystem_validation = False
 
+        def supports_file_path(self, _path):
+            return True
+
     class _RecordingFileManager:
         def __init__(self):
             self.saved = []
@@ -378,6 +449,209 @@ def test_tiff_stack_streaming_saves_per_slice_component_metadata() -> None:
 
 
 @pytest.mark.unit
+def test_tiff_stack_streaming_projects_scalar_metadata_over_declared_stack_axis() -> None:
+    fm = _RecordingFileManager()
+    payload = ImageMetadataPayload(
+        data=np.zeros((2, 5, 7), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": 1,
+                "z_index": 1,
+                "channel": 3,
+            },
+        ),
+    )
+
+    materialize(
+        tiff_stack(),
+        data=payload,
+        path="/tmp/A01_s001_w3_z001_t001_DerivedStack_step6",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={"napari_stream": _viewer_stream_backend_kwargs()},
+        source_identity_stack_axes=frozenset({"z_index"}),
+    )
+
+    saved_images = [
+        item
+        for item in fm.saved
+        if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
+    ]
+    assert [_stream_component_metadata(item) for item in saved_images] == [
+        {"well": "A01", "site": 1, "z_index": "1", "channel": 3},
+        {"well": "A01", "site": 1, "z_index": "2", "channel": 3},
+    ]
+
+
+@pytest.mark.unit
+def test_tiff_stack_projection_skips_axes_already_varying_in_slice_metadata() -> None:
+    items = tuple(
+        MaterializationInputItem(
+            value=RuntimeImagePayloadContext(
+                np.zeros((5, 7), dtype=np.float32),
+                mask=None,
+                metadata=ImagePayloadMetadata(
+                    source_component_metadata={
+                        AllComponents.WELL.value: "A01",
+                        AllComponents.SITE.value: 1,
+                        AllComponents.Z_INDEX.value: index + 1,
+                        AllComponents.CHANNEL.value: 3,
+                    },
+                ),
+            ).payload(),
+            source_description="materialization payload",
+            runtime_plane_metadata=RuntimeProjectionPlaneMetadata(
+                plane_indices=(index,),
+                plane_shape=(3,),
+            ),
+        )
+        for index in range(3)
+    )
+
+    axes = RuntimePlaneStackAxesProjectionSelection(
+        frozenset((AllComponents.Z_INDEX.value, AllComponents.CHANNEL.value)),
+        items,
+    ).axes()
+
+    assert axes == frozenset()
+
+
+@pytest.mark.unit
+def test_tiff_stack_projection_rejects_ambiguous_scalar_declared_axes() -> None:
+    items = tuple(
+        MaterializationInputItem(
+            value=RuntimeImagePayloadContext(
+                np.zeros((5, 7), dtype=np.float32),
+                mask=None,
+                metadata=ImagePayloadMetadata(
+                    source_component_metadata={
+                        AllComponents.WELL.value: "A01",
+                        AllComponents.SITE.value: 1,
+                        AllComponents.CHANNEL.value: 3,
+                    },
+                ),
+            ).payload(),
+            source_description="materialization payload",
+            runtime_plane_metadata=RuntimeProjectionPlaneMetadata(
+                plane_indices=(index,),
+                plane_shape=(3,),
+            ),
+        )
+        for index in range(3)
+    )
+
+    with pytest.raises(ValueError, match="cannot map runtime plane metadata"):
+        RuntimePlaneStackAxesProjectionSelection(
+            frozenset((AllComponents.Z_INDEX.value, AllComponents.CHANNEL.value)),
+            items,
+        ).axes()
+
+
+@pytest.mark.unit
+def test_tiff_stack_projection_uses_artifact_scalar_z_origin() -> None:
+    items = tuple(
+        MaterializationInputItem(
+            value=np.zeros((5, 7), dtype=np.float32),
+            source_description="materialization payload",
+            runtime_plane_metadata=RuntimeProjectionPlaneMetadata(
+                plane_indices=(index,),
+                plane_shape=(3,),
+            ),
+        )
+        for index in range(3)
+    )
+
+    axes = RuntimePlaneStackAxesProjectionSelection(
+        frozenset((AllComponents.Z_INDEX.value, AllComponents.CHANNEL.value)),
+        items,
+        SourceImageIdentity(
+            component_metadata={
+                AllComponents.WELL.value: "A01",
+                AllComponents.SITE.value: 1,
+                AllComponents.Z_INDEX.value: 1,
+                AllComponents.CHANNEL.value: 3,
+            },
+        ),
+    ).axes()
+
+    assert axes == frozenset((AllComponents.Z_INDEX.value,))
+
+
+@pytest.mark.unit
+def test_tiff_stack_streaming_preserves_runtime_source_plane_metadata() -> None:
+    fm = _RecordingFileManager()
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 5, 7), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/tmp/A01_s001_w3_z001_t001.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": 1,
+                "z_index": 1,
+                "channel": 3,
+                SOURCE_PLANE_INDEX_FIELD: "0",
+                SOURCE_PLANE_COUNT_FIELD: "2",
+            },
+        ),
+    ).payload()
+
+    materialize(
+        tiff_stack(),
+        data=payload,
+        path="/tmp/A01_s001_w3_z001_t001_DerivedStack_step6",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={"napari_stream": _viewer_stream_backend_kwargs()},
+        source_identity_stack_axes=frozenset({"z_index", "channel"}),
+    )
+
+    saved_images = [
+        item
+        for item in fm.saved
+        if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
+    ]
+    assert [_stream_component_metadata(item) for item in saved_images] == [
+        {"well": "A01", "site": 1, "z_index": "1", "channel": 3},
+        {"well": "A01", "site": 1, "z_index": "2", "channel": 3},
+    ]
+
+
+@pytest.mark.unit
+def test_tiff_stack_streaming_projects_artifact_identity_over_declared_stack_axis() -> None:
+    fm = _RecordingFileManager()
+
+    materialize(
+        tiff_stack(),
+        data=np.zeros((2, 5, 7), dtype=np.float32),
+        path="/tmp/A01_s001_w3_z001_t001_DerivedStack_step6",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={"napari_stream": _viewer_stream_backend_kwargs()},
+        artifact_source_identity=SourceImageIdentity(
+            component_metadata={
+                "well": "A01",
+                "site": 1,
+                "z_index": 1,
+                "channel": 3,
+            },
+        ),
+        source_identity_stack_axes=frozenset({"z_index"}),
+    )
+
+    saved_images = [
+        item
+        for item in fm.saved
+        if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
+    ]
+    assert [_stream_component_metadata(item) for item in saved_images] == [
+        {"well": "A01", "site": 1, "z_index": "1", "channel": 3},
+        {"well": "A01", "site": 1, "z_index": "2", "channel": 3},
+    ]
+
+
+@pytest.mark.unit
 def test_tiff_stack_streaming_uses_single_plane_scalar_source_identity() -> None:
     fm = _RecordingFileManager()
     payload = ImageMetadataPayload(
@@ -410,6 +684,61 @@ def test_tiff_stack_streaming_uses_single_plane_scalar_source_identity() -> None
         "well": "A01",
         "site": 1,
         "channel": 3,
+    }
+
+
+@pytest.mark.unit
+def test_materialized_tiff_output_uses_artifact_source_identity_as_fallback() -> None:
+    class _TimepointDisplayConfig(_TestViewerDisplayConfig):
+        COMPONENT_ORDER = ("well", "site", "z_index", "channel", "timepoint")
+
+    fm = _RecordingFileManager()
+    payload = ImageMetadataPayload(
+        data=np.zeros((5, 7, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": 1,
+                "z_index": 1,
+                "channel": 3,
+            },
+        ),
+    )
+
+    materialize(
+        tiff_stack(),
+        data=payload,
+        path="/tmp/A01_s001_w3_z001_t020_AdjacentImage_step6",
+        filemanager=fm,
+        backends=["napari_stream"],
+        backend_kwargs={
+            "napari_stream": _viewer_stream_backend_kwargs_for_display(
+                _TimepointDisplayConfig()
+            )
+        },
+        artifact_source_identity=SourceImageIdentity(
+            component_metadata={
+                "well": "A01",
+                "site": 1,
+                "z_index": 1,
+                "channel": 1,
+                "timepoint": 20,
+            },
+        ),
+    )
+
+    saved_images = [
+        item
+        for item in fm.saved
+        if item[1].endswith(".tif")
+    ]
+    assert len(saved_images) == 1
+    assert _stream_component_metadata(saved_images[0]) == {
+        "well": "A01",
+        "site": 1,
+        "z_index": 1,
+        "channel": 3,
+        "timepoint": 20,
     }
 
 
@@ -462,6 +791,8 @@ def test_roi_materialization_extracts_each_plane_from_object_label_stack() -> No
     assert [roi.metadata["label"] for roi in rois] == [1, 2]
     assert [roi.metadata["plane_indices"] for roi in rois] == [(0,), (1,)]
     assert all(roi.metadata["plane_shape"] == (2,) for roi in rois)
+    assert all(roi.metadata["spatial_origin_yx"] == (0, 0) for roi in rois)
+    assert all(roi.metadata["source_spatial_shape_yx"] == (8, 8) for roi in rois)
 
 
 @pytest.mark.unit
@@ -528,6 +859,9 @@ def test_roi_streaming_preserves_singleton_projected_source_metadata() -> None:
 def test_roi_materialization_splits_addressable_label_planes_for_streaming() -> None:
     class _RecordingBackend:
         requires_filesystem_validation = False
+
+        def supports_file_path(self, _path):
+            return True
 
     class _RecordingFileManager:
         def __init__(self):
@@ -637,16 +971,12 @@ def test_roi_materialization_replaces_parser_equivalent_reference_source_prefix(
             "site": 1,
             "channel": 1,
             "z_index": 1,
-            "timepoint": 1,
-            "extension": ".tif",
         },
         {
             "well": "A14",
             "site": 2,
             "channel": 1,
             "z_index": 1,
-            "timepoint": 1,
-            "extension": ".tif",
         },
     ]
 
@@ -655,6 +985,9 @@ def test_roi_materialization_replaces_parser_equivalent_reference_source_prefix(
 def test_roi_streaming_applies_target_metadata_without_scalar_stream_metadata() -> None:
     class _RecordingBackend:
         requires_filesystem_validation = False
+
+        def supports_file_path(self, _path):
+            return True
 
     class _RecordingFileManager:
         def __init__(self):
@@ -708,6 +1041,9 @@ def test_roi_streaming_applies_target_metadata_without_scalar_stream_metadata() 
 def test_roi_materialization_coalesces_duplicate_stream_targets() -> None:
     class _RecordingBackend:
         requires_filesystem_validation = False
+
+        def supports_file_path(self, _path):
+            return True
 
     class _RecordingFileManager:
         def __init__(self):
@@ -822,8 +1158,6 @@ def test_roi_materialization_coalesces_source_stack_archive_with_artifact_identi
         "well": "A01",
         "site": 1,
         "channel": 1,
-        "timepoint": 1,
-        "extension": ".tif",
     }
     assert len(roi_saves[0][0]) == 2
 
@@ -966,6 +1300,9 @@ def test_roi_materialization_rejects_conflicting_duplicate_archive_identity() ->
 def test_roi_materialization_uses_source_context_for_partial_label_stack() -> None:
     class _RecordingBackend:
         requires_filesystem_validation = False
+
+        def supports_file_path(self, _path):
+            return True
 
     class _RecordingFileManager:
         def __init__(self):

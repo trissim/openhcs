@@ -93,12 +93,7 @@ class DefaultImageOutputSourcePayloadPolicy(CellProfilerImageOutputSourcePayload
     registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def source_payload(self, request: CellProfilerOutputRecordRequest) -> CellProfilerRuntimeValue | None:
-        if (
-            isinstance(request.output_value, ImagePayloadMetadataCarrier)
-            and image_payload_metadata(request.output_value).source_provenance.has_values
-        ):
-            return None
-        return request.unique_primary_image_source_payload()
+        return request.primary_image_output_source_payload()
 
 
 class CellProfilerImageOutputValuePolicy(
@@ -134,7 +129,7 @@ class CorrectIlluminationApplyImageOutputSourcePayloadPolicy(
     def source_payload(self, request: CellProfilerOutputRecordRequest) -> CellProfilerRuntimeValue | None:
         source_spec = request.correct_illumination_apply_source_spec()
         if source_spec is None:
-            return request.source.payload
+            return request.primary_image_output_source_payload()
         return request.input_image_source_payload(source_spec)
 
 

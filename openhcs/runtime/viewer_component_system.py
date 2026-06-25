@@ -917,6 +917,26 @@ class ViewerComponentValueDomain:
                 if component in components:
                     observed_values[component].add(components[component])
 
+    def update_component_values(
+        self,
+        domain_key: ComponentDomainKey,
+        axis_components: Sequence[str],
+        component_values: ComponentValues,
+    ) -> None:
+        if domain_key not in self.domain_values:
+            self.domain_values[domain_key] = {
+                component: set() for component in axis_components
+            }
+
+        observed_values = self.domain_values[domain_key]
+        for component, values in component_values.items():
+            if component not in observed_values:
+                raise ValueError(
+                    f"Component value domain {domain_key!r} cannot record "
+                    f"undeclared component {component!r}."
+                )
+            observed_values[component].update(values)
+
     def values_for(
         self,
         domain_key: ComponentDomainKey,
@@ -990,6 +1010,19 @@ class ViewerRouteComponentValueTracker(ViewerComponentValueDomain):
             layer_items,
         )
 
+    def update_component_values(
+        self,
+        route_key: str,
+        axis_components: Sequence[str],
+        component_values: ComponentValues,
+    ) -> None:
+        ViewerComponentValueDomain.update_component_values(
+            self,
+            self.domain_key(route_key, axis_components),
+            axis_components,
+            component_values,
+        )
+
     @staticmethod
     def domain_key(
         route_key: str,
@@ -1008,6 +1041,14 @@ class ViewerDisplayAxisDomainContract(ABC):
         layer_items: Sequence[ViewerComponentAddressedItem],
     ) -> None:
         """Record observed values for the shared viewer axis domain."""
+
+    @abstractmethod
+    def record_display_component_values(
+        self,
+        axis_components: Sequence[str],
+        component_values: ComponentValues,
+    ) -> None:
+        """Record declared values represented by aggregate payload axes."""
 
     @abstractmethod
     def display_axis_values_for(
@@ -1034,6 +1075,18 @@ class ViewerDisplayAxisDomain(
             tuple(axis_components),
             axis_components,
             layer_items,
+        )
+
+    def record_display_component_values(
+        self,
+        axis_components: Sequence[str],
+        component_values: ComponentValues,
+    ) -> None:
+        ViewerComponentValueDomain.update_component_values(
+            self,
+            tuple(axis_components),
+            axis_components,
+            component_values,
         )
 
     def display_axis_values_for(

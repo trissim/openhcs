@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from collections.abc import Iterable
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.runtime_execution_validation import (
@@ -27,6 +28,7 @@ from openhcs.interop.cellprofiler.runtime_pipeline import (
     DirectPipelineExecution,
     PreparedGeneratedPipeline,
 )
+from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     setting_values,
@@ -43,6 +45,54 @@ class CPPipeInfrastructureFeature(Enum):
 
 class CPPipeExecutionValidationError(RuntimeError):
     """Converted CellProfiler execution violated compiled expectations."""
+
+
+@dataclass(frozen=True, slots=True)
+class CPPipeInfrastructureProfile:
+    """External output semantics declared by CellProfiler infrastructure modules."""
+
+    features: frozenset[CPPipeInfrastructureFeature]
+    image_export_specs: tuple[RuntimeImageExportSpec, ...]
+
+    @classmethod
+    def from_cppipe_path(
+        cls,
+        cppipe_path: Path,
+        *,
+        parser: CPPipeParser | None = None,
+    ) -> "CPPipeInfrastructureProfile":
+        return cls.from_modules((parser or CPPipeParser()).parse(cppipe_path))
+
+    @classmethod
+    def from_prepared(
+        cls,
+        prepared: PreparedGeneratedPipeline,
+    ) -> "CPPipeInfrastructureProfile":
+        return cls.from_modules(prepared.infrastructure_modules)
+
+    @classmethod
+    def from_modules(
+        cls,
+        modules: Iterable[ModuleBlock],
+    ) -> "CPPipeInfrastructureProfile":
+        module_tuple = tuple(modules)
+        features = _infrastructure_features(module_tuple)
+        return cls(
+            features=features,
+            image_export_specs=_image_export_specs(module_tuple),
+        )
+
+    @property
+    def exports_tables(self) -> bool:
+        return CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET in self.features
+
+    @property
+    def exports_images(self) -> bool:
+        return CPPipeInfrastructureFeature.SAVE_IMAGES in self.features
+
+    @property
+    def image_exports_without_table_exports(self) -> bool:
+        return bool(self.image_export_specs) and not self.exports_tables
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,12 +144,12 @@ def _runtime_expectation(
 ) -> RuntimeArtifactExecutionExpectation:
     output_specs = _output_specs(prepared)
     artifact_kinds = frozenset(spec.kind for spec in output_specs)
+    infrastructure = CPPipeInfrastructureProfile.from_prepared(prepared)
     return RuntimeArtifactExecutionExpectation.from_output_specs(
         output_specs,
         exports=_runtime_exports(
-            _infrastructure_features(prepared),
+            infrastructure,
             artifact_kinds,
-            _image_export_specs(prepared) if validate_image_exports else (),
             validate_table_exports=validate_table_exports,
             validate_image_exports=validate_image_exports,
         ),
@@ -107,9 +157,9 @@ def _runtime_expectation(
 
 
 def _infrastructure_features(
-    prepared: PreparedGeneratedPipeline,
+    modules: Iterable[ModuleBlock],
 ) -> frozenset[CPPipeInfrastructureFeature]:
-    module_names = {module.name for module in prepared.infrastructure_modules}
+    module_names = {module.name for module in modules}
     return frozenset(
         feature
         for feature in CPPipeInfrastructureFeature
@@ -128,7 +178,7 @@ def _output_specs(
 
 
 def _image_export_specs(
-    prepared: PreparedGeneratedPipeline,
+    modules: Iterable[ModuleBlock],
 ) -> tuple[RuntimeImageExportSpec, ...]:
     return tuple(
         RuntimeImageExportSpec(
@@ -136,7 +186,7 @@ def _image_export_specs(
             bit_depth=save_images_bit_depth(module),
             file_format=optional_setting_value(module, SAVE_IMAGES_FILE_FORMAT_SETTING),
         )
-        for module in prepared.infrastructure_modules
+        for module in modules
         if module.name == CPPipeInfrastructureFeature.SAVE_IMAGES.value
         for value in setting_values(module, SAVE_IMAGES_SOURCE_IMAGE_SETTING)
         for image_name in split_symbol_names(value)
@@ -144,9 +194,8 @@ def _image_export_specs(
 
 
 def _runtime_exports(
-    infrastructure_features: frozenset[CPPipeInfrastructureFeature],
+    infrastructure: CPPipeInfrastructureProfile,
     artifact_kinds: frozenset[ArtifactKind],
-    image_export_specs: tuple[RuntimeImageExportSpec, ...],
     *,
     validate_table_exports: bool = True,
     validate_image_exports: bool = True,
@@ -154,20 +203,20 @@ def _runtime_exports(
     return RuntimeExportExpectation.from_flags(
         table_exports=(
             validate_table_exports
-            and
-            CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET
-            in infrastructure_features
+            and infrastructure.exports_tables
         ),
         image_exports=(
             validate_image_exports
-            and CPPipeInfrastructureFeature.SAVE_IMAGES in infrastructure_features
+            and infrastructure.exports_images
         ),
         table_artifact_kinds=frozenset(
             kind
             for kind in artifact_kinds
             if artifact_kind_exports_as_table(kind)
         ),
-        image_export_specs=image_export_specs,
+        image_export_specs=(
+            infrastructure.image_export_specs if validate_image_exports else ()
+        ),
     )
 
 def _execution_failures(

@@ -834,6 +834,9 @@ def module_contract_literal(
     externally_materialized_outputs: frozenset[tuple[ArtifactKind, str]] = (
         frozenset()
     ),
+    artifact_name_materialized_outputs: frozenset[tuple[ArtifactKind, str]] = (
+        frozenset()
+    ),
     import_collector: set[tuple[str, str]] | None = None,
 ) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
@@ -848,7 +851,11 @@ def module_contract_literal(
                 (spec.kind, spec.name) not in externally_materialized_outputs
             ),
             materialization_literal=(
-                "tiff_stack(normalize_uint8=True)"
+                "tiff_stack("
+                "normalize_uint8=True, "
+                f"filename_identity=MaterializedFilenameIdentity."
+                f"{'ARTIFACT_NAME' if (spec.kind, spec.name) in artifact_name_materialized_outputs else 'SOURCE_IDENTITY'}"
+                ")"
                 if (spec.kind, spec.name) in externally_materialized_outputs
                 else None
             ),
@@ -1897,6 +1904,29 @@ class UnmixColorsContractBuilder(ModuleContractBuilder):
             for row in unmix_colors_output_rows(module)
         ]
         return self.assemble_contract(module, builder, inputs=[image], outputs=outputs)
+
+
+class CorrectIlluminationCalculateContractBuilder(ModuleContractBuilder):
+    """Compile illumination-function image outputs without synthetic measurements."""
+
+    module_name = "CorrectIlluminationCalculate"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        image = builder.require(
+            _setting(module, INPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        output = builder.declare(
+            _setting(module, OUTPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        return self.assemble_contract(module, builder, inputs=[image], outputs=[output])
 
 
 class CorrectIlluminationApplyContractBuilder(ModuleContractBuilder):

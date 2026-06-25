@@ -872,7 +872,7 @@ def _track_by_distance_numba(
                 best_distance_squared = distance_squared
                 best_old = old_index
         if best_old >= 0 and best_distance_squared <= radius_squared:
-            new_labels[current_index] = old_object_numbers[best_old]
+            new_labels[current_index] = frame.old_object_numbers[best_old]
             parent_object_numbers[current_index] = best_old + 1
             parent_image_numbers[current_index] = 1
         else:

@@ -371,6 +371,66 @@ class _CoordinateGapViewerWindowGateway(_FakeViewerWindowGateway):
         return state
 
 
+class _RgbViewerWindowGateway(_FakeViewerWindowGateway):
+    def window_state(self, request):
+        state = super().window_state(request)
+        layer = dict(state["layers"][0])
+        layer["data_shape"] = (2, 1, 1, 16, 16, 3)
+        layer["payload_summaries"] = tuple(
+            {
+                **payload_summary,
+                "shape": (16, 16, 3),
+                "size": 16 * 16 * 3,
+            }
+            for payload_summary in layer["payload_summaries"]
+        )
+        state["layers"] = (layer,)
+        return state
+
+
+class _AggregateStackViewerWindowGateway(_FakeViewerWindowGateway):
+    def window_state(self, request):
+        state = super().window_state(request)
+        layer = dict(state["layers"][0])
+        layer["item_count"] = 1
+        layer["component_values"] = (
+            {"well": "A14", "site": 1, "channel": 1},
+        )
+        layer["payload_summaries"] = (
+            {
+                "data_type": "image",
+                "path": "/tmp/A14_stack.tif",
+                "components": {"well": "A14", "site": 1, "channel": 1},
+                "aggregate_component_values": {"z_index": (1, 2, 3)},
+                "payload_type": "ndarray",
+                "shape": (3, 16, 16),
+                "dtype": "uint16",
+                "size": 3 * 16 * 16,
+                "nonzero_count": 384,
+            },
+        )
+        layer["axis_labels"] = ("z_index", "channel", "y", "x")
+        layer["stack_axes"] = ("z_index", "channel")
+        layer["labels"] = {
+            "z_index": ("1", "2", "3"),
+            "channel": ("1",),
+        }
+        layer["axis_component_values"] = {
+            "z_index": (1, 2, 3),
+            "channel": (1,),
+        }
+        layer["routed_component_values"] = {
+            "z_index": (1, 2, 3),
+            "channel": (1,),
+        }
+        layer["data_shape"] = (3, 1, 16, 16)
+        state["layers"] = (layer,)
+        state["axis_labels"] = ("z_index", "channel", "y", "x")
+        state["viewer_ndim"] = 4
+        state["component_item_count"] = 1
+        return state
+
+
 class _SilentZMQSocket:
     def __init__(self) -> None:
         self.closed = False
@@ -633,6 +693,10 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
     assert result.nonzero_payload_count == 2
     assert result.zero_payload_count == 0
     assert result.missing_nonzero_count == 0
+    assert result.missing_payload_coordinate_count == 0
+    assert result.duplicate_payload_coordinate_count == 0
+    assert result.payload_without_coordinate_count == 0
+    assert result.spatial_mismatch_count == 0
     assert result.required_axis_labels == ("well", "site", "channel")
     assert result.warnings == ()
     assert result.state is not None
@@ -641,6 +705,8 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
     assert layer_summary.valid is True
     assert layer_summary.route_key == "IdentifyPrimaryObjects|image"
     assert layer_summary.coordinate_gap_count == 0
+    assert layer_summary.expected_coordinate_count == 2
+    assert layer_summary.payload_coordinate_count == 2
     assert layer_summary.axis_labels == ("well", "site", "channel", "y", "x")
 
 
@@ -667,11 +733,33 @@ def test_viewer_window_service_validation_reports_coordinate_gaps():
         gateway=_CoordinateGapViewerWindowGateway()
     ).validation_summary(port=5584)
 
-    assert result.valid is True
+    assert result.valid is False
     assert result.layer_summaries[0].coordinate_gap_count == 2
+    assert result.layer_summaries[0].missing_payload_coordinate_count == 2
     assert [warning.code for warning in result.warnings] == [
         "viewer_layer_coordinate_gaps",
+        "viewer_payload_coordinates_missing",
     ]
+
+
+def test_viewer_window_service_validation_accepts_channel_last_rgb_spatial_shape():
+    result = ViewerWindowService(
+        gateway=_RgbViewerWindowGateway()
+    ).validation_summary(port=5584)
+
+    assert result.valid is True
+    assert result.layer_summaries[0].spatial_mismatch_count == 0
+
+
+def test_viewer_window_service_validation_expands_aggregate_payload_coordinates():
+    result = ViewerWindowService(
+        gateway=_AggregateStackViewerWindowGateway()
+    ).validation_summary(port=5584)
+
+    assert result.valid is True
+    assert result.layer_summaries[0].expected_coordinate_count == 3
+    assert result.layer_summaries[0].payload_coordinate_count == 3
+    assert result.layer_summaries[0].payload_without_coordinate_count == 0
 
 
 def test_viewer_window_service_reports_malformed_state_response():

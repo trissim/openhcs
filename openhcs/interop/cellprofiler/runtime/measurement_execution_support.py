@@ -82,8 +82,9 @@ def object_measurement_runtime_inputs(
     float,
 ]:
     """Prepare image, labels, payload, and execution mode for object measurement."""
+    profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
     profile_events: list[CellProfilerRuntimeProfileEvent] = []
-    label_payload_started_at = time.perf_counter()
+    label_payload_started_at = time.perf_counter() if profile_enabled else 0.0
     if not isinstance(label_payload, ObjectLabelValue):
         raise TypeError(
             "CellProfiler object measurement requires ObjectLabelValue labels, "
@@ -95,52 +96,60 @@ def object_measurement_runtime_inputs(
         plane_projector=adapter,
         align_image_to_labels=measurement_image.align_to_labels,
     )
-    profile_events.append(
-        object_label_stage_event(
-            "raw",
-            measurement_image,
-            object_spec,
-            prepared_labels.source_projected_payload,
+    if profile_enabled:
+        profile_events.append(
+            object_label_stage_event(
+                "raw",
+                measurement_image,
+                object_spec,
+                prepared_labels.source_projected_payload,
+            )
         )
-    )
-    profile_events.append(
-        dense_label_stage_event(
-            "measurement_image",
-            measurement_image,
-            object_spec,
-            prepared_labels.source_projected_labels,
+        profile_events.append(
+            dense_label_stage_event(
+                "measurement_image",
+                measurement_image,
+                object_spec,
+                prepared_labels.source_projected_labels,
+            )
         )
+    label_payload_seconds = (
+        time.perf_counter() - label_payload_started_at
+        if profile_enabled
+        else 0.0
     )
-    label_payload_seconds = time.perf_counter() - label_payload_started_at
 
-    label_align_started_at = time.perf_counter()
-    profile_events.append(
-        dense_label_stage_event(
-            "source_projected_labels",
-            measurement_image,
-            object_spec,
-            prepared_labels.source_projected_labels,
+    label_align_started_at = time.perf_counter() if profile_enabled else 0.0
+    if profile_enabled:
+        profile_events.append(
+            dense_label_stage_event(
+                "source_projected_labels",
+                measurement_image,
+                object_spec,
+                prepared_labels.source_projected_labels,
+            )
         )
-    )
     aligned_image = prepared_labels.aligned_image
     measurement_labels = prepared_labels.measurement_labels
-    profile_events.append(
-        dense_label_stage_event(
-            "final_labels",
-            measurement_image,
-            object_spec,
-            measurement_labels,
+    if profile_enabled:
+        profile_events.append(
+            dense_label_stage_event(
+                "final_labels",
+                measurement_image,
+                object_spec,
+                measurement_labels,
+            )
         )
-    )
     completion_label_payload = prepared_labels.completion_payload
-    profile_events.append(
-        object_label_stage_event(
-            "completion_payload",
-            measurement_image,
-            object_spec,
-            completion_label_payload,
+    if profile_enabled:
+        profile_events.append(
+            object_label_stage_event(
+                "completion_payload",
+                measurement_image,
+                object_spec,
+                completion_label_payload,
+            )
         )
-    )
     executable_labels = (
         CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
             object_label_measurement_execution_from_callable(func)
@@ -152,15 +161,20 @@ def object_measurement_runtime_inputs(
             )
         )
     )
-    profile_events.append(
-        dense_label_stage_event(
-            "executable_labels",
-            measurement_image,
-            object_spec,
-            executable_labels,
+    if profile_enabled:
+        profile_events.append(
+            dense_label_stage_event(
+                "executable_labels",
+                measurement_image,
+                object_spec,
+                executable_labels,
+            )
         )
+    label_align_seconds = (
+        time.perf_counter() - label_align_started_at
+        if profile_enabled
+        else 0.0
     )
-    label_align_seconds = time.perf_counter() - label_align_started_at
     execution_mode = (
         CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
             module_name

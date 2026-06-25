@@ -4,6 +4,7 @@ import numpy as np
 from typing import Tuple, Optional
 from dataclasses import dataclass, replace
 from enum import Enum
+from openhcs.core.image_shapes import is_color_image_stack, is_grayscale_image_stack
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.runtime_values import object_label_dense_array
@@ -301,7 +302,7 @@ def display_data_on_image(
     )
 
     # Handle dimensionality
-    if image.ndim == 3:
+    if is_grayscale_image_stack(image) or is_color_image_stack(image):
         # Process each slice
         results = []
         for i in range(image.shape[0]):

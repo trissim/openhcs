@@ -98,6 +98,7 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ObjectLabelValue,
     RuntimeArrayData,
+    RuntimeImageSourceIdentityCompleteness,
     SourceImageObjectLabelBuildRequest,
     image_payload_data,
     image_payload_metadata,
@@ -1091,8 +1092,12 @@ class FunctionCoreExecutor:
         self.bind_runtime_owned_parameters(final_kwargs, parameter_names)
         self.bind_runtime_adapter(final_kwargs, parameter_names)
         raw_output = self.invoke(main_data_arg, final_kwargs)
-        main_output = self.save_artifact_outputs(raw_output, main_data_arg)
-        if self.runtime_adapter_output_source_is_authoritative(main_output):
+        main_output = self.save_artifact_outputs(
+            raw_output,
+            main_data_arg,
+            loaded_artifact_payloads=loaded_artifact_payloads,
+        )
+        if RuntimeImageSourceIdentityCompleteness(main_output).complete():
             return main_output
         main_output_source = self.main_output_source_payload(
             main_data_arg,
@@ -1104,18 +1109,6 @@ class FunctionCoreExecutor:
             None,
         )
 
-    def runtime_adapter_output_source_is_authoritative(
-        self,
-        output: RuntimePayload,
-    ) -> bool:
-        if not self.invocation.runtime_domain.adapter_manages_artifact_inputs:
-            return False
-        source_provenance = image_payload_metadata(output).source_provenance
-        return (
-            source_provenance.addressable
-            or source_provenance.source_image_provenance_planes.has_values
-        )
-
     def memory_types(self) -> "FunctionChainInvocationMemoryTypes":
         return FunctionChainInvocationMemoryTypes.from_invocation(self.invocation)
 
@@ -1125,6 +1118,8 @@ class FunctionCoreExecutor:
         *,
         loaded_artifact_payloads: Mapping[str, RuntimePayload],
     ) -> RuntimePayload:
+        if RuntimeImageSourceIdentityCompleteness(primary_source_payload).complete():
+            return primary_source_payload
         object_label_sources = self.object_label_source_payloads(
             loaded_artifact_payloads,
         )
@@ -1284,28 +1279,48 @@ class FunctionCoreExecutor:
         self,
         raw_output: RuntimeFunctionOutput,
         source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[str, RuntimePayload],
     ) -> RuntimePayload:
         if isinstance(raw_output, StepResult):
-            self.save_step_result_artifacts(raw_output, source_payload)
+            self.save_step_result_artifacts(
+                raw_output,
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            )
             return raw_output.image
         if isinstance(raw_output, tuple):
-            return self.save_tuple_output(raw_output, source_payload)
+            return self.save_tuple_output(
+                raw_output,
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            )
         return raw_output
 
     def save_tuple_output(
         self,
         raw_output: tuple[RuntimePayload, ...],
         source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[str, RuntimePayload],
     ) -> RuntimePayload:
         artifact_outputs = tuple(self.artifacts.outputs.values())
         artifact_count = len(artifact_outputs)
         if artifact_count == 0:
             return AlignedImageStack(raw_output)
         if len(raw_output) == artifact_count:
-            self.save_tuple_artifacts(raw_output, source_payload)
+            self.save_tuple_artifacts(
+                raw_output,
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            )
             return self.main_flow_output_from_artifacts(raw_output, artifact_outputs)
         if len(raw_output) == artifact_count + 1:
-            self.save_tuple_artifacts(raw_output[1:], source_payload)
+            self.save_tuple_artifacts(
+                raw_output[1:],
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            )
             return raw_output[0]
         raise ValueError(
             f"Function returned {len(raw_output)} tuple values for "
@@ -1344,6 +1359,8 @@ class FunctionCoreExecutor:
         self,
         step_result: StepResult,
         source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[str, RuntimePayload],
     ) -> None:
         for output_key, output_plan in self.artifacts.outputs.items():
             if output_key not in step_result.artifacts:
@@ -1356,12 +1373,15 @@ class FunctionCoreExecutor:
                 output_plan,
                 step_result.artifacts[output_key],
                 source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
             )
 
     def save_tuple_artifacts(
         self,
         returned_artifact_values: tuple[RuntimePayload, ...],
         source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[str, RuntimePayload],
     ) -> None:
         for index, (output_key, output_plan) in enumerate(
             self.artifacts.outputs.items()
@@ -1380,6 +1400,7 @@ class FunctionCoreExecutor:
                 output_plan,
                 returned_artifact_values[index],
                 source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
             )
 
     def save_artifact_output(
@@ -1388,6 +1409,8 @@ class FunctionCoreExecutor:
         output_plan: ArtifactOutputPlan,
         value: RuntimePayload,
         source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[str, RuntimePayload],
     ) -> None:
         logger.info(
             f"Saving artifact output '{output_key}' to VFS path '{output_plan.path}' "
@@ -1398,7 +1421,12 @@ class FunctionCoreExecutor:
             self.runtime_scope.context,
             output_plan,
             value,
-            source_payload,
+            self.artifact_output_source_payload(
+                output_plan,
+                value,
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            ),
             group_key=self.group_key,
         )
         RuntimeProfileSink.record(
@@ -1408,6 +1436,33 @@ class FunctionCoreExecutor:
             artifact=output_key,
             kind=output_plan.kind.value,
         )
+
+    def artifact_output_source_payload(
+        self,
+        output_plan: ArtifactOutputPlan,
+        output_value: RuntimePayload,
+        primary_source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[str, RuntimePayload],
+    ) -> RuntimePayload:
+        if (
+            output_plan.kind is ArtifactKind.IMAGE
+            and not RuntimeImageSourceIdentityCompleteness(output_value).complete()
+        ):
+            object_label_sources = self.object_label_source_payloads(
+                loaded_artifact_payloads,
+            )
+            if object_label_sources and not self.has_non_object_artifact_inputs(
+                loaded_artifact_payloads
+            ):
+                if len(object_label_sources) != 1:
+                    raise NotImplementedError(
+                        "Image artifact output source context is ambiguous for "
+                        "multiple object-label artifact inputs with no image "
+                        "artifact input."
+                    )
+                return object_label_sources[0]
+        return primary_source_payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -1468,6 +1523,7 @@ class PatternGroupOutputData:
 
     slices: list[RuntimeArrayData]
     slice_contexts: tuple[AlignedImageSliceContext, ...] = ()
+    stack_payload: RuntimeArrayData | None = None
 
     def __post_init__(self) -> None:
         if not self.slice_contexts:
@@ -1669,40 +1725,58 @@ class PatternGroupRuntime:
         )
 
         full_file_paths = [str(plan.input_dir / f) for f in matching_files]
-        raw_slices = context.filemanager.load_batch(
-            full_file_paths,
-            Backend.MEMORY.value,
+        cached_stack = context.runtime_image_stack_cache.get(
+            tuple(full_file_paths),
+            memory_type=plan.input_memory_type,
         )
-        raw_slices = self._apply_source_image_loading_semantics(
-            raw_slices,
-            matching_files,
-            full_file_paths,
+        RuntimeProfileSink.record(
+            "runtime_stack_cache_get",
+            0.0,
+            step=plan.step_index,
+            step_name=plan.step_name,
+            hit=cached_stack is not None,
+            paths=len(full_file_paths),
+            memory_type=plan.input_memory_type,
         )
-
-        if not raw_slices:
-            raise ValueError(
-                f"No valid images loaded for pattern group {self.pattern_repr} "
-                f"in {plan.input_dir}. "
-                f"Found {len(matching_files)} matching files but failed to load any valid images. "
-                f"This indicates corrupted image files, unsupported formats, or I/O errors. "
-                f"Check file integrity and format compatibility."
+        if cached_stack is None:
+            raw_slices = context.filemanager.load_batch(
+                full_file_paths,
+                Backend.MEMORY.value,
+            )
+            raw_slices = self._apply_source_image_loading_semantics(
+                raw_slices,
+                matching_files,
+                full_file_paths,
             )
 
-        raw_slice_data = tuple(image_payload_data(slice_data) for slice_data in raw_slices)
-        main_data_stack = ImageStackLayout.for_slices(raw_slice_data).stack(
-            slices=raw_slice_data,
-            memory_type=plan.input_memory_type,
-            gpu_id=plan.device_id,
-        )
-        main_data_stack = stack_image_payload_context(raw_slices, main_data_stack)
+            if not raw_slices:
+                raise ValueError(
+                    f"No valid images loaded for pattern group {self.pattern_repr} "
+                    f"in {plan.input_dir}. "
+                    f"Found {len(matching_files)} matching files but failed to load any valid images. "
+                    f"This indicates corrupted image files, unsupported formats, or I/O errors. "
+                    f"Check file integrity and format compatibility."
+                )
+
+            raw_slice_data = tuple(image_payload_data(slice_data) for slice_data in raw_slices)
+            main_data_stack = ImageStackLayout.for_slices(raw_slice_data).stack(
+                slices=raw_slice_data,
+                memory_type=plan.input_memory_type,
+                gpu_id=plan.device_id,
+            )
+            main_data_stack = stack_image_payload_context(raw_slices, main_data_stack)
+            source_slice_shapes = tuple(
+                tuple(slice_data.shape)
+                for slice_data in raw_slice_data
+            )
+        else:
+            main_data_stack = cached_stack.stack
+            source_slice_shapes = cached_stack.source_slice_shapes
 
         return PatternGroupData(
             matching_files=matching_files,
             main_data_stack=main_data_stack,
-            source_slice_shapes=tuple(
-                tuple(slice_data.shape)
-                for slice_data in raw_slice_data
-            ),
+            source_slice_shapes=source_slice_shapes,
             source_binding_context=SourceBindingRuntimeContextRequest.from_context(
                 context=self.request.context,
                 plan=self.request.execution_plan,
@@ -1894,6 +1968,7 @@ class PatternGroupRuntime:
 
         return PatternGroupOutputData(
             slices=unstack_image_payload_context(processed_stack, output_slices),
+            stack_payload=processed_stack,
         )
 
     def _save_outputs(
@@ -1983,6 +2058,7 @@ class PatternGroupRuntime:
 
             if context.filemanager.exists(output_path_text, Backend.MEMORY.value):
                 context.filemanager.delete(output_path_text, Backend.MEMORY.value)
+                context.runtime_image_stack_cache.discard_paths((output_path_text,))
 
             output_payloads.append(img_slice)
             output_paths_batch.append(output_path_text)
@@ -2004,6 +2080,37 @@ class PatternGroupRuntime:
             output_paths_batch,
             Backend.MEMORY.value,
         )
+        stack_payload_data = (
+            image_payload_data(output_data.stack_payload)
+            if output_data.stack_payload is not None
+            else None
+        )
+        if (
+            output_data.stack_payload is not None
+            and np.shape(stack_payload_data)[:1] == (len(output_payloads),)
+        ):
+            source_slice_shapes = tuple(
+                tuple(image_payload_data(payload).shape)
+                for payload in output_payloads
+            )
+            stack_payload = stack_image_payload_context(
+                output_payloads,
+                stack_payload_data,
+            )
+            context.runtime_image_stack_cache.store(
+                tuple(output_paths_batch),
+                memory_type=self.request.execution_plan.output_memory_type,
+                stack=stack_payload,
+                source_slice_shapes=source_slice_shapes,
+            )
+            RuntimeProfileSink.record(
+                "runtime_stack_cache_store",
+                0.0,
+                step=self.request.execution_plan.step_index,
+                step_name=self.request.execution_plan.step_name,
+                paths=len(output_paths_batch),
+                memory_type=self.request.execution_plan.output_memory_type,
+            )
         return output_records
 
     def _cleanup_collapsed_domains(
@@ -2033,6 +2140,7 @@ class PatternGroupRuntime:
                     str(unused_path),
                     Backend.MEMORY.value,
                 ):
+                    context.runtime_image_stack_cache.discard_paths((str(unused_path),))
                     context.filemanager.delete(
                         str(unused_path),
                         Backend.MEMORY.value,

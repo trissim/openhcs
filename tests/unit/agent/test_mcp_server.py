@@ -3,6 +3,8 @@ import importlib.util
 import inspect
 import json
 
+from openhcs.agent.capabilities import get_capability_registry
+
 import openhcs.mcp.server as server
 
 
@@ -76,6 +78,25 @@ def test_mcp_server_exposes_execution_session_tools():
     assert "openhcs_get_viewer_window_state" in tool_names
     assert "openhcs_probe_viewer_window" in tool_names
     assert "openhcs_validate_viewer_window_state" in tool_names
+
+
+def test_viewer_capabilities_advertise_payload_coordinate_validation():
+    capabilities = {
+        capability.name: capability
+        for capability in get_capability_registry().capabilities
+    }
+
+    state_capability = capabilities["openhcs_get_viewer_window_state"]
+    validation_capability = capabilities["openhcs_validate_viewer_window_state"]
+
+    assert "viewer_payload_summaries" in state_capability.data_exposure
+    assert "viewer_shape_bounds" in state_capability.data_exposure
+    assert "viewer_coordinate_coverage" in validation_capability.data_exposure
+    assert (
+        "viewer_payload_spatial_compatibility"
+        in validation_capability.data_exposure
+    )
+    assert "routed coordinate coverage" in validation_capability.description
 
 
 def test_mcp_server_exposes_ui_bridge_tools():

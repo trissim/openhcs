@@ -84,13 +84,19 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
+from openhcs.interop.cellprofiler.save_images_settings import (
+    SAVE_IMAGES_SOURCE_IMAGE_SETTING,
+)
 from openhcs.processing.backends.cellprofiler.library import (
     canonical_module_name,
     require_function,
     validated_contracts,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import tiff_stack
+from openhcs.processing.materialization import (
+    MaterializedFilenameIdentity,
+    tiff_stack,
+)
 from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
@@ -150,6 +156,7 @@ class ArtifactSpecKey:
 
 
 ExternallyMaterializedOutputs = frozenset[ArtifactSpecKey]
+ArtifactNameMaterializedOutputs = frozenset[ArtifactSpecKey]
 
 
 @dataclass(frozen=True)
@@ -181,9 +188,6 @@ _INPUTLESS_ARTIFACT_ONLY_KINDS = frozenset(
         ArtifactKind.RELATIONSHIPS,
     }
 )
-_SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
-
-
 def variable_component_literal(component: AllComponents) -> str:
     return f"VariableComponents.{component.name}"
 
@@ -277,6 +281,12 @@ class SourceProcessingAxisPlan:
             f"{tuple(component.value for component in source_identity_components)!r}."
         )
 
+    def optional_single_image_set_component(self, error_message: str) -> AllComponents | None:
+        """Return the image-set component when the schema declares one."""
+        if not self.image_set_components:
+            return None
+        return ComponentSet(self.image_set_components).single_or_none(error_message)
+
     def single_component_for_role(
         self,
         role: SourceProcessingAxisRole,
@@ -369,6 +379,8 @@ class SourceProcessingComponentSemantics:
         component = ComponentSet(self.grouping_components()).variable().last()
         if component is not None:
             return component
+        if self.uses_ordinal_image_sets_without_declared_identity():
+            return SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS[-1]
         if self.source_schema.is_empty:
             return ComponentSet.default_variable().last()
         return None
@@ -385,8 +397,8 @@ class SourceProcessingComponentSemantics:
         )
         if components:
             return components
-        if self.uses_ordered_image_sets_without_declared_identity():
-            return SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS
+        if self.uses_implicit_source_alias_axis():
+            return (AllComponents.CHANNEL,)
         return components
 
     def source_alias_components(self) -> tuple[AllComponents, ...]:
@@ -399,8 +411,8 @@ class SourceProcessingComponentSemantics:
         )
         if explicit_components:
             return explicit_components
-        if self.uses_ordered_image_sets_without_declared_identity():
-            return ()
+        if self.uses_implicit_source_alias_axis():
+            return (AllComponents.CHANNEL,)
         if len(self.source_schema.assignments_by_alias) > 1:
             return image_set_components.as_tuple()
         return ()
@@ -426,14 +438,23 @@ class SourceProcessingComponentSemantics:
             ),
         ).as_tuple()
 
-    def uses_ordered_image_sets_without_declared_identity(self) -> bool:
+    def uses_ordinal_image_sets_without_declared_identity(self) -> bool:
         """Return whether ordered CP image sets need OpenHCS ordinal site identity."""
         match_plan = self.match_plan()
-        if match_plan is None:
+        if match_plan is not None and match_plan.method is not SourceBindingMatchMethod.ORDER:
             return False
-        if match_plan.method is not SourceBindingMatchMethod.ORDER:
+        if self.source_metadata_components():
             return False
-        return not self.source_metadata_components()
+        if match_plan is not None:
+            return True
+        return len(self.source_schema.loaded_image_aliases) > 1
+
+    def uses_implicit_source_alias_axis(self) -> bool:
+        """Return whether CP source aliases lower to OpenHCS channel identity."""
+        if not self.uses_ordinal_image_sets_without_declared_identity():
+            return False
+        loaded_aliases = self.source_schema.loaded_image_aliases
+        return len(loaded_aliases) > 1
 
     def variable_components(self) -> tuple[AllComponents, ...]:
         return ComponentSet.collect(
@@ -898,7 +919,11 @@ class RuntimeArtifactProcessingScope:
     ) -> ModuleProcessingComponents:
         """Preserve source identity for runtime artifacts split by source axes."""
         source_identity_components = (
-            components.execution_components()
+            ComponentSet.collect(
+                components.execution_components(),
+                self.lineage.variable_components,
+                self.axis_plan.source_stack_components,
+            )
             .intersection(ComponentSet(self.axis_plan.source_identity_stack_components()))
             .as_tuple()
         )
@@ -1002,6 +1027,7 @@ class SourceBindingProcessingScope:
                 .excluding(
                     ComponentSet.collect((group_by_component,)),
                     ComponentSet(self.axis_plan.source_stack_components),
+                    ComponentSet(self.axis_plan.source_alias_components),
                 )
                 .as_tuple()
             )
@@ -1470,19 +1496,17 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
         scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
         if scope.requires_channel_grouping:
             axis_plan = request.axis_plan()
+            sample_group_components = SourceProcessingAxisRolePolicy.for_role(
+                SourceProcessingAxisRole.SAMPLE_GROUP
+            ).components(axis_plan)
             return ModuleProcessingComponents(
-                SourceProcessingAxisRolePolicy.for_role(
-                    SourceProcessingAxisRole.SAMPLE_GROUP
-                ).components(axis_plan),
-                ComponentSet(
-                    SourceProcessingAxisRolePolicy.for_role(
-                        SourceProcessingAxisRole.IMAGE_SET
-                    ).components(axis_plan)
-                ).single_or_none(
+                sample_group_components,
+                axis_plan.optional_single_image_set_component(
                     "CorrectIlluminationCalculate all-image scope cannot infer one "
                     "group-by component from multiple image-set axes: "
                     f"{tuple(component.value for component in axis_plan.image_set_components)!r}."
                 ),
+                sample_group_components,
             )
         return super().components(request)
 
@@ -1514,7 +1538,7 @@ def _save_images_required_artifacts(
         ArtifactSpecKey(ArtifactKind.IMAGE, image_name)
         for module in skipped_modules
         if module.name == "SaveImages"
-        for value in setting_values(module, _SAVE_IMAGES_SOURCE_IMAGE_SETTING)
+        for value in setting_values(module, SAVE_IMAGES_SOURCE_IMAGE_SETTING)
         for image_name in split_symbol_names(value)
     )
 
@@ -1857,12 +1881,16 @@ class PipelineGeneratorRuntimeContractProjector:
         artifact_contracts: dict[int, ModuleArtifactContracts],
         *,
         externally_materialized_outputs: ExternallyMaterializedOutputs = frozenset(),
+        artifact_name_materialized_outputs: ArtifactNameMaterializedOutputs = (
+            frozenset()
+        ),
     ) -> dict[int, ModuleArtifactContract]:
         """Build product-runtime contracts without serializing them into generated code."""
         return {
             module.module_num: self.runtime_module_contract(
                 artifact_contracts[module.module_num],
                 externally_materialized_outputs=externally_materialized_outputs,
+                artifact_name_materialized_outputs=artifact_name_materialized_outputs,
             )
             for module in modules
             if (
@@ -1876,12 +1904,14 @@ class PipelineGeneratorRuntimeContractProjector:
         contract: ModuleArtifactContracts,
         *,
         externally_materialized_outputs: ExternallyMaterializedOutputs,
+        artifact_name_materialized_outputs: ArtifactNameMaterializedOutputs,
     ) -> ModuleArtifactContract:
         """Project symbol-table contracts into runtime module contracts."""
         outputs = tuple(
             self.runtime_output_spec(
                 spec,
                 externally_materialized_outputs=externally_materialized_outputs,
+                artifact_name_materialized_outputs=artifact_name_materialized_outputs,
             )
             for spec in contract.outputs
         )
@@ -1889,6 +1919,7 @@ class PipelineGeneratorRuntimeContractProjector:
             self.runtime_output_spec(
                 spec,
                 externally_materialized_outputs=externally_materialized_outputs,
+                artifact_name_materialized_outputs=artifact_name_materialized_outputs,
             )
             for spec in contract.declared_outputs
         )
@@ -1905,6 +1936,7 @@ class PipelineGeneratorRuntimeContractProjector:
         spec: ArtifactSpec,
         *,
         externally_materialized_outputs: ExternallyMaterializedOutputs,
+        artifact_name_materialized_outputs: ArtifactNameMaterializedOutputs,
     ) -> ArtifactSpec:
         """Apply runtime-only materialization required by skipped SaveImages modules."""
         if ArtifactSpecKey.from_spec(spec) not in externally_materialized_outputs:
@@ -1915,7 +1947,18 @@ class PipelineGeneratorRuntimeContractProjector:
             ):
                 return replace(spec, materialization=NO_ARTIFACT_MATERIALIZATION)
             return spec
-        return replace(spec, materialization=tiff_stack(normalize_uint8=True))
+        filename_identity = (
+            MaterializedFilenameIdentity.ARTIFACT_NAME
+            if ArtifactSpecKey.from_spec(spec) in artifact_name_materialized_outputs
+            else MaterializedFilenameIdentity.SOURCE_IDENTITY
+        )
+        return replace(
+            spec,
+            materialization=tiff_stack(
+                normalize_uint8=True,
+                filename_identity=filename_identity,
+            ),
+        )
 
 
 class ArtifactContractCommentSection(ABC, metaclass=AutoRegisterMeta):
@@ -2350,6 +2393,7 @@ class PipelineGeneratorBuildStage:
         externally_materialized_outputs = (
             save_images_required_artifacts | terminal_image_artifacts
         )
+        artifact_name_materialized_outputs = save_images_required_artifacts
         executable_modules = (
             self.generator.pruner.prune_dead_unmaterialized_artifact_steps(
                 registry_modules,
@@ -2366,6 +2410,7 @@ class PipelineGeneratorBuildStage:
             executable_modules,
             contracts_by_module,
             externally_materialized_outputs=externally_materialized_outputs,
+            artifact_name_materialized_outputs=artifact_name_materialized_outputs,
         )
 
         function_names_by_module: dict[int, str] = {}
@@ -2487,7 +2532,7 @@ from openhcs.core.config import LazyProcessingConfig
 from openhcs.constants.constants import VariableComponents, GroupBy
 from openhcs.constants.constants import AllComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.processing.materialization import tiff_stack
+from openhcs.processing.materialization import MaterializedFilenameIdentity, tiff_stack
 
 '''
 

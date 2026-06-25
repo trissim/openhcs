@@ -9,6 +9,7 @@ from functools import lru_cache
 from dataclasses import dataclass, replace
 from enum import Enum
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -26,6 +27,9 @@ from openhcs.core.measurement_image_alignment import (
     MeasurementImageAlignmentSource,
     MeasurementImageLabelAlignmentStrategy,
     MeasurementLabelSourceAlignmentStrategy,
+)
+from openhcs.core.measurement_row_materialization import (
+    MeasurementProjectedColumnarRows,
 )
 from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
@@ -45,7 +49,9 @@ from openhcs.core.runtime_invocation import (
     requested_image_execution_mode,
 )
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     ImagePayloadMetadata,
+    ImagePayloadMetadataCompositionMode,
     ImagePayloadMetadataCompositionRequest,
     ImageMetadataPayload,
     MaskedImagePayload,
@@ -99,6 +105,7 @@ class CellProfilerSourceIdentityMixin:
 
     source_image_name: str | None
     source_aliases: tuple[str, ...]
+    payload: CellProfilerRuntimeValue
 
     @property
     def has_source_identity(self) -> bool:
@@ -129,6 +136,22 @@ class CellProfilerSourceIdentityMixin:
     def matches_single_source_name(self, name: str) -> bool:
         """Return whether this source identity is exactly one named image."""
         return name in self.single_source_names()
+
+    def source_payload_for_name(
+        self,
+        name: str,
+    ) -> CellProfilerRuntimeValue | None:
+        """Return this payload when it already carries the requested source."""
+        if self.matches_single_source_name(name):
+            return self.payload
+        return self.composed_source_payload_for_name(name)
+
+    def composed_source_payload_for_name(
+        self,
+        name: str,
+    ) -> CellProfilerRuntimeValue | None:
+        """Return a payload projected from a composed source axis, when declared."""
+        return None
 
     def single_source_names(self) -> frozenset[str]:
         """Return source names that identify this payload as one image."""
@@ -387,9 +410,15 @@ class CellProfilerImageRequest(
 
     source_aliases: tuple[str, ...] = ()
     projects_runtime_slice_kwargs: bool = True
+    publishes_side_effect_main_flow: bool = True
 
     def __post_init__(self) -> None:
         self.validate_source_identity()
+        if not isinstance(self.publishes_side_effect_main_flow, bool):
+            raise TypeError(
+                "CellProfilerImageRequest.publishes_side_effect_main_flow must be "
+                f"bool, got {type(self.publishes_side_effect_main_flow).__name__}."
+            )
 
     def owns_source_axis(self, source_aliases: tuple[str, ...]) -> bool:
         """Return whether this request declares exactly the requested source axis."""
@@ -404,6 +433,33 @@ class CellProfilerImageRequest(
                 source_alias,
             ),
         )
+
+    def composed_source_payload_for_name(
+        self,
+        name: str,
+    ) -> CellProfilerRuntimeValue | None:
+        """Return this invocation payload projected to a declared source name."""
+        if name in self.source_aliases:
+            return self.source_axis_payload(name)
+        return None
+
+    def source_payloads_for_names(
+        self,
+        names: tuple[str, ...],
+    ) -> Mapping[str, CellProfilerRuntimeValue] | None:
+        """Return source-axis payloads for an exact declared source-name axis."""
+        if not self.owns_source_axis(names):
+            return None
+        payloads: dict[str, CellProfilerRuntimeValue] = {}
+        for name in names:
+            payload = self.source_payload_for_name(name)
+            if payload is None:
+                raise ValueError(
+                    "CellProfiler source-axis request declared source name "
+                    f"{name!r} but could not project its payload."
+                )
+            payloads[name] = payload
+        return MappingProxyType(payloads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,6 +619,33 @@ class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
                 continue
             projected[runtime_feature_name] = row_mapping[source_field_name]
         return projected
+
+    @classmethod
+    def project_columnar_rows_for_pair(
+        cls,
+        rows: ColumnarRows,
+        source_pair: CellProfilerSourceImagePair,
+        *,
+        retain_field: Callable[[str], bool],
+    ) -> ColumnarRows:
+        """Return columnar rows with source-pair fields projected once."""
+        columns_by_name = {str(column): column for column in rows.columns}
+        if not (cls.source_field_names() & columns_by_name.keys()):
+            return rows
+
+        projected = {
+            field_name: rows.column_values(column)
+            for field_name, column in columns_by_name.items()
+            if retain_field(field_name)
+        }
+        for source_field_name, runtime_feature_name in (
+            cls.runtime_feature_names_for_pair(source_pair).items()
+        ):
+            column = columns_by_name.get(source_field_name)
+            if column is None:
+                continue
+            projected[runtime_feature_name] = rows.column_values(column)
+        return MeasurementProjectedColumnarRows(MappingProxyType(projected))
 
     @property
     def source_field_name(self) -> str:
@@ -748,16 +831,34 @@ class CellProfilerMeasurementImage(
     def composed_source_metadata(
         cls,
         measurement_images: tuple["CellProfilerMeasurementImage", ...],
+        *,
+        mode: ImagePayloadMetadataCompositionMode | None = None,
     ) -> ImagePayloadMetadata | None:
         """Return source metadata composed in runtime measurement-image order."""
         if not measurement_images:
             return None
+        if mode is None:
+            mode = cls.source_metadata_composition_mode(measurement_images)
         metadata = ImagePayloadMetadataCompositionRequest(
-            tuple(image.payload for image in measurement_images)
+            tuple(image.payload for image in measurement_images),
+            mode=mode,
         ).metadata()
         if not metadata.has_values:
             return None
         return metadata
+
+    @classmethod
+    def source_metadata_composition_mode(
+        cls,
+        measurement_images: tuple["CellProfilerMeasurementImage", ...],
+    ) -> ImagePayloadMetadataCompositionMode:
+        """Return source metadata topology declared by measurement reference domains."""
+        if all(
+            image.reference_domain is CellProfilerMeasurementImageDomain.OBJECT_LABELS
+            for image in measurement_images
+        ):
+            return ImagePayloadMetadataCompositionMode.BUNDLE
+        return ImagePayloadMetadataCompositionMode.STACK
 
     @property
     def alignment_image(self) -> CellProfilerRuntimeValue:

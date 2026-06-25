@@ -76,6 +76,16 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
         parser = self._parser(subparsers)
         parser.add_argument("--manifest", type=Path, required=True)
         parser.add_argument("--output-dir", type=Path, required=True)
+        parser.add_argument(
+            "--case",
+            action="append",
+            dest="case_names",
+            metavar="CASE_NAME",
+            help=(
+                "Run one exact benchmark case name from the manifest. "
+                "Repeat for multiple cases. Defaults to all cases."
+            ),
+        )
         parser.add_argument("--native-reference-root", type=Path)
         parser.add_argument(
             "--require-native-reference",
@@ -170,8 +180,12 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
         suite_id = args.suite_id or datetime.now().strftime(
             "cp_vs_openhcs_%Y%m%d_%H%M%S"
         )
-        observations = run_comparison_suite(
+        cases = _filter_cases_by_name(
             load_comparison_cases(args.manifest),
+            tuple(args.case_names or ()),
+        )
+        observations = run_comparison_suite(
+            cases,
             output_root=args.output_dir,
             suite_id=suite_id,
             repeats=args.repeats,
@@ -203,6 +217,27 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             plot_summary(args.output_dir / "summary.csv", figures_output_dir)
             print(f"figures={figures_output_dir}")
         return 0
+
+
+def _filter_cases_by_name(cases, requested_names: tuple[str, ...]):
+    """Return manifest cases selected by exact name, failing on absent names."""
+    if not requested_names:
+        return cases
+
+    available_names = tuple(case.name for case in cases)
+    available_name_set = set(available_names)
+    unknown_names = tuple(
+        name for name in dict.fromkeys(requested_names) if name not in available_name_set
+    )
+    if unknown_names:
+        raise ValueError(
+            "Unknown benchmark case name(s): "
+            f"{', '.join(unknown_names)}. Available case name(s): "
+            f"{', '.join(available_names)}"
+        )
+
+    requested_name_set = set(requested_names)
+    return tuple(case for case in cases if case.name in requested_name_set)
 
 
 class OfficialCp3ManifestCommand(BenchmarkCliCommand):

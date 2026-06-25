@@ -150,7 +150,7 @@ class FunctionStepArtifactContractScope:
             output
             for output in self.artifact_outputs.values()
             if output.materialization is not NO_ARTIFACT_MATERIALIZATION
-            and output.kind.materialization_uses_source_identity_filename
+            and output.materialization_uses_source_identity_filename()
         )
 
 

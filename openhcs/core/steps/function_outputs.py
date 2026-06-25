@@ -3,28 +3,43 @@
 from __future__ import annotations
 
 import logging
+import time
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import ViewerStreamProducer
 
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.runtime_slice_projection import (
-    RuntimeProjectionSourceIdentityError,
+    RuntimeProjectedPayloadItem,
+    RuntimeProjectionSourceIdentityRequest,
     RuntimeProjectionSourceIdentityRequirement,
 )
-from openhcs.core.runtime_values import ImagePayloadMetadataInput, image_payload_data
-from openhcs.core.source_image_provenance import SourceComponentMetadata
+from openhcs.core.runtime_profile import RuntimeProfileLogger
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadataInput,
+    image_payload_data,
+)
+from openhcs.core.source_image_provenance import (
+    SourceComponentMetadata,
+    SourceIdentityStackAxisProjection,
+)
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
 )
-from openhcs.core.steps.function_output_identity import FunctionOutputParserContext
+from openhcs.core.steps.function_output_identity import (
+    FunctionOutputIdentityAuthority,
+    FunctionOutputParserContext,
+    FunctionOutputPathAuthority,
+)
 from openhcs.core.steps.function_output_manifest import (
     ProducedOutputSemantics,
     step_output_manifest,
@@ -39,6 +54,7 @@ from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
     StreamSourceComponentMetadataItems,
 )
+from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 logger = logging.getLogger(__name__)
 StreamPayload = ImagePayloadMetadataInput
@@ -90,11 +106,56 @@ def finalize_function_step_outputs(
     plan: FunctionStepExecutionPlan,
 ) -> None:
     """Persist images, streams, metadata, and non-image artifacts for one step."""
-    MemoryOutputWriter.write_if_needed(context, plan)
-    MaterializedImageOutputWriter.write_if_needed(context, plan)
-    StreamOutputsAuthority.stream_outputs(context, plan)
-    OpenHCSMetadataWriter.write(context, plan)
-    RuntimeArtifactMaterializationAuthority.materialize(context, plan)
+    if not RuntimeProfileLogger.enabled():
+        MemoryOutputWriter.write_if_needed(context, plan)
+        MaterializedImageOutputWriter.write_if_needed(context, plan)
+        StreamOutputsAuthority.stream_outputs(context, plan)
+        OpenHCSMetadataWriter.write(context, plan)
+        RuntimeArtifactMaterializationAuthority.materialize(context, plan)
+        return
+
+    _profile_finalization_phase(
+        "finalize_memory_outputs",
+        lambda: MemoryOutputWriter.write_if_needed(context, plan),
+        plan,
+    )
+    _profile_finalization_phase(
+        "finalize_materialized_images",
+        lambda: MaterializedImageOutputWriter.write_if_needed(context, plan),
+        plan,
+    )
+    _profile_finalization_phase(
+        "finalize_stream_outputs",
+        lambda: StreamOutputsAuthority.stream_outputs(context, plan),
+        plan,
+    )
+    _profile_finalization_phase(
+        "finalize_openhcs_metadata",
+        lambda: OpenHCSMetadataWriter.write(context, plan),
+        plan,
+    )
+    _profile_finalization_phase(
+        "finalize_runtime_artifacts",
+        lambda: RuntimeArtifactMaterializationAuthority.materialize(context, plan),
+        plan,
+    )
+
+
+def _profile_finalization_phase(
+    label: str,
+    operation: Callable[[], None],
+    plan: FunctionStepExecutionPlan,
+) -> None:
+    started_at = time.perf_counter()
+    operation()
+    RuntimeProfileLogger.log(
+        logger,
+        label,
+        time.perf_counter() - started_at,
+        step=plan.step_index,
+        step_name=plan.step_name,
+        axis_id=plan.axis_id,
+    )
 
 class MemoryOutputWriter:
     """Writes memory-backed step outputs to the configured write backend."""
@@ -198,6 +259,93 @@ class MaterializedImageOutputWriter:
         )
 
 @dataclass(frozen=True, slots=True)
+class StreamOutputProjectionRequest:
+    """Nominal source of truth for projecting produced outputs into viewer streams."""
+
+    parser: FilenameParser
+    payloads: tuple[StreamPayload, ...]
+    paths: tuple[str, ...]
+    produced_outputs: tuple[ProducedOutputSemantics, ...]
+    source_identity_stack_projection: SourceIdentityStackAxisProjection
+
+    @classmethod
+    def from_sequences(
+        cls,
+        *,
+        parser: FilenameParser,
+        payloads: list[StreamPayload],
+        paths: list[str],
+        produced_outputs: tuple[ProducedOutputSemantics, ...],
+        source_identity_stack_projection: SourceIdentityStackAxisProjection,
+    ) -> "StreamOutputProjectionRequest":
+        return cls(
+            parser=parser,
+            payloads=tuple(payloads),
+            paths=tuple(paths),
+            produced_outputs=produced_outputs,
+            source_identity_stack_projection=source_identity_stack_projection,
+        )
+
+    def __post_init__(self) -> None:
+        if len(self.payloads) != len(self.paths):
+            raise ValueError(
+                "Streaming payload/path cardinality mismatch: "
+                f"{len(self.payloads)} payloads for {len(self.paths)} paths."
+            )
+        if len(self.payloads) != len(self.produced_outputs):
+            raise ValueError(
+                "Streaming payload/output-record cardinality mismatch: "
+                f"{len(self.payloads)} payloads for "
+                f"{len(self.produced_outputs)} output records."
+            )
+        if not self.produced_outputs:
+            raise ValueError("Streaming requires at least one produced output record.")
+
+    def require_single_producer_identity(self) -> StreamProducerIdentity:
+        producer_identity = self.produced_outputs[0].producer_identity
+        for produced_output in self.produced_outputs[1:]:
+            if produced_output.producer_identity != producer_identity:
+                raise ValueError("A viewer stream batch cannot mix producer identities.")
+        return producer_identity
+
+    def runtime_projection_request(
+        self,
+        payload: StreamPayload,
+        path: str,
+    ) -> RuntimeProjectionSourceIdentityRequest:
+        return RuntimeProjectionSourceIdentityRequest(
+            value=payload,
+            source_description=path,
+            source_identity_stack_projection=self.source_identity_stack_projection,
+        )
+
+    def for_producer(
+        self,
+        producer_identity: StreamProducerIdentity,
+    ) -> "StreamOutputProjectionRequest":
+        payloads: list[StreamPayload] = []
+        paths: list[str] = []
+        produced_outputs: list[ProducedOutputSemantics] = []
+        for payload, path, produced_output in zip(
+            self.payloads,
+            self.paths,
+            self.produced_outputs,
+            strict=True,
+        ):
+            if produced_output.producer_identity == producer_identity:
+                payloads.append(payload)
+                paths.append(path)
+                produced_outputs.append(produced_output)
+        return StreamOutputProjectionRequest.from_sequences(
+            parser=self.parser,
+            payloads=payloads,
+            paths=paths,
+            produced_outputs=tuple(produced_outputs),
+            source_identity_stack_projection=self.source_identity_stack_projection,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StreamOutputBatch:
     """Projected viewer stream payloads with one authoritative producer identity."""
 
@@ -209,50 +357,39 @@ class StreamOutputBatch:
     @classmethod
     def from_projection(
         cls,
-        *,
-        payloads: list[StreamPayload],
-        paths: list[str],
-        produced_outputs: tuple[ProducedOutputSemantics, ...],
+        request: StreamOutputProjectionRequest,
     ) -> "StreamOutputBatch":
-        if len(payloads) != len(paths):
-            raise ValueError(
-                "Streaming payload/path cardinality mismatch: "
-                f"{len(payloads)} payloads for {len(paths)} paths."
-            )
-        if len(payloads) != len(produced_outputs):
-            raise ValueError(
-                "Streaming payload/output-record cardinality mismatch: "
-                f"{len(payloads)} payloads for {len(produced_outputs)} "
-                "output records."
-            )
-        if not produced_outputs:
-            raise ValueError("Streaming requires at least one produced output record.")
-
-        producer_identity = produced_outputs[0].producer_identity
-        for produced_output in produced_outputs[1:]:
-            if produced_output.producer_identity != producer_identity:
-                raise ValueError(
-                    "A viewer stream batch cannot mix producer identities."
-                )
+        producer_identity = request.require_single_producer_identity()
 
         data_items: list[StreamPayload] = []
         output_paths: list[str] = []
         component_metadata: list[SourceComponentMetadata] = []
-        for payload, path in zip(
-            payloads,
-            paths,
+        for payload, path, produced_output in zip(
+            request.payloads,
+            request.paths,
+            request.produced_outputs,
             strict=True,
         ):
-            for projected_item in cls.project_item(payload, path):
+            projected_items = tuple(
+                cls.project_item(request.runtime_projection_request(payload, path))
+            )
+            for projected_item in projected_items:
+                stream_path = cls.stream_path_for_projected_item(
+                    projected_item,
+                    produced_path=path,
+                    produced_output=produced_output,
+                    parser=request.parser,
+                    projected_item_count=len(projected_items),
+                )
                 source_metadata = projected_item.require_source_component_metadata()
                 logger.info(
                     "🔬 STREAM SEND: path=%s components=%s %s",
-                    path,
+                    stream_path,
                     dict(source_metadata),
                     stream_payload_summary(projected_item.data),
                 )
                 data_items.append(projected_item.data)
-                output_paths.append(path)
+                output_paths.append(stream_path)
                 component_metadata.append(source_metadata)
 
         return cls(
@@ -262,6 +399,23 @@ class StreamOutputBatch:
                 component_metadata
             ),
             producer=ViewerStreamProducer.from_identity(producer_identity),
+        )
+
+    @classmethod
+    def from_projection_by_producer(
+        cls,
+        request: StreamOutputProjectionRequest,
+    ) -> tuple["StreamOutputBatch", ...]:
+        producer_identities = tuple(
+            dict.fromkeys(
+                produced_output.producer_identity
+                for produced_output in request.produced_outputs
+            )
+        )
+
+        return tuple(
+            cls.from_projection(request.for_producer(producer_identity))
+            for producer_identity in producer_identities
         )
 
     @property
@@ -278,19 +432,40 @@ class StreamOutputBatch:
 
     @staticmethod
     def project_item(
-        payload: StreamPayload,
-        path: str,
-    ):
-        try:
-            return (
-                RuntimeProjectionSourceIdentityRequirement.REQUIRED_COMPONENT_METADATA
-            ).project_payload_items(
-                payload,
-                source_description=path,
+        request: RuntimeProjectionSourceIdentityRequest,
+    ) -> tuple[RuntimeProjectedPayloadItem, ...]:
+        return (
+            RuntimeProjectionSourceIdentityRequirement.REQUIRED_COMPONENT_METADATA
+        ).project_payload_items(request)
+
+    @staticmethod
+    def stream_path_for_projected_item(
+        projected_item: RuntimeProjectedPayloadItem,
+        *,
+        produced_path: str,
+        produced_output: ProducedOutputSemantics,
+        parser: FilenameParser,
+        projected_item_count: int,
+    ) -> str:
+        """Return the stream-visible path for one projected payload item."""
+        if projected_item_count <= 1:
+            return produced_path
+        identity = FunctionOutputIdentityAuthority.identity_from_metadata(
+            parser,
+            projected_item.metadata,
+            fallback_identity_path=produced_path,
+        )
+        if identity is None:
+            return produced_path
+        if produced_output.filename_qualifier is not None:
+            identity = identity.with_filename_qualifier(
+                produced_output.filename_qualifier
             )
-        except RuntimeProjectionSourceIdentityError as error:
-            logger.info("Skipping unaddressed stream output %s: %s", path, error)
-            return ()
+        filename = FunctionOutputPathAuthority.filename_for_identity(
+            parser,
+            identity,
+        )
+        return str(Path(produced_path).parent / filename)
 
 class StreamOutputsAuthority:
     """Streams step image outputs through viewer backends."""
@@ -301,8 +476,15 @@ class StreamOutputsAuthority:
         plan: FunctionStepExecutionPlan,
     ) -> None:
         for config_instance in plan.streaming_configs:
-            produced_outputs = step_output_manifest(context).produced_records_for(plan)
-            memory_paths = ProducedMemoryPathsAuthority.paths(context, plan)
+            produced_outputs = tuple(
+                record
+                for record in step_output_manifest(context).produced_records_for(plan)
+                if record.streams_as_image_payload
+            )
+            memory_paths = [
+                ProducedMemoryPathsAuthority.memory_path(record, plan)
+                for record in produced_outputs
+            ]
             if not memory_paths:
                 logger.info(
                     "No produced image outputs to stream for step %s.",
@@ -324,32 +506,49 @@ class StreamOutputsAuthority:
                     Backend.MEMORY.value,
                 )
             )
-            stream_batch = StreamOutputBatch.from_projection(
-                payloads=streaming_payloads,
-                paths=list(streaming_paths),
-                produced_outputs=produced_outputs,
+            stream_batches = StreamOutputBatch.from_projection_by_producer(
+                StreamOutputProjectionRequest.from_sequences(
+                    parser=context.microscope_handler.parser,
+                    payloads=streaming_payloads,
+                    paths=list(streaming_paths),
+                    produced_outputs=produced_outputs,
+                    source_identity_stack_projection=(
+                        SourceIdentityStackAxisProjection.from_axes(
+                            plan.step_source_identity_stack_axes
+                        )
+                    ),
+                )
             )
-            if stream_batch.is_empty:
+            stream_batches = tuple(
+                stream_batch
+                for stream_batch in stream_batches
+                if not stream_batch.is_empty
+            )
+            if not stream_batches:
                 logger.info(
                     "No streamable image outputs for step %s after stack projection.",
                     plan.step_name,
                 )
                 continue
             viewer_surface = config_instance.streaming_viewer_surface(context)
-            source_metadata_items = stream_batch.source_metadata_items
-            stream_backend_kwargs = StreamComponentMessageExtraAuthority.from_context(
-                viewer_surface,
-                context=context,
-                source_metadata_items=source_metadata_items,
-            ).viewer_backend_kwargs(
-                producer=stream_batch.producer,
-            )
-            context.filemanager.save_batch(
-                stream_batch.data_list,
-                stream_batch.paths,
-                config_instance.backend.value,
-                **stream_backend_kwargs.to_kwargs(),
-            )
+            for stream_batch in stream_batches:
+                stream_backend_kwargs = (
+                    StreamComponentMessageExtraAuthority.from_context(
+                        viewer_surface,
+                        context=context,
+                        source_metadata_items=(
+                            stream_batch.source_metadata_items
+                        ),
+                    ).viewer_backend_kwargs(
+                        producer=stream_batch.producer,
+                    )
+                )
+                context.filemanager.save_batch(
+                    stream_batch.data_list,
+                    stream_batch.paths,
+                    config_instance.backend.value,
+                    **stream_backend_kwargs.to_kwargs(),
+                )
 
 class OpenHCSMetadataWriter:
     """Writes OpenHCS metadata sidecars for primary and materialized outputs."""

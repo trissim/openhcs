@@ -51,7 +51,7 @@ CellProfiler import tests preservation of a widely used, trusted workflow format
 | Measurements | Named measurement outputs | Tables remain tied to the workflow that produced them |
 | Relationships and grids | Named non-image outputs | Object relationships and geometry are preserved explicitly |
 | SaveImages and ExportToSpreadsheet | Output destinations and format writers | Files are produced from workflow results, not hidden side effects |
-| Module settings | Traceable parameter state | Settings can be edited, inherited, serialized, and audited |
+| Module settings | Traceable parameter state | Settings can be edited, inherited, and reviewed in the workflow record |
 
 Compatibility is defined by strict output parity. A workflow counts only when native CellProfiler outputs and OpenHCS outputs match under the declared comparison policy. Numeric values, label identities, object relationships, measurement rows, and materialized files are compared separately where relevant. Speed is reported after output parity is established (Figure 2).
 

@@ -31,6 +31,7 @@ from openhcs.core.registry_strategies import (
     NominalTypeKeyedStrategyMixin,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
+from openhcs.core.source_image_provenance import SourcePlaneIndexedProvenanceExpansion
 from openhcs.core.source_spatial_domain import (
     SourceSpatialDomain,
     SourceSpatialDomainAdapter,
@@ -39,6 +40,7 @@ from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     ImagePayloadMetadata,
     ImagePayloadMetadataCarrier,
+    ImagePayloadMetadataCompositionMode,
     ImagePayloadMetadataCompositionRequest,
     ImagePayloadMetadataInput,
     ImagePayloadSequence,
@@ -242,10 +244,7 @@ class ObjectLabelPayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
 
     @property
     def array(self) -> Any:
-        if isinstance(self.value, ObjectLabelSet):
-            payload = self.value.runtime_payload()
-            return payload.labels if isinstance(payload, ObjectLabelPayload) else payload
-        return self.value.labels
+        return ObjectLabelDenseDataStrategy.for_payload(self.value).data(self.value)
 
     @property
     def domain(self) -> SourceSpatialDomain:
@@ -299,19 +298,58 @@ class AlignedImageStackKwargResolver:
 class ImagePayloadSliceProjector:
     """Project payload context from a parent image into one child image slice."""
 
-    mask: Any | None
+    mask: RuntimeArrayData | None
     metadata: ImagePayloadMetadata
 
-    def payload_for_slice(self, data_slice: Any, index: int) -> Any:
+    def payload_for_slice(
+        self,
+        data_slice: RuntimeArrayData,
+        index: int,
+    ) -> ImagePayloadMetadataInput:
         """Return a slice payload with mask and metadata in the slice domain."""
-        metadata = self.metadata.for_source_plane(index)
+        metadata = self.metadata_for_slice(data_slice, index)
         mask = self.mask_for_slice(data_slice, index)
-        return metadata.payload_with(data_slice, mask)
+        payload: ImagePayloadMetadataInput = metadata.payload_with(data_slice, mask)
+        return payload
 
-    def mask_for_slice(self, data_slice: Any, index: int) -> Any | None:
+    def metadata_for_slice(
+        self,
+        data_slice: RuntimeArrayData,
+        index: int,
+    ) -> ImagePayloadMetadata:
+        """Return metadata for a child image slice or preserved source stack."""
+        if self.slice_preserves_source_plane_axis(data_slice):
+            return self.metadata_for_preserved_source_plane_axis(data_slice)
+        return self.metadata.for_source_plane(index)
+
+    def metadata_for_preserved_source_plane_axis(
+        self,
+        data_slice: RuntimeArrayData,
+    ) -> ImagePayloadMetadata:
+        """Return metadata for a child payload that still carries source planes."""
+        plane_count = self.preserved_source_plane_count(data_slice)
+        if plane_count is None:
+            return self.metadata
+        source_provenance = SourcePlaneIndexedProvenanceExpansion(
+            self.metadata.source_provenance,
+            expected_plane_count=plane_count,
+        ).expanded()
+        if source_provenance == self.metadata.source_provenance:
+            return self.metadata
+        return self.metadata.with_source_provenance(source_provenance)
+
+    def mask_for_slice(
+        self,
+        data_slice: RuntimeArrayData,
+        index: int,
+    ) -> RuntimeArrayData | None:
         """Return the parent mask projected into ``data_slice``'s domain."""
         if self.mask is None:
             return None
+        if self.slice_preserves_source_plane_axis(data_slice):
+            preserved_mask = project_image_mask_to_data_domain(self.mask, data_slice)
+            if preserved_mask is not None:
+                return preserved_mask
         mask_array = np.asarray(self.mask)
         data_array = np.asarray(data_slice)
         data_shape = tuple(data_array.shape)
@@ -326,6 +364,31 @@ class ImagePayloadSliceProjector:
         raise ValueError(
             "Image payload mask cannot be projected into slice domain; "
             f"got mask {mask_array.shape!r} for slice {data_shape!r}."
+        )
+
+    def slice_preserves_source_plane_axis(self, data_slice: RuntimeArrayData) -> bool:
+        """Return whether child data still carries every source plane."""
+        return self.preserved_source_plane_count(data_slice) is not None
+
+    def preserved_source_plane_count(
+        self,
+        data_slice: RuntimeArrayData,
+    ) -> int | None:
+        """Return preserved source-plane count for a child stack, if any."""
+        if not is_image_stack(data_slice):
+            return None
+        data_plane_count = int(np.shape(data_slice)[0])
+        source_plane_count = self.metadata.source_provenance.source_plane_count
+        if source_plane_count == data_plane_count:
+            return data_plane_count
+        expanded_provenance = SourcePlaneIndexedProvenanceExpansion(
+            self.metadata.source_provenance,
+            expected_plane_count=data_plane_count,
+        ).expanded()
+        return (
+            data_plane_count
+            if expanded_provenance.source_plane_count == data_plane_count
+            else None
         )
 
     @staticmethod
@@ -352,33 +415,64 @@ class ImagePayloadSliceProjector:
 
 def stack_image_payload_context(
     image_payloads: Sequence[Any],
-    stack: Any,
+    stack: RuntimeArrayData,
 ) -> Any:
     """Attach composed image metadata and masks to a freshly stacked payload."""
     payloads = tuple(image_payloads)
     metadata = ImagePayloadMetadataCompositionRequest(payloads).metadata()
     return RuntimeImagePayloadContext(
         stack,
-        _stack_image_payload_mask(payloads),
+        _stack_image_payload_mask(payloads, stack),
         metadata,
     ).payload()
 
 
-def _stack_image_payload_mask(image_payloads: Sequence[Any]) -> Any | None:
+def _stack_image_payload_mask(
+    image_payloads: Sequence[Any],
+    stack: RuntimeArrayData,
+) -> RuntimeArrayData | None:
     masks = tuple(image_payload_mask(payload) for payload in image_payloads)
     if not any(mask is not None for mask in masks):
         return None
-    data_slices = tuple(image_payload_data(payload) for payload in image_payloads)
+    payloads = tuple(image_payloads)
+    data_slices = tuple(image_payload_data(payload) for payload in payloads)
+    stack_shape = tuple(np.shape(stack))
+    if len(payloads) == 1 and stack_shape == tuple(np.shape(data_slices[0])):
+        output_slice_domains = (stack,)
+        compose_stack_axis = False
+    else:
+        if stack_shape[:1] != (len(payloads),):
+            raise ValueError(
+                "Image payload stack mask composition requires output stack "
+                f"axis length {len(payloads)}, got stack shape {stack_shape!r}."
+            )
+        output_slice_domains = tuple(
+            stack[slice_index]
+            for slice_index in range(len(payloads))
+        )
+        compose_stack_axis = True
     resolved_masks = tuple(
-        _complete_image_payload_mask(payload_data, mask)
-        for payload_data, mask in zip(data_slices, masks)
+        _complete_image_payload_mask(slice_domain, mask)
+        for slice_domain, mask in zip(output_slice_domains, masks)
     )
-    return np.stack(resolved_masks)
+    if compose_stack_axis:
+        return np.stack(resolved_masks)
+    return resolved_masks[0]
 
 
-def _complete_image_payload_mask(payload_data: Any, mask: Any | None) -> Any:
+def _complete_image_payload_mask(
+    payload_data: RuntimeArrayData,
+    mask: RuntimeArrayData | None,
+) -> RuntimeArrayData:
     if mask is not None:
-        return np.asarray(mask, dtype=bool)
+        projected_mask = project_image_mask_to_data_domain(mask, payload_data)
+        if projected_mask is None:
+            raise ValueError(
+                "Image payload mask cannot be projected into output slice "
+                f"domain; got mask {tuple(np.shape(mask))!r} for slice "
+                f"{tuple(np.shape(payload_data))!r}."
+            )
+        return projected_mask
     return np.ones(_payload_spatial_shape(payload_data), dtype=bool)
 
 
@@ -831,23 +925,35 @@ class ImagePayloadComposition:
 class ImagePayloadBundleContext(ImagePayloadSequence):
     """Compose same-slice image bundle data, masks, and metadata together."""
 
+    metadata_mode: ImagePayloadMetadataCompositionMode = (
+        ImagePayloadMetadataCompositionMode.BUNDLE
+    )
+
     @classmethod
     def from_payloads(
         cls,
         payloads: tuple[ImagePayloadMetadataInput, ...],
+        *,
+        metadata_mode: ImagePayloadMetadataCompositionMode = (
+            ImagePayloadMetadataCompositionMode.BUNDLE
+        ),
     ) -> "ImagePayloadBundleContext":
         normalized = tuple(
             _normalize_bundle_image_payload(payload) for payload in payloads
         )
         return cls(
             ImagePayloadSourceSpatialDomainAdapter
-            .payloads_aligned_to_common_source_domain(normalized)
+            .payloads_aligned_to_common_source_domain(normalized),
+            metadata_mode=metadata_mode,
         )
 
     def compose(self) -> Any:
         composed = self.compose_unmasked(self.data_payloads)
         return (
-            ImagePayloadMetadataCompositionRequest(self.payloads)
+            ImagePayloadMetadataCompositionRequest(
+                self.payloads,
+                mode=self.metadata_mode,
+            )
             .metadata()
             .payload_with(
                 composed,
@@ -1126,6 +1232,9 @@ def compose_aligned_image_payload(
     owner_name: str,
     image_payloads: tuple[Any, ...],
     slice_contexts: Sequence[AlignedImageSliceContext] = (),
+    metadata_mode: ImagePayloadMetadataCompositionMode = (
+        ImagePayloadMetadataCompositionMode.BUNDLE
+    ),
 ) -> ImagePayloadComposition:
     """Compose one or more image payloads into an executor-ready payload."""
     if not image_payloads:
@@ -1170,7 +1279,8 @@ def compose_aligned_image_payload(
     if max_slice_count == 1:
         return ImagePayloadComposition(
             payload=ImagePayloadBundleContext.from_payloads(
-                tuple(slices[0] for slices in payload_slices)
+                tuple(slices[0] for slices in payload_slices),
+                metadata_mode=metadata_mode,
             ).compose(),
             execution_mode=ImagePayloadExecutionMode.FULL_STACK,
         )
@@ -1181,7 +1291,8 @@ def compose_aligned_image_payload(
                     tuple(
                         aligned_payload_slice(slices, slice_index)
                         for slices in payload_slices
-                    )
+                    ),
+                    metadata_mode=metadata_mode,
                 ).compose()
                 for slice_index in range(max_slice_count)
             )

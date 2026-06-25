@@ -9,11 +9,16 @@ from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
     RuntimeProjectionSourceIdentityRequirement,
+    RuntimeProjectionSourceIdentityRequest,
     RuntimeSliceProjection,
     RuntimeSliceProjectionStrategy,
     RuntimeProjectionAxis,
 )
 from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
+from openhcs.core.source_metadata import (
+    SOURCE_PLANE_COUNT_FIELD,
+    SOURCE_PLANE_INDEX_FIELD,
+)
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.runtime_values import (
     FieldSpec,
@@ -42,6 +47,7 @@ from openhcs.core.runtime_values import (
     RelationshipEndpoint,
     ObjectRelationship,
     RuntimeArrayPayload,
+    RuntimeImageSourceIdentityCompleteness,
     RuntimeStoragePolicy,
     RuntimeValue,
     RuntimeValueSchema,
@@ -52,6 +58,7 @@ from openhcs.core.runtime_values import (
     SourceImagePlaneAxisPolicy,
     SourceImagePlaneAxisRequest,
     ImagePayloadSourceMetadataContext,
+    ImagePayloadMetadataCompositionMode,
     ImagePayloadMetadataCompositionRequest,
     SourceImageProvenancePlanes,
     image_payload_data,
@@ -702,6 +709,58 @@ def test_object_label_pure_2d_aggregator_preserves_sparse_ijv_sets() -> None:
     assert aggregated.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
 
 
+def test_empty_sparse_ijv_stack_preserves_runtime_slice_count() -> None:
+    shape = (4, 5)
+    empty = np.zeros(shape, dtype=np.int32)
+    source_domain = SourceSpatialDomain(source_shape_yx=shape)
+    first = ObjectLabelSet(
+        name="Cells",
+        labels=SparseIJVLabelRows.from_dense_labels(empty),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        domain=ObjectLabelDomain(declared_object_count=0),
+        source_spatial_domain=source_domain,
+    )
+    second = ObjectLabelSet(
+        name="Cells",
+        labels=SparseIJVLabelRows.from_dense_labels(empty),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        domain=ObjectLabelDomain(declared_object_count=0),
+        source_spatial_domain=source_domain,
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first, second),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelSet)
+    assert isinstance(aggregated.labels, SparseIJVLabelRows)
+    assert aggregated.labels.label_data_runtime_slice_count() == 2
+    assert RuntimeSliceProjection.slice_count_from_values((aggregated,)) == 2
+    np.testing.assert_array_equal(
+        object_label_dense_array(aggregated),
+        np.zeros((2, *shape), dtype=np.int32),
+    )
+
+    projected_items = (
+        RuntimeProjectionSourceIdentityRequirement.OPTIONAL
+    ).project_payload_items(
+        RuntimeProjectionSourceIdentityRequest(
+            value=aggregated,
+            source_description="empty sparse labels",
+        )
+    )
+
+    assert len(projected_items) == 2
+    assert [item.runtime_plane_metadata.plane_indices for item in projected_items] == [
+        (0,),
+        (1,),
+    ]
+    assert [
+        object_label_dense_array(item.value).shape for item in projected_items
+    ] == [shape, shape]
+
+
 def test_shape_object_feature_table_uses_registered_nominal_contract() -> None:
     table = ShapeObjectFeatureValueTable.from_feature_arrays(
         {
@@ -810,7 +869,7 @@ def test_sparse_shape_measurement_preserves_high_object_id_feature_domain() -> N
         calculate_advanced=False,
         calculate_zernikes=True,
         shape_backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
-        zernike_backend_provider=CellProfilerBackendProvider.CENTROSOME,
+        zernike_backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
     ).rows()
 
     assert len(rows) == 1
@@ -928,6 +987,109 @@ def test_composed_image_metadata_preserves_single_channel_source_context() -> No
         "site": "2",
         "channel": "1",
     }
+
+
+def test_bundle_image_metadata_keeps_agreed_present_component_values() -> None:
+    first = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "timepoint": "7",
+            },
+        ),
+        mask=None,
+    ).payload()
+    second = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    bundle = ImagePayloadMetadataCompositionRequest(
+        (first, second),
+        mode=ImagePayloadMetadataCompositionMode.BUNDLE,
+    ).metadata()
+    stack = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
+
+    assert dict(bundle.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "1",
+        "timepoint": "7",
+    }
+    assert dict(stack.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "1",
+    }
+
+
+def test_bundle_image_metadata_preserves_payload_source_provenance() -> None:
+    first = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.tif",),
+                component_metadata=(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "1",
+                    },
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
+    second = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w2_z001_t001.tif",),
+                component_metadata=(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "2",
+                        "z_index": "1",
+                    },
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
+
+    bundle = ImagePayloadMetadataCompositionRequest(
+        (first, second),
+        mode=ImagePayloadMetadataCompositionMode.BUNDLE,
+    ).metadata()
+    stack = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
+
+    assert bundle.source_image_provenance_planes.count == 2
+    assert tuple(
+        plane.source_identity.path
+        for plane in bundle.source_image_provenance_planes.planes
+    ) == (
+        "/input/A01_s001_w1_z001_t001.tif",
+        "/input/A01_s001_w2_z001_t001.tif",
+    )
+    assert dict(bundle.source_component_metadata) == {
+        "extension": ".tif",
+        "well": "A01",
+        "site": "1",
+        "z_index": "1",
+    }
+    assert stack.source_image_provenance_planes.count == 2
 
 
 def test_object_label_payload_from_composed_source_image_keeps_site_axis_metadata() -> None:
@@ -1352,13 +1514,137 @@ def test_runtime_projection_requirement_projects_singleton_object_label_stack() 
     (item,) = (
         RuntimeProjectionSourceIdentityRequirement.OPTIONAL
     ).project_payload_items(
-        payload,
-        source_description="singleton labels",
+        RuntimeProjectionSourceIdentityRequest(
+            value=payload,
+            source_description="singleton labels",
+        )
     )
 
     assert isinstance(item.value, ObjectLabelPayload)
     np.testing.assert_array_equal(item.value.labels, labels[0])
     assert item.source_component_metadata == {"well": "A01", "site": 1, "channel": 1}
+    assert item.runtime_plane_metadata is None
+
+
+def test_runtime_projection_requirement_tracks_multi_plane_runtime_coordinates() -> None:
+    labels = np.arange(50, dtype=np.int32).reshape(2, 5, 5)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            component_metadata=(
+                {"well": "A01", "site": 1, "channel": 1, "z_index": 1},
+                {"well": "A01", "site": 1, "channel": 1, "z_index": 2},
+            ),
+        ),
+    )
+
+    first, second = (
+        RuntimeProjectionSourceIdentityRequirement.OPTIONAL
+    ).project_payload_items(
+        RuntimeProjectionSourceIdentityRequest(
+            value=payload,
+            source_description="labels",
+        )
+    )
+
+    assert first.runtime_plane_metadata is not None
+    assert second.runtime_plane_metadata is not None
+    assert first.runtime_plane_metadata.roi_metadata == {
+        "plane_indices": (0,),
+        "plane_shape": (2,),
+    }
+    assert second.runtime_plane_metadata.roi_metadata == {
+        "plane_indices": (1,),
+        "plane_shape": (2,),
+    }
+    assert first.runtime_plane_metadata.source_plane_indices == (0,)
+    assert second.runtime_plane_metadata.source_plane_indices == (1,)
+    assert first.source_component_metadata == {
+        "well": "A01",
+        "site": 1,
+        "channel": 1,
+        "z_index": 1,
+    }
+    assert second.source_component_metadata == {
+        "well": "A01",
+        "site": 1,
+        "channel": 1,
+        "z_index": 2,
+    }
+
+
+def test_runtime_projection_expands_indexed_scalar_source_metadata() -> None:
+    source_path = "/input/A01_s001_w3_z001_t001.tif"
+    payload = RuntimeImagePayloadContext(
+        np.arange(12, dtype=np.uint16).reshape(3, 2, 2),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "3",
+                "z_index": "1",
+                SOURCE_PLANE_INDEX_FIELD: "0",
+                SOURCE_PLANE_COUNT_FIELD: "3",
+            },
+        ),
+    ).payload()
+
+    projected = (
+        RuntimeProjectionSourceIdentityRequirement.REQUIRED_COMPONENT_METADATA
+    ).project_payload_items(
+        RuntimeProjectionSourceIdentityRequest(
+            value=payload,
+            source_description=source_path,
+        )
+    )
+
+    assert len(projected) == 3
+    assert [item.runtime_plane_metadata.source_plane_indices for item in projected] == [
+        (0,),
+        (1,),
+        (2,),
+    ]
+    assert [item.source_component_metadata["z_index"] for item in projected] == [
+        "1",
+        "2",
+        "3",
+    ]
+    assert [
+        item.source_component_metadata[SOURCE_PLANE_INDEX_FIELD]
+        for item in projected
+    ] == ["0", "1", "2"]
+
+
+def test_runtime_projection_rejects_unindexed_scalar_volume_source_metadata() -> None:
+    source_path = "/input/A01_s001_w1_z001_t001.tif"
+    payload = RuntimeImagePayloadContext(
+        np.arange(8, dtype=np.uint16).reshape(2, 2, 2),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "z_index": "1",
+            },
+        ),
+    ).payload()
+
+    with pytest.raises(
+        ValueError,
+        match="requires complete per-slice component metadata",
+    ):
+        (
+            RuntimeProjectionSourceIdentityRequirement.REQUIRED_COMPONENT_METADATA
+        ).project_payload_items(
+            RuntimeProjectionSourceIdentityRequest(
+                value=payload,
+                source_description=source_path,
+            )
+        )
 
 
 def test_dense_object_label_slice_stack_projects_payload_labels() -> None:
@@ -1458,6 +1744,90 @@ def test_object_label_value_runtime_slice_projection_owns_domain_and_labels() ->
     assert projected.domain.declared_object_id_domains == ((1,), (3,))
 
 
+def test_object_label_runtime_slice_projection_preserves_grouped_source_planes() -> None:
+    labels = np.array(
+        [
+            [[1, 0], [0, 0]],
+            [[0, 2], [0, 0]],
+        ],
+        dtype=np.int32,
+    )
+    payload = ObjectLabelPayload(
+        labels=labels,
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+        source_component_metadata={
+            "well": "A01",
+            "site": "1",
+            "z_index": "1",
+            "timepoint": "1",
+        },
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s001_w2_z001_t001.TIF",
+            ),
+            component_metadata=(
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "1",
+                    "z_index": "1",
+                    "timepoint": "1",
+                },
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "2",
+                    "z_index": "1",
+                    "timepoint": "1",
+                },
+            ),
+        ),
+    )
+
+    projected = payload.with_runtime_slice_projection(
+        slice_index=0,
+        slice_count=1,
+        plane_indices=(0, 1),
+    )
+
+    assert isinstance(projected, ObjectLabelPayload)
+    assert projected.domain.declared_object_id_domains == ((1,), (2,))
+    assert projected.source_path is None
+    assert dict(projected.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "z_index": "1",
+        "timepoint": "1",
+    }
+    assert projected.source_image_provenance_planes.paths == (
+        "/input/A01_s001_w1_z001_t001.TIF",
+        "/input/A01_s001_w2_z001_t001.TIF",
+    )
+    assert tuple(
+        dict(item)
+        for item in projected.source_image_provenance_planes.component_metadata
+    ) == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "z_index": "1",
+            "timepoint": "1",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "z_index": "1",
+            "timepoint": "1",
+        },
+    )
+
+
 def test_normalize_artifact_value_builds_key_schema_and_storage_policy():
     output_plan = ArtifactOutputPlan(
         name="measurements",
@@ -1554,6 +1924,21 @@ def test_normalize_artifact_value_preserves_slice_aligned_object_label_sources()
         "/input/A02_s002_w1_z001_t001.tif",
     )
     assert tuple(dict(item) for item in payload.source_image_provenance_planes.component_metadata) == (
+        {"well": "A02", "site": 1, "channel": 1},
+        {"well": "A02", "site": 2, "channel": 1},
+    )
+    assert value.schema.source_provenance.source_image_provenance_planes.paths == (
+        "/input/A02_s001_w1_z001_t001.tif",
+        "/input/A02_s002_w1_z001_t001.tif",
+    )
+    assert tuple(
+        dict(item)
+        for item in (
+            value.schema.source_provenance
+            .source_image_provenance_planes
+            .component_metadata
+        )
+    ) == (
         {"well": "A02", "site": 1, "channel": 1},
         {"well": "A02", "site": 2, "channel": 1},
     )
@@ -1972,6 +2357,173 @@ def test_derived_image_payload_context_replaces_stale_scalar_source_identity() -
     assert metadata.source_image_names == ("OrigSyto",)
 
 
+def test_derived_image_payload_context_replaces_singleton_stack_scalar_source_identity() -> None:
+    source = ImageMetadataPayload(
+        data=np.zeros((4, 5, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/Sequence1_s001_w1_z001_t007.tif",
+            source_component_metadata={
+                "well": "Sequence1",
+                "site": "1",
+                "channel": "1",
+                "timepoint": "7",
+            },
+            source_image_names=("OrigColor",),
+        ),
+    )
+    output = ImageMetadataPayload(
+        data=np.ones((1, 4, 5, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/Sequence1_s001_w1_z001.tif",
+            source_component_metadata={
+                "well": "Sequence1",
+                "site": "1",
+                "channel": "1",
+            },
+            source_image_names=("AdjacentImage",),
+        ),
+    )
+
+    result = DerivedImagePayloadContext(source, output).payload()
+    metadata = image_payload_metadata(result)
+
+    assert metadata.source_path == "/input/Sequence1_s001_w1_z001_t007.tif"
+    assert metadata.source_component_metadata == {
+        "well": "Sequence1",
+        "site": "1",
+        "channel": "1",
+        "timepoint": "7",
+    }
+    assert metadata.source_image_provenance_planes.paths == ()
+    assert metadata.source_image_names == ("OrigColor",)
+
+
+def test_derived_image_payload_context_expands_indexed_scalar_source_metadata_for_stack() -> None:
+    source_path = "/input/A01_s001_w3_z001_t001.tif"
+    source = ImageMetadataPayload(
+        data=np.zeros((3, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "3",
+                "z_index": "1",
+                SOURCE_PLANE_INDEX_FIELD: "0",
+                SOURCE_PLANE_COUNT_FIELD: "3",
+            },
+        ),
+    )
+    output = np.ones((3, 4, 5), dtype=np.float32)
+
+    result = DerivedImagePayloadContext(source, output).payload()
+    metadata = image_payload_metadata(result)
+
+    assert metadata.source_image_provenance_planes.paths == (
+        source_path,
+        source_path,
+        source_path,
+    )
+    assert tuple(
+        dict(item) for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "1",
+            SOURCE_PLANE_INDEX_FIELD: "0",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "2",
+            SOURCE_PLANE_INDEX_FIELD: "1",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "3",
+            SOURCE_PLANE_INDEX_FIELD: "2",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+    )
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "3",
+        SOURCE_PLANE_COUNT_FIELD: "3",
+    }
+
+
+def test_derived_image_payload_context_expands_indexed_scalar_output_metadata_for_stack() -> None:
+    source_path = "/input/A01_s001_w3_z001_t001.tif"
+    output = ImageMetadataPayload(
+        data=np.ones((3, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "3",
+                "z_index": "1",
+                SOURCE_PLANE_INDEX_FIELD: "0",
+                SOURCE_PLANE_COUNT_FIELD: "3",
+            },
+        ),
+    )
+
+    result = DerivedImagePayloadContext(
+        np.zeros((3, 4, 5), dtype=np.float32),
+        output,
+    ).payload()
+    metadata = image_payload_metadata(result)
+
+    assert metadata.source_image_provenance_planes.paths == (
+        source_path,
+        source_path,
+        source_path,
+    )
+    assert tuple(
+        dict(item) for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "1",
+            SOURCE_PLANE_INDEX_FIELD: "0",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "2",
+            SOURCE_PLANE_INDEX_FIELD: "1",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "3",
+            SOURCE_PLANE_INDEX_FIELD: "2",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+    )
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "3",
+        SOURCE_PLANE_COUNT_FIELD: "3",
+    }
+
+
 def test_derived_image_payload_context_keeps_scalar_output_source_over_stack_source() -> None:
     source = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
@@ -2047,6 +2599,76 @@ def test_object_label_source_context_keeps_source_aligned_stack_planes() -> None
     ) == component_metadata
 
 
+def test_object_label_source_context_keeps_source_aligned_stack_planes_with_scalar_label_source() -> None:
+    source_path = "/input/A01_s001_w3_z001_t001.tif"
+    paths = (source_path, source_path, source_path)
+    component_metadata = (
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "1",
+            SOURCE_PLANE_INDEX_FIELD: "0",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "2",
+            SOURCE_PLANE_INDEX_FIELD: "1",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "3",
+            SOURCE_PLANE_INDEX_FIELD: "2",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+    )
+    image = RuntimeImagePayloadContext(
+        np.zeros((3, 4, 5), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=paths,
+                component_metadata=component_metadata,
+            ),
+        ),
+    ).payload()
+    labels = ObjectLabelPayload(
+        labels=np.ones((3, 4, 5), dtype=np.int32),
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_path=source_path,
+        source_component_metadata={
+            "well": "A01",
+            "site": "1",
+            "channel": "3",
+            "z_index": "1",
+            SOURCE_PLANE_INDEX_FIELD: "0",
+            SOURCE_PLANE_COUNT_FIELD: "3",
+        },
+    )
+
+    contextualized = labels.with_source_image_context(image)
+
+    assert contextualized.source_path == source_path
+    assert dict(contextualized.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "3",
+        SOURCE_PLANE_COUNT_FIELD: "3",
+    }
+    assert contextualized.source_image_provenance_planes.paths == paths
+    assert tuple(
+        dict(item)
+        for item in contextualized.source_image_provenance_planes.component_metadata
+    ) == component_metadata
+
+
 def test_image_mask_for_data_domain_broadcasts_spatial_mask_to_leading_axes() -> None:
     image = np.zeros((2, 4, 5), dtype=np.float32)
     mask = np.ones((4, 5), dtype=bool)
@@ -2083,6 +2705,42 @@ def test_image_payload_channel_projection_preserves_channel_mask_and_metadata() 
     np.testing.assert_array_equal(result.mask, mask[1:2])
     assert result.metadata.intensity_scale == 65535.0
     assert result.metadata.source_dtype == "uint16"
+
+
+def test_selected_channel_singleton_stack_keeps_scalar_source_identity() -> None:
+    data = np.stack(
+        (
+            np.full((3, 4), 1.0, dtype=np.float32),
+            np.full((3, 4), 2.0, dtype=np.float32),
+        )
+    )
+    source = RuntimeImagePayloadContext(
+        data,
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1.tif", "/input/A01_s001_w2.tif"),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "1", "channel": "2"},
+                ),
+            )
+        ),
+    ).payload()
+    selected = ImagePayloadChannelProjection.from_channel(source, data, 0).payload()
+
+    contextualized = DerivedImagePayloadContext(source, selected).payload()
+    metadata = image_payload_metadata(contextualized)
+
+    assert RuntimeImageSourceIdentityCompleteness(selected).complete()
+    assert RuntimeImageSourceIdentityCompleteness(contextualized).complete()
+    assert metadata.source_path == "/input/A01_s001_w1.tif"
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "1",
+    }
+    assert metadata.source_image_provenance_planes.count == 0
 
 
 def test_masked_image_payload_accepts_grayscale_volume_stack_mask_domains() -> None:

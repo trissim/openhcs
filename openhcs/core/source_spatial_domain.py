@@ -16,6 +16,7 @@ from zmqruntime.viewer_protocol import (
     ViewerWireValue,
 )
 
+from openhcs.core.image_shapes import image_spatial_axis_indices
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 
 SourceSpatialAliasValueT = TypeVar("SourceSpatialAliasValueT")
@@ -557,28 +558,38 @@ def dense_array_in_source_spatial_domain(
             f"{value_name} spatial domains require non-negative source shape "
             f"and origin; got source={source_shape!r}, origin={origin!r}."
         )
-    if label_array.shape[-2:] == (source_y, source_x) and origin == (0, 0):
-        return label_array
-
     if label_array.ndim < 2:
         raise ValueError(
             f"{value_name} spatial domains require at least 2D arrays; got "
             f"shape {label_array.shape!r}."
         )
+    spatial_axes = image_spatial_axis_indices(label_array)
+    if spatial_axes is None:
+        raise ValueError(
+            f"{value_name} spatial domains require image-like arrays; got "
+            f"shape {label_array.shape!r}."
+        )
+    y_axis, x_axis = spatial_axes
+    payload_y = int(label_array.shape[y_axis])
+    payload_x = int(label_array.shape[x_axis])
+    if (payload_y, payload_x) == (source_y, source_x) and origin == (0, 0):
+        return label_array
+
     if (
-        origin_y + label_array.shape[-2] > source_y
-        or origin_x + label_array.shape[-1] > source_x
+        origin_y + payload_y > source_y
+        or origin_x + payload_x > source_x
     ):
         raise ValueError(
             f"{value_name} crop exceeds its declared source domain; got array "
             f"{label_array.shape!r}, source={source_shape!r}, origin={origin!r}."
         )
 
-    expanded_shape = (*label_array.shape[:-2], source_y, source_x)
+    expanded_shape = list(label_array.shape)
+    expanded_shape[y_axis] = source_y
+    expanded_shape[x_axis] = source_x
     expanded = np.full(expanded_shape, fill_value, dtype=label_array.dtype)
-    expanded[
-        ...,
-        origin_y : origin_y + label_array.shape[-2],
-        origin_x : origin_x + label_array.shape[-1],
-    ] = label_array
+    target_slices = [slice(None)] * label_array.ndim
+    target_slices[y_axis] = slice(origin_y, origin_y + payload_y)
+    target_slices[x_axis] = slice(origin_x, origin_x + payload_x)
+    expanded[tuple(target_slices)] = label_array
     return expanded

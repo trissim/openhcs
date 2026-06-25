@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections import OrderedDict
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -53,11 +52,6 @@ from openhcs.core.source_matching import (
     source_metadata_component,
     source_metadata_value,
     source_metadata_values_equal,
-)
-from openhcs.core.source_metadata import (
-    SourceMetadataIdentityItems,
-    SourceMetadataIdentityProjection,
-    SourceMetadataMapping,
 )
 from openhcs.core.source_path_identity import (
     source_path_identity_key,
@@ -129,12 +123,33 @@ from openhcs.interop.cellprofiler.runtime.runtime_value_authorities import (
 
 PipelineStartPayloadCacheValue = tuple[ImagePayloadValue, ...]
 StepInputPayloadCacheValue = tuple[ImagePayloadValue, ...]
-StepInputPayloadSourceIdentity = tuple[str, str, SourceMetadataIdentityItems]
-_PIPELINE_START_PAYLOAD_CACHE_LIMIT = 64
-_PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
-    tuple[Hashable, ...],
-    PipelineStartPayloadCacheValue,
-] = OrderedDict()
+SourcePayloadCandidateCacheIdentity = tuple[Hashable, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineStartSourcePayloadCacheKey:
+    """Source-candidate identity for pipeline-start payload loads."""
+
+    backend: str
+    filemanager: CellProfilerFileManager
+    selected_sources: tuple[SourcePayloadCandidateCacheIdentity, ...]
+
+    @classmethod
+    def from_sources(
+        cls,
+        *,
+        backend: str,
+        filemanager: CellProfilerFileManager,
+        context: SourceBindingRuntimeContext,
+        selected_sources: tuple[ParsedSourceCandidate, ...],
+    ) -> "PipelineStartSourcePayloadCacheKey":
+        return cls(
+            backend=backend,
+            filemanager=filemanager,
+            selected_sources=tuple(
+                candidate.cache_identity(context) for candidate in selected_sources
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +159,7 @@ class StepInputSourcePayloadCacheKey:
     storage_backend: str
     source_backend: str
     filemanager: CellProfilerFileManager
-    selected_sources: tuple[StepInputPayloadSourceIdentity, ...]
+    selected_sources: tuple[SourcePayloadCandidateCacheIdentity, ...]
 
     @classmethod
     def from_sources(
@@ -153,6 +168,7 @@ class StepInputSourcePayloadCacheKey:
         storage_backend: str,
         source_backend: str,
         filemanager: CellProfilerFileManager,
+        context: SourceBindingRuntimeContext,
         selected_sources: tuple[ParsedSourceCandidate, ...],
     ) -> "StepInputSourcePayloadCacheKey":
         return cls(
@@ -160,14 +176,7 @@ class StepInputSourcePayloadCacheKey:
             source_backend=source_backend,
             filemanager=filemanager,
             selected_sources=tuple(
-                (
-                    candidate.path,
-                    candidate.resolved_path,
-                    SourceMetadataIdentityProjection(
-                        cast(SourceMetadataMapping, candidate.metadata)
-                    ).items(),
-                )
-                for candidate in selected_sources
+                candidate.cache_identity(context) for candidate in selected_sources
             ),
         )
 
@@ -867,20 +876,12 @@ class CurrentStepPayloadSelector:
             and not self.current_image_paths
         ):
             return CurrentStepPayloadSelection()
-        if (
-            selected_paths == self.current_files
-            or selected_paths == self.current_source_paths
-        ):
+        selected_indexes = self._selected_current_indexes(selected_paths)
+        if selected_indexes == tuple(range(len(self.current_files))):
             return CurrentStepPayloadSelection(
                 payload=self._exact_payload(current_image),
             )
-        current_indexes = {
-            path: index for index, path in enumerate(self.current_files)
-        }
-        current_indexes.update(
-            {path: index for index, path in enumerate(self.current_source_paths)}
-        )
-        if any(path not in current_indexes for path in selected_paths):
+        if selected_indexes is None:
             return CurrentStepPayloadSelection()
 
         memo = self._memo(current_image)
@@ -894,13 +895,51 @@ class CurrentStepPayloadSelector:
         if selected_payload is None:
             selected_payload = RestackLikePayloadAuthority.restack(
                 [
-                    self._slices(memo, current_image)[current_indexes[path]]
-                    for path in selected_paths
+                    self._slices(memo, current_image)[index]
+                    for index in selected_indexes
                 ],
                 current_image,
             )
             memo.selected_payloads[cache_key] = selected_payload
         return CurrentStepPayloadSelection(payload=selected_payload)
+
+    def _selected_current_indexes(
+        self,
+        selected_paths: tuple[str, ...],
+    ) -> tuple[int, ...] | None:
+        path_indexes = self._current_path_indexes()
+        selected_indexes: list[int] = []
+        for selected_path in selected_paths:
+            selected_index = None
+            for identity in SourceBindingRuntimeContext.source_path_identities(
+                str(selected_path)
+            ):
+                selected_index = path_indexes.get(identity)
+                if selected_index is not None:
+                    break
+            if selected_index is None:
+                return None
+            selected_indexes.append(selected_index)
+        return tuple(selected_indexes)
+
+    def _current_path_indexes(self) -> Mapping[str, int]:
+        indexes: dict[str, int] = {}
+        for index, path in enumerate(self.current_files):
+            self._add_path_index(indexes, path, index)
+        for index, path in enumerate(self.current_source_paths):
+            self._add_path_index(indexes, path, index)
+        for index, path in enumerate(self.current_image_paths):
+            self._add_path_index(indexes, path, index)
+        return MappingProxyType(indexes)
+
+    @staticmethod
+    def _add_path_index(
+        indexes: dict[str, int],
+        path: str,
+        index: int,
+    ) -> None:
+        for identity in SourceBindingRuntimeContext.source_path_identities(str(path)):
+            indexes.setdefault(identity, index)
 
     def _exact_payload(
         self,
@@ -950,6 +989,19 @@ class StepInputSourcePayloadProcessCache(
     """Process-local cache for loaded step-input source-binding payloads."""
 
     max_entries: int = 64
+
+
+@dataclass(slots=True)
+class PipelineStartSourcePayloadProcessCache(
+    ProcessLocalBoundedCache[
+        PipelineStartSourcePayloadCacheKey,
+        PipelineStartPayloadCacheValue,
+    ]
+):
+    """Process-local cache for loaded pipeline-start source-binding payloads."""
+
+    max_entries: int = 64
+
 
 class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for loading selected pipeline-start source files."""
@@ -1245,6 +1297,7 @@ def _step_input_payload_cache_key(
         storage_backend=context.step_input_storage_backend,
         source_backend=context.step_input_source_backend,
         filemanager=filemanager,
+        context=context,
         selected_sources=selected_sources,
     )
 
@@ -1274,54 +1327,31 @@ def _load_pipeline_start_stack(
         raise RuntimeError(
             "Pipeline-start source resolution requires pipeline_input_backend."
         )
-    cache_key = _pipeline_start_payload_cache_key(
-        adapter,
-        backend,
-        selected_paths,
-        storage_paths,
+    processing_context = RequireProcessingContextBoundaryPolicy(adapter).context
+    cache_key = PipelineStartSourcePayloadCacheKey.from_sources(
+        backend=backend,
+        filemanager=processing_context.filemanager,
+        context=adapter.source_binding_context,
+        selected_sources=selected_sources,
     )
-    loaded_payloads = adapter._pipeline_start_payload_cache.get(cache_key)
+    cache = PipelineStartSourcePayloadProcessCache.process_cache()
+    loaded_payloads = cache.cached_value(cache_key)
     if loaded_payloads is None:
-        loaded_payloads = _PIPELINE_START_PAYLOAD_PROCESS_CACHE.get(cache_key)
-        if loaded_payloads is not None:
-            _PIPELINE_START_PAYLOAD_PROCESS_CACHE.move_to_end(cache_key)
-            adapter._pipeline_start_payload_cache[cache_key] = loaded_payloads
-    if loaded_payloads is None:
-        loaded_payloads = tuple(
-            PipelineStartSourceFileLoader.for_paths(storage_paths).load_slices(
-                PipelineStartSourceLoadRequest(
-                    adapter=adapter,
-                    selected_sources=selected_sources,
-                    backend=backend,
-                )
-            )
+        load_request = PipelineStartSourceLoadRequest(
+            adapter=adapter,
+            selected_sources=selected_sources,
+            backend=backend,
         )
-        adapter._pipeline_start_payload_cache[cache_key] = loaded_payloads
-        _PIPELINE_START_PAYLOAD_PROCESS_CACHE[cache_key] = loaded_payloads
-        _PIPELINE_START_PAYLOAD_PROCESS_CACHE.move_to_end(cache_key)
-        if len(_PIPELINE_START_PAYLOAD_PROCESS_CACHE) > _PIPELINE_START_PAYLOAD_CACHE_LIMIT:
-            _PIPELINE_START_PAYLOAD_PROCESS_CACHE.popitem(last=False)
+        loaded_payloads = tuple(
+            PipelineStartSourceFileLoader.for_paths(storage_paths).load_slices(load_request)
+        )
+        cache.store_value(cache_key, loaded_payloads)
     if not loaded_payloads:
         raise RuntimeError(
             "Pipeline-start source resolution loaded no payloads from "
             f"{list(selected_paths)}."
         )
     return RestackLikePayloadAuthority.restack(list(loaded_payloads), current_image)
-
-def _pipeline_start_payload_cache_key(
-    adapter: CellProfilerRuntimeAdapter,
-    backend: str,
-    selected_paths: tuple[str, ...],
-    storage_paths: tuple[str, ...],
-) -> tuple[Hashable, ...]:
-    context = adapter.source_binding_context
-    return (
-        backend,
-        RequireProcessingContextBoundaryPolicy(adapter).context.filemanager,
-        selected_paths,
-        storage_paths,
-        context.metadata_identity_for_paths(selected_paths),
-    )
 
 def _matlab_numeric_arrays(
     mat_payload: Mapping[str, ImagePayloadValue],

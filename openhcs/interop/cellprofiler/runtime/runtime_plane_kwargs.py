@@ -85,7 +85,6 @@ class CurrentRuntimePlaneKwargProjectionContract:
 
     func: CellProfilerFunction
     default_execution_mode: ImagePayloadExecutionMode
-    source_identity_stack_axes: frozenset[str] = frozenset()
 
     def projects_runtime_slice_kwargs(self) -> bool:
         return self.projects_runtime_slice_values()
@@ -113,8 +112,6 @@ class CurrentRuntimePlaneKwargProjectionContract:
         )
 
     def projects_runtime_slice_values(self) -> bool:
-        if self.source_identity_stack_axes:
-            return False
         return self.projects_runtime_artifact_values()
 
 
