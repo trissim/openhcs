@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QWidget
 
 from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeRequest,
@@ -21,6 +22,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceRequest,
     UiSnapshotListRequest,
     UiSnapshotRestoreRequest,
+    UiWidgetTreeRequest,
+    UiWindowOpenPolicy,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
@@ -28,9 +31,17 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeService,
 )
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
+from openhcs.pyqt_gui.services.ui_agent_bridge import (
+    UiAgentBridgeService,
+    UiObjectStateSnapshotProvider,
+)
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig
+from openhcs.pyqt_gui.services.ui_bridge_registry import (
+    UiBridgeRegistrationContext,
+    UiBridgeSurfaceRegistry,
+)
 from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
+from openhcs.pyqt_gui.services.ui_bridge_windows import MainWindowBridgeProviderSet
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
@@ -156,6 +167,37 @@ class QtApplicationAuthority:
         return cls.app_instance
 
 
+class FakeEmbeddedWindowWidgets:
+    def __init__(self) -> None:
+        self.plate_manager = QWidget()
+        self.pipeline_editor = QWidget()
+        self.zmq_manager = QWidget()
+
+    def require_plate_manager(self) -> QWidget:
+        return self.plate_manager
+
+    def require_pipeline_editor(self) -> QWidget:
+        return self.pipeline_editor
+
+    def require_zmq_manager(self) -> QWidget:
+        return self.zmq_manager
+
+    def show_plate_manager(self) -> None:
+        self.plate_manager.show()
+
+    def show_pipeline_editor(self) -> None:
+        self.pipeline_editor.show()
+
+    def show_zmq_manager(self) -> None:
+        self.zmq_manager.show()
+
+
+class FakeMainWindow:
+    def __init__(self) -> None:
+        self.embedded_widgets = FakeEmbeddedWindowWidgets()
+        self.window_specs = {}
+
+
 class FakePlateManager:
     BUTTON_CONFIGS = [
         ("Code", PlateManagerAction.CODE_PLATE.value, "Generate Python code"),
@@ -263,6 +305,43 @@ def test_selected_read_fails_loudly_when_no_plate_is_selected() -> None:
 
     assert document.errors
     assert document.errors[0].code == "ui_code_document_read_failed"
+
+
+def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
+    QtApplicationAuthority.app()
+    main_window = FakeMainWindow()
+    main_window.embedded_widgets.plate_manager.setObjectName("plate_manager")
+    main_window.embedded_widgets.plate_manager.show()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    windows = bridge.list_windows()
+    window_ids = tuple(summary.window_id for summary in windows.windows)
+    assert "plate_manager" in window_ids
+
+    widget_tree = bridge.widget_tree(
+        UiWidgetTreeRequest(
+            window_id="plate_manager",
+            open_policy=UiWindowOpenPolicy(),
+        )
+    )
+
+    assert widget_tree.errors == ()
+    assert widget_tree.projected is True
+    assert widget_tree.root is not None
+    assert widget_tree.root.object_name == "plate_manager"
 
 
 def test_all_read_returns_source_hash_and_revision() -> None:

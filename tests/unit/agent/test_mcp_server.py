@@ -27,6 +27,9 @@ def test_installed_mcp_script_uses_fail_soft_bootstrap_entrypoint():
     assert pyproject["project"]["scripts"]["openhcs-mcp"] == (
         "openhcs.mcp.bootstrap:main"
     )
+    assert pyproject["project"]["scripts"]["openhcs-mcp-dev"] == (
+        "openhcs.mcp.dev_client:main"
+    )
 
 
 def test_development_extra_installs_mcp_dependency():
@@ -374,6 +377,56 @@ def test_mcp_stdio_validation_error_keeps_session_alive():
     assert "not_a_workflow" in invalid_text
     assert "init_plate" in invalid_text
     assert health_payload["status"] == "ok"
+
+
+def test_mcp_dev_client_rejects_non_object_tool_arguments():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    assert dev_client.parse_json_object('{"port": 5565}') == {"port": 5565}
+
+    with pytest.raises(ValueError, match="JSON object"):
+        dev_client.parse_json_object("[5565]")
+
+
+def test_mcp_dev_client_accepts_common_flags_after_subcommands():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    parser = dev_client._build_parser()
+
+    after_command = parser.parse_args(("ui-smoke", "--allow-error-payloads"))
+    before_command = parser.parse_args(("--allow-error-payloads", "ui-smoke"))
+
+    assert after_command.allow_error_payloads is True
+    assert before_command.allow_error_payloads is True
+
+
+def test_mcp_dev_client_launches_fresh_current_source_server():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    async def call_health_through_dev_client():
+        return await dev_client.call_fresh_mcp_server(
+            dev_client.McpDevServerSpec(sys.executable),
+            (dev_client.McpDevToolCall("openhcs_health_check", {}),),
+            timeout_seconds=5,
+        )
+
+    payload = asyncio.run(call_health_through_dev_client())
+    result = payload["results"][0]
+    health_payload = result["payloads"][0]
+
+    assert result["tool"] == "openhcs_health_check"
+    assert result["mcp_error"] is False
+    assert health_payload["status"] == "ok"
+    assert health_payload["server_source_changed_since_import"] is False
 
 
 def test_mcp_stdio_bootstrap_failure_keeps_transport_open(tmp_path):

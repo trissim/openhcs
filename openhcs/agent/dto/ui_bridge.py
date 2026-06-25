@@ -723,6 +723,9 @@ class UiWindowOperationRequest(UiWindowIdentity):
 
     open_policy: UiWindowOpenPolicy
 
+    def as_identity(self) -> UiWindowIdentity:
+        return UiWindowIdentity(window_id=self.window_id)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UiWindowFocusRequest(UiWindowOperationRequest):

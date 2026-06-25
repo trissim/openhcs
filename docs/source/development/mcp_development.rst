@@ -19,6 +19,11 @@ Use two separate modes during development:
 * Use a separate active-checkout MCP process when editing ``openhcs/mcp`` or
   ``openhcs/agent``. Restart that MCP client/process after source edits before
   relying on non-health tools.
+* For active development and testing, prefer ``openhcs-mcp-dev`` or
+  ``python -m openhcs.mcp.dev_client``. The dev client starts a fresh stdio MCP
+  server from the current checkout for each command, calls tools through the MCP
+  protocol, prints JSON, and closes the subprocess. It does not depend on Codex
+  refreshing its attached MCP process.
 
 The OpenHCS MCP server intentionally keeps ``openhcs_health_check`` callable
 when the source is stale. Health reports process identity, source freshness, and
@@ -47,6 +52,26 @@ timeouts:
 The ``exec`` form makes the Python MCP process the child process observed by
 the client instead of leaving an extra shell wrapper. Short timeouts prevent a
 broken UI/viewer/runtime control path from becoming a long Codex wait.
+
+Fresh Current-Checkout Client
+-----------------------------
+
+Source the active checkout environment, then call the dev client directly:
+
+.. code-block:: bash
+
+   cd /path/to/active-openhcs
+   . .venv/bin/activate
+   python -m openhcs.mcp.dev_client health
+   python -m openhcs.mcp.dev_client tools
+   python -m openhcs.mcp.dev_client ui-smoke --allow-error-payloads
+   python -m openhcs.mcp.dev_client selected-workflow init_plate
+   python -m openhcs.mcp.dev_client widget-tree plate_manager
+   python -m openhcs.mcp.dev_client viewer-payloads 5565 --include-shape-payloads
+
+Use ``--timeout-seconds`` for the MCP client-side timeout. UI and viewer tools
+also use bounded OpenHCS control timeouts, so a broken bridge or stale viewer
+should fail quickly instead of blocking the development loop.
 
 What Not To Do
 --------------

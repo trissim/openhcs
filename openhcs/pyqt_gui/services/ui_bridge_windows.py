@@ -904,7 +904,7 @@ class UiWindowProjectionService(
         return ScopeWindowRegistry.find_handler(identity.window_id) is not None
 
     def focus(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
-        identity = request
+        identity = request.as_identity()
         route_index = self._route_index()
         embedded_route = route_index.embedded_route(identity)
         if embedded_route is not None:
@@ -932,7 +932,7 @@ class UiWindowProjectionService(
         self,
         request: UiWindowNavigateRequest,
     ) -> UiWindowNavigateResult:
-        identity = request
+        identity = request.as_identity()
         route_index = self._route_index()
         embedded_route = route_index.embedded_route(identity)
         if embedded_route is not None:
@@ -981,7 +981,7 @@ class UiWindowProjectionService(
         )
 
     def close(self, request: UiWindowCloseRequest) -> UiWindowCloseResult:
-        identity = request
+        identity = request.as_identity()
         route_index = self._route_index()
         embedded_route = route_index.embedded_route(identity)
         if embedded_route is not None:
@@ -1024,7 +1024,7 @@ class UiWindowProjectionService(
         self,
         request: UiWindowOperationRequest,
     ) -> WindowProjectionTarget | None:
-        identity = request
+        identity = request.as_identity()
         return self._target(
             identity,
             create_if_missing=request.open_policy.create_if_missing,
@@ -1087,7 +1087,7 @@ class UiWindowProjectionService(
         request: UiWindowCloseRequest,
         summary: UiWindowSummary,
     ) -> UiWindowCloseResult:
-        scope = UiWindowManagerScope.from_identity(request)
+        scope = UiWindowManagerScope.from_identity(request.as_identity())
         if WindowManager.close_window(scope.value):
             return WindowCloseResultBoundaryPolicy.closed(
                 request,
