@@ -78,6 +78,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _ensure_streaming_storage_backends_registered() -> None:
+    """Import streaming backend modules so PolyStore registers them before cache use."""
+    import importlib
+
+    for module_name in ("polystore.napari_stream", "polystore.fiji_stream"):
+        importlib.import_module(module_name)
+
+
 def _merge_nested_dataclass(pipeline_value, global_value):
     """
     Recursively merge nested dataclass configs.
@@ -497,6 +505,16 @@ def _configure_worker_with_gpu(
     os.environ.pop("OPENHCS_SUBPROCESS_NO_GPU", None)
     os.environ.pop("POLYSTORE_SUBPROCESS_NO_GPU", None)
 
+    # Spawned workers start with a fresh interpreter and may load an older
+    # metaclass-registry cache that omits streaming backends. Import them before
+    # any process-local PolyStore registry is materialized.
+    try:
+        _ensure_streaming_storage_backends_registered()
+    except Exception as e:
+        logging.getLogger("openhcs.worker").warning(
+            "Failed to pre-register PolyStore streaming backends: %s", e
+        )
+
     # Configure logging only if log_file_base is provided
     if log_file_base:
         _configure_worker_logging(log_file_base)
@@ -663,6 +681,8 @@ class PipelineOrchestrator:
                 storage_registry as global_storage_registry,
                 ensure_storage_registry,
             )
+
+            _ensure_streaming_storage_backends_registered()
 
             # Ensure registry is initialized
             ensure_storage_registry()
