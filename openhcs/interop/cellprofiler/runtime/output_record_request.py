@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
@@ -36,25 +36,8 @@ from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
     from openhcs.interop.cellprofiler.runtime.module_execution import (
-        CellProfilerPrimaryImageInputPolicy,
+        CellProfilerModuleRuntimePlan,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class CorrectIlluminationOriginalImageName:
-    """Original-image naming rule used by CorrectIlluminationApply outputs."""
-
-    name: str
-
-    prefix: ClassVar[str] = "Orig"
-
-    def is_original_source(self) -> bool:
-        return self.name[: len(type(self).prefix)] == type(self).prefix
-
-    def output_candidate_names(self) -> tuple[str, ...]:
-        if self.is_original_source():
-            return (self.name,)
-        return (f"{type(self).prefix}{self.name}", self.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,8 +46,7 @@ class CellProfilerOutputRecordContext(
 ):
     """Shared invocation context for one declared CellProfiler artifact output."""
 
-    contract: ModuleArtifactContract
-    primary_image_input_policy: CellProfilerPrimaryImageInputPolicy
+    runtime_plan: CellProfilerModuleRuntimePlan
     adapter: CellProfilerRuntimeAdapter
     spec: ArtifactSpec
     output_value: CellProfilerRuntimeValue
@@ -73,6 +55,10 @@ class CellProfilerOutputRecordContext(
     func: CellProfilerFunction
     call_kwargs: CellProfilerKwargs
     function_name: str = ""
+
+    @property
+    def contract(self) -> ModuleArtifactContract:
+        return self.runtime_plan.contract
 
     @property
     def module_name(self) -> str:
@@ -140,53 +126,30 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
         self,
     ) -> CellProfilerRuntimeValue | None:
         """Map image output ordinal to primary-image input ordinal when declared."""
-        output_index = self._image_output_index()
+        output_index = self.image_output_index()
         if output_index is None:
             return None
-        primary_image_inputs = self.primary_image_input_policy.primary_image_inputs(
-            self.module_name,
-            self.func,
-            self.declared_input_specs,
-        )
-        if len(primary_image_inputs) != len(self._image_outputs()):
+        if len(self.runtime_plan.primary_image_inputs) != len(self.image_outputs()):
             return None
-        return self.input_image_source_payload(primary_image_inputs[output_index])
+        primary_input = self.runtime_plan.primary_image_inputs[output_index]
+        invocation_payload = self.invocation_primary_image_source_payload(primary_input)
+        if invocation_payload is not None:
+            return invocation_payload
+        return self.input_image_source_payload(primary_input)
 
     def unique_primary_image_source_payload(
         self,
     ) -> CellProfilerRuntimeValue | None:
         """Resolve the unique declared primary image input, when one exists."""
-        primary_image_inputs = self.primary_image_input_policy.primary_image_inputs(
-            self.module_name,
-            self.func,
-            self.declared_input_specs,
-        )
-        if len(primary_image_inputs) != 1:
+        if len(self.runtime_plan.primary_image_inputs) != 1:
             return None
-        primary_input = primary_image_inputs[0]
-        input_payload = self.input_image_source_payload(primary_input)
+        primary_input = self.runtime_plan.primary_image_inputs[0]
         invocation_payload = self.invocation_primary_image_source_payload(primary_input)
+        if invocation_payload is not None:
+            return invocation_payload
+        input_payload = self.input_image_source_payload(primary_input)
         if input_payload is None:
-            return invocation_payload
-        if invocation_payload is None:
-            return input_payload
-        return self.preferred_unique_primary_source_payload(
-            input_payload=input_payload,
-            invocation_payload=invocation_payload,
-        )
-
-    def preferred_unique_primary_source_payload(
-        self,
-        *,
-        input_payload: CellProfilerRuntimeValue,
-        invocation_payload: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        """Select source context for one declared primary-image input."""
-        if (
-            self.payload_explains_output_label_planes(invocation_payload)
-            and not self.payload_explains_output_label_planes(input_payload)
-        ):
-            return invocation_payload
+            return None
         return input_payload
 
     def invocation_primary_image_source_payload(
@@ -202,7 +165,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
     ) -> CellProfilerRuntimeValue | None:
         """Return runtime image input data with the correct current-image scope."""
         runtime_current_image = (
-            self.primary_image_input_policy.runtime_image_current_image(
+            self.runtime_plan.primary_image_input_policy.runtime_image_current_image(
                 self.module_name,
                 spec,
                 self.current_image,
@@ -225,46 +188,15 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
             self.current_image,
         )
 
-    def correct_illumination_apply_source_spec(self) -> ArtifactSpec | None:
-        """Return the original source image input for a corrected image output."""
-        original_inputs = self.original_image_inputs()
-        input_specs = {spec.name: spec for spec in original_inputs}
-        candidate_names = CorrectIlluminationOriginalImageName(
-            self.spec.name
-        ).output_candidate_names()
-        for candidate_name in candidate_names:
-            if candidate_name in input_specs:
-                return input_specs[candidate_name]
-        output_index = self._image_output_index()
-        image_outputs = self._image_outputs()
-        if (
-            output_index is not None
-            and len(original_inputs) == len(image_outputs)
-        ):
-            return original_inputs[output_index]
-        return None
-
-    def original_image_inputs(self) -> tuple[ArtifactSpec, ...]:
-        """Return declared primary image inputs with CellProfiler Orig* semantics."""
-        return tuple(
-            spec
-            for spec in self.primary_image_input_policy.primary_image_inputs(
-                self.module_name,
-                self.func,
-                self.declared_input_specs,
-            )
-            if CorrectIlluminationOriginalImageName(spec.name).is_original_source()
-        )
-
-    def _image_outputs(self) -> tuple[ArtifactSpec, ...]:
+    def image_outputs(self) -> tuple[ArtifactSpec, ...]:
         """Return declared image outputs in contract order."""
         return self.contract.output_collection().of_kind(ArtifactKind.IMAGE)
 
-    def _image_output_index(self) -> int | None:
+    def image_output_index(self) -> int | None:
         """Return this output's declared image-output ordinal, when unique."""
         matches = tuple(
             index
-            for index, spec in enumerate(self._image_outputs())
+            for index, spec in enumerate(self.image_outputs())
             if spec.name == self.spec.name
         )
         if len(matches) != 1:
@@ -276,12 +208,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
         object_inputs = self.contract.declared_input_collection().of_kind(
             ArtifactKind.OBJECT_LABELS
         )
-        image_inputs = self.primary_image_input_policy.primary_image_inputs(
-            self.module_name,
-            self.func,
-            self.declared_input_specs,
-        )
-        if object_inputs and not image_inputs:
+        if object_inputs and not self.runtime_plan.primary_image_inputs:
             relationship_source_spec = (
                 self.relationship_derived_object_label_source_spec(object_inputs)
             )
@@ -320,7 +247,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
 
     def relationship_parent_specs_for_output_child(self) -> tuple[ArtifactSpec, ...]:
         """Return parent object specs from relationships that target this output."""
-        endpoint_resolver = RelationshipEndpointResolver(self)
+        endpoint_resolver = RelationshipEndpointResolver.for_request(self)
         relationship_outputs = self.contract.output_collection().of_kind(
             ArtifactKind.RELATIONSHIPS
         )

@@ -16,16 +16,39 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
 )
 
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    required_setting_value,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    coerce_cellprofiler_enum,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BoundModuleSettings,
+    IdentifyPrimaryObjectsDebugViewModule,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    CurrentPayloadMeasurementRecordMixin,
+    NoFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    OutputObjectThresholdMeasurementRecordRowsMixin,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerAveragingMethod,
     CellProfilerOtsuMethod,
     CellProfilerThresholdAssignment,
     CellProfilerThresholdMethod,
     CellProfilerThresholdRequest,
-    CellProfilerThresholdSettings,
     CellProfilerThresholdScope,
+    CellProfilerThresholdSettings,
     CellProfilerVarianceMethod,
+    ThresholdSettingsModule,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
     threshold_profile_sink,
@@ -561,6 +584,141 @@ def identify_primary_objects(
     )
 
 
+class IdentifyPrimaryObjectsModule(
+    OutputObjectThresholdMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    CurrentPayloadMeasurementRecordMixin,
+    NoFieldsMeasurementRecordMixin,
+    ThresholdSettingsModule,
+    IdentifyPrimaryObjectsDebugViewModule,
+):
+    module_name = "IdentifyPrimaryObjects"
+    function_name = "identify_primary_objects"
+    validated = True
+    confidence = 1.0
+    include_threshold_advanced_setting = True
+    input_image_setting = SettingNameFamily(
+        "Select the input image",
+        aliases=(
+            "Select an input image",
+            "Select the input binary image",
+            "Input",
+        ),
+    )
+    output_objects_setting = SettingNameFamily(
+        "Name the primary objects to be identified",
+        aliases=("Object",),
+    )
+    ignored_settings = (
+        input_image_setting,
+        output_objects_setting,
+        "Display accepted local maxima?",
+        "Select maxima color",
+    )
+
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Typical diameter of objects, in pixel units (Min,Max)",
+            "diameter_range",
+        ),
+        SettingToKeywordBinding(
+            "Discard objects outside the diameter range?",
+            "exclude_size",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Discard objects touching the border of the image?",
+            "exclude_border_objects",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Method to distinguish clumped objects",
+            "unclump_method",
+            cellprofiler_enum_value_setting_parser(UnclumpMethod),
+        ),
+        SettingToKeywordBinding(
+            "Method to draw dividing lines between clumped objects",
+            "watershed_method",
+            cellprofiler_enum_value_setting_parser(WatershedMethod),
+        ),
+        SettingToKeywordBinding(
+            "Size of smoothing filter",
+            "smoothing_filter_size",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Suppress local maxima that are closer than this minimum allowed distance",
+            "maxima_suppression_size",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Speed up by using lower-resolution image to find local maxima?",
+            "low_res_maxima",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Fill holes in identified objects?",
+            "fill_holes",
+            cellprofiler_enum_value_setting_parser(FillHolesOption),
+        ),
+        SettingToKeywordBinding(
+            "Automatically calculate size of smoothing filter for declumping?",
+            "automatic_smoothing",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Automatically calculate minimum allowed distance between local maxima?",
+            "automatic_suppression",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Handling of objects if excessive number of objects identified",
+            "limit_erase",
+            cellprofiler_enum_value_setting_parser(ExcessObjectHandling),
+        ),
+        SettingToKeywordBinding(
+            "Maximum number of objects",
+            "maximum_object_count",
+            parse_cellprofiler_int,
+        ),
+    )
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls,
+        module: "ModuleBlock",
+        bound: BoundModuleSettings,
+    ) -> BoundModuleSettings:
+        kwargs = dict(bound.kwargs)
+        diameter_range = kwargs.pop("diameter_range", None)
+        if diameter_range is not None:
+            if not isinstance(diameter_range, tuple) or len(diameter_range) != 2:
+                raise ValueError(
+                    f"{module.name} diameter range must contain two values, "
+                    f"got {diameter_range!r}."
+                )
+            kwargs["min_diameter"], kwargs["max_diameter"] = diameter_range
+        return BoundModuleSettings(
+            kwargs,
+            bound.unmapped_kwargs,
+            bound.invocation_options,
+            bound.setting_coverage,
+        )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        inputs = [
+            builder.require_artifact(ArtifactSpec(required_setting_value(module, cls.input_image_setting), ArtifactKind.IMAGE), module)
+        ]
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
+            builder.declare_artifact(ArtifactSpec(required_setting_value(module, cls.output_objects_setting), ArtifactKind.OBJECT_LABELS), module),
+        ]
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
 def _prepare_identify_primary_objects() -> None:
     """Compile Numba/backend kernels used by IdentifyPrimaryObjects."""
     labels = np.array(
@@ -656,6 +814,7 @@ identify_primary_objects.__openhcs_prepare__ = _prepare_identify_primary_objects
 __all__ = public_names_from_objects(
     ExcessObjectHandling,
     FillHolesOption,
+    IdentifyPrimaryObjectsModule,
     PrimaryObjectStats,
     UnclumpMethod,
     WatershedMethod,

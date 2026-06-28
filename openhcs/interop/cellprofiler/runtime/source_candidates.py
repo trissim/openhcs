@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from pathlib import Path
 import time
@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.constants.constants import Backend
 from openhcs.core.process_local_cache import ProcessLocalBoundedCache
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -26,6 +27,7 @@ from openhcs.core.source_bindings import (
     SourceBindingRuntimeContext,
     SourceRuntimePathLookup,
 )
+from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
 from openhcs.core.source_matching import (
     SourceAxisMetadataScope,
@@ -44,6 +46,7 @@ from openhcs.core.source_path_identity import (
     source_path_identity_key,
     source_paths_equal,
 )
+from openhcs.core.source_metadata import SourceMetadataIdentityProjection
 from openhcs.core.runtime_values import (
     ImagePayloadSourceMetadataContext,
     image_payload_metadata,
@@ -122,14 +125,14 @@ class SourceCandidateRuntimeCache:
             self.adapter
         ).context.microscope_handler.parser
         universe = self.universe()
-        candidate_path_identity = tuple(
+        path_identities = tuple(
             path_resolution.cache_identity(context)
             for file_path in self.file_paths
             for path_resolution in universe.path_projection(file_path).paths()
         )
         return (
-            tuple(self.file_paths),
-            candidate_path_identity,
+            path_identities,
+            universe.projects_virtual_paths,
             self.adapter.source_binding_plan.metadata_rules,
             parser.semantic_identity(),
         )
@@ -169,7 +172,7 @@ class SourceBindingAxisAliasResolution:
     """Resolve aliases that identify a source-binding plane request."""
 
     requested_aliases: tuple[str, ...]
-    group_bindings: tuple[NamedSourceBinding, ...]
+    bindings: tuple[NamedSourceBinding, ...]
 
     def aliases(self) -> tuple[str, ...]:
         requested = tuple(str(alias) for alias in self.requested_aliases)
@@ -177,7 +180,7 @@ class SourceBindingAxisAliasResolution:
             return requested
         binding_aliases = tuple(
             str(binding.alias)
-            for binding in self.group_bindings
+            for binding in self.bindings
             if binding.alias
         )
         unique_aliases = tuple(dict.fromkeys(binding_aliases))
@@ -293,14 +296,14 @@ class SourceAliasOrderIndexRequest(SourceBindingMatchPlanRequest):
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingImageSetMatchScope:
-    """Source-binding match plan and binding group for image-set alignment."""
+    """Source-binding match plan and bindings for image-set alignment."""
 
     plan: SourceBindingMatchPlan | None
-    binding_group: tuple[NamedSourceBinding, ...]
+    bindings: tuple[NamedSourceBinding, ...]
 
     def binding_for_alias(self, alias: str) -> NamedSourceBinding | None:
-        """Return the binding for ``alias`` within this image-set match group."""
-        for binding in self.binding_group:
+        """Return the binding for ``alias`` within this image-set match scope."""
+        for binding in self.bindings:
             if binding.alias == alias:
                 return binding
         return None
@@ -424,15 +427,32 @@ class CellProfilerImageNumberResolver:
 
     def image_numbers_for_paths(self, source_paths: tuple[str, ...]) -> tuple[int, ...]:
         """Return ordered CP ImageNumbers represented by source paths."""
+        numbers_by_slice = self.image_numbers_by_source_path_index(source_paths)
         numbers: list[int] = []
         seen: set[int] = set()
-        for source_path in source_paths:
-            image_number = self.image_number_for_path(source_path)
+        for image_number in numbers_by_slice.values():
             if image_number is None or image_number in seen:
                 continue
             numbers.append(image_number)
             seen.add(image_number)
         return tuple(numbers)
+
+    def image_numbers_by_source_path_index(
+        self,
+        source_paths: tuple[str, ...],
+    ) -> Mapping[int, int]:
+        """Return CP ImageNumbers keyed by source-path tuple index."""
+        if not source_paths:
+            return MappingProxyType({})
+        image_number_map = self.image_number_map()
+        image_numbers: dict[int, int] = {}
+        for index, source_path in enumerate(source_paths):
+            image_number = image_number_map.image_number_for_source_order_path(
+                self.adapter.cellprofiler_source_order_path(source_path)
+            ).value
+            if image_number is not None:
+                image_numbers[index] = int(image_number)
+        return MappingProxyType(image_numbers)
 
     def image_number_for_path(self, source_path: str | None) -> int | None:
         return self.image_number_resolution(source_path).value
@@ -624,10 +644,7 @@ class SourceBindingPlaneCandidateContext:
         adapter: CellProfilerRuntimeAdapter,
         alias: str,
     ) -> "SourceBindingPlaneCandidateContext | None":
-        binding = adapter.source_binding_plan.binding_for_alias(
-            alias,
-            adapter.group_key,
-        )
+        binding = adapter.source_binding_plan.binding_for_alias(alias)
         if binding is None:
             return None
         source_context = adapter.source_binding_context
@@ -649,9 +666,7 @@ class SourceBindingPlaneCandidateContext:
             universe=candidate_universe,
             match_scope=SourceBindingImageSetMatchScope(
                 plan=adapter.source_binding_plan.match_plan,
-                binding_group=adapter.source_binding_plan.bindings_for_group(
-                    adapter.group_key
-                ),
+                bindings=adapter.source_binding_plan.bindings,
             ),
         )
 
@@ -711,6 +726,10 @@ class SourceBindingPlaneCandidateUniverse:
             binding=binding,
             candidates=candidate_source,
         )
+        plane_candidates = cls._prefer_virtual_plane_candidates(
+            ordered_candidates,
+            adapter.source_binding_context,
+        )
         axis_scope = adapter.source_axis_metadata_scope()
         candidate_universe = SourceBindingMatchCandidateUniverse(
             step_input_candidates=step_candidates,
@@ -721,12 +740,37 @@ class SourceBindingPlaneCandidateUniverse:
             axis_scope=axis_scope,
             plane_candidates=ParsedSourceCandidateSet(
                 candidate_universe.axis_scoped_candidates(
-                    ordered_candidates,
+                    plane_candidates,
                     axis_scope,
                 )
             ),
             candidate_universe=candidate_universe,
         )
+
+    @staticmethod
+    def _prefer_virtual_plane_candidates(
+        candidates: tuple["ParsedSourceCandidate", ...],
+        context: SourceBindingRuntimeContext,
+    ) -> tuple["ParsedSourceCandidate", ...]:
+        """Return plane candidates using virtual paths for known source identities."""
+        preferred: list[ParsedSourceCandidate] = []
+        for candidate in candidates:
+            virtual_paths = context.virtual_source_paths_by_identity.get(
+                source_path_identity_key(candidate.resolved_path),
+                (),
+            )
+            if not virtual_paths:
+                preferred.append(candidate)
+                continue
+            preferred.extend(
+                replace(
+                    candidate,
+                    path=virtual_path,
+                    virtual_path=virtual_path,
+                )
+                for virtual_path in virtual_paths
+            )
+        return tuple(preferred)
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingMatchCandidateUniverse:
@@ -832,8 +876,14 @@ class PipelineStartSourceLoadRequest:
     adapter: CellProfilerRuntimeAdapter
     selected_sources: tuple["ParsedSourceCandidate", ...]
     backend: str
+    source_load_plan: SourceLoadPlan
     identity_paths = CollectionAttributeProjection("selected_sources", "path")
-    storage_paths = CollectionAttributeProjection("selected_sources", "resolved_path")
+
+    @property
+    def storage_paths(self) -> tuple[str, ...]:
+        if Backend(self.backend) is Backend.VIRTUAL_WORKSPACE:
+            return self.identity_paths
+        return tuple(source.resolved_path for source in self.selected_sources)
 
 @dataclass(frozen=True, slots=True)
 class PipelineStartSourcePayloadRequest(PipelineStartSourceLoadRequest):
@@ -856,6 +906,7 @@ class PipelineStartSourcePayloadRequest(PipelineStartSourceLoadRequest):
             adapter=load_request.adapter,
             selected_sources=load_request.selected_sources,
             backend=load_request.backend,
+            source_load_plan=load_request.source_load_plan,
             payload=payload,
             source_path=source.path,
             storage_path=source.resolved_path,
@@ -917,8 +968,8 @@ class SourceCandidatePathResolution:
         return (
             self.path,
             source_path_identity_key(self.resolved_path),
-            self.virtual_path,
             context.metadata_identity_for_paths(self.metadata_paths(context)),
+            self.virtual_path,
         )
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -927,19 +978,42 @@ class ParsedSourceCandidate(SourceCandidatePathResolution, ParsedSourceCandidate
 
     filename: str
     metadata: ParsedSourceMetadata
+    source_identity: SourceImageSetIdentity = field(init=False)
+    candidate_identity: "ParsedSourceCandidateIdentity" = field(init=False)
 
-    @property
-    def source_identity(self) -> SourceImageSetIdentity:
-        """Return the semantic source identity represented by this candidate."""
-        return SourceImageSetIdentity.from_metadata(
+    def __post_init__(self) -> None:
+        source_identity = SourceImageSetIdentity.from_metadata(
             self.metadata,
             fallback_source_path=self.resolved_path,
         )
+        object.__setattr__(self, "source_identity", source_identity)
+        object.__setattr__(
+            self,
+            "candidate_identity",
+            ParsedSourceCandidateIdentity(
+                source_identity=source_identity,
+                resolved_path_identity=source_path_identity_key(self.resolved_path),
+            ),
+        )
 
-    @property
-    def candidate_identity(self) -> "ParsedSourceCandidateIdentity":
-        """Return the physical source candidate identity for deduplication."""
-        return ParsedSourceCandidateIdentity.from_candidate(self)
+    def cache_identity(
+        self,
+        context: SourceBindingRuntimeContext,
+    ) -> tuple[Hashable, ...]:
+        """Return source-context identity, falling back to parsed metadata."""
+        context_metadata_identity = context.metadata_identity_for_paths(
+            self.metadata_paths(context)
+        )
+        if any(metadata for _path, metadata in context_metadata_identity):
+            metadata_identity = context_metadata_identity
+        else:
+            metadata_identity = SourceMetadataIdentityProjection(self.metadata).items()
+        return (
+            self.path,
+            source_path_identity_key(self.resolved_path),
+            metadata_identity,
+            self.virtual_path,
+        )
 
 @dataclass(frozen=True, slots=True)
 class ParsedSourceCandidateSet:
@@ -1568,16 +1642,9 @@ class SourceCandidateMatcher:
         candidates: tuple[ParsedSourceCandidate, ...],
         binding: NamedSourceBinding,
     ) -> None:
-        metadata_fields = {selector.field for selector in binding.selector.metadata}
-        if not metadata_fields:
-            return
-        unsupported = tuple(
-            field
-            for field in sorted(metadata_fields)
-            if not any(
-                source_metadata_value(candidate.metadata, field) is not None
-                for candidate in candidates
-            )
+        unsupported = SourceCandidateMatcher.unsupported_metadata_selector_fields(
+            candidates,
+            binding,
         )
         if unsupported:
             raise NotImplementedError(
@@ -1585,6 +1652,33 @@ class SourceCandidateMatcher:
                 "native OpenHCS filename parser exposes those fields. Missing "
                 f"fields: {list(unsupported)}."
             )
+
+    @staticmethod
+    def supports_metadata_selectors(
+        candidates: tuple[ParsedSourceCandidate, ...],
+        binding: NamedSourceBinding,
+    ) -> bool:
+        return not SourceCandidateMatcher.unsupported_metadata_selector_fields(
+            candidates,
+            binding,
+        )
+
+    @staticmethod
+    def unsupported_metadata_selector_fields(
+        candidates: tuple[ParsedSourceCandidate, ...],
+        binding: NamedSourceBinding,
+    ) -> tuple[str, ...]:
+        metadata_fields = {selector.field for selector in binding.selector.metadata}
+        if not metadata_fields:
+            return ()
+        return tuple(
+            field
+            for field in sorted(metadata_fields)
+            if not any(
+                source_metadata_value(candidate.metadata, field) is not None
+                for candidate in candidates
+            )
+        )
 
     @classmethod
     def matches_explicit_components(
@@ -1661,7 +1755,18 @@ class SourceCandidateMatcher:
     def ordered_source_candidates(
         candidates: tuple[ParsedSourceCandidate, ...],
     ) -> tuple[ParsedSourceCandidate, ...]:
-        return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
+        cache_key = (
+            "source_candidates_ordered",
+            tuple(candidate.candidate_identity for candidate in candidates),
+        )
+        cache = SOURCE_CANDIDATE_MATCH_PROCESS_CACHE
+        cached = cache.cached_value(cache_key)
+        if cached is not None:
+            return cached
+        return cache.store_value(
+            cache_key,
+            tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path)),
+        )
 
     @classmethod
     def inherited_scope_components(
@@ -1855,7 +1960,7 @@ class SourceCandidateMatcher:
         request: SourceAliasOrderIndexRequest,
     ) -> int | None:
         matched_indexes: set[int] = set()
-        for binding in request.binding_plan.binding_group:
+        for binding in request.binding_plan.bindings:
             if binding.alias == request.alias:
                 continue
             for index, ordered_candidate in enumerate(

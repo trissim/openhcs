@@ -2,6 +2,65 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+
+class EnhanceEdgesModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'EnhanceEdges'
+    function_name = 'enhance_edges'
+    validated = True
+    confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Automatically calculate the threshold?",
+            "automatic_threshold",
+        ),
+        SettingToKeywordBinding("Absolute threshold", "manual_threshold"),
+        SettingToKeywordBinding(
+            "Threshold adjustment factor",
+            "threshold_adjustment_factor",
+        ),
+        SettingToKeywordBinding("Select an edge-finding method", "method"),
+        SettingToKeywordBinding("Select edge direction to enhance", "direction"),
+        SettingToKeywordBinding(
+            "Calculate Gaussian's sigma automatically?",
+            "automatic_gaussian",
+        ),
+        SettingToKeywordBinding("Gaussian's sigma value", "sigma"),
+        SettingToKeywordBinding(
+            "Calculate value for low threshold automatically?",
+            "automatic_low_threshold",
+        ),
+        SettingToKeywordBinding("Low threshold value", "low_threshold"),
+    )
+
+
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -31,6 +90,9 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
 
 
 class EdgeMethod(Enum):

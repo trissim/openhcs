@@ -30,6 +30,7 @@ from openhcs.core.measurement_feature_queries import (
 )
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
+    ObjectLabelDomainScope,
     ObjectLocationMeasurementFeature,
     ObjectLabelRepresentation,
     measurement_row_mapping,
@@ -467,25 +468,18 @@ class ThresholdMeasurementRows(CellProfilerResultMeasurementRows):
 
 @dataclass(frozen=True, slots=True)
 class ObjectLocationCenterValues:
-    """XY center values for one object-label domain."""
+    """Center coordinate values for one object-label domain."""
 
     object_ids: tuple[int, ...]
-    center_y: np.ndarray
-    center_x: np.ndarray
+    coordinates: tuple[tuple[ObjectLocationMeasurementFeature, np.ndarray], ...]
 
     def feature_values(
         self,
         object_index: int,
     ) -> ObjectLocationFeatureValues:
         return (
-            (
-                ObjectLocationMeasurementFeature.CENTER_X,
-                float(self.center_x[object_index]),
-            ),
-            (
-                ObjectLocationMeasurementFeature.CENTER_Y,
-                float(self.center_y[object_index]),
-            ),
+            (feature, float(values[object_index]))
+            for feature, values in self.coordinates
         )
 
 
@@ -498,6 +492,7 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
     label_payload: CellProfilerRuntimeValue
     object_name: str
     include_declared_empty: bool = True
+    domain_scope: ObjectLabelDomainScope | None = None
 
     def rows(self) -> list[CellProfilerKwargDict]:
         rows: list[CellProfilerKwargDict] = []
@@ -537,11 +532,16 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
 
     def label_planes(self) -> tuple[np.ndarray, ...]:
         label_array = np.asarray(LABEL_PAYLOAD_FINAL.value(self.label_payload))
+        if self.domain_scope is ObjectLabelDomainScope.PAYLOAD:
+            return (label_array,)
         if label_array.ndim <= 2:
             return (label_array,)
         return tuple(label_array[index] for index in range(label_array.shape[0]))
 
     def label_plane_domains(self) -> tuple[tuple[np.ndarray, tuple[int, ...]], ...]:
+        if self.domain_scope is ObjectLabelDomainScope.PAYLOAD:
+            label_array = np.asarray(LABEL_PAYLOAD_FINAL.value(self.label_payload))
+            return ((label_array, self.object_domain_for_payload(label_array)),)
         domain_stack = DenseObjectLabelPlaneDomainStackRequest(
             self.label_payload,
             None,
@@ -573,11 +573,28 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
         *,
         domain: tuple[int, ...],
     ) -> ObjectLocationCenterValues:
-        center_y, center_x = self.dense_label_centers_for_domain(label_plane, domain)
+        coordinates = self.dense_label_centers_for_domain(label_plane, domain)
         return ObjectLocationCenterValues(
             object_ids=domain,
-            center_y=center_y,
-            center_x=center_x,
+            coordinates=coordinates,
+        )
+
+    def object_domain_for_payload(
+        self,
+        label_payload: CellProfilerRuntimeValue,
+    ) -> tuple[int, ...]:
+        if self.include_declared_empty and isinstance(
+            self.label_payload,
+            ObjectLabelDomainMetadata,
+        ):
+            declared_domain = (
+                self.label_payload.object_label_domain().explicit_id_domain()
+            )
+            if declared_domain is not None:
+                return declared_domain
+        return self.present_domain_for_plane(
+            label_payload,
+            dense_extent=not self.include_declared_empty,
         )
 
     def object_domain_for_plane(
@@ -633,34 +650,69 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
     def dense_label_centers_for_domain(
         label_plane: CellProfilerRuntimeValue,
         domain: Sequence[int],
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[tuple[ObjectLocationMeasurementFeature, np.ndarray], ...]:
         labels = np.asarray(label_plane, dtype=np.int64)
-        center_y = np.full(len(domain), np.nan, dtype=np.float64)
         center_x = np.full(len(domain), np.nan, dtype=np.float64)
+        center_y = np.full(len(domain), np.nan, dtype=np.float64)
+        center_z = np.full(len(domain), np.nan, dtype=np.float64)
         if not domain or labels.size == 0:
-            return center_y, center_x
+            return (
+                (ObjectLocationMeasurementFeature.CENTER_X, center_x),
+                (ObjectLocationMeasurementFeature.CENTER_Y, center_y),
+                *(
+                    ((ObjectLocationMeasurementFeature.CENTER_Z, center_z),)
+                    if labels.ndim >= 3
+                    else ()
+                ),
+            )
 
-        y_indices, x_indices = np.nonzero(labels > 0)
-        if y_indices.size == 0:
-            return center_y, center_x
+        positive_coordinates = np.nonzero(labels > 0)
+        if not positive_coordinates or positive_coordinates[-1].size == 0:
+            return (
+                (ObjectLocationMeasurementFeature.CENTER_X, center_x),
+                (ObjectLocationMeasurementFeature.CENTER_Y, center_y),
+                *(
+                    ((ObjectLocationMeasurementFeature.CENTER_Z, center_z),)
+                    if labels.ndim >= 3
+                    else ()
+                ),
+            )
 
-        object_ids = labels[y_indices, x_indices]
+        object_ids = labels[positive_coordinates]
         max_domain_label = 0
         if domain:
             max_domain_label = max(domain)
         max_label = max(int(object_ids.max()), max_domain_label)
         counts = np.bincount(object_ids, minlength=max_label + 1)
-        y_sums = np.bincount(object_ids, weights=y_indices, minlength=max_label + 1)
-        x_sums = np.bincount(object_ids, weights=x_indices, minlength=max_label + 1)
+        axis_centers: list[np.ndarray] = []
+        for coordinates in positive_coordinates:
+            sums = np.bincount(
+                object_ids,
+                weights=coordinates,
+                minlength=max_label + 1,
+            )
+            centers = np.full(max_label + 1, np.nan, dtype=np.float64)
+            np.divide(sums, counts, out=centers, where=counts > 0)
+            axis_centers.append(centers)
         for index, object_label in enumerate(domain):
             if object_label <= 0 or object_label >= counts.shape[0]:
                 continue
             count = counts[object_label]
             if count <= 0:
                 continue
-            center_y[index] = y_sums[object_label] / count
-            center_x[index] = x_sums[object_label] / count
-        return center_y, center_x
+            center_x[index] = axis_centers[-1][object_label]
+            center_y[index] = axis_centers[-2][object_label]
+            if labels.ndim >= 3:
+                center_z[index] = axis_centers[-3][object_label]
+        return (
+            (ObjectLocationMeasurementFeature.CENTER_X, center_x),
+            (ObjectLocationMeasurementFeature.CENTER_Y, center_y),
+            *(
+                ((ObjectLocationMeasurementFeature.CENTER_Z, center_z),)
+                if labels.ndim >= 3
+                else ()
+            ),
+        )
 
 
 def _split_cellprofiler_output(raw_output: CellProfilerRuntimeValue) -> tuple[CellProfilerRuntimeValue, CellProfilerRuntimeValues]:

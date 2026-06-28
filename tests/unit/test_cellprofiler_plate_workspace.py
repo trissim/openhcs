@@ -146,8 +146,7 @@ def test_prepare_cellprofiler_input_workspace_preserves_external_object_inputs(
     bindings = tuple(
         binding
         for step in result.prepared_pipeline.runtime_pipeline_steps
-        for group in step.source_bindings.groups
-        for binding in group.bindings
+        for binding in step.source_bindings.bindings
     )
     assert any(
         binding.alias == "Nuclei"

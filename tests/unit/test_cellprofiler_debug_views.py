@@ -3,11 +3,15 @@ from openhcs.core.debug import DebugArtifactRef, DebugCursor, DebugSnapshot
 from openhcs.core.debug_views import DebugViewModel
 from openhcs.interop.cellprofiler.debug_views import (
     CellProfilerDebugView,
+    DeclaredCellProfilerDebugView,
     DefaultCellProfilerDebugView,
-    IdentifyPrimaryObjectsDebugView,
-    MeasureImageIntensityDebugView,
-    RelateObjectsDebugView,
-    TableDrivenCellProfilerDebugView,
+    declared_debug_view_modules,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    CellProfilerModule,
+    IdentifyPrimaryObjectsDebugViewModule,
+    MeasurementDebugViewModule,
+    RelationshipDebugViewModule,
 )
 
 
@@ -81,7 +85,7 @@ def test_cellprofiler_debug_view_registry_returns_default_renderer():
     )
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, MeasureImageIntensityDebugView)
+    assert isinstance(renderer, DeclaredCellProfilerDebugView)
     assert isinstance(view, DebugViewModel)
     assert view.title == "MeasureImageIntensity"
     assert view.sections[0].table is not None
@@ -126,7 +130,11 @@ def test_identify_primary_objects_debug_view_lists_output_artifacts():
     )
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, IdentifyPrimaryObjectsDebugView)
+    assert isinstance(renderer, DeclaredCellProfilerDebugView)
+    assert issubclass(
+        CellProfilerModule.for_module(CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS),
+        IdentifyPrimaryObjectsDebugViewModule,
+    )
     assert view.title == CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS
     assert view.sections[0].table is not None
     assert view.sections[0].table.rows == (
@@ -159,7 +167,11 @@ def test_measurement_debug_view_prioritizes_measurement_outputs():
     )
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, MeasureImageIntensityDebugView)
+    assert isinstance(renderer, DeclaredCellProfilerDebugView)
+    assert issubclass(
+        CellProfilerModule.for_module(CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY),
+        MeasurementDebugViewModule,
+    )
     assert view.sections[1].title == "Measurement Outputs"
     assert view.sections[1].table is not None
     assert view.sections[1].table.rows[0][0] == "Intensity"
@@ -187,7 +199,11 @@ def test_relationship_debug_view_prioritizes_relationship_outputs():
     renderer = CellProfilerDebugView.for_module("RelateObjects")
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, RelateObjectsDebugView)
+    assert isinstance(renderer, DeclaredCellProfilerDebugView)
+    assert issubclass(
+        CellProfilerModule.for_module("RelateObjects"),
+        RelationshipDebugViewModule,
+    )
     assert view.sections[1].title == "Relationship Outputs"
     assert view.sections[1].table is not None
     assert view.sections[1].table.rows[0][0] == "ParentChild"
@@ -215,7 +231,7 @@ def test_table_driven_debug_view_covers_major_cellprofiler_module_families():
     renderer = CellProfilerDebugView.for_module("MeasureObjectIntensity")
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, TableDrivenCellProfilerDebugView)
+    assert isinstance(renderer, DeclaredCellProfilerDebugView)
     assert view.title == "MeasureObjectIntensity"
     assert view.sections[1].title == "Measurement Outputs"
 
@@ -242,6 +258,16 @@ def test_display_export_debug_view_includes_artifact_overview():
     renderer = CellProfilerDebugView.for_module("SaveImages")
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, TableDrivenCellProfilerDebugView)
+    assert isinstance(renderer, DeclaredCellProfilerDebugView)
     assert view.sections[1].title == "Artifact Overview"
     assert ("inputs", "1") in view.sections[1].table.rows
+
+
+def test_declared_debug_view_modules_are_discovered_from_module_registry():
+    module_names = {
+        module_type.module_name for module_type in declared_debug_view_modules()
+    }
+
+    assert "IdentifyPrimaryObjects" in module_names
+    assert "MeasureImageIntensity" in module_names
+    assert "RelateObjects" in module_names

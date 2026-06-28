@@ -92,16 +92,6 @@ class BlockSettingLookupPolicy:
         return default
 
 
-IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
-    "Select images to measure",
-    aliases=("Select an image to measure", "Select the image to measure"),
-)
-OBJECT_MEASUREMENT_SETTING = SettingNameFamily(
-    "Select object sets to measure",
-    aliases=("Select objects to measure", "Select an object to measure"),
-)
-
-
 def optional_setting_value(
     module: ModuleBlock,
     name: str | SettingNameFamily,

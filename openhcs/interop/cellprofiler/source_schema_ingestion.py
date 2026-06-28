@@ -11,6 +11,7 @@ from typing import Any, ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
+from openhcs.constants.constants import Microscope
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_matching import is_image_path, source_filters_match
@@ -214,6 +215,16 @@ def prepare_cellprofiler_source_schema_workspace(
         ) from exc
 
     if prepared.source_schema.is_empty:
+        return CellProfilerSourceSchemaWorkspace(
+            materialization=None,
+            source_root=request.source_root,
+            prepared_pipeline=prepared,
+        )
+    pipeline_config = prepared.generated_pipeline.pipeline_config
+    if (
+        pipeline_config is not None
+        and pipeline_config.microscope is Microscope.SOURCE_BINDINGS
+    ):
         return CellProfilerSourceSchemaWorkspace(
             materialization=None,
             source_root=request.source_root,

@@ -3,13 +3,19 @@ from pathlib import Path
 import pytest
 
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.module_processing_components import (
+    ModuleProcessingComponents,
+    source_binding_variable_component_literals,
+)
 from openhcs.interop.cellprofiler.pipeline_generator import (
     PipelineGenerator,
     python_literal,
-    source_binding_variable_component_literals,
+)
+from openhcs.interop.cellprofiler.measurement_scope import (
+    CellProfilerMeasurementTargetScope,
 )
 from openhcs.interop.cellprofiler.runtime_pipeline import partition_cppipe_modules
-from openhcs.interop.cellprofiler.overlay_outlines_settings import overlay_outlines_bound_kwargs
+from openhcs.processing.backends.cellprofiler.outlines import OverlayOutlinesModule
 from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolKind,
     CellProfilerSymbolTable,
@@ -22,7 +28,36 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     StepSourceBindingsConfig,
 )
+from openhcs.constants.constants import VariableComponents
+from openhcs.processing.backends.cellprofiler.tracking import TrackObjectsModule
 from benchmark.cellprofiler_library.functions.rescaleintensity import RescaleMethod
+
+
+def test_pipeline_generator_queries_module_classes_for_module_semantics():
+    generator_source = (
+        Path(__file__).parents[2]
+        / "openhcs"
+        / "interop"
+        / "cellprofiler"
+        / "pipeline_generator.py"
+    ).read_text()
+
+    assert "_ModuleSettingsBindingStrategy" not in generator_source
+    assert "_ModuleFunctionResolutionStrategy" not in generator_source
+    assert "default_module_processing_components" not in generator_source
+
+
+def test_module_classes_do_not_define_settings_binding_strategy():
+    module_classes_source = (
+        Path(__file__).parents[2]
+        / "openhcs"
+        / "processing"
+        / "backends"
+        / "cellprofiler"
+        / "module_classes.py"
+    ).read_text()
+
+    assert "settings_binding_strategy" not in module_classes_source
 
 
 def _module(
@@ -65,6 +100,10 @@ def test_source_binding_variable_components_derive_timepoint_from_metadata() -> 
 
 def test_generated_kwarg_literal_serializes_enum_values():
     assert python_literal(RescaleMethod.STRETCH) == "'stretch'"
+    assert (
+        python_literal(CellProfilerMeasurementTargetScope.BOTH)
+        == "CellProfilerMeasurementTargetScope.BOTH"
+    )
 
 
 def _identify_primary(module_num: int = 1) -> ModuleBlock:
@@ -156,7 +195,7 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
     assert [spec.kind for spec in primary_contract.inputs] == [ArtifactKind.IMAGE]
     assert tuple(
         binding.alias
-        for binding in primary_contract.source_bindings.groups[0].bindings
+        for binding in primary_contract.source_bindings.bindings
     ) == ("OrigBlue",)
     assert primary_contract.runtime_artifact_inputs == ()
     assert [spec.kind for spec in primary_contract.outputs] == [
@@ -180,7 +219,7 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
     measure_contract = table.contracts_by_module_num[4]
     assert tuple(
         binding.alias
-        for binding in measure_contract.source_bindings.groups[0].bindings
+        for binding in measure_contract.source_bindings.bindings
     ) == ("OrigBlue", "OrigGreen")
     assert [spec.name for spec in measure_contract.runtime_artifact_inputs] == [
         "Nuclei",
@@ -366,7 +405,7 @@ def test_cellprofiler_symbol_table_accepts_declared_source_object_inputs():
         CellProfilerSymbolKind.OBJECTS,
     ).source_bound is True
     assert contract.runtime_artifact_inputs == ()
-    assert contract.source_bindings.groups[0].bindings[0].artifact_kind is (
+    assert contract.source_bindings.bindings[0].artifact_kind is (
         ArtifactKind.OBJECT_LABELS
     )
     assert [spec.name for spec in contract.inputs] == ["LoadedNuclei"]
@@ -877,7 +916,7 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CELLPROFILER_MODULE_CONTRACTS" not in generated.code
     assert "benchmark.cellprofiler_library" not in generated.code
     assert "benchmark.cellprofiler_compat" not in generated.code
-    assert "from openhcs.interop.cellprofiler.runtime import" in generated.code
+    assert "from openhcs.interop.cellprofiler.runtime.generated_pipeline import" in generated.code
     assert "require_cellprofiler_function" not in generated.code
     assert "attach_callable_contract_metadata" not in generated.code
     assert "CellProfilerAbsorbedFunctionBinding" not in generated.code
@@ -948,6 +987,56 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
     assert "measure_texture_objects," in generated.code
     assert "measure_colocalization_objects," in generated.code
     assert "measure_granularity_objects," in generated.code
+    assert "CellProfilerMeasurementTargetScope.BOTH" in generated.code
+
+
+def test_pipeline_generator_uses_module_class_required_variable_components():
+    assert TrackObjectsModule.required_variable_components == (
+        VariableComponents.TIMEPOINT,
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="track_objects_components",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            _identify_primary(),
+            _module(
+                2,
+                "TrackObjects",
+                {
+                    "Choose a tracking method": "Overlap",
+                    "Select the objects to track": "Nuclei",
+                    "Maximum pixel distance to consider matches": "50",
+                },
+            ),
+        ],
+    )
+
+    assert "track_objects," in generated.code
+    assert (
+        "variable_components=[VariableComponents.SITE, VariableComponents.TIMEPOINT],"
+        in generated.code
+    )
+    assert (
+        generated.runtime_module_contracts_by_module_num[
+            2
+        ].required_variable_components
+        == (VariableComponents.TIMEPOINT,)
+    )
+    assert (
+        "required_variable_components=(VariableComponents.TIMEPOINT,)"
+        in generated.code
+    )
+
+
+def test_module_processing_components_validate_required_variable_components():
+    processing_components = ModuleProcessingComponents((), None)
+
+    with pytest.raises(ValueError, match="TrackObjects requires variable_components"):
+        processing_components.validate_required_variable_components(
+            (VariableComponents.TIMEPOINT,),
+            module_name="TrackObjects",
+        )
 
 
 def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
@@ -1378,7 +1467,7 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
     assert "'filter_size_method': 'manually'" in generated.code
     assert "'manual_filter_size': 10" in generated.code
     assert "variable_components=[VariableComponents.SITE]" in generated.code
-    assert "group_by=GroupBy.CHANNEL" in generated.code
+    assert "group_by=GroupBy.NONE" in generated.code
     assert "'method': 'subtract'" in generated.code
     assert "'truncate_low': False" in generated.code
     assert "'truncate_high': True" in generated.code
@@ -1454,7 +1543,7 @@ def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts
     illumination_contract = table.contracts_by_module_num[2]
     assert tuple(
         binding.alias
-        for binding in illumination_contract.source_bindings.groups[0].bindings
+        for binding in illumination_contract.source_bindings.bindings
     ) == ("OrigBlue", "IllumBlue")
     assert [spec.name for spec in illumination_contract.outputs] == ["CorrBlue"]
 
@@ -1642,7 +1731,7 @@ def test_overlay_outlines_preserves_color_before_object_rows() -> None:
         ],
     )
 
-    assert overlay_outlines_bound_kwargs(module)["outline_colors"] == (
+    assert OverlayOutlinesModule.settings_source(module)["outline_colors"] == (
         "#0080FF",
         "blue",
         "yellow",
@@ -1729,7 +1818,7 @@ def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
     assert [spec.kind for spec in contract.inputs] == [ArtifactKind.IMAGE]
     assert tuple(
         binding.alias
-        for binding in contract.source_bindings.groups[0].bindings
+        for binding in contract.source_bindings.bindings
     ) == ("OrigBlue",)
     assert [spec.name for spec in contract.outputs] == ["IllumBlue"]
     assert [spec.kind for spec in contract.outputs] == [ArtifactKind.IMAGE]
@@ -1806,7 +1895,7 @@ def test_generated_inputless_measurement_only_step_disables_default_grouping():
 
     assert "name=\"CalculateMath\"" in generated.code
     assert "variable_components=[VariableComponents.SITE]" in generated.code
-    assert "group_by=GroupBy.NONE," in generated.code
+    assert "group_by=GroupBy.NONE" in generated.code
 
 
 def test_cellprofiler_symbol_table_infers_mask_objects_contract():
@@ -1830,7 +1919,7 @@ def test_cellprofiler_symbol_table_infers_mask_objects_contract():
     assert [spec.name for spec in contract.runtime_artifact_inputs] == ["Nuclei"]
     assert tuple(
         binding.alias
-        for binding in contract.source_bindings.groups[0].bindings
+        for binding in contract.source_bindings.bindings
     ) == ("OrigBlue",)
     assert [spec.name for spec in contract.outputs] == [
         "MaskObjects_2_measurements",
@@ -1890,7 +1979,7 @@ def test_cellprofiler_symbol_table_reads_gray_to_color_stack_inputs_from_records
 
     assert [spec.name for spec in contract.inputs] == ["OrigBlue", "OrigGreen"]
     assert tuple(
-        binding.alias for binding in contract.source_bindings.groups[0].bindings
+        binding.alias for binding in contract.source_bindings.bindings
     ) == ("OrigBlue", "OrigGreen")
     assert [spec.name for spec in contract.outputs] == ["StackedColor"]
 
@@ -2059,13 +2148,41 @@ def test_grid_variants_do_not_treat_shape_choices_as_object_symbols():
         "GridObjects",
     ]
     assert "define_grid_automatic," in generated.code
-    assert "CellProfilerInvocationOptions(" in generated.code
-    assert "grid_cycle_scope=CellProfilerGridCycleScope.EACH_CYCLE" in generated.code
+    assert "DefineGridInvocationOptions(" in generated.code
+    assert "cycle_scope=DefineGridCycleScope.EACH_CYCLE" in generated.code
     assert "_cellprofiler_grid_cycle_scope" not in generated.code
     assert "identify_objects_in_grid_with_guides," in generated.code
     assert "Natural Shape and Location" not in [
         spec.name for spec in identify_grid.inputs
     ]
+
+
+def test_define_grid_drops_blank_optional_artifact_symbols():
+    modules = [
+        _module_with_records(
+            1,
+            "DefineGrid",
+            [
+                ("Name the grid", "Grid"),
+                ("Number of rows", "8"),
+                ("Number of columns", "12"),
+                ("Select the method to define the grid", "Manual"),
+                ("Select the image on which to display the grid", "None"),
+                ("Select the image to display when drawing", "None"),
+                ("Select the previously identified objects", "None"),
+                ("Retain an image of the grid?", "No"),
+                ("Name the output image", "IgnoredGridImage"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[1]
+
+    assert contract.inputs == ()
+    assert contract.source_bindings.is_empty
+    assert [spec.name for spec in contract.outputs] == ["Grid"]
+    assert [spec.kind for spec in contract.outputs] == [ArtifactKind.SPATIAL_GRID]
 
 
 def test_mask_and_worm_output_object_names_are_declared_generically():

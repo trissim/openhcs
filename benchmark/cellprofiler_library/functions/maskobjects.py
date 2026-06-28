@@ -3,7 +3,7 @@
 Removes objects outside of a specified region or regions.
 """
 
-from openhcs.interop.cellprofiler.mask_objects_settings import (
+from openhcs.processing.backends.cellprofiler.morphology import (
     MaskObjectsNumberingChoice as NumberingChoice,
     MaskObjectsOverlapHandling as OverlapHandling,
 )

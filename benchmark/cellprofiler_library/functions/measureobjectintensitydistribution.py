@@ -1,6 +1,6 @@
 """Benchmark-library facade for CellProfiler MeasureObjectIntensityDistribution."""
 
-from openhcs.interop.cellprofiler.intensity_distribution_settings import (
+from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     IntensityDistributionCenterChoice as CenterChoice,
     IntensityDistributionZernikeMode as ZernikeMode,
 )

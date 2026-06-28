@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from typing import Callable, ClassVar, Mapping
+from typing import Callable, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -255,110 +255,59 @@ DISPLAY_EXPORT_MODULE_SECTION_SPECS = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerModuleDebugRendererSpec:
-    """Declarative renderer assignment for one CellProfiler module family."""
-
-    module_names: tuple[str, ...]
-    section_specs: tuple[CellProfilerDebugSectionSpec, ...]
-
-
-CELLPROFILER_MODULE_DEBUG_RENDERER_SPECS = (
-    CellProfilerModuleDebugRendererSpec(
-        module_names=(
-            "IdentifySecondaryObjects",
-            "IdentifyTertiaryObjects",
-            "MaskObjects",
-            "FilterObjects",
-            "ExpandOrShrinkObjects",
-            "ConvertObjectsToImage",
-            "ConvertImageToObjects",
-        ),
-        section_specs=OBJECT_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerModuleDebugRendererSpec(
-        module_names=(
-            "MeasureObjectIntensity",
-            "MeasureObjectIntensityDistribution",
-            "MeasureColocalization",
-            "MeasureGranularity",
-            "MeasureImageAreaOccupied",
-            "MeasureImageQuality",
-            "MeasureObjectNeighbors",
-            "MeasureTexture",
-        ),
-        section_specs=MEASUREMENT_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerModuleDebugRendererSpec(
-        module_names=(
-            "CalculateMath",
-            "ClassifyObjects",
-            "MeasureCorrelation",
-            "MeasureImageOverlap",
-            "ScoreAll",
-        ),
-        section_specs=MEASUREMENT_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerModuleDebugRendererSpec(
-        module_names=(
-            "Resize",
-            "RescaleIntensity",
-            "Smooth",
-            "GaussianFilter",
-            "MedianFilter",
-            "ReduceNoise",
-            "Threshold",
-            "MaskImage",
-            "Crop",
-            "ColorToGray",
-            "GrayToColor",
-            "CorrectIlluminationCalculate",
-            "CorrectIlluminationApply",
-            "EnhanceEdges",
-            "EnhanceOrSuppressFeatures",
-            "InvertForPrinting",
-            "Morph",
-            "OverlayOutlines",
-            "SaveCroppedObjects",
-            "UnmixColors",
-        ),
-        section_specs=IMAGE_PROCESSING_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerModuleDebugRendererSpec(
-        module_names=(
-            "DisplayDataOnImage",
-            "DisplayHistogram",
-            "DisplayPlatemap",
-            "DisplayScatterPlot",
-            "DisplayDensityPlot",
-            "ExportToDatabase",
-            "ExportToSpreadsheet",
-            "SaveImages",
-        ),
-        section_specs=DISPLAY_EXPORT_MODULE_SECTION_SPECS,
-    ),
-)
-
-
-def build_table_driven_renderer_specs() -> Mapping[
-    str,
-    tuple[CellProfilerDebugSectionSpec, ...],
-]:
-    return {
-        module_name: spec.section_specs
-        for spec in CELLPROFILER_MODULE_DEBUG_RENDERER_SPECS
-        for module_name in spec.module_names
-    }
-
-
-TABLE_DRIVEN_RENDERER_SPECS = build_table_driven_renderer_specs()
-
-
 def build_sections(
     snapshot: DebugSnapshot,
     specs: tuple[CellProfilerDebugSectionSpec, ...],
 ) -> tuple[DebugViewSection, ...]:
     return tuple(spec.section_for(snapshot) for spec in specs)
+
+
+def declared_section_specs(
+    module_name: str,
+) -> tuple[str, tuple[CellProfilerDebugSectionSpec, ...]] | None:
+    """Resolve debug sections from the backend module declaration type."""
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+        CellProfilerDebugViewModule,
+        DisplayExportDebugViewModule,
+        ImageProcessingDebugViewModule,
+        IdentifyPrimaryObjectsDebugViewModule,
+        MeasurementDebugViewModule,
+        ObjectDebugViewModule,
+        RelationshipDebugViewModule,
+    )
+
+    module_type = CellProfilerModule.for_module(module_name)
+    if module_type is None or not issubclass(module_type, CellProfilerDebugViewModule):
+        return None
+    if issubclass(module_type, IdentifyPrimaryObjectsDebugViewModule):
+        return str(module_type.module_name), IDENTIFY_PRIMARY_OBJECTS_SECTION_SPECS
+    if issubclass(module_type, RelationshipDebugViewModule):
+        return str(module_type.module_name), RELATIONSHIP_MODULE_SECTION_SPECS
+    if issubclass(module_type, MeasurementDebugViewModule):
+        return str(module_type.module_name), MEASUREMENT_MODULE_SECTION_SPECS
+    if issubclass(module_type, ObjectDebugViewModule):
+        return str(module_type.module_name), OBJECT_MODULE_SECTION_SPECS
+    if issubclass(module_type, DisplayExportDebugViewModule):
+        return str(module_type.module_name), DISPLAY_EXPORT_MODULE_SECTION_SPECS
+    if issubclass(module_type, ImageProcessingDebugViewModule):
+        return str(module_type.module_name), IMAGE_PROCESSING_MODULE_SECTION_SPECS
+    return None
+
+
+def declared_debug_view_modules() -> tuple[type[object], ...]:
+    """Return registered CellProfiler module declarations with debug sections."""
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerDebugViewModule,
+        CellProfilerModule,
+    )
+
+    return tuple(
+        module_type
+        for module_type in CellProfilerModule.__registry__.values()
+        if module_type.module_name is not None
+        and issubclass(module_type, CellProfilerDebugViewModule)
+    )
 
 
 class CellProfilerDebugView(ABC, metaclass=AutoRegisterMeta):
@@ -374,10 +323,11 @@ class CellProfilerDebugView(ABC, metaclass=AutoRegisterMeta):
             renderer_type = cls.__registry__.get(module_name)
             if renderer_type is not None:
                 return renderer_type()
-            section_specs = TABLE_DRIVEN_RENDERER_SPECS.get(module_name)
-            if section_specs is not None:
-                return TableDrivenCellProfilerDebugView(
-                    module_name=module_name,
+            declaration = declared_section_specs(module_name)
+            if declaration is not None:
+                declared_module_name, section_specs = declaration
+                return DeclaredCellProfilerDebugView(
+                    module_name=declared_module_name,
                     section_specs=section_specs,
                 )
         return DefaultCellProfilerDebugView()
@@ -399,18 +349,6 @@ class DefaultCellProfilerDebugView(CellProfilerDebugView):
         )
 
 
-class IdentifyPrimaryObjectsDebugView(CellProfilerDebugView):
-    """Specialized summary for IdentifyPrimaryObjects snapshots."""
-
-    module_name = "IdentifyPrimaryObjects"
-
-    def build_view_model(self, snapshot: DebugSnapshot) -> DebugViewModel:
-        return DebugViewModel(
-            title="IdentifyPrimaryObjects",
-            sections=build_sections(snapshot, IDENTIFY_PRIMARY_OBJECTS_SECTION_SPECS),
-        )
-
-
 class SectionSpecCellProfilerDebugView(CellProfilerDebugView):
     """Renderer driven by declarative CellProfiler section specs."""
 
@@ -426,8 +364,8 @@ class SectionSpecCellProfilerDebugView(CellProfilerDebugView):
         )
 
 
-class TableDrivenCellProfilerDebugView(CellProfilerDebugView):
-    """Renderer selected from the CellProfiler module-category spec table."""
+class DeclaredCellProfilerDebugView(CellProfilerDebugView):
+    """Renderer selected from the CellProfiler module declaration type."""
 
     __skip__ = True
 
@@ -445,68 +383,6 @@ class TableDrivenCellProfilerDebugView(CellProfilerDebugView):
             title=self.module_name,
             sections=build_sections(snapshot, self.section_specs),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerSectionRendererDeclaration:
-    """Named specialized renderer declaration for one CellProfiler module."""
-
-    class_name: str
-    module_name: str
-    section_specs: tuple[CellProfilerDebugSectionSpec, ...]
-
-
-def declare_section_spec_debug_view(
-    declaration: CellProfilerSectionRendererDeclaration,
-) -> type[SectionSpecCellProfilerDebugView]:
-    return type(
-        declaration.class_name,
-        (SectionSpecCellProfilerDebugView,),
-        {
-            "__module__": __name__,
-            "__doc__": f"Specialized summary for {declaration.module_name} snapshots.",
-            "module_name": declaration.module_name,
-            "section_specs": declaration.section_specs,
-        },
-    )
-
-
-for _renderer_declaration in (
-    CellProfilerSectionRendererDeclaration(
-        "MeasureImageIntensityDebugView",
-        "MeasureImageIntensity",
-        MEASUREMENT_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerSectionRendererDeclaration(
-        "MeasureObjectSizeShapeDebugView",
-        "MeasureObjectSizeShape",
-        MEASUREMENT_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerSectionRendererDeclaration(
-        "RelateObjectsDebugView",
-        "RelateObjects",
-        RELATIONSHIP_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerSectionRendererDeclaration(
-        "TrackObjectsDebugView",
-        "TrackObjects",
-        RELATIONSHIP_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerSectionRendererDeclaration(
-        "ImageMathDebugView",
-        "ImageMath",
-        IMAGE_PROCESSING_MODULE_SECTION_SPECS,
-    ),
-    CellProfilerSectionRendererDeclaration(
-        "CorrectIlluminationApplyDebugView",
-        "CorrectIlluminationApply",
-        IMAGE_PROCESSING_MODULE_SECTION_SPECS,
-    ),
-):
-    globals()[_renderer_declaration.class_name] = declare_section_spec_debug_view(
-        _renderer_declaration
-    )
-del _renderer_declaration
 
 
 def is_cellprofiler_debug_view_export(name: str, value: object) -> bool:

@@ -1,6 +1,7 @@
 """CellProfiler-compatible skeleton measurement backends."""
 
 from __future__ import annotations
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 from dataclasses import dataclass
 
@@ -309,6 +310,19 @@ def measure_object_skeleton(
         )
     return image, measurements
 
+
+class MeasureImageSkeletonModule(CellProfilerModule):
+    module_name = 'MeasureImageSkeleton'
+    function_name = 'measure_image_skeleton'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+
+class MeasureObjectSkeletonModule(CellProfilerModule):
+    module_name = 'MeasureObjectSkeleton'
+    function_name = 'measure_object_skeleton'
+    validated = True
+    confidence = 1.0
 
 __all__ = public_names_from_objects(
     DiskStructuringElement,

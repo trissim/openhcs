@@ -8,6 +8,688 @@ behavior when explicitly requested.
 
 from __future__ import annotations
 
+from enum import Enum
+
+import numpy as np
+
+from openhcs.core.aligned_image_payload import AlignedImageStack, ImagePayloadExecutionMode
+from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.runtime_values import (
+    DenseObjectLabelSliceStackRequest,
+    ObjectLabelRuntimeSliceStackContract,
+    SingletonObjectLabelStackCollapseStrategy,
+    object_label_dense_array,
+)
+
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
+    StructuringElementExecutionModePolicy,
+    VolumetricInputExecutionModePolicy,
+)
+from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.binding_authorities import (
+    CellProfilerInvocationOverrideKwarg,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    CellProfilerObjectInputPolicyMixin,
+    LabelsObjectInputPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    ObjectInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerKwargDict,
+    CellProfilerRuntimeValue,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    ObjectDebugViewModule,
+    ObjectLineageTransformContractModule,
+    PlaneRuntimeArtifactModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingBinding,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+
+
+class CombineObjectsMethod(Enum):
+    """Overlap policies exposed by CombineObjects settings."""
+
+    MERGE = "merge"
+    PRESERVE = "preserve"
+    DISCARD = "discard"
+    SEGMENT = "segment"
+
+
+class MaskObjectsOverlapHandling(Enum):
+    """CellProfiler MaskObjects overlap handling mode."""
+
+    MASK = "keep_overlapping_region"
+    KEEP = "keep"
+    REMOVE = "remove"
+    REMOVE_PERCENTAGE = "remove_depending_on_overlap"
+
+
+class MaskObjectsNumberingChoice(Enum):
+    """CellProfiler MaskObjects output label numbering mode."""
+
+    RENUMBER = "renumber"
+    RETAIN = "retain"
+
+
+class ImageStructuringElementModule(
+    StructuringElementExecutionModePolicy,
+    StructuringElementSettingsModule,
+):
+    """Shared declaration for image morphology modules with one image output."""
+
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_image_setting = SettingNameFamily("Name the output image")
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        image = builder.require_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.input_image_setting),
+                ArtifactKind.IMAGE,
+            ),
+            module,
+        )
+        output = builder.declare_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.output_image_setting),
+                ArtifactKind.IMAGE,
+            ),
+            module,
+        )
+        return assembler.assemble_contract(module, builder, inputs=[image], outputs=[output])
+
+
+class ClosingModule(ImageStructuringElementModule):
+    module_name = 'Closing'
+    function_name = 'closing'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+
+
+class ObjectTransformContractModule(
+    PlaneRuntimeArtifactModule,
+    ObjectDebugViewModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+):
+    """Shared declaration for object modules that emit measurements plus objects."""
+
+    input_objects_setting = SettingNameFamily(
+        "Select the input objects",
+        aliases=("Select objects to be masked",),
+    )
+    output_objects_setting = SettingNameFamily(
+        "Name the output objects",
+        aliases=("Name the masked objects",),
+    )
+
+    @classmethod
+    def object_input_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
+        return (cls.input_objects_setting,)
+
+    @classmethod
+    def object_output_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
+        return (cls.output_objects_setting,)
+
+
+class ObjectLineageTransformModule(
+    ObjectDebugViewModule,
+    ObjectLineageTransformContractModule,
+):
+    """Shared declaration for object transforms that also emit parent-child lineage."""
+
+
+class CombineObjectsInputPolicy(CellProfilerObjectInputPolicyMixin):
+    """Bind two object-label inputs as the CombineObjects label-pair payload."""
+
+    image_override_kwarg = CellProfilerInvocationOverrideKwarg.image
+    execution_mode_override_kwarg = CellProfilerInvocationOverrideKwarg.execution_mode
+
+    def bind(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        request.require_exact_object_count(2)
+        label_planes = self.label_pair_payload(request)
+        shapes = {tuple(labels.shape) for labels in label_planes}
+        if len(shapes) != 1:
+            raise ValueError(
+                "CombineObjects requires object-label inputs with matching "
+                f"shapes, got {sorted(shapes)!r}."
+            )
+        return {
+            CellProfilerInvocationOverrideKwarg.image: (
+                self.aligned_label_pair_payload(label_planes)
+            ),
+            CellProfilerInvocationOverrideKwarg.execution_mode: (
+                ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+            ),
+        }
+
+    def aligned_label_pair_payload(
+        self,
+        label_planes: tuple[np.ndarray, np.ndarray],
+    ) -> AlignedImageStack:
+        """Return pairwise label payloads without exposing the pair axis as slices."""
+        slice_count = self.common_runtime_slice_count(label_planes)
+        if slice_count is None:
+            return AlignedImageStack((np.stack(label_planes, axis=0),))
+        return AlignedImageStack(
+            tuple(
+                np.stack(
+                    tuple(label_stack[slice_index] for label_stack in label_planes),
+                    axis=0,
+                )
+                for slice_index in range(slice_count)
+            )
+        )
+
+    def common_runtime_slice_count(
+        self,
+        label_planes: tuple[np.ndarray, np.ndarray],
+    ) -> int | None:
+        """Return shared runtime-slice depth when both pair inputs are stacks."""
+        if any(labels.ndim != 3 for labels in label_planes):
+            return None
+        counts = {int(labels.shape[0]) for labels in label_planes}
+        if len(counts) != 1:
+            raise ValueError(
+                "CombineObjects requires object-label stack inputs with matching "
+                f"runtime slice counts, got {sorted(counts)!r}."
+            )
+        return counts.pop()
+
+    def label_pair_payload(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the two CombineObjects inputs in a shared dense slice domain."""
+        label_payloads = tuple(
+            request.label_payload_for(spec)
+            for spec in request.object_inputs
+        )
+        slice_counts = tuple(
+            count
+            for payload in label_payloads
+            for count in (self.runtime_slice_count(payload),)
+            if count is not None
+        )
+        if not slice_counts:
+            return tuple(
+                np.asarray(
+                    SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
+                        payload
+                    ),
+                    dtype=np.int32,
+                )
+                for payload in label_payloads
+            )
+        slice_count_set = set(slice_counts)
+        if len(slice_count_set) != 1:
+            raise ValueError(
+                "CombineObjects requires compatible object-label runtime slice "
+                f"domains, got slice counts {sorted(slice_count_set)!r}."
+            )
+        slice_count = slice_count_set.pop()
+        stacks = tuple(
+            DenseObjectLabelSliceStackRequest(
+                payload,
+                slice_count,
+                np.int32,
+            ).stack()
+            for payload in label_payloads
+        )
+        if any(stack is None for stack in stacks):
+            shapes = [
+                tuple(object_label_dense_array(payload, dtype=np.int32).shape)
+                for payload in label_payloads
+            ]
+            raise ValueError(
+                "CombineObjects requires object-label inputs compatible with "
+                f"runtime slice count {slice_count}, got shapes {shapes!r}."
+            )
+        return tuple(stack.labels for stack in stacks if stack is not None)
+
+    def runtime_slice_count(self, payload: CellProfilerRuntimeValue) -> int | None:
+        """Return the declared or dense object-label slice count for CombineObjects."""
+        declared_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(payload)
+        if declared_count is not None:
+            return declared_count
+        label_array = object_label_dense_array(payload, dtype=np.int32)
+        if label_array.ndim != 3:
+            return None
+        return int(label_array.shape[0])
+
+
+class CombineobjectsModule(
+    PlaneRuntimeArtifactModule,
+    CombineObjectsInputPolicy,
+    CellProfilerModule,
+    ArtifactContractModule,
+):
+    module_name = 'Combineobjects'
+    function_name = 'combineobjects'
+    validated = True
+    confidence = 1.0
+    first_objects_setting = SettingNameFamily("Select initial object set")
+    second_objects_setting = SettingNameFamily("Select object set to combine")
+    output_objects_setting = SettingNameFamily("Name the combined object set")
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Select how to handle overlapping objects",
+            "method",
+            cellprofiler_enum_value_setting_parser(CombineObjectsMethod),
+        ),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        first_objects = builder.require_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.first_objects_setting),
+                ArtifactKind.OBJECT_LABELS,
+            ),
+            module,
+        )
+        second_objects = builder.require_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.second_objects_setting),
+                ArtifactKind.OBJECT_LABELS,
+            ),
+            module,
+        )
+        outputs = [
+            builder.declare_artifact(
+                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+                module,
+            ),
+            builder.declare_artifact(
+                ArtifactSpec(
+                    required_setting_value(module, cls.output_objects_setting),
+                    ArtifactKind.OBJECT_LABELS,
+                ),
+                module,
+            ),
+        ]
+        return assembler.assemble_contract(
+            module,
+            builder,
+            inputs=[first_objects, second_objects],
+            outputs=outputs,
+        )
+
+
+class DilateImageModule(ImageStructuringElementModule):
+    module_name = 'DilateImage'
+    function_name = 'dilate_image'
+    validated = True
+    aliases = ('Dilation',)
+    contract = 'unknown'
+    confidence = 1.0
+
+
+class DilateObjectsModule(ObjectTransformContractModule, StructuringElementSettingsModule):
+    module_name = 'DilateObjects'
+    function_name = 'dilate_objects'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    structuring_element_binding = StructuringElementSettingBinding(
+        shape_keyword="structuring_element_shape",
+        size_keyword="structuring_element_size",
+    )
+
+
+class ErodeImageModule(ImageStructuringElementModule):
+    module_name = 'ErodeImage'
+    function_name = 'erode_image'
+    validated = True
+    aliases = ('Erosion',)
+    contract = 'unknown'
+    confidence = 1.0
+
+
+class ErodeObjectsModule(
+    StructuringElementExecutionModePolicy,
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+    LabelsObjectInputPolicy,
+    ObjectLineageTransformModule,
+    StructuringElementSettingsModule,
+):
+    module_name = 'ErodeObjects'
+    function_name = 'erode_objects'
+    validated = True
+    confidence = 1.0
+    input_objects_setting = SettingNameFamily(
+        "Select the input object",
+        aliases=("Select the input objects",),
+    )
+    output_objects_setting = SettingNameFamily(
+        "Name the output object",
+        aliases=("Name the output objects",),
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Prevent object removal",
+            "preserve_midpoints",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Relabel resulting objects",
+            "relabel_objects",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+
+class CellProfilerExpandShrinkOperation(Enum):
+    """Closed CellProfiler UI operation dialect for ExpandOrShrinkObjects."""
+
+    SHRINK_TO_POINT = "Shrink objects to a point"
+    EXPAND_UNTIL_TOUCHING = "Expand objects until touching"
+    ADD_DIVIDING_LINES = "Add partial dividing lines between objects"
+    SHRINK_DEFINED_PIXELS = "Shrink objects by a specified number of pixels"
+    SHRINK_BY_MEASUREMENT = "Shrink objects by a previous measurement"
+    EXPAND_DEFINED_PIXELS = "Expand objects by a specified number of pixels"
+    EXPAND_BY_MEASUREMENT = "Expand objects by a previous measurement"
+    SKELETONIZE = "Skeletonize each object"
+    DESPUR = "Remove spurs"
+
+
+class ExpandShrinkMode(Enum):
+    """Runtime mode literals consumed by ExpandOrShrinkObjects execution."""
+
+    EXPAND_DEFINED_PIXELS = "expand_defined_pixels"
+    EXPAND_INFINITE = "expand_infinite"
+    SHRINK_DEFINED_PIXELS = "shrink_defined_pixels"
+    SHRINK_TO_POINT = "shrink_to_point"
+    ADD_DIVIDING_LINES = "add_dividing_lines"
+    DESPUR = "despur"
+    SKELETONIZE = "skeletonize"
+
+
+class ExpandOrShrinkObjectsModule(
+    PlaneRuntimeArtifactModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    ObjectDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'ExpandOrShrinkObjects'
+    function_name = 'expand_or_shrink_objects'
+    validated = True
+    confidence = 1.0
+    object_input_settings = ("Select the input objects",)
+    object_output_settings = ("Name the output objects",)
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Select the operation",
+            "mode",
+            lambda value: (
+                ExpandShrinkOperationStrategy
+                .mode_for_cellprofiler_operation(value)
+                .value
+            ),
+        ),
+        SettingToKeywordBinding(
+            "Number of pixels by which to expand or shrink",
+            "iterations",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Fill holes in objects so that all objects shrink to a single point?",
+            "fill_holes",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+
+class MaskObjectsModule(ObjectLabelDrivenPrimaryImageInputPolicy, ObjectTransformContractModule):
+    module_name = 'MaskObjects'
+    function_name = 'mask_objects'
+    validated = True
+    confidence = 1.0
+    outline_retention_setting = "Retain outlines of the resulting objects?"
+    outline_image_setting = "Name the outline image"
+    input_objects_setting = SettingNameFamily(
+        "Select the input objects",
+        aliases=("Select objects to be masked",),
+    )
+    output_objects_setting = SettingNameFamily(
+        "Name the output objects",
+        aliases=("Name the masked objects",),
+    )
+    masking_image_setting = SettingNameFamily("Select the masking image")
+    masking_objects_setting = SettingNameFamily("Select the masking object")
+    ignored_settings = (
+        "Mask using a region defined by other objects or by binary image",
+        "Select the masking image",
+        outline_retention_setting,
+    )
+
+    @classmethod
+    def ignored_settings_for(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        ignored = tuple(cls.ignored_settings)
+        if cls.setting_value(module, cls.outline_retention_setting) == "No":
+            return (*ignored, cls.outline_image_setting)
+        return ignored
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Handling of objects that are partially masked",
+            "overlap_handling",
+            cellprofiler_enum_value_setting_parser(MaskObjectsOverlapHandling),
+        ),
+        SettingToKeywordBinding(
+            "Fraction of object that must overlap",
+            "overlap_fraction",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Numbering of resulting objects",
+            "numbering",
+            cellprofiler_enum_value_setting_parser(MaskObjectsNumberingChoice),
+        ),
+        SettingToKeywordBinding(
+            "Invert the mask?",
+            "invert_mask",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+
+        input_objects = builder.require_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.input_objects_setting),
+                ArtifactKind.OBJECT_LABELS,
+            ),
+            module,
+        )
+        inputs = [input_objects]
+        masking_image = optional_setting_value(module, cls.masking_image_setting)
+        if masking_image is not None:
+            inputs.append(
+                builder.require_artifact(
+                    ArtifactSpec(masking_image, ArtifactKind.IMAGE),
+                    module,
+                )
+            )
+        masking_objects = optional_setting_value(module, cls.masking_objects_setting)
+        if masking_objects is not None:
+            inputs.append(
+                builder.require_artifact(
+                    ArtifactSpec(masking_objects, ArtifactKind.OBJECT_LABELS),
+                    module,
+                )
+            )
+
+        output_objects = builder.declare_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.output_objects_setting),
+                ArtifactKind.OBJECT_LABELS,
+            ),
+            module,
+        )
+        outputs = [
+            builder.declare_artifact(
+                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+                module,
+            ),
+            builder.declare_artifact(
+                ArtifactSpec(
+                    parent_child_relationship_artifact_name(
+                        input_objects.name,
+                        output_objects.name,
+                    ),
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+                module,
+            ),
+            output_objects,
+        ]
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
+class OpeningModule(ImageStructuringElementModule):
+    module_name = 'Opening'
+    function_name = 'opening'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+
+
+class RemoveHolesModule(
+    VolumetricInputExecutionModePolicy,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    CellProfilerModule,
+):
+    module_name = 'RemoveHoles'
+    function_name = 'remove_holes'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Size of holes to fill",
+            "diameter",
+            parse_cellprofiler_float,
+        ),
+    )
+
+
+class ResizeObjectsModule(
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+    LabelsObjectInputPolicy,
+    ObjectLineageTransformModule,
+):
+    module_name = 'ResizeObjects'
+    function_name = 'resize_objects'
+    validated = True
+    contract = 'flexible'
+    function_variants = ('resize_objects_3d',)
+    confidence = 1.0
+    input_objects_setting = SettingNameFamily(
+        "Select the input object",
+        aliases=("Select the input objects",),
+    )
+    output_objects_setting = SettingNameFamily(
+        "Name the output object",
+        aliases=("Name the output objects",),
+    )
+    desired_dimensions_image_setting = SettingNameFamily(
+        "Select the image with the desired dimensions",
+    )
+    factor_z_setting = SettingNameFamily("Z Factor")
+    planes_setting = SettingNameFamily("Planes (Z)")
+    volumetric_settings = (factor_z_setting, planes_setting)
+    ignored_settings = (desired_dimensions_image_setting,)
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Method",
+            "method",
+            normalize_cellprofiler_setting_name,
+        ),
+        SettingToKeywordBinding("X Factor", "factor_x", parse_cellprofiler_float),
+        SettingToKeywordBinding("Y Factor", "factor_y", parse_cellprofiler_float),
+        SettingToKeywordBinding(
+            factor_z_setting,
+            "factor_z",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding("Width (X)", "width", parse_cellprofiler_int),
+        SettingToKeywordBinding("Height (Y)", "height", parse_cellprofiler_int),
+        SettingToKeywordBinding(
+            planes_setting,
+            "planes",
+            parse_cellprofiler_int,
+        ),
+    )
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+    ) -> "ResolvedModuleFunction":
+        del default_function_name
+        function_name = (
+            cls.function_variants[0]
+            if any(setting_values(module, setting) for setting in cls.volumetric_settings)
+            else str(cls.function_name)
+        )
+        return super().resolve_function(module, default_function_name=function_name)
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -55,15 +737,6 @@ from openhcs.core.runtime_values import (
     object_label_value_with_dense_labels,
     with_image_payload_data,
 )
-from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
-    CellProfilerExpandShrinkOperation,
-    ExpandShrinkMode,
-)
-from openhcs.interop.cellprofiler.image_module_settings import CombineObjectsMethod
-from openhcs.interop.cellprofiler.mask_objects_settings import (
-    MaskObjectsNumberingChoice,
-    MaskObjectsOverlapHandling,
-)
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.enum_attributes import (
     CellProfilerEnumAttributeMixin,
@@ -93,6 +766,9 @@ from openhcs.processing.backends.analysis.region_properties import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
 
 HolePredicate = Callable[[int, bool], bool]
 ConnectivityStructureBuilder = Callable[[int], np.ndarray]
@@ -4130,6 +4806,28 @@ class ExpandShrinkOperationStrategy(
         resolved = coerce_cellprofiler_enum(ExpandShrinkMode, mode)
         return cls.for_enum_member(resolved)
 
+    @classmethod
+    def mode_for_cellprofiler_operation(
+        cls,
+        operation: CellProfilerExpandShrinkOperation | str,
+    ) -> ExpandShrinkMode:
+        """Return the runtime mode declared for one CellProfiler operation."""
+        resolved = coerce_cellprofiler_enum(
+            CellProfilerExpandShrinkOperation,
+            operation,
+        )
+        matches = tuple(
+            strategy_type.mode
+            for strategy_type in cls.registered_strategy_types()
+            if resolved in strategy_type.cellprofiler_operations
+        )
+        if len(matches) != 1 or not isinstance(matches[0], ExpandShrinkMode):
+            raise ValueError(
+                "Expected exactly one ExpandOrShrinkObjects mode for operation "
+                f"{resolved.value!r}; found {len(matches)}."
+            )
+        return matches[0]
+
     @abstractmethod
     def apply(
         self,
@@ -6452,6 +7150,39 @@ def resize_objects_3d(
     relationship = object_label_lineage_payload(labels, resized_labels)
     return image, stats, relationship, resized_labels
 
+
+class FillObjectsModule(CellProfilerModule):
+    module_name = 'FillObjects'
+    function_name = 'fill_objects'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+
+class MorphModule(ImageProcessingDebugViewModule, CellProfilerModule):
+    module_name = 'Morph'
+    function_name = 'morph'
+    validated = True
+    confidence = 1.0
+
+class MorphologicalskeletonModule(CellProfilerModule):
+    module_name = 'Morphologicalskeleton'
+    function_name = 'morphologicalskeleton'
+    validated = True
+    contract = 'pure_3d'
+    category = 'z_projection'
+    confidence = 0.95
+
+class ShrinkToObjectCentersModule(CellProfilerModule):
+    module_name = 'ShrinkToObjectCenters'
+    function_name = 'shrink_to_object_centers'
+    validated = True
+    confidence = 1.0
+
+class SplitOrMergeObjectsModule(CellProfilerModule):
+    module_name = 'SplitOrMergeObjects'
+    function_name = 'split_or_merge_objects'
+    validated = True
+    confidence = 1.0
 
 __all__ = public_names_from_objects(
     CentrosomeNumpyMorphologyBackendStrategy,

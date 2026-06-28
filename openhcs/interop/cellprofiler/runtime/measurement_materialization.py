@@ -23,6 +23,7 @@ from openhcs.core.measurement_row_materialization import (
     MeasurementSliceIndexImageNumberProjection,
     ProjectedMeasurementRows,
 )
+from openhcs.core.pipeline.function_contracts import special_output_specs_from_callable
 from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_semantics import (
@@ -36,6 +37,8 @@ from openhcs.core.runtime_values import (
     ColumnarRows,
     ImagePayloadMetadataInput,
     ImagePayloadMetadata,
+    ImagePayloadMetadataCompositionMode,
+    ImagePayloadMetadataCompositionRequest,
     MeasurementTable,
     ObjectLabelValue,
     ObjectRelationship,
@@ -46,7 +49,6 @@ from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerRuntimeAdapter,
 )
 from openhcs.interop.cellprofiler.runtime.artifact_binding import _callable_type_hints
-from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
 from openhcs.interop.cellprofiler.runtime.measurement_rows import (
     ConcatenatedMeasurementColumnarRows,
 )
@@ -59,6 +61,9 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValueSequence,
     MeasurementObjectName,
     MeasurementRowsInput,
+)
+from openhcs.interop.cellprofiler.runtime.source_candidates import (
+    CellProfilerImageNumberResolver,
 )
 from openhcs.processing.materialization import tabular_field_names_from_materialization
 
@@ -100,12 +105,7 @@ class CellProfilerMeasurementFieldSchema:
     def from_callable_materialization(
         func: CellProfilerFunction,
     ) -> tuple[FieldSpec, ...]:
-        raw_outputs = MappingValueLookup(
-            vars(unwrap(func)),
-            "__special_outputs__",
-        ).value_or(())
-        if not isinstance(raw_outputs, tuple):
-            return ()
+        raw_outputs = special_output_specs_from_callable(unwrap(func))
         field_sets = tuple(
             field_names
             for output_spec in raw_outputs
@@ -243,12 +243,15 @@ class CellProfilerMeasurementOutputProjection:
 
     @classmethod
     def project_columnar_rows(cls, rows: ColumnarRows) -> ColumnarRows:
-        columns: dict[str, CellProfilerRuntimeValueSequence] = {}
-        for name, values in rows.columns.items():
-            columns[cls.export_field_name(name)] = values
+        columns = CellProfilerProjectedColumnarRowColumns(rows.columns)
         if isinstance(rows, MeasurementSparseColumnarRows):
-            return MeasurementSparseColumnarRows(MappingProxyType(columns))
-        return MeasurementProjectedColumnarRows(MappingProxyType(columns))
+            return MeasurementSparseColumnarRows(columns)
+        return MeasurementProjectedColumnarRows(
+            columns,
+            declared_object_measurement_domain_covered=(
+                rows.covers_declared_object_measurement_domain
+            ),
+        )
 
     @classmethod
     def project_row(cls, row: CellProfilerRuntimeValue) -> "CellProfilerProjectedMeasurementRow":
@@ -289,6 +292,37 @@ class CellProfilerMeasurementOutputProjection:
         if text == text.lower():
             return text
         return normalize_runtime_identifier(text)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerProjectedColumnarRowColumns(Mapping[str, Sequence[object]]):
+    """Lazy column-name projection for CellProfiler measurement tables."""
+
+    source_columns: Mapping[str, Sequence[object]]
+    source_column_by_projected_name: Mapping[str, str] = field(init=False)
+    column_names: tuple[str, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        projected_sources: dict[str, str] = {}
+        for source_name in self.source_columns:
+            projected_sources[
+                CellProfilerMeasurementOutputProjection.export_field_name(source_name)
+            ] = source_name
+        object.__setattr__(
+            self,
+            "source_column_by_projected_name",
+            MappingProxyType(projected_sources),
+        )
+        object.__setattr__(self, "column_names", tuple(projected_sources))
+
+    def __getitem__(self, projected_name: str) -> Sequence[object]:
+        return self.source_columns[self.source_column_by_projected_name[projected_name]]
+
+    def __iter__(self):
+        return iter(self.column_names)
+
+    def __len__(self) -> int:
+        return len(self.column_names)
 
 @dataclass(frozen=True, slots=True)
 class ProjectedMeasurementFieldDescriptor:
@@ -435,6 +469,31 @@ class CellProfilerMeasurementRecord:
         if len(unique_names) == 1:
             return unique_names[0]
         return None
+
+    @classmethod
+    def composed_source_metadata(
+        cls,
+        records: tuple["CellProfilerMeasurementRecord", ...],
+        *,
+        mode: ImagePayloadMetadataCompositionMode = (
+            ImagePayloadMetadataCompositionMode.STACK
+        ),
+    ) -> ImagePayloadMetadata | None:
+        """Return source metadata composed in measurement-record order."""
+        if not records:
+            return None
+        source_metadata = tuple(
+            record.source_context.payload_metadata() for record in records
+        )
+        if not any(metadata.has_values for metadata in source_metadata):
+            return None
+        composed = ImagePayloadMetadataCompositionRequest(
+            tuple(metadata.payload_with((0,)) for metadata in source_metadata),
+            mode=mode,
+        ).metadata()
+        if not composed.has_values:
+            return None
+        return composed
 
     def with_ownership(
         self,
@@ -778,9 +837,18 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
                 source_paths=len(source_paths),
             )
         phase_started_at = time.perf_counter()
-        start = self.adapter.cellprofiler_image_number_start_for_source_paths(
-            source_paths
-        )
+        if self.adapter.can_resolve_source_candidates:
+            start = (
+                CellProfilerImageNumberResolver.for_adapter(
+                    self.adapter
+                ).image_number_start_for_paths(source_paths)
+            )
+            if start is None:
+                start = self.adapter.cellprofiler_axis_image_number_start()
+        else:
+            start = self.adapter.cellprofiler_image_number_start_for_source_paths(
+                source_paths
+            )
         RuntimeProfileLogger.log(
             logger,
             "measurement_axis_image_number_start",
@@ -820,17 +888,23 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     ) -> Mapping[int, int]:
         if len(source_paths) == 1:
             return MappingProxyType({0: start})
-        return MappingProxyType(
-            {
-                slice_index: image_number
-                for slice_index, source_path in enumerate(source_paths)
-                for image_number in (
-                    self.adapter.cellprofiler_image_number_for_source_paths(
-                        (source_path,)
-                    ),
-                )
-                if image_number is not None
-            }
+        if not self.adapter.can_resolve_source_candidates:
+            return MappingProxyType(
+                {
+                    slice_index: image_number
+                    for slice_index, source_path in enumerate(source_paths)
+                    for image_number in (
+                        self.adapter.cellprofiler_image_number_for_source_paths(
+                            (source_path,)
+                        ),
+                    )
+                    if image_number is not None
+                }
+            )
+        return CellProfilerImageNumberResolver.for_adapter(
+            self.adapter
+        ).image_numbers_by_source_path_index(
+            source_paths
         )
 
     @property

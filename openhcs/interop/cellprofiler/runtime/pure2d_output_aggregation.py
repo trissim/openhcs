@@ -17,7 +17,6 @@ from openhcs.core.aligned_image_payload import (
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.image_stack_layout import ImageStackLayout, ImageStackLayoutUnstackRequest
 from openhcs.core.memory import convert_memory, detect_memory_type
-from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.runtime_semantics import ParentChildRelationshipPayload, RuntimePlaneAxis
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_values import (
@@ -35,8 +34,6 @@ from openhcs.interop.cellprofiler.runtime.image_payload_collapse import (
     SINGLETON_STACK_OUTPUT_COLLAPSE,
 )
 from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerClassAttributes,
-    CellProfilerRuntimeType,
     CellProfilerRuntimeValue,
     CellProfilerRuntimeValues,
     CellProfilerRuntimeValueSequence,
@@ -187,44 +184,26 @@ class ParentChildRelationshipPure2DOutputAggregator(CellProfilerPure2DOutputAggr
         )
 
 
-@dataclass(frozen=True, slots=True)
-class Pure2DOutputAggregatorSpec(GeneratedLeafClassSpec):
-    """Declarative leaf spec for one pure-2D output aggregator."""
-
-    output_type: CellProfilerRuntimeType
-
-    def class_attributes(self) -> CellProfilerClassAttributes:
-        return {"output_type": self.output_type}
-
-
-for _pure_2d_output_aggregator_spec in (
-    Pure2DOutputAggregatorSpec(
-        "ObjectLabelPayloadPure2DOutputAggregator",
-        ObjectLabelValuePure2DOutputAggregator,
-        ObjectLabelPayload,
-    ),
-    Pure2DOutputAggregatorSpec(
-        "ObjectLabelSetPure2DOutputAggregator",
-        ObjectLabelValuePure2DOutputAggregator,
-        ObjectLabelSet,
-    ),
-    Pure2DOutputAggregatorSpec(
-        "MaskedImagePayloadPure2DOutputAggregator",
-        ImagePayloadPure2DOutputAggregator,
-        MaskedImagePayload,
-    ),
-    Pure2DOutputAggregatorSpec(
-        "ImageMetadataPayloadPure2DOutputAggregator",
-        ImagePayloadPure2DOutputAggregator,
-        ImageMetadataPayload,
-    ),
-    Pure2DOutputAggregatorSpec(
-        "NumPyImagePure2DOutputAggregator",
-        ImagePayloadPure2DOutputAggregator,
-        np.ndarray,
-    ),
+class ObjectLabelPayloadPure2DOutputAggregator(
+    ObjectLabelValuePure2DOutputAggregator
 ):
-    _pure_2d_output_aggregator_spec.declare_in(globals())
+    output_type = ObjectLabelPayload
+
+
+class ObjectLabelSetPure2DOutputAggregator(ObjectLabelValuePure2DOutputAggregator):
+    output_type = ObjectLabelSet
+
+
+class MaskedImagePayloadPure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
+    output_type = MaskedImagePayload
+
+
+class ImageMetadataPayloadPure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
+    output_type = ImageMetadataPayload
+
+
+class NumPyImagePure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
+    output_type = np.ndarray
 
 
 def _stack_cellprofiler_slice_outputs(

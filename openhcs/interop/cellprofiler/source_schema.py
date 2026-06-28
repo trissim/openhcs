@@ -29,7 +29,6 @@ from openhcs.core.pipeline_image_schema import (
     image_type_participates_in_image_stack,
 )
 from openhcs.core.component_set import ComponentSet
-from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
@@ -112,24 +111,19 @@ class SourceFilterSubjectLiteral(SourceSchemaLiteralResolver):
         return f"Unsupported source filter subject: {value!r}."
 
 
-for _source_filter_subject_literal in (
-    GeneratedLeafClassSpec(
-        "FileFilterSubjectLiteral",
-        SourceFilterSubjectLiteral,
-        attributes={"literal": "file", "subject": SourceFilterSubject.FILE},
-    ),
-    GeneratedLeafClassSpec(
-        "DirectoryFilterSubjectLiteral",
-        SourceFilterSubjectLiteral,
-        attributes={"literal": "directory", "subject": SourceFilterSubject.DIRECTORY},
-    ),
-    GeneratedLeafClassSpec(
-        "ExtensionFilterSubjectLiteral",
-        SourceFilterSubjectLiteral,
-        attributes={"literal": "extension", "subject": SourceFilterSubject.EXTENSION},
-    ),
-):
-    _source_filter_subject_literal.declare_in(globals())
+class FileFilterSubjectLiteral(SourceFilterSubjectLiteral):
+    literal = "file"
+    subject = SourceFilterSubject.FILE
+
+
+class DirectoryFilterSubjectLiteral(SourceFilterSubjectLiteral):
+    literal = "directory"
+    subject = SourceFilterSubject.DIRECTORY
+
+
+class ExtensionFilterSubjectLiteral(SourceFilterSubjectLiteral):
+    literal = "extension"
+    subject = SourceFilterSubject.EXTENSION
 
 
 class SourceFilterOperatorLiteral(SourceSchemaLiteralResolver):
@@ -154,67 +148,44 @@ class SourceFilterOperatorLiteral(SourceSchemaLiteralResolver):
         return self.match_type
 
 
-for _source_filter_operator_literal in (
-    GeneratedLeafClassSpec(
-        "ContainsFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={
-            "literal": "contain",
-            "match_type": SourceFilterMatchType.CONTAINS,
-            "negated_match_type": SourceFilterMatchType.DOES_NOT_CONTAIN,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "ContainsRegexFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={
-            "literal": "containregexp",
-            "match_type": SourceFilterMatchType.CONTAINS_REGEX,
-            "negated_match_type": SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "EqualsFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={
-            "literal": "eq",
-            "match_type": SourceFilterMatchType.EQUALS,
-            "negated_match_type": SourceFilterMatchType.DOES_NOT_EQUAL,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "StartsWithFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={
-            "literal": "startwith",
-            "match_type": SourceFilterMatchType.STARTS_WITH,
-            "negated_match_type": SourceFilterMatchType.DOES_NOT_START_WITH,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "EndsWithFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={
-            "literal": "endwith",
-            "match_type": SourceFilterMatchType.ENDS_WITH,
-            "negated_match_type": SourceFilterMatchType.DOES_NOT_END_WITH,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "IsImageFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={
-            "literal": "isimage",
-            "match_type": SourceFilterMatchType.IS_IMAGE,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "IsTifFilterOperatorLiteral",
-        SourceFilterOperatorLiteral,
-        attributes={"literal": "istif", "match_type": SourceFilterMatchType.IS_TIF},
-    ),
-):
-    _source_filter_operator_literal.declare_in(globals())
+class ContainsFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "contain"
+    match_type = SourceFilterMatchType.CONTAINS
+    negated_match_type = SourceFilterMatchType.DOES_NOT_CONTAIN
+
+
+class ContainsRegexFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "containregexp"
+    match_type = SourceFilterMatchType.CONTAINS_REGEX
+    negated_match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
+
+
+class EqualsFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "eq"
+    match_type = SourceFilterMatchType.EQUALS
+    negated_match_type = SourceFilterMatchType.DOES_NOT_EQUAL
+
+
+class StartsWithFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "startwith"
+    match_type = SourceFilterMatchType.STARTS_WITH
+    negated_match_type = SourceFilterMatchType.DOES_NOT_START_WITH
+
+
+class EndsWithFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "endwith"
+    match_type = SourceFilterMatchType.ENDS_WITH
+    negated_match_type = SourceFilterMatchType.DOES_NOT_END_WITH
+
+
+class IsImageFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "isimage"
+    match_type = SourceFilterMatchType.IS_IMAGE
+
+
+class IsTifFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "istif"
+    match_type = SourceFilterMatchType.IS_TIF
 
 
 class SourceBindingMatchMethodLiteral(SourceSchemaLiteralResolver):
@@ -228,22 +199,14 @@ class SourceBindingMatchMethodLiteral(SourceSchemaLiteralResolver):
         return f"Unsupported NamesAndTypes image set matching method: {value!r}."
 
 
-for _source_binding_match_method_literal in (
-    GeneratedLeafClassSpec(
-        "MetadataMatchMethodLiteral",
-        SourceBindingMatchMethodLiteral,
-        attributes={
-            "literal": "metadata",
-            "method": SourceBindingMatchMethod.METADATA,
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "OrderMatchMethodLiteral",
-        SourceBindingMatchMethodLiteral,
-        attributes={"literal": "order", "method": SourceBindingMatchMethod.ORDER},
-    ),
-):
-    _source_binding_match_method_literal.declare_in(globals())
+class MetadataMatchMethodLiteral(SourceBindingMatchMethodLiteral):
+    literal = "metadata"
+    method = SourceBindingMatchMethod.METADATA
+
+
+class OrderMatchMethodLiteral(SourceBindingMatchMethodLiteral):
+    literal = "order"
+    method = SourceBindingMatchMethod.ORDER
 
 
 class SourceFilterCriteriaParser(ABC, metaclass=AutoRegisterMeta):
@@ -1216,7 +1179,9 @@ class DisabledPathMetadataRulePolicy:
 class DisabledMetadataAxisComponents:
     """Components whose disabled metadata rules should not be resurrected."""
 
-    components: ComponentSet = field(default_factory=ComponentSet.default_group_by)
+    components: ComponentSet = field(
+        default_factory=lambda: ComponentSet.from_enum_values((AllComponents.CHANNEL,))
+    )
 
     def contains(self, component: AllComponents | None) -> bool:
         return component in self.components

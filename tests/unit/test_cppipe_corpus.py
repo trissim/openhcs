@@ -10,6 +10,10 @@ from benchmark.converter.cppipe_corpus import (
     comparison_manifests_cppipe_corpus,
     in_tree_cppipe_corpus,
 )
+from openhcs.constants.constants import Microscope
+from openhcs.core.pipeline_image_schema import (
+    PipelineImageSchemaSourceBindingsRepresentability,
+)
 from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipeline
 from openhcs.interop.cellprofiler import CellProfilerModuleRole
 from openhcs.interop.cellprofiler import CellProfilerPipelineImportResult
@@ -138,6 +142,26 @@ def test_in_tree_cppipe_corpus_prepare_expectations(tmp_path: Path) -> None:
             assert import_result.semantic_contracts == (
                 prepared.generated_pipeline.artifact_contracts
             )
+            assert import_result.pipeline_config is prepared.generated_pipeline.pipeline_config
+            assert "pipeline_config =" not in import_result.generated_source
+            source_schema_unsupported = PipelineImageSchemaSourceBindingsRepresentability(
+                import_result.source_schema
+            ).unsupported_fields()
+            if import_result.source_schema.is_empty:
+                assert import_result.pipeline_config is None
+            else:
+                assert import_result.pipeline_config is not None
+                assert (
+                    import_result.pipeline_config.source_bindings_config
+                    == import_result.source_schema.to_runtime_source_bindings_config()
+                )
+                if source_schema_unsupported:
+                    assert import_result.pipeline_config.microscope is None
+                else:
+                    assert (
+                        import_result.pipeline_config.microscope
+                        is Microscope.SOURCE_BINDINGS
+                    )
             continue
 
         assert case.expected_error_substring is not None

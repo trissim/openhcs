@@ -1,6 +1,7 @@
 """CellProfiler-compatible image projection backend."""
 
 from __future__ import annotations
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -205,6 +206,14 @@ def make_projection(
     result = ProjectionStrategy.for_projection_type(projection_type).apply(request)
     return result, request.stats(result)
 
+
+class MakeProjectionModule(CellProfilerModule):
+    module_name = 'MakeProjection'
+    function_name = 'make_projection'
+    validated = True
+    contract = 'volumetric_to_slice'
+    category = 'z_projection'
+    confidence = 1.0
 
 __all__ = public_names_from_objects(
     AverageProjectionStrategy,

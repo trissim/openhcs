@@ -53,6 +53,7 @@ class ImageRuntimeArtifactCacheInvalidationPolicy(FullRuntimeArtifactCacheInvali
 
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
         adapter._image_cache.clear()
+        adapter._current_image_cache.clear()
         adapter._source_paths_by_image_name_cache.clear()
         adapter._artifact_availability_cache.clear()
 

@@ -2,6 +2,258 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+from openhcs.core.artifacts import ArtifactKind
+from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
+from openhcs.interop.cellprofiler.runtime.special_input_policies import (
+    SpecialInputBindingRequest,
+    TrailingImageSpecialInputPolicy,
+)
+from openhcs.core.registry_strategies import enum_member_with_payload
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    coerce_cellprofiler_enum,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+
+class ImageMathOperation(Enum):
+    """ImageMath operation literals exposed by CellProfiler settings."""
+
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "ImageMathOperation":
+        return enum_member_with_payload(
+            cls,
+            absorbed_value,
+            payload_attribute="cellprofiler_literals",
+            payload=(absorbed_value, *cellprofiler_literals),
+        )
+
+    ADD = ("add",)
+    SUBTRACT = ("subtract",)
+    DIFFERENCE = ("absolute_difference", "difference")
+    MULTIPLY = ("multiply",)
+    DIVIDE = ("divide",)
+    AVERAGE = ("average",)
+    MINIMUM = ("minimum",)
+    MAXIMUM = ("maximum",)
+    STDEV = ("standard_deviation", "stdev")
+    INVERT = ("invert",)
+    COMPLEMENT = ("complement",)
+    LOG_TRANSFORM = (
+        "log_transform_base2",
+        "log_transform",
+        "log_transform_base_2",
+    )
+    LOG_TRANSFORM_LEGACY = ("log_transform_legacy",)
+    NONE = ("none",)
+    OR = ("or",)
+    AND = ("and",)
+    NOT = ("not",)
+    EQUALS = ("equals",)
+
+    def matches_cellprofiler_literal(self, value: str) -> bool:
+        """Return whether a CP setting literal names this operation."""
+        normalized = normalize_cellprofiler_setting_name(value)
+        return normalized in {
+            normalize_cellprofiler_setting_name(literal)
+            for literal in (self.name, *self.cellprofiler_literals)
+        }
+
+    @classmethod
+    def from_cellprofiler_literal(cls, value: str) -> "ImageMathOperation":
+        """Return the operation named by a CellProfiler setting literal."""
+        matches = tuple(
+            operation
+            for operation in cls
+            if operation.matches_cellprofiler_literal(value)
+        )
+        if len(matches) == 1:
+            return matches[0]
+        return coerce_cellprofiler_enum(cls, value)
+
+
+def parse_image_math_operation(value: str) -> str:
+    """Return the absorbed-function operation literal for a CP setting."""
+    return ImageMathOperation.from_cellprofiler_literal(value).value
+
+class ImageMathSpecialInputPolicy(TrailingImageSpecialInputPolicy):
+    """Bind trailing ImageMath image inputs as ordered operands."""
+
+
+    def bind(
+        self,
+        request: SpecialInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        return {
+            "image_operands": tuple(
+                request.runtime_value(spec)
+                for spec in request.image_inputs
+            )
+        }
+
+
+class ImageMathModule(
+    ImageMathSpecialInputPolicy,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+    ArtifactContractModule,
+):
+    module_name = 'ImageMath'
+    function_name = 'image_math'
+    validated = True
+    contract = 'flexible'
+    confidence = 1.0
+    image_operand_settings = (
+        "Select the first image",
+        "Select the second image",
+        "Select the third image",
+        "Select the fourth image",
+    )
+    output_image_setting = "Name the output image"
+    operand_factor_settings = (
+        "Multiply the first image by",
+        "Multiply the second image by",
+        "Multiply the third image by",
+        "Multiply the fourth image by",
+    )
+    operand_choice_setting = "Image or measurement?"
+    ignored_settings = (
+        *operand_factor_settings,
+        *image_operand_settings,
+        operand_choice_setting,
+        "Measurement",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Operation",
+            "operation",
+            parse_image_math_operation,
+        ),
+        SettingToKeywordBinding(
+            "Raise the power of the result by",
+            "exponent",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Multiply the result by",
+            "after_factor",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding("Add to result", "addend", parse_cellprofiler_float),
+        SettingToKeywordBinding(
+            "Set values less than 0 equal to 0?",
+            "truncate_low",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Set values greater than 1 equal to 1?",
+            "truncate_high",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Replace invalid values with 0?",
+            "replace_nan",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Ignore the image masks?",
+            "ignore_masks",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def source_binding_participates_in_image_stack(
+        cls,
+        module: "ModuleBlock",
+        symbol: "CellProfilerSymbol",
+        input_symbols: tuple["CellProfilerSymbol", ...],
+    ) -> bool:
+        del module
+        if symbol.artifact_spec().kind is not ArtifactKind.IMAGE:
+            return True
+        first_external_image = next(
+            (
+                candidate
+                for candidate in input_symbols
+                if candidate.is_external_source
+                and candidate.artifact_spec().kind is ArtifactKind.IMAGE
+            ),
+            None,
+        )
+        if first_external_image is None:
+            return True
+        return symbol.key == first_external_image.key
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls,
+        module: "ModuleBlock",
+        bound: "BoundModuleSettings",
+    ) -> "BoundModuleSettings":
+        factors = tuple(
+            parse_cellprofiler_float(value)
+            for setting_name in cls.operand_factor_settings
+            if (value := optional_setting_value(module, setting_name)) is not None
+        )
+        if not factors:
+            return bound
+        return bound.with_kwargs({"factors": factors})
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactSpec
+
+        inputs = tuple(
+            builder.require_artifact(ArtifactSpec(image_name, ArtifactKind.IMAGE), module)
+            for setting in cls.image_operand_settings
+            for value in setting_values(module, setting)
+            for image_name in split_symbol_names(value)
+        )
+        output = builder.declare_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.output_image_setting),
+                ArtifactKind.IMAGE,
+            ),
+            module,
+        )
+        return assembler.assemble_contract(
+            module,
+            builder,
+            inputs=inputs,
+            outputs=[output],
+        )
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,9 +280,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_metadata,
 )
-from openhcs.interop.cellprofiler.image_math_settings import (
-    ImageMathOperation as MathOperation,
-)
+MathOperation = ImageMathOperation
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]

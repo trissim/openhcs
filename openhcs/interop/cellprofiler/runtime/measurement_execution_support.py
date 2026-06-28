@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 import time
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode, payload_slice_count
 from openhcs.core.artifacts import ArtifactSpec
-from openhcs.core.measurement_image_alignment import PreparedMeasurementObjectLabels
 from openhcs.core.pipeline.function_contracts import (
     object_label_measurement_execution_from_callable,
 )
+from openhcs.core.runtime_profile import RuntimeProfileTimer
 from openhcs.core.runtime_values import (
     ColumnarRows,
     ObjectLabelValue,
 )
+from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
+from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
+    _execute_runtime_batch_invocation,
+)
 from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerMeasurementImage
 from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
     CellProfilerMeasurementRecord,
@@ -47,6 +51,15 @@ from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
 
+ObjectMeasurementBatchExecutor = Callable[
+    [
+        CellProfilerFunction,
+        tuple[RuntimeBatchInvocationRequest, ...],
+        Callable[[CellProfilerFunction, RuntimeBatchInvocationRequest], CellProfilerRuntimeValue],
+    ],
+    Sequence[CellProfilerRuntimeValue],
+]
+
 def project_object_label_payload_for_measurement_image(
     measurement_image: CellProfilerMeasurementImage,
     payload: CellProfilerRuntimeValue,
@@ -55,8 +68,7 @@ def project_object_label_payload_for_measurement_image(
 ) -> CellProfilerRuntimeValue:
     """Return payload labels aligned to the measurement image's local pixels."""
     if isinstance(payload, ObjectLabelValue):
-        return PreparedMeasurementObjectLabels.from_source(
-            measurement_image,
+        return measurement_image.prepare_object_labels(
             payload,
             plane_projector=adapter,
         ).source_projected_payload
@@ -84,17 +96,15 @@ def object_measurement_runtime_inputs(
     """Prepare image, labels, payload, and execution mode for object measurement."""
     profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
     profile_events: list[CellProfilerRuntimeProfileEvent] = []
-    label_payload_started_at = time.perf_counter() if profile_enabled else 0.0
+    label_payload_timer = RuntimeProfileTimer.start()
     if not isinstance(label_payload, ObjectLabelValue):
         raise TypeError(
             "CellProfiler object measurement requires ObjectLabelValue labels, "
             f"got {type(label_payload).__name__}."
         )
-    prepared_labels = PreparedMeasurementObjectLabels.from_source(
-        measurement_image,
+    prepared_labels = measurement_image.prepare_object_labels(
         label_payload,
         plane_projector=adapter,
-        align_image_to_labels=measurement_image.align_to_labels,
     )
     if profile_enabled:
         profile_events.append(
@@ -113,13 +123,9 @@ def object_measurement_runtime_inputs(
                 prepared_labels.source_projected_labels,
             )
         )
-    label_payload_seconds = (
-        time.perf_counter() - label_payload_started_at
-        if profile_enabled
-        else 0.0
-    )
+    label_payload_seconds = label_payload_timer.elapsed()
 
-    label_align_started_at = time.perf_counter() if profile_enabled else 0.0
+    label_align_timer = RuntimeProfileTimer.start()
     if profile_enabled:
         profile_events.append(
             dense_label_stage_event(
@@ -170,11 +176,7 @@ def object_measurement_runtime_inputs(
                 executable_labels,
             )
         )
-    label_align_seconds = (
-        time.perf_counter() - label_align_started_at
-        if profile_enabled
-        else 0.0
-    )
+    label_align_seconds = label_align_timer.elapsed()
     execution_mode = (
         CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
             module_name
@@ -208,6 +210,108 @@ def object_measurement_batch_group_key(
         ("object_artifact", (object_spec.name, object_spec.kind)),
         ("object_labels", labels.object_label_semantic_identity()),
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PreparedObjectMeasurementInvocation(RuntimeBatchInvocationRequest):
+    """One prepared object-measurement invocation plus output ownership context."""
+
+    measurement_image: CellProfilerMeasurementImage
+    object_spec: ArtifactSpec
+    invocation: "ObjectMeasurementInvocation"
+    completion_label_payload: CellProfilerRuntimeValue
+
+    def record_output(
+        self,
+        output_recorder: "ObjectMeasurementOutputRecorder",
+        raw_output: CellProfilerRuntimeValue,
+    ) -> None:
+        """Record one raw invocation output through the shared recorder."""
+        output_recorder.record(
+            raw_output,
+            measurement_image=self.measurement_image,
+            object_spec=self.object_spec,
+            completion_label_payload=self.completion_label_payload,
+            invocation=self.invocation,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedObjectMeasurementInvocationBatch:
+    """Execute prepared object-measurement invocations in declared batch order."""
+
+    func: CellProfilerFunction
+    function_name: str
+    invocations: tuple[PreparedObjectMeasurementInvocation, ...]
+    batch_executor: ObjectMeasurementBatchExecutor | None
+
+    def execute(
+        self,
+        output_recorder: "ObjectMeasurementOutputRecorder",
+    ) -> float:
+        """Execute all invocations, record outputs, and return contract seconds."""
+        if self.batch_executor is not None:
+            return self._execute_batched(output_recorder)
+        return self._execute_serial(output_recorder)
+
+    def _execute_serial(
+        self,
+        output_recorder: "ObjectMeasurementOutputRecorder",
+    ) -> float:
+        contract_execute_seconds = 0.0
+        for prepared_invocation in self.invocations:
+            contract_started_at = time.perf_counter()
+            raw_output = _execute_runtime_batch_invocation(
+                self.func,
+                prepared_invocation,
+            )
+            contract_execute_seconds += time.perf_counter() - contract_started_at
+            prepared_invocation.record_output(output_recorder, raw_output)
+        return contract_execute_seconds
+
+    def _execute_batched(
+        self,
+        output_recorder: "ObjectMeasurementOutputRecorder",
+    ) -> float:
+        contract_started_at = time.perf_counter()
+        raw_outputs = tuple(
+            self.require_batch_executor()(
+                self.func,
+                self.invocations,
+                _execute_runtime_batch_invocation,
+            )
+        )
+        contract_execute_seconds = time.perf_counter() - contract_started_at
+        if len(raw_outputs) != len(self.invocations):
+            raise ValueError(
+                f"{self.function_name} measurement-image batch executor returned "
+                f"{len(raw_outputs)} outputs for {len(self.invocations)} requests."
+            )
+
+        ordered_batch_outputs = {
+            prepared_invocation.batch_index: (
+                raw_output,
+                prepared_invocation,
+            )
+            for raw_output, prepared_invocation in zip(
+                raw_outputs,
+                self.invocations,
+                strict=True,
+            )
+        }
+        for order_index in range(len(ordered_batch_outputs)):
+            raw_output, prepared_invocation = ordered_batch_outputs[order_index]
+            prepared_invocation.record_output(output_recorder, raw_output)
+        return contract_execute_seconds
+
+    def require_batch_executor(self) -> ObjectMeasurementBatchExecutor:
+        """Return the declared batch executor for the batched path."""
+        if self.batch_executor is None:
+            raise RuntimeError(
+                "PreparedObjectMeasurementInvocationBatch requires a batch executor "
+                "for batched execution."
+            )
+        return self.batch_executor
 
 
 def object_label_stage_event(

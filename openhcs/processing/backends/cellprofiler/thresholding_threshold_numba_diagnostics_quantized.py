@@ -27,6 +27,14 @@ class QuantizedThresholdDiagnosticContext(NamedTuple):
     entropy_log_delta_values: np.ndarray
 
 
+def quantized_threshold_codes(image: np.ndarray, scale: int) -> np.ndarray:
+    """Return dense unit-interval integer codes for quantized diagnostics."""
+    code_dtype = np.uint8 if scale <= int(np.iinfo(np.uint8).max) else np.uint16
+    return np.ascontiguousarray(
+        np.rint(image * int(scale)).astype(code_dtype, copy=False)
+    )
+
+
 @njit(cache=True)
 def _threshold_diagnostics_unmasked_finite_quantized_numba(
     context: QuantizedThresholdDiagnosticContext,

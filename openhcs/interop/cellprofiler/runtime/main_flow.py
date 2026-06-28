@@ -9,6 +9,7 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.aligned_image_payload import (
     compose_aligned_image_payload,
     flatten_aligned_image_payload_slices,
@@ -28,13 +29,13 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     project_image_mask_to_data_domain,
 )
+from openhcs.core.steps.function_output_identity import (
+    FunctionOutputIdentityAuthority,
+    FunctionOutputIdentityCache,
+)
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerImageRequest,
     CellProfilerMeasurementImage,
-)
-from openhcs.interop.cellprofiler.runtime.module_names import (
-    CELLPROFILER_CORRECT_ILLUMINATION_APPLY_MODULE,
-    CELLPROFILER_CORRECT_ILLUMINATION_CALCULATE_MODULE,
 )
 from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerRuntimeValue
 from openhcs.interop.cellprofiler.runtime.policy_registry import (
@@ -42,6 +43,18 @@ from openhcs.interop.cellprofiler.runtime.policy_registry import (
     CellProfilerModulePolicyLookupMixin,
     CellProfilerModulePolicyRegistryKey,
 )
+from openhcs.microscopes.microscope_interfaces import FilenameParser
+
+
+class CellProfilerMainFlowReplacementPolicyMixin(ABC):
+    """Declaration-owned main-flow replacement policy for image outputs."""
+
+    @abstractmethod
+    def replaces_main_flow(
+        self,
+        image_outputs: tuple[ArtifactSpec, ...],
+    ) -> bool:
+        """Return True when the declared module image output owns downstream flow."""
 
 
 class CellProfilerMainFlowReplacementPolicy(
@@ -52,13 +65,7 @@ class CellProfilerMainFlowReplacementPolicy(
     """Nominal policy for mapping declared CellProfiler image outputs to main flow."""
 
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
-
-    @abstractmethod
-    def replaces_main_flow(
-        self,
-        image_outputs: tuple[ArtifactSpec, ...],
-    ) -> bool:
-        """Return True when the declared module image output owns downstream flow."""
+    declaration_policy_bases = (CellProfilerMainFlowReplacementPolicyMixin,)
 
 
 class ContractImageOutputMainFlowReplacementPolicy(
@@ -73,35 +80,6 @@ class ContractImageOutputMainFlowReplacementPolicy(
         image_outputs: tuple[ArtifactSpec, ...],
     ) -> bool:
         return len(image_outputs) == 1
-
-
-class CorrectIlluminationApplyMainFlowReplacementPolicy(
-    CellProfilerMainFlowReplacementPolicy
-):
-    """CorrectIlluminationApply publishes corrected image outputs to main flow."""
-
-    module_name = CELLPROFILER_CORRECT_ILLUMINATION_APPLY_MODULE
-
-    def replaces_main_flow(
-        self,
-        image_outputs: tuple[ArtifactSpec, ...],
-    ) -> bool:
-        return bool(image_outputs)
-
-
-class CorrectIlluminationCalculateMainFlowReplacementPolicy(
-    CellProfilerMainFlowReplacementPolicy
-):
-    """CorrectIlluminationCalculate records image artifacts without replacing flow."""
-
-    module_name = CELLPROFILER_CORRECT_ILLUMINATION_CALCULATE_MODULE
-
-    def replaces_main_flow(
-        self,
-        image_outputs: tuple[ArtifactSpec, ...],
-    ) -> bool:
-        del image_outputs
-        return False
 
 
 class MeasurementSourceImageCardinality(IntEnum):
@@ -141,6 +119,9 @@ class CellProfilerMeasurementMainFlowSurface(ABC, metaclass=AutoRegisterMeta):
         *,
         input_image: CellProfilerRuntimeValue,
         source_images: tuple[CellProfilerMeasurementImage, ...],
+        variable_components: tuple[VariableComponents, ...],
+        parser: FilenameParser | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
         """Return the image carrier published to OpenHCS main flow."""
 
@@ -155,8 +136,11 @@ class NoSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSurface)
         *,
         input_image: CellProfilerRuntimeValue,
         source_images: tuple[CellProfilerMeasurementImage, ...],
+        variable_components: tuple[VariableComponents, ...],
+        parser: FilenameParser | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
-        del source_images
+        del source_images, variable_components, parser, identity_cache
         return input_image
 
 
@@ -170,9 +154,22 @@ class SingleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSurf
         *,
         input_image: CellProfilerRuntimeValue,
         source_images: tuple[CellProfilerMeasurementImage, ...],
+        variable_components: tuple[VariableComponents, ...],
+        parser: FilenameParser | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
-        del input_image
-        return source_images[0].payload
+        payload = source_images[0].payload
+        if (
+            image_payload_metadata(payload).source_image_provenance_planes.count > 1
+            and not MainFlowSurfaceAddressability(
+                payload,
+                variable_components=variable_components,
+                parser=parser,
+                identity_cache=identity_cache,
+            ).addressable
+        ):
+            return input_image
+        return payload
 
 
 class MultipleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSurface):
@@ -185,25 +182,48 @@ class MultipleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSu
         *,
         input_image: CellProfilerRuntimeValue,
         source_images: tuple[CellProfilerMeasurementImage, ...],
+        variable_components: tuple[VariableComponents, ...],
+        parser: FilenameParser | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
         composed = compose_aligned_image_payload(
             "CellProfilerMeasurementMainFlow",
             tuple(image.payload for image in source_images),
             metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
         ).payload
-        if MeasurementMainFlowSurfaceAddressability(composed).addressable:
+        if MainFlowSurfaceAddressability(
+            composed,
+            variable_components=variable_components,
+            parser=parser,
+            identity_cache=identity_cache,
+        ).addressable:
             return composed
         return input_image
 
 
 @dataclass(frozen=True, slots=True)
-class MeasurementMainFlowSurfaceAddressability:
-    """Addressability contract for publishing measurement source surfaces."""
+class MainFlowSurfaceAddressability:
+    """Addressability contract for publishing source surfaces to main flow."""
 
     payload: CellProfilerRuntimeValue
+    variable_components: tuple[VariableComponents, ...]
+    parser: FilenameParser | None
+    identity_cache: FunctionOutputIdentityCache
 
     @property
     def addressable(self) -> bool:
+        if self.parser is not None:
+            try:
+                identity = FunctionOutputIdentityAuthority.identity_from_metadata_with_cache(
+                    self.parser,
+                    image_payload_metadata(self.payload),
+                    variable_components=self.variable_components,
+                    identity_cache=self.identity_cache,
+                )
+            except ValueError:
+                return False
+            return identity is not None and identity.extension is not None
+
         source_identities = tuple(
             image_payload_metadata(output_slice)
             .source_provenance
@@ -211,13 +231,50 @@ class MeasurementMainFlowSurfaceAddressability:
             .identity
             for output_slice in flatten_aligned_image_payload_slices(self.payload)
         )
+        if not all(
+            path is not None or component_metadata is not None
+            for path, component_metadata in source_identities
+        ):
+            return False
+        component_metadatas = tuple(
+            component_metadata
+            for _path, component_metadata in source_identities
+            if component_metadata is not None
+        )
+        if len(component_metadatas) != len(source_identities):
+            return False
         return (
-            all(
-                path is not None or component_metadata is not None
-                for path, component_metadata in source_identities
-            )
+            self._component_metadata_is_stack_addressable(component_metadatas)
             and len(set(source_identities)) == len(source_identities)
         )
+
+    def _component_metadata_is_stack_addressable(
+        self,
+        component_metadatas: tuple[tuple[tuple[str, str], ...], ...],
+    ) -> bool:
+        metadata_maps = tuple(dict(metadata) for metadata in component_metadatas)
+        variable_component_values = frozenset(
+            component.value
+            for component in self.variable_components
+            if component.value is not None
+        )
+        semantic_keys = (
+            frozenset(key for metadata in metadata_maps for key in metadata)
+            - variable_component_values
+        )
+        ordered_keys = tuple(
+            component.value
+            for component in AllComponents
+            if component.value in semantic_keys
+        )
+        extra_keys = tuple(sorted(semantic_keys - frozenset(ordered_keys)))
+        for key in (*ordered_keys, *extra_keys):
+            values = tuple(metadata.get(key) for metadata in metadata_maps)
+            if any(key not in metadata for metadata in metadata_maps):
+                return False
+            if len(frozenset(values)) != 1:
+                return False
+        return True
 
 
 class CellProfilerMeasurementMainFlowPolicy:
@@ -228,6 +285,9 @@ class CellProfilerMeasurementMainFlowPolicy:
         *,
         input_image: CellProfilerRuntimeValue,
         measurement_images: tuple[CellProfilerMeasurementImage, ...],
+        variable_components: tuple[VariableComponents, ...],
+        parser: FilenameParser | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
         source_images = self.source_domain_images(measurement_images)
         return CellProfilerMeasurementMainFlowSurface.for_source_images(
@@ -235,6 +295,9 @@ class CellProfilerMeasurementMainFlowPolicy:
         ).output_image(
             input_image=input_image,
             source_images=source_images,
+            variable_components=variable_components,
+            parser=parser,
+            identity_cache=identity_cache,
         )
 
     def source_domain_images(
@@ -259,13 +322,28 @@ class CellProfilerSideEffectMainFlowPolicy:
         *,
         current_image: CellProfilerRuntimeValue,
         image_request: CellProfilerImageRequest,
+        variable_components: tuple[VariableComponents, ...],
+        parser: FilenameParser | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
-        return (
-            image_request.payload
-            if image_request.has_source_identity
+        if (
+            image_request.has_source_identity
             and image_request.publishes_side_effect_main_flow
-            else current_image
-        )
+        ):
+            if (
+                image_payload_metadata(
+                    image_request.payload
+                ).source_image_provenance_planes.count > 1
+                and not MainFlowSurfaceAddressability(
+                    image_request.payload,
+                    variable_components=variable_components,
+                    parser=parser,
+                    identity_cache=identity_cache,
+                ).addressable
+            ):
+                return current_image
+            return image_request.payload
+        return current_image
 
 
 CELLPROFILER_SIDE_EFFECT_MAIN_FLOW = CellProfilerSideEffectMainFlowPolicy()

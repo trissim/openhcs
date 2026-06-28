@@ -14,7 +14,9 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar
 
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
 from openhcs.core.artifact_contract_preview import SourceBindingRuntimeContractGuard
@@ -37,7 +39,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 from openhcs.processing.func_registry import register_function
 from openhcs.interop.cellprofiler.runtime.module_execution import (
-    CellProfilerModuleContractRegistry,
     CellProfilerRuntimeCallable,
     CellProfilerRuntimeStepBinding,
 )
@@ -97,19 +98,6 @@ class GeneratedPipelineContractSidecar:
             contracts[module_num] = codec.from_payload(contract_payload)
         return contracts
 
-    @classmethod
-    def register(
-        cls,
-        *,
-        generated_module_name: str,
-        path: str | Path,
-    ) -> dict[int, ModuleArtifactContract]:
-        """Read a sidecar and register its contracts for a generated module."""
-        contracts = cls.read(Path(path))
-        CellProfilerModuleContractRegistry.register(generated_module_name, contracts)
-        return contracts
-
-
 @dataclass(frozen=True, slots=True)
 class GeneratedPipelineContractSidecarCodec:
     """Codec for one ModuleArtifactContract sidecar record."""
@@ -139,6 +127,10 @@ class GeneratedPipelineContractSidecarCodec:
             "declared_outputs": self.spec_codec.sequence_payload(
                 contract.declared_outputs
             ),
+            "required_variable_components": [
+                component.value
+                for component in contract.required_variable_components
+            ],
         }
 
     def from_payload(
@@ -154,6 +146,10 @@ class GeneratedPipelineContractSidecarCodec:
             outputs=self.spec_codec.sequence_from_payload(payload.get("outputs", ())),
             declared_outputs=self.spec_codec.sequence_from_payload(
                 payload.get("declared_outputs", ())
+            ),
+            required_variable_components=tuple(
+                VariableComponents(component)
+                for component in payload.get("required_variable_components", ())
             ),
         )
 
@@ -453,11 +449,6 @@ class GeneratedPipelineRuntimeModule:
         semantic_contract_fingerprint: str | None = None,
     ) -> ModuleType:
         """Import generated pipeline code from source with the stable module name."""
-        if artifact_contracts:
-            CellProfilerModuleContractRegistry.register(
-                self.module_name,
-                artifact_contracts,
-            )
         module = ModuleType(self.module_name)
         module.__file__ = filename
         sys.modules[self.module_name] = module
@@ -478,7 +469,7 @@ class GeneratedPipelineRuntimeModule:
         semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
         semantic_contract_fingerprint: str | None = None,
     ) -> Path:
-        """Write an importable module that restores registry visibility on import."""
+        """Write an importable module that restores generated declarations on import."""
         output_dir = importable_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
         contract_sidecar = output_dir / f"{self.module_name}.cellprofiler_contracts.json"
@@ -490,8 +481,9 @@ class GeneratedPipelineRuntimeModule:
             contract_prelude = (
                 "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
                 "GeneratedPipelineContractSidecar as _openhcs_cp_contract_sidecar\n"
-                "    _openhcs_cp_contract_values = _openhcs_cp_contract_sidecar.register("
-                f"generated_module_name=__name__, path={str(contract_sidecar)!r})\n"
+                "    from pathlib import Path as _openhcs_generated_path\n"
+                "    _openhcs_cp_contract_values = _openhcs_cp_contract_sidecar.read("
+                f"_openhcs_generated_path({str(contract_sidecar)!r}))\n"
             )
         semantic_sidecar = output_dir / (
             f"{self.module_name}.cellprofiler_semantic_contracts.py"
@@ -567,10 +559,8 @@ def bind_generated_pipeline_runtime(
             raise TypeError(
                 "Generated CellProfiler artifact contracts must be "
                 f"ModuleArtifactContract values, got {type(contract).__name__}."
-        )
+            )
         normalized[int(module_num)] = contract
-    if normalized:
-        CellProfilerModuleContractRegistry.register(module.__name__, normalized)
     GeneratedPipelineRuntimeBindings(module, normalized).apply()
 
 
@@ -663,8 +653,8 @@ class GeneratedPipelineRuntimeBindings:
         ).validate()
         return CellProfilerRuntimeStepBinding(
             raw_callable=func,
-            generated_module_name=self.module.__name__,
-            module_num=step_contract.module_num,
+            contract=contract,
+            processing_contract=metadata.processing_contract,
             declared_processing_contract=metadata.declared_processing_contract,
         ).load()
 
@@ -701,6 +691,26 @@ class CellProfilerGeneratedRuntimeBindingState:
                 return False
         return not unmatched_contracts
 
+    @classmethod
+    def pipeline_requires_rebinding(cls, pipeline_steps: Sequence[Any]) -> bool:
+        """Return whether any generated CellProfiler step still uses raw callables."""
+        for step in pipeline_steps:
+            if not isinstance(step, FunctionStep):
+                continue
+            if CellProfilerGeneratedStepFunctionSpec(step.func).metadata() is None:
+                continue
+            if not cls.step_has_runtime_bound_callable(step):
+                return True
+        return False
+
+    @classmethod
+    def step_has_runtime_bound_callable(cls, step: FunctionStep) -> bool:
+        """Return whether one generated step already carries runtime contracts."""
+        return any(
+            isinstance(func, cls.runtime_callable_type())
+            for func in cls.function_spec_callables(step.func)
+        )
+
     @staticmethod
     def runtime_callable_type() -> type:
         from openhcs.interop.cellprofiler.runtime.module_execution import (
@@ -709,7 +719,8 @@ class CellProfilerGeneratedRuntimeBindingState:
 
         return CellProfilerRuntimeCallable
 
-    def function_spec_callables(self, func_spec: Any) -> Iterator[Callable[..., Any]]:
+    @staticmethod
+    def function_spec_callables(func_spec: Any) -> Iterator[Callable[..., Any]]:
         if callable(func_spec):
             yield func_spec
             return
@@ -755,10 +766,6 @@ class CellProfilerPipelineRuntimeRebinder:
             self.contracts_by_module_num,
         ).matches_expected_contracts():
             return pipeline_steps
-        CellProfilerModuleContractRegistry.register(
-            self.generated_module_name,
-            self.contracts_by_module_num,
-        )
         module = ModuleType(self.generated_module_name)
         module.pipeline_steps = pipeline_steps
         GeneratedPipelineRuntimeBindings(
@@ -1012,9 +1019,9 @@ class GeneratedPipelineFunctionRegistration:
                 continue
 
             contract = GeneratedPipelineFunction(func).processing_contract
-            func.__processing_contract__ = contract
+            vars(func)[FunctionContractAttribute.processing_contract] = contract
             wrapped_func = registry.apply_contract_wrapper(func, contract)
-            wrapped_func.__processing_contract__ = contract
+            vars(wrapped_func)[FunctionContractAttribute.processing_contract] = contract
             callable_contract = CallableContract.from_callable(wrapped_func)
             wrapped_func.__function_metadata__ = FunctionMetadata(
                 name=metadata_name,

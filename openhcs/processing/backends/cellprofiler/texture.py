@@ -2,9 +2,671 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from enum import Enum
+from inspect import unwrap
+from typing import ClassVar
+
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    setting_names,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_int,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+    ObjectMeasurementRowsModule,
+    PerObjectMeasurementExecutionModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
+    DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    LabelsObjectInputPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.dual_scope_measurement_policies import (
+    DeclaredDualScopeMeasurementPolicy,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+
+
+from openhcs.core.measurement_row_materialization import (
+    MEASUREMENT_OBJECT_ID_FIELDS,
+    MEASUREMENT_OBJECT_NAME_FIELD,
+    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
+    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+    measurement_object_label,
+)
+from openhcs.core.runtime_semantics import (
+    MeasurementObjectRowIdentity,
+    MeasurementRowAxisField,
+    MeasurementScalarLiteral,
+    ObjectLabelDomainScope,
+    RuntimePlaneAxis,
+    measurement_row_mapping,
+)
+from openhcs.core.runtime_values import ColumnarRows
+from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
+from openhcs.interop.cellprofiler.runtime.measurement_rows import LABEL_PAYLOAD_FINAL
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_completion import (
+    MissingObjectMeasurementValuePolicy,
+    MissingObjectMeasurementValueRequest,
+    MissingObjectMeasurementValueStrategy,
+    ObjectMeasurementIdsByAxisView,
+    ObjectMeasurementProjectedRowKeys,
+    ObjectMeasurementRowCompletionSchema,
+    ObjectMeasurementRowIdentityProjectionRequest,
+    ObjectMeasurementRowIdentityProjectionResult,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerFunction,
+    CellProfilerKwargDict,
+    CellProfilerRuntimeValue,
+    CellProfilerRuntimeValues,
+    CellProfilerRuntimeValueSequence,
+    MeasurementRowMapping,
+    MeasurementRowsInput,
+)
+from openhcs.interop.cellprofiler.runtime.processing_contracts import (
+    RuntimeShapeInspection,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_profile import (
+    CellProfilerRuntimeProfileLogger,
+)
+
+class MeasureTextureObjectMeasurementRowPolicy(
+    DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy
+):
+    """Use direct texture rows when CP already emitted the declared dense domain."""
+
+    row_identity = MeasurementObjectRowIdentity.ROW_SEQUENCE
+    row_sequence_axis_fields: ClassVar[frozenset[str]] = frozenset(
+        (
+            MeasurementRowAxisField.SCALE.value,
+            MeasurementRowAxisField.DIRECTION.value,
+            MeasurementRowAxisField.GRAY_LEVELS.value,
+        )
+    )
+
+    def row_identity_axis_fields(
+        self,
+        axis_fields: Sequence[str],
+        *,
+        label_payload: CellProfilerRuntimeValue | None = None,
+    ) -> tuple[str, ...]:
+        """Texture compact rows are sequenced by feature axis, not source/slice axes."""
+        if not MeasureTextureMissingValueDomain.from_payload(
+            label_payload
+        ).is_multi_source_plane_domain():
+            return tuple(axis_fields)
+        return tuple(
+            field_name
+            for field_name in axis_fields
+            if field_name in type(self).row_sequence_axis_fields
+        )
+
+    def object_identity_for_label_payload(
+        self,
+        label_payload: CellProfilerRuntimeValue,
+    ) -> MeasurementObjectRowIdentity:
+        """Use row-sequence identity only for multi-source plane-domain texture rows."""
+        if MeasureTextureMissingValueDomain.from_payload(
+            label_payload
+        ).is_multi_source_plane_domain():
+            return MeasurementObjectRowIdentity.ROW_SEQUENCE
+        return MeasurementObjectRowIdentity.ROW_ORDINAL
+
+    def missing_measurement_value(
+        self,
+        *,
+        object_id: int,
+        label_payload: CellProfilerRuntimeValue,
+        field_name: str,
+        positive_label_extent: int | None = None,
+    ) -> float:
+        missing_domain = MeasureTextureMissingValueDomain.from_payload(label_payload)
+        value_policy = missing_domain.missing_value_policy(type(self).missing_value_policy)
+        if positive_label_extent is None:
+            positive_label_extent = missing_domain.compact_row_ordinal_positive_extent()
+        strategy = MissingObjectMeasurementValueStrategy.for_enum_member(value_policy)
+        return strategy.missing_value(
+            MissingObjectMeasurementValueRequest(
+                object_id=object_id,
+                label_payload=label_payload,
+                field_name=field_name,
+                positive_label_extent=positive_label_extent,
+            )
+        )
+
+    def complete_rows(
+        self,
+        rows: MeasurementRowsInput,
+        *,
+        label_payload: CellProfilerRuntimeValue,
+        func: CellProfilerFunction,
+    ) -> MeasurementRowsInput:
+        """Avoid padding work only when emitted rows already match the domain."""
+        if isinstance(rows, ColumnarRows):
+            return rows
+        missing_domain = MeasureTextureMissingValueDomain.from_payload(label_payload)
+        schema = ObjectMeasurementRowCompletionSchema.from_rows(rows, func)
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "measure_texture_complete_rows",
+            0.0,
+            rows=len(rows),
+            axis_fields=schema.axis_fields,
+            object_id_field=schema.object_id_field,
+            multi_source_domain=missing_domain.is_multi_source_plane_domain(),
+            label_payload_type=type(label_payload).__name__,
+            label_shape=RuntimeShapeInspection(
+                np.asarray(LABEL_PAYLOAD_FINAL.value(label_payload))
+            ).shape_tuple(),
+        )
+        from openhcs.processing.backends.cellprofiler.texture import (
+            measure_texture_objects,
+        )
+
+        if (
+            rows
+            and unwrap(func) is unwrap(measure_texture_objects)
+            and not missing_domain.is_multi_source_plane_domain()
+        ):
+            return list(rows)
+        if not schema.axis_fields and rows:
+            required_object_ids = schema.object_ids_for_axis(
+                label_payload=label_payload,
+                object_identity=self.object_identity(),
+                axis_key=(),
+            )
+            emitted_object_ids = tuple(
+                int(measurement_row_mapping(row)[schema.object_id_field])
+                for row in rows
+                if self.row_is_object_scoped(row)
+            )
+            if emitted_object_ids == required_object_ids:
+                return missing_domain.normalize_existing_rows(
+                    rows,
+                    field_names=schema.field_names,
+                    object_id_field=schema.object_id_field,
+                    axis_fields=schema.axis_fields,
+                )
+        if schema.axis_fields and rows:
+            complete_axis_rows = TextureAxisMeasurementRows.from_rows(
+                rows,
+                schema=schema,
+                label_payload=label_payload,
+                row_policy=self,
+            )
+            if complete_axis_rows.already_complete:
+                return missing_domain.normalize_existing_rows(
+                    rows,
+                    field_names=schema.field_names,
+                    object_id_field=schema.object_id_field,
+                    axis_fields=schema.axis_fields,
+                )
+        completed_rows = super().complete_rows(
+            rows,
+            label_payload=label_payload,
+            func=func,
+        )
+        if isinstance(completed_rows, ColumnarRows):
+            return completed_rows
+        return missing_domain.normalize_existing_rows(
+            completed_rows,
+            field_names=schema.field_names,
+            object_id_field=schema.object_id_field,
+            axis_fields=schema.axis_fields,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TextureAxisMeasurementRows:
+    """Observed MeasureTexture row coverage by measurement axis."""
+
+    emitted_object_ids_by_axis: ObjectMeasurementIdsByAxisView
+    required_object_ids_by_axis: ObjectMeasurementIdsByAxisView
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: CellProfilerRuntimeValueSequence,
+        *,
+        schema: ObjectMeasurementRowCompletionSchema,
+        label_payload: CellProfilerRuntimeValue,
+        row_policy: MeasureTextureObjectMeasurementRowPolicy,
+    ) -> "TextureAxisMeasurementRows":
+        emitted_ids: dict[CellProfilerRuntimeValues, list[int]] = {}
+        projection_request = ObjectMeasurementRowIdentityProjectionRequest(
+            rows=rows,
+            object_id_field=schema.object_id_field,
+            axis_fields=schema.axis_fields,
+            row_policy=row_policy,
+        )
+        for row in rows:
+            row_mapping = measurement_row_mapping(row)
+            object_id = measurement_object_label(
+                row_mapping,
+                object_id_field=schema.object_id_field,
+            )
+            if object_id is None:
+                continue
+            axis_key = projection_request.axis_key_from_mapping(row_mapping)
+            if axis_key not in emitted_ids:
+                emitted_ids[axis_key] = []
+            emitted_ids[axis_key].append(int(object_id))
+        axis_keys = tuple(emitted_ids)
+        required_ids_by_axis = row_policy.required_object_ids_by_axis(
+            label_payload=label_payload,
+            projection=ObjectMeasurementRowIdentityProjectionResult(
+                rows=tuple(rows),
+                row_keys=ObjectMeasurementProjectedRowKeys(
+                    tuple(
+                        (object_id, axis_key)
+                        for axis_key, object_ids in emitted_ids.items()
+                        for object_id in object_ids
+                    )
+                ),
+                measured_row_keys=ObjectMeasurementProjectedRowKeys(
+                    tuple(
+                        (object_id, axis_key)
+                        for axis_key, object_ids in emitted_ids.items()
+                        for object_id in object_ids
+                    )
+                ),
+                axis_keys=axis_keys,
+            ),
+            object_identity=row_policy.object_identity_for_label_payload(label_payload),
+            object_id_field=schema.object_id_field,
+            axis_fields=schema.axis_fields,
+            axis_keys=axis_keys,
+        )
+        return cls(
+            emitted_object_ids_by_axis={
+                axis_key: tuple(object_ids)
+                for axis_key, object_ids in emitted_ids.items()
+            },
+            required_object_ids_by_axis=required_ids_by_axis,
+        )
+
+    @property
+    def already_complete(self) -> bool:
+        if not self.emitted_object_ids_by_axis:
+            return False
+        if self.emitted_object_ids_by_axis.keys() != self.required_object_ids_by_axis.keys():
+            return False
+        for axis_key, object_ids in self.emitted_object_ids_by_axis.items():
+            required_object_ids = self.required_object_ids_by_axis[axis_key]
+            if len(object_ids) != len(required_object_ids):
+                return False
+            if frozenset(object_ids) != frozenset(required_object_ids):
+                return False
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class MeasureTextureMissingValueDomain:
+    """Resolve texture padding semantics from the object-label measurement domain."""
+
+    label_payload: ObjectLabelValue | None
+
+    @classmethod
+    def from_payload(
+        cls,
+        label_payload: CellProfilerRuntimeValue | None,
+    ) -> "MeasureTextureMissingValueDomain":
+        """Return texture domain semantics only for object-label payloads."""
+        if isinstance(label_payload, ObjectLabelValue):
+            return cls(label_payload)
+        return cls(None)
+
+    def missing_value_policy(
+        self,
+        default_policy: MissingObjectMeasurementValuePolicy,
+    ) -> MissingObjectMeasurementValuePolicy:
+        if self.is_multi_source_plane_domain():
+            return MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
+        return default_policy
+
+    def is_multi_source_plane_domain(self) -> bool:
+        payload = self.label_payload
+        if payload is None:
+            return False
+        if payload.domain.scope is not ObjectLabelDomainScope.PLANE:
+            return False
+        if payload.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            return False
+        if len(payload.source_image_names) <= 1:
+            return False
+        labels = np.asarray(LABEL_PAYLOAD_FINAL.value(payload))
+        return labels.ndim >= 4
+
+    def normalize_existing_rows(
+        self,
+        rows: CellProfilerRuntimeValueSequence,
+        *,
+        field_names: Sequence[str],
+        object_id_field: str,
+        axis_fields: Sequence[str],
+    ) -> list[CellProfilerRuntimeValue]:
+        if not self.is_multi_source_plane_domain():
+            return list(rows)
+        extent = self.compact_row_ordinal_positive_extent()
+        if extent is None:
+            return list(rows)
+        extent = max(extent, self.compact_row_ordinal_extent_from_rows(rows))
+        identity_fields = {
+            object_id_field,
+            *MEASUREMENT_OBJECT_ID_FIELDS,
+            *axis_fields,
+            MEASUREMENT_OBJECT_NAME_FIELD,
+            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+        }
+        measurement_fields = tuple(
+            field_name for field_name in field_names if field_name not in identity_fields
+        )
+        return MeasureTextureExistingRowsNormalizer(
+            rows=rows,
+            extent=extent,
+            field_names=tuple(field_names),
+            identity_fields=frozenset(identity_fields),
+            first_measurement_field=FirstMeasurementField(
+                measurement_fields
+            ).value_or_none(),
+        ).normalized_rows()
+
+    def compact_row_ordinal_positive_extent(self) -> int | None:
+        """Return the declared compact-row extent for multi-source texture labels."""
+        if not self.is_multi_source_plane_domain():
+            return None
+        if not isinstance(self.label_payload, ObjectLabelValue):
+            raise TypeError(
+                "MeasureTexture row-ordinal extent requires ObjectLabelValue, got "
+                f"{type(self.label_payload).__name__}."
+            )
+        domain = self.label_payload.object_label_domain()
+        if domain.declared_object_id_domains:
+            return max(len(object_ids) for object_ids in domain.declared_object_id_domains)
+        explicit_domain = domain.explicit_id_domain()
+        if explicit_domain is not None:
+            return len(explicit_domain)
+        return None
+
+    @staticmethod
+    def compact_row_ordinal_extent_from_rows(rows: CellProfilerRuntimeValueSequence) -> int:
+        """Return the largest compact row ordinal already emitted by texture rows."""
+        object_ids = tuple(
+            object_id
+            for row in rows
+            for object_id in (measurement_object_label(measurement_row_mapping(row)),)
+            if object_id is not None
+        )
+        if not object_ids:
+            return 0
+        return max(object_ids)
+
+
+@dataclass(frozen=True, slots=True)
+class FirstMeasurementField:
+    """First non-identity measurement field available for row diagnostics."""
+
+    measurement_fields: tuple[str, ...]
+
+    def value_or_none(self) -> str | None:
+        match self.measurement_fields:
+            case (field_name, *_):
+                return field_name
+            case _:
+                return None
+
+
+@dataclass(slots=True)
+class MeasureTextureExistingRowsNormalizer:
+    """Normalize existing MeasureTexture rows for compact multi-source domains."""
+
+    rows: CellProfilerRuntimeValueSequence
+    extent: int
+    field_names: tuple[str, ...]
+    identity_fields: frozenset[str]
+    first_measurement_field: str | None
+    first_field_value_types: Counter[str] = field(default_factory=Counter)
+    first_field_sample_values: list[str] = field(default_factory=list)
+    nan_replacements: int = 0
+    none_replacements: int = 0
+    absent_replacements: int = 0
+
+    def normalized_rows(self) -> list[CellProfilerRuntimeValue]:
+        normalized_rows = [self.normalized_row(row) for row in self.rows]
+        self.log_profile(len(normalized_rows))
+        return normalized_rows
+
+    def normalized_row(self, row: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue:
+        row_mapping = measurement_row_mapping(row)
+        object_id = measurement_object_label(row_mapping)
+        if object_id is None or object_id > self.extent:
+            return row
+        normalized_row = dict(row_mapping)
+        normalized_row[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = (
+            MeasurementObjectRowIdentity.ROW_SEQUENCE.value
+        )
+        self.record_first_field_sample(row_mapping)
+        self.replace_existing_measurements(row_mapping, normalized_row)
+        self.add_absent_measurements(normalized_row)
+        return normalized_row
+
+    def record_first_field_sample(self, row_mapping: MeasurementRowMapping) -> None:
+        field_name = self.first_measurement_field
+        if field_name is None:
+            return
+        first_value = MappingValueLookup(row_mapping, field_name).value_or("<ABSENT>")
+        self.first_field_value_types[type(first_value).__name__] += 1
+        if len(self.first_field_sample_values) < 6:
+            self.first_field_sample_values.append(repr(first_value))
+
+    def replace_existing_measurements(
+        self,
+        row_mapping: MeasurementRowMapping,
+        normalized_row: CellProfilerKwargDict,
+    ) -> None:
+        for field_name, value in row_mapping.items():
+            if field_name in self.identity_fields:
+                continue
+            self.replace_existing_measurement(field_name, value, normalized_row)
+
+    def replace_existing_measurement(
+        self,
+        field_name: str,
+        value: CellProfilerRuntimeValue,
+        normalized_row: CellProfilerKwargDict,
+    ) -> None:
+        if value is None:
+            normalized_row[field_name] = 0.0
+            self.none_replacements += 1
+            return
+        if MeasurementScalarLiteral(value).is_padding_measurement_value:
+            normalized_row[field_name] = 0.0
+            self.nan_replacements += 1
+
+    def add_absent_measurements(self, normalized_row: CellProfilerKwargDict) -> None:
+        for field_name in self.field_names:
+            if field_name in self.identity_fields or field_name in normalized_row:
+                continue
+            normalized_row[field_name] = 0.0
+            self.absent_replacements += 1
+
+    def log_profile(self, row_count: int) -> None:
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "measure_texture_normalize_rows",
+            0.0,
+            rows=row_count,
+            extent=self.extent,
+            field_count=len(self.field_names),
+            first_measurement_field=self.first_measurement_field,
+            first_field_value_types=dict(self.first_field_value_types),
+            first_field_sample_values=tuple(self.first_field_sample_values),
+            nan_replacements=self.nan_replacements,
+            none_replacements=self.none_replacements,
+            absent_replacements=self.absent_replacements,
+        )
+
+class MeasureTextureModule(
+    LabelsObjectInputPolicy,
+    PerObjectMeasurementExecutionModule,
+    ObjectMeasurementRowsModule,
+    MeasureTextureObjectMeasurementRowPolicy,
+    DeclaredDualScopeMeasurementPolicy,
+    ScopedMeasurementModule,
+):
+    module_name = 'MeasureTexture'
+    function_name = 'measure_texture'
+    validated = True
+    function_variants = ('measure_texture_objects',)
+    image_function_name = 'measure_texture'
+    confidence = 1.0
+    measurement_scope_setting = SettingNameFamily(
+        "Measure images or objects?",
+        aliases=("Measure whole images or objects?",),
+    )
+    object_measurement_setting = SettingNameFamily(
+        "Select objects to measure",
+        aliases=("Select an object to measure",),
+    )
+    ignored_settings = (
+        "Hidden",
+        "Angles to measure",
+        "Measure Gabor features?",
+        "Number of angles to compute for Gabor",
+    )
+
+    class MeasurementScope(str, Enum):
+        image = "Images"
+        objects = "Objects"
+        both = "Both"
+
+        @classmethod
+        def from_literal(
+            cls,
+            value: "MeasureTextureModule.MeasurementScope | str",
+        ) -> "MeasureTextureModule.MeasurementScope":
+            return cellprofiler_enum_from_literal(cls, value)
+
+    measurement_scope_default = MeasurementScope.image
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+    ) -> "ResolvedModuleFunction":
+        scope = cls.MeasurementScope.from_literal(
+            cls.setting_value(module, cls.measurement_scope_setting)
+            or cls.measurement_scope_default.value
+        )
+        object_values = setting_values(module, cls.object_measurement_setting)
+        has_objects = any(split_symbol_names(value) for value in object_values)
+        if (
+            scope in (cls.MeasurementScope.objects, cls.MeasurementScope.both)
+            and has_objects
+        ):
+            return super().resolve_function(
+                module,
+                default_function_name=cls.function_variants[0],
+            )
+        return super().resolve_function(
+            module,
+            default_function_name=default_function_name,
+        )
+
+    @classmethod
+    def measurement_target_scope(
+        cls,
+        module: "ModuleBlock",
+    ) -> "MeasureTextureModule.MeasurementScope":
+        return cls.MeasurementScope.from_literal(
+            cls.setting_value(module, cls.measurement_scope_setting)
+            or cls.measurement_scope_default.value
+        )
+
+    texture_scale_setting = "Texture scale to measure"
+    gray_levels_setting = "Enter how many gray levels to measure the texture at"
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: "SettingsBinder",
+        param_mapping: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str] = frozenset(),
+    ) -> "BoundModuleSettings":
+        bound = cls._bind_generic_settings(
+            module,
+            binder=binder,
+            param_mapping=param_mapping,
+        )
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting_name in setting_names(cls.measurement_scope_setting):
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+        texture_scales = setting_values(module, cls.texture_scale_setting)
+        if texture_scales:
+            parsed_scales = tuple(parse_cellprofiler_int(value) for value in texture_scales)
+            kwargs["scale"] = (
+                parsed_scales[0] if len(parsed_scales) == 1 else parsed_scales
+            )
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(cls.texture_scale_setting),
+                None,
+            )
+
+        gray_levels = optional_setting_value(module, cls.gray_levels_setting)
+        if gray_levels is not None:
+            kwargs["gray_levels"] = parse_cellprofiler_int(gray_levels)
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(cls.gray_levels_setting),
+                None,
+            )
+
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=cls.postprocess_bound_settings(
+                module,
+                BoundModuleSettings(kwargs, unmapped_kwargs),
+            ),
+            ignored_unmapped_settings=ignored_unmapped_settings,
+        )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        return cls.measurement_artifact_contract_from_declared_settings(
+            assembler,
+            builder,
+            module,
+        )
+
+
+
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import ClassVar, TypeAlias
+from typing import TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -37,6 +699,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
 
 
 F_HARALICK = [

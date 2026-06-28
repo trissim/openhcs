@@ -1,16 +1,15 @@
-"""CellProfiler setting-to-artifact semantic classifiers."""
+"""CellProfiler setting-to-artifact semantic projection."""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
 
-from metaclass_registry import AutoRegisterMeta
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.pipeline.function_contracts import special_output_specs_from_callable
+from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 from openhcs.core.special_outputs import (
     SpecialOutputKindClassifier,
     special_output_name,
@@ -100,219 +99,206 @@ class FunctionSpecialOutput:
         )
 
 
-class ArtifactSettingClassifier(ABC, metaclass=AutoRegisterMeta):
-    """Nominal setting-label classifier for CellProfiler artifact semantics."""
-
-    __registry_key__ = "classifier_name"
-    __skip_if_no_key__ = True
-    classifier_name: ClassVar[str | None] = None
+class ArtifactSettingRoleAuthority:
+    """Resolve a direction/kind pair to the closed artifact-setting role."""
 
     @classmethod
-    def role_for(cls, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        matches: list[tuple[type[ArtifactSettingClassifier], ArtifactSettingRole]] = []
-        for classifier_type in cls.classifier_types_by_mro():
-            role = classifier_type().classify(setting)
-            if role is not None:
-                matches.append((classifier_type, role))
-        if not matches:
-            return None
-        role = matches[0][1]
-        conflicting = tuple(
-            classifier_type.__name__
-            for classifier_type, candidate_role in matches
-            if candidate_role is not role
-        )
-        if conflicting:
-            raise ValueError(
-                f"Ambiguous artifact setting role for {setting.name!r}: "
-                f"{', '.join(conflicting)}."
-            )
-        return role
-
-    @classmethod
-    def classifier_types_by_mro(
+    def role_for(
         cls,
-    ) -> tuple[type["ArtifactSettingClassifier"], ...]:
-        registered = set(cls.__registry__.values())
-        ordered: list[type[ArtifactSettingClassifier]] = []
-        seen: set[type[ArtifactSettingClassifier]] = set()
-
-        def visit(owner: type[ArtifactSettingClassifier]) -> None:
-            for child in owner.__subclasses__():
-                visit(child)
-            if owner in registered and owner not in seen:
-                ordered.append(owner)
-                seen.add(owner)
-
-        visit(cls)
-        return tuple(ordered)
-        return None
-
-    @abstractmethod
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        """Return a role when this classifier owns the setting label."""
-
-
-class OutputImageSettingClassifier(ArtifactSettingClassifier):
-    """Classify output image name settings."""
-
-    classifier_name = "output_image"
-
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        name = _normalized_setting(setting.name)
-        if name.startswith("name_the_output_image"):
-            return ArtifactSettingRole.OUTPUT_IMAGE
-        if name.startswith("name_the_image_to_save"):
-            return ArtifactSettingRole.OUTPUT_IMAGE
+        direction: ArtifactSettingDirection,
+        artifact_kind: ArtifactKind,
+    ) -> ArtifactSettingRole | None:
+        del cls
+        for role in ArtifactSettingRole:
+            if role.direction is direction and role.artifact_kind is artifact_kind:
+                return role
         return None
 
 
-class OutputObjectsSettingClassifier(ArtifactSettingClassifier):
-    """Classify output object-label name settings."""
+@dataclass(frozen=True, slots=True)
+class DeclaredArtifactSetting:
+    """One artifact setting declared by a CellProfilerModule."""
 
-    classifier_name = "output_objects"
+    setting_name: str
+    role: ArtifactSettingRole
 
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        name = _normalized_setting(setting.name)
-        if not name.startswith("name_"):
-            return None
-        tokens = _tokens(name)
-        if "object" not in tokens and "objects" not in tokens:
-            return None
-        if any(
-            phrase in name
-            for phrase in (
-                "combined_object_set",
-                "masked_objects",
-                "output_objects",
-                "objects_to_be_identified",
-                "primary_objects_to_be_identified",
-                "secondary_objects_to_be_identified",
-                "tertiary_objects_to_be_identified",
-                "new_primary_objects",
+    def symbols(self, module: ModuleBlock) -> tuple[ArtifactSettingSymbol, ...]:
+        return tuple(
+            ArtifactSettingSymbol(self.role, name, setting.name)
+            for setting in _iter_module_settings(module)
+            if _normalized_setting(setting.name)
+            == _normalized_setting(self.setting_name)
+            for name in _symbol_names_from_setting(setting)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredArtifactSymbolCollector:
+    """Lightweight builder that records contract-declared artifact symbols."""
+
+    @property
+    def source_schema(self) -> "PipelineImageSchema":
+        from openhcs.core.pipeline_image_schema import PipelineImageSchema
+
+        return PipelineImageSchema.empty()
+
+    def require_artifact(self, spec, module: ModuleBlock):
+        from openhcs.interop.cellprofiler.symbol_table import (
+            CellProfilerSymbol,
+            CellProfilerSymbolKind,
+        )
+
+        del module
+        return CellProfilerSymbol(
+            spec.name,
+            CellProfilerSymbolKind.from_artifact_kind(spec.kind),
+        )
+
+    def declare_artifact(self, spec, module: ModuleBlock):
+        from openhcs.interop.cellprofiler.symbol_table import (
+            CellProfilerSymbol,
+            CellProfilerSymbolKind,
+        )
+
+        return CellProfilerSymbol(
+            spec.name,
+            CellProfilerSymbolKind.from_artifact_kind(spec.kind),
+            producer_module_num=module.module_num,
+            sidecar_role=spec.sidecar_role,
+        )
+
+    def optional_artifact(self, spec):
+        del spec
+        return None
+
+    def measurement_output_for_module_num(self, module_num: int | None):
+        del module_num
+        return None
+
+    def measurement_outputs(self) -> tuple[object, ...]:
+        return ()
+
+    def source_bindings_for(self, symbols, **kwargs):
+        del symbols, kwargs
+        return EMPTY_SOURCE_BINDINGS
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredArtifactSettingSymbols:
+    """Artifact settings derived from a module declaration and its contract."""
+
+    module_type: type
+    module: ModuleBlock
+
+    def symbols(self) -> tuple[ArtifactSettingSymbol, ...]:
+        return self._unique(
+            (
+                *self.explicit_symbols(
+                    ArtifactSettingDirection.INPUT,
+                    self.module_type.declared_artifact_input_settings(),
+                ),
+                *self.explicit_symbols(
+                    ArtifactSettingDirection.OUTPUT,
+                    self.module_type.declared_artifact_output_settings(),
+                ),
+                *self.contract_symbols(),
             )
+        )
+
+    def explicit_symbols(
+        self,
+        direction: ArtifactSettingDirection,
+        setting_roles,
+    ) -> tuple[ArtifactSettingSymbol, ...]:
+        symbols: list[ArtifactSettingSymbol] = []
+        for setting_name, artifact_kind in setting_roles:
+            role = ArtifactSettingRoleAuthority.role_for(direction, artifact_kind)
+            if role is None:
+                continue
+            for concrete_setting_name in self._setting_names(setting_name):
+                symbols.extend(
+                    DeclaredArtifactSetting(concrete_setting_name, role).symbols(
+                        self.module
+                    )
+                )
+        return tuple(symbols)
+
+    def contract_symbols(self) -> tuple[ArtifactSettingSymbol, ...]:
+        from openhcs.interop.cellprofiler.symbol_table import (
+            CellProfilerContractAssemblyMixin,
+        )
+
+        try:
+            contract = self.module_type.artifact_contract(
+                CellProfilerContractAssemblyMixin(),
+                DeclaredArtifactSymbolCollector(),
+                self.module,
+            )
+        except ValueError:
+            return ()
+        if contract is None:
+            return ()
+        symbols_by_name: dict[str, set[ArtifactSettingRole]] = {}
+        for direction, contract_symbols in (
+            (ArtifactSettingDirection.INPUT, contract.input_symbols),
+            (ArtifactSettingDirection.OUTPUT, contract.output_symbols),
+            (ArtifactSettingDirection.OUTPUT, contract.declared_output_symbols),
         ):
-            return ArtifactSettingRole.OUTPUT_OBJECTS
-        if name.startswith("name_the_output"):
-            return ArtifactSettingRole.OUTPUT_OBJECTS
-        return None
+            for symbol in contract_symbols:
+                role = ArtifactSettingRoleAuthority.role_for(
+                    direction,
+                    symbol.kind.artifact_kind,
+                )
+                if role is None:
+                    continue
+                symbols_by_name.setdefault(symbol.name, set()).add(role)
+        return tuple(
+            ArtifactSettingSymbol(role, name, setting.name)
+            for setting in _iter_module_settings(self.module)
+            for name in _symbol_names_from_setting(setting)
+            for role in symbols_by_name.get(name, ())
+        )
 
+    @staticmethod
+    def _setting_names(setting_name) -> tuple[str, ...]:
+        from openhcs.interop.cellprofiler.setting_names import setting_names
 
-class OutputSpatialGridSettingClassifier(ArtifactSettingClassifier):
-    """Classify named spatial-grid definitions."""
+        return setting_names(setting_name)
 
-    classifier_name = "output_spatial_grid"
-
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        if _normalized_setting(setting.name) == "name_the_grid":
-            return ArtifactSettingRole.OUTPUT_SPATIAL_GRID
-        return None
-
-
-class InputImageSettingClassifier(ArtifactSettingClassifier):
-    """Classify source or produced image name inputs."""
-
-    classifier_name = "input_image"
-
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        name = _normalized_setting(setting.name)
-        tokens = _tokens(name)
-        if "image" not in tokens and "images" not in tokens:
-            return None
-        if not name.startswith("select_"):
-            return None
-        if _contains_any(
-            name,
-            (
-                "image_type",
-                "image_set",
-                "rule_criteria",
-                "thresholding_method",
-            ),
-        ):
-            return None
-        return ArtifactSettingRole.INPUT_IMAGE
-
-
-class InputObjectsSettingClassifier(ArtifactSettingClassifier):
-    """Classify object-label name inputs."""
-
-    classifier_name = "input_objects"
-
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        name = _normalized_setting(setting.name)
-        if "object" not in _tokens(name) and "objects" not in _tokens(name):
-            return None
-        if not name.startswith("select_"):
-            return None
-        if _contains_any(
-            name,
-            (
-                "how_to_handle",
-                "location",
-                "method",
-                "module",
-                "measurement",
-                "shape",
-            ),
-        ):
-            return None
-        return ArtifactSettingRole.INPUT_OBJECTS
-
-
-class BareObjectsInputSettingClassifier(InputObjectsSettingClassifier):
-    """Classify CellProfiler LabelSubscriber settings named simply ``Objects``."""
-
-    classifier_name = "bare_input_objects"
-
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        if _normalized_setting(setting.name) == "objects":
-            return ArtifactSettingRole.INPUT_OBJECTS
-        return None
-
-
-class InputSpatialGridSettingClassifier(ArtifactSettingClassifier):
-    """Classify named spatial-grid inputs."""
-
-    classifier_name = "input_spatial_grid"
-
-    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        if _normalized_setting(setting.name) == "select_the_defined_grid":
-            return ArtifactSettingRole.INPUT_SPATIAL_GRID
-        return None
+    @staticmethod
+    def _unique(
+        symbols: tuple[ArtifactSettingSymbol, ...],
+    ) -> tuple[ArtifactSettingSymbol, ...]:
+        unique: list[ArtifactSettingSymbol] = []
+        seen: set[tuple[ArtifactSettingRole, str, str]] = set()
+        for symbol in symbols:
+            key = (symbol.role, symbol.name, symbol.setting_name)
+            if key in seen:
+                continue
+            unique.append(symbol)
+            seen.add(key)
+        return tuple(unique)
 
 
 def artifact_setting_symbols(module: ModuleBlock) -> tuple[ArtifactSettingSymbol, ...]:
-    """Return artifact-name settings in .cppipe order."""
-    symbols: list[ArtifactSettingSymbol] = []
-    for setting in _iter_module_settings(module):
-        role = ArtifactSettingClassifier.role_for(setting)
-        if role is None:
-            continue
-        for name in _symbol_names_from_setting(setting):
-            symbols.append(
-                ArtifactSettingSymbol(
-                    role=role,
-                    name=name,
-                    setting_name=setting.name,
-                )
-            )
-    return tuple(symbols)
+    """Return declaration-owned artifact-name settings in .cppipe order."""
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    module_type = CellProfilerModule.for_module(module.name)
+    if module_type is not None:
+        return DeclaredArtifactSettingSymbols(module_type, module).symbols()
+    return ()
 
 
 def function_special_outputs(module_name: str) -> tuple[FunctionSpecialOutput, ...]:
     """Return function-declared auxiliary outputs with semantic artifact kinds."""
     from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
 
-    raw_outputs = vars(require_cellprofiler_function(module_name)).get(
-        "__special_outputs__",
-        (),
+    raw_outputs = special_output_specs_from_callable(
+        require_cellprofiler_function(module_name)
     )
-    if not isinstance(raw_outputs, tuple):
-        raise TypeError(
-            f"{module_name}.__special_outputs__ must be a tuple, "
-            f"got {type(raw_outputs).__name__}."
-        )
     return tuple(
         FunctionSpecialOutput(
             name=special_output_name(spec),
@@ -333,10 +319,14 @@ def _iter_module_settings(module: ModuleBlock) -> tuple[ModuleSetting, ...]:
 
 
 def _symbol_names_from_setting(setting: ModuleSetting) -> tuple[str, ...]:
+    return _symbol_names_from_value(setting.value)
+
+
+def _symbol_names_from_value(value: str) -> tuple[str, ...]:
     return tuple(
-        value
-        for value in (part.strip() for part in setting.value.split(","))
-        if value and not _is_blank_symbol(value)
+        part
+        for part in (part.strip() for part in value.split(","))
+        if part and not _is_blank_symbol(part)
     )
 
 
@@ -359,11 +349,3 @@ def _normalized_nonempty_name(value: str, field_name: str) -> str:
 
 def _normalized_setting(value: str) -> str:
     return normalize_cellprofiler_setting_name(value)
-
-
-def _tokens(value: str) -> frozenset[str]:
-    return frozenset(value.split("_"))
-
-
-def _contains_any(value: str, fragments: tuple[str, ...]) -> bool:
-    return any(fragment in value for fragment in fragments)

@@ -7,6 +7,13 @@ It takes a binary image and labels the worms, untangling them and
 associating all of a worm's pieces together.
 """
 
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    block_setting_value,
+    repeating_setting_blocks,
+)
+from openhcs.interop.cellprofiler.settings_binder import parse_cellprofiler_bool
+
 import numpy as np
 import re
 import scipy.ndimage
@@ -14,7 +21,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from heapq import heappop, heappush
+from pathlib import Path
 from typing import Any, ClassVar
+from xml.dom.minidom import parse
 
 from metaclass_registry import AutoRegisterMeta
 from scipy.ndimage import (
@@ -26,6 +35,17 @@ from scipy.ndimage import (
 )
 
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpecCollection
+from openhcs.interop.cellprofiler.runtime.bound_parameters import RuntimeBoundParameterName
+from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    CellProfilerObjectInputCountAuthority,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
+from openhcs.interop.cellprofiler.runtime.special_input_policies import (
+    CellProfilerSpecialInputPolicyMixin,
+    SpecialInputBindingRequest,
+)
 from openhcs.interop.cellprofiler.worm_measurements import (
     WormControlPointMeasurementSchema,
 )
@@ -44,6 +64,188 @@ from openhcs.processing.materialization import csv_materializer, segmentation_ma
 
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+class UntangleWormsModule(ModuleSettingsSourceModule):
+    module_name = 'UntangleWorms'
+    function_name = 'untangle_worms'
+    validated = True
+    confidence = 1.0
+    input_image_setting = SettingNameFamily(
+        "Select the input binary image",
+        aliases=("Select the input image",),
+    )
+    overlapping_objects_setting = "Name the output overlapping worm objects"
+    nonoverlapping_objects_setting = "Name the output non-overlapping worm objects"
+    training_file_name_setting = "Training set file name"
+    training_parameter_tags: ClassVar[tuple[tuple[str, str, type], ...]] = (
+        ("min-area", "min_worm_area", float),
+        ("max-area", "max_worm_area", float),
+        ("cost-threshold", "cost_threshold", float),
+        ("num-control-points", "num_control_points", int),
+        ("max-radius", "max_radius", float),
+        ("max-skel-length", "max_skel_length", float),
+        ("min-path-length", "min_path_length", float),
+        ("max-path-length", "max_path_length", float),
+        ("median-worm-area", "median_worm_area", float),
+        ("overlap-weight", "overlap_weight", float),
+        ("leftover-weight", "leftover_weight", float),
+    )
+    training_vector_tags: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("mean-angles", "mean_angles"),
+        ("radii-from-training", "radii_from_training"),
+    )
+    training_matrix_tags: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("inv-angles-covariance-matrix", "inv_angles_covariance_matrix"),
+    )
+
+    class OverlapStyle(str, Enum):
+        WITH_OVERLAP = "with_overlap"
+        WITHOUT_OVERLAP = "without_overlap"
+        BOTH = "both"
+
+    @classmethod
+    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+        """Bind UntangleWorms settings that affect runtime output semantics."""
+        overlap_style = coerce_cellprofiler_enum(
+            cls.OverlapStyle,
+            module.get_setting("Overlap style", "Without overlap"),
+        )
+        kwargs: dict[str, str | int | float | tuple[Any, ...]] = {
+            "overlap_style": overlap_style.value,
+            "overlapping_object_name": required_setting_value(
+                module,
+                cls.overlapping_objects_setting,
+            ),
+            "nonoverlapping_object_name": required_setting_value(
+                module,
+                cls.nonoverlapping_objects_setting,
+            ),
+        }
+        if (num_control_points := optional_setting_value(
+            module,
+            "Number of control points",
+        )) is not None:
+            kwargs["num_control_points"] = int(float(num_control_points))
+        kwargs.update(cls.training_parameter_kwargs(module))
+        return kwargs
+
+    @classmethod
+    def training_parameter_kwargs(
+        cls,
+        module: "ModuleBlock",
+    ) -> dict[str, float | int | tuple[Any, ...]]:
+        training_path = cls.training_file_path(module)
+        if training_path is None:
+            return {}
+        doc = parse(str(training_path))
+        kwargs: dict[str, float | int | tuple[Any, ...]] = {}
+        for tag_name, parameter_name, coerce in cls.training_parameter_tags:
+            elements = doc.documentElement.getElementsByTagName(tag_name)
+            if len(elements) != 1:
+                continue
+            text = "".join(
+                node.data
+                for node in elements[0].childNodes
+                if node.nodeType == doc.TEXT_NODE
+            ).strip()
+            if text:
+                kwargs[parameter_name] = (
+                    coerce(float(text)) if coerce is int else coerce(text)
+                )
+        for tag_name, parameter_name in cls.training_vector_tags:
+            values = cls.xml_vector_values(doc, tag_name)
+            if values:
+                kwargs[parameter_name] = values
+        for tag_name, parameter_name in cls.training_matrix_tags:
+            rows = cls.xml_matrix_values(doc, tag_name)
+            if rows:
+                kwargs[parameter_name] = rows
+        return kwargs
+
+    @classmethod
+    def xml_vector_values(cls, doc: Any, tag_name: str) -> tuple[float, ...]:
+        elements = doc.documentElement.getElementsByTagName(tag_name)
+        if len(elements) != 1:
+            return ()
+        return tuple(
+            cls.xml_float(value_element, doc)
+            for value_element in elements[0].getElementsByTagName("value")
+        )
+
+    @classmethod
+    def xml_matrix_values(
+        cls,
+        doc: Any,
+        tag_name: str,
+    ) -> tuple[tuple[float, ...], ...]:
+        elements = doc.documentElement.getElementsByTagName(tag_name)
+        if len(elements) != 1:
+            return ()
+        return tuple(
+            tuple(
+                cls.xml_float(value_element, doc)
+                for value_element in values_element.getElementsByTagName("value")
+            )
+            for values_element in elements[0].getElementsByTagName("values")
+        )
+
+    @staticmethod
+    def xml_float(element: Any, doc: Any) -> float:
+        text = "".join(
+            node.data
+            for node in element.childNodes
+            if node.nodeType == doc.TEXT_NODE
+        ).strip()
+        return float(text)
+
+    @classmethod
+    def training_file_path(cls, module: "ModuleBlock") -> Path | None:
+        file_name = optional_setting_value(module, cls.training_file_name_setting)
+        if not file_name or module.cppipe_path is None:
+            return None
+        for candidate in (
+            module.cppipe_path.parent / file_name,
+            module.cppipe_path.parent / "images" / file_name,
+        ):
+            if candidate.is_file():
+                return candidate
+        return None
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        image = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, cls.input_image_setting), ArtifactKind.IMAGE),
+            module,
+        )
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
+            builder.declare_artifact(ArtifactSpec(required_setting_value(module, cls.overlapping_objects_setting), ArtifactKind.OBJECT_LABELS), module),
+            builder.declare_artifact(ArtifactSpec(required_setting_value(module, cls.nonoverlapping_objects_setting), ArtifactKind.OBJECT_LABELS), module),
+        ]
+        return assembler.assemble_contract(module, builder, inputs=[image], outputs=outputs)
+
+
 from openhcs.processing.backends.cellprofiler.worm_geometry import (
     branchpoints,
     calculate_cumulative_lengths,
@@ -55,6 +257,216 @@ from openhcs.processing.backends.cellprofiler.worm_geometry import (
     skeletonize_worm_mask,
     trace_skeleton_path,
 )
+
+
+class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
+    """Resolve worm labels plus producer-derived control points."""
+
+    worm_labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("worm_labels")
+    )
+    control_points_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("control_points")
+    )
+
+    def extra_bound_parameter_names(
+        self,
+        plan: "CellProfilerModuleRuntimePlan",
+    ) -> tuple[str, ...]:
+        if ArtifactSpecCollection(plan.runtime_inputs).of_kind(ArtifactKind.MEASUREMENTS):
+            return super().extra_bound_parameter_names(plan)
+        return ()
+
+    def bind(
+        self,
+        request: SpecialInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        object_inputs = request.object_inputs
+        CellProfilerObjectInputCountAuthority.require_exact(
+            request.module_name,
+            object_inputs,
+            1,
+        )
+        measurement_inputs = ArtifactSpecCollection(request.runtime_inputs).of_kind(
+            ArtifactKind.MEASUREMENTS
+        )
+        bound: CellProfilerKwargDict = {
+            self.worm_labels_kwarg: request.labels_for(object_inputs[0]),
+        }
+        if not measurement_inputs:
+            return bound
+        if len(measurement_inputs) > 1:
+            raise NotImplementedError(
+                f"{request.module_name} supports one producer measurement "
+                f"input; got {[spec.name for spec in measurement_inputs]}."
+            )
+        num_control_points = int(
+            MappingValueLookup(request.kwargs, "num_control_points").value_or(21)
+        )
+        control_points = WormControlPointMeasurementSchema(
+            num_control_points=num_control_points,
+        ).control_points_from_rows(
+            request.runtime_value(measurement_inputs[0]),
+            object_name=object_inputs[0].name,
+        )
+        if control_points is not None:
+            bound[self.control_points_kwarg] = control_points
+        return bound
+
+
+class StraightenWormsModule(
+    StraightenWormsSpecialInputPolicy,
+    ModuleSettingsSourceModule,
+):
+    module_name = 'StraightenWorms'
+    function_name = 'straighten_worms'
+    validated = True
+    contract = 'flexible'
+    confidence = 1.0
+    input_objects_setting = "Select the input untangled worm objects"
+    output_objects_setting = "Name the output straightened worm objects"
+    input_image_setting = "Select an input image to straighten"
+    output_image_setting = "Name the output straightened image"
+    worm_width_setting = "Worm width"
+    measure_intensity_setting = "Measure intensity distribution?"
+    transverse_segments_setting = "Number of transverse segments"
+    longitudinal_stripes_setting = "Number of longitudinal stripes"
+    alignment_setting = "Align worms?"
+
+    class FlipMode(Enum):
+        NONE = "do_not_align"
+        TOP = "top_brightest"
+        BOTTOM = "bottom_brightest"
+        MANUAL = "flip_manually"
+
+    @dataclass(frozen=True, slots=True)
+    class ImageBinding:
+        input_image_name: str
+        output_image_name: str
+
+    @classmethod
+    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+        kwargs: dict[str, Any] = {}
+        cls._bind_optional_int(module, cls.worm_width_setting, "worm_width", kwargs)
+        cls._bind_optional_bool(
+            module,
+            cls.measure_intensity_setting,
+            "measure_intensity",
+            kwargs,
+        )
+        cls._bind_optional_int(
+            module,
+            cls.transverse_segments_setting,
+            "number_of_segments",
+            kwargs,
+        )
+        cls._bind_optional_int(
+            module,
+            cls.longitudinal_stripes_setting,
+            "number_of_stripes",
+            kwargs,
+        )
+        alignment = optional_setting_value(module, cls.alignment_setting)
+        if alignment is not None:
+            kwargs["flip_mode"] = coerce_cellprofiler_enum(
+                cls.FlipMode,
+                alignment,
+            ).value
+        return kwargs
+
+    @classmethod
+    def input_objects_name(cls, module: "ModuleBlock") -> str:
+        return required_setting_value(module, cls.input_objects_setting)
+
+    @classmethod
+    def output_objects_name(cls, module: "ModuleBlock") -> str:
+        return required_setting_value(module, cls.output_objects_setting)
+
+    @classmethod
+    def image_bindings(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["StraightenWormsModule.ImageBinding", ...]:
+        return tuple(
+            cls.ImageBinding(
+                input_image_name=block_setting_value(
+                    block,
+                    cls.input_image_setting,
+                ),
+                output_image_name=block_setting_value(
+                    block,
+                    cls.output_image_setting,
+                ),
+            )
+            for block in repeating_setting_blocks(
+                module.iter_settings(),
+                start_name=cls.input_image_setting,
+            )
+            if block_setting_value(block, cls.input_image_setting)
+            and block_setting_value(block, cls.output_image_setting)
+        )
+
+    @classmethod
+    def _bind_optional_int(
+        cls,
+        module: "ModuleBlock",
+        setting_name: str,
+        parameter_name: str,
+        kwargs: dict[str, Any],
+    ) -> None:
+        value = optional_setting_value(module, setting_name)
+        if value is not None:
+            kwargs[parameter_name] = int(float(value))
+
+    @classmethod
+    def _bind_optional_bool(
+        cls,
+        module: "ModuleBlock",
+        setting_name: str,
+        parameter_name: str,
+        kwargs: dict[str, Any],
+    ) -> None:
+        value = optional_setting_value(module, setting_name)
+        if value is not None:
+            kwargs[parameter_name] = parse_cellprofiler_bool(value)
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        input_objects = builder.require_artifact(
+            ArtifactSpec(cls.input_objects_name(module), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        image_bindings = cls.image_bindings(module)
+        image_inputs = [
+            builder.require_artifact(ArtifactSpec(binding.input_image_name, ArtifactKind.IMAGE), module)
+            for binding in image_bindings
+        ]
+        image_outputs = [
+            builder.declare_artifact(ArtifactSpec(binding.output_image_name, ArtifactKind.IMAGE), module)
+            for binding in image_bindings
+        ]
+        output_objects = builder.declare_artifact(
+            ArtifactSpec(cls.output_objects_name(module), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        producer_measurements = builder.measurement_output_for_module_num(input_objects.producer_module_num)
+        measurements = builder.declare_artifact(
+            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+            module,
+        )
+        side_inputs = [input_objects]
+        if producer_measurements is not None:
+            side_inputs.append(producer_measurements)
+        return assembler.assemble_contract(
+            module,
+            builder,
+            inputs=[*side_inputs, *image_inputs],
+            outputs=[*image_outputs, output_objects, measurements],
+        )
+
+
 
 
 class OverlapStyle(str, Enum):
@@ -1871,3 +2283,10 @@ def _worm_descriptor_row(
         ).row_fields(control_coords)
     )
     return row
+
+
+class IdentifyDeadWormsModule(CellProfilerModule):
+    module_name = 'IdentifyDeadWorms'
+    function_name = 'identify_dead_worms'
+    validated = True
+    confidence = 1.0

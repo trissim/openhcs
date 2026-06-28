@@ -6,6 +6,7 @@ import numpy as np
 
 from openhcs.core.image_shapes import is_color_image_stack
 from openhcs.core.runtime_values import (
+    ObjectLabelValue,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
@@ -18,6 +19,8 @@ class SingletonStackOutputCollapsePolicy:
     """Collapse single-plane stack outputs while preserving payload context."""
 
     def collapse(self, value: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue:
+        if isinstance(value, ObjectLabelValue):
+            return value
         metadata = image_payload_metadata(value)
         mask = image_payload_mask(value)
         if mask is not None or metadata.has_values:

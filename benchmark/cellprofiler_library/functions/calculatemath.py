@@ -1,9 +1,9 @@
 """Converted from CellProfiler: CalculateMath."""
 
-from openhcs.interop.cellprofiler.calculate_math_settings import (
+from openhcs.processing.backends.cellprofiler.measurement_math import (
     CalculateMathRoundingMethod as RoundingMethod,
 )
-from openhcs.interop.cellprofiler.image_math_settings import (
+from openhcs.processing.backends.cellprofiler.image_math import (
     ImageMathOperation as MathOperation,
 )
 from openhcs.processing.backends.cellprofiler.measurement_math import (

@@ -2,6 +2,86 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+class ReducenoiseModule(ImageProcessingDebugViewModule, CellProfilerModule):
+    module_name = 'Reducenoise'
+    function_name = 'reducenoise'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
+        SettingToKeywordBinding(
+            "Distance",
+            "patch_distance",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Cut-off distance",
+            "cutoff_distance",
+            parse_cellprofiler_float,
+        ),
+    )
+
+
+class SmoothModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'Smooth'
+    function_name = 'smooth'
+    validated = True
+    confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
+    setting_bindings = (
+        SettingToKeywordBinding("Select smoothing method", "smoothing_method"),
+        SettingToKeywordBinding(
+            "Calculate artifact diameter automatically?",
+            "auto_object_size",
+        ),
+        SettingToKeywordBinding("Typical artifact diameter", "object_size"),
+        SettingToKeywordBinding(
+            "Edge intensity difference",
+            "edge_intensity_difference",
+        ),
+        SettingToKeywordBinding(
+            "Clip intensities to 0 and 1?",
+            "clip_polynomial",
+        ),
+    )
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass

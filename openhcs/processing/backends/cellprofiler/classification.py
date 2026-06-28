@@ -2,6 +2,561 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import ClassVar
+
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeArtifactKindStrategy,
+)
+from openhcs.interop.cellprofiler.runtime.binding_authorities import (
+    CellProfilerStringKwargAuthority,
+)
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeBoundParameterName,
+    RuntimeBoundParameterNames,
+    declared_runtime_bound_parameter_names,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    CellProfilerObjectInputCountAuthority,
+    CellProfilerObjectMeasurementVectorBinding,
+    CellProfilerObjectMeasurementVectorSource,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerKwargDict,
+    CellProfilerRuntimeValue,
+)
+from openhcs.interop.cellprofiler.runtime.special_input_policies import (
+    NoSpecialImageInputsMixin,
+    SpecialInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    MeasurementDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    ClassifyObjectsMeasurementRecordRowsMixin,
+    ColumnarFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+)
+
+class ClassifyObjectsMeasurementInputPolicy(
+    NoSpecialImageInputsMixin,
+):
+    """Resolve ClassifyObjects label and measurement-vector inputs."""
+
+    measurement_value_parameters: ClassVar[RuntimeBoundParameterNames] = (
+        RuntimeBoundParameterNames(
+            "measurement_values",
+            "measurement1_values",
+            "measurement2_values",
+        )
+    )
+    measurement_feature_kwargs: ClassVar[tuple[str, ...]] = (
+        "measurement_feature",
+        "measurement1_feature",
+        "measurement2_feature",
+    )
+    measurement_kwarg_by_parameter: ClassVar[Mapping[str, str]] = dict(
+        zip(measurement_value_parameters, measurement_feature_kwargs, strict=True)
+    )
+    labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("labels")
+    )
+    measurement_values_by_rule_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("measurement_values_by_rule")
+    )
+
+    def extra_bound_parameter_names(
+        self,
+        plan: CellProfilerModuleRuntimePlan,
+    ) -> tuple[str, ...]:
+        """Return runtime-derived classification measurement vectors."""
+        del plan
+        declared_names = declared_runtime_bound_parameter_names(type(self))
+        return tuple(
+            name
+            for name in declared_names
+            if name != self.labels_kwarg
+        )
+
+    def bind(
+        self,
+        request: SpecialInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        object_inputs = request.object_inputs
+        CellProfilerObjectInputCountAuthority.require_exact(
+            request.module_name,
+            object_inputs,
+            1,
+        )
+        object_spec = object_inputs[0]
+        labels = request.labels_for(object_spec)
+        measurement_labels = request.label_payload_for(object_spec)
+        image_number = RuntimeArtifactKindStrategy.for_kind(
+            object_spec.kind
+        ).cellprofiler_image_number(request.artifact_input_request(object_spec))
+        if "classification_rules" in request.kwargs:
+            rules = request.kwargs["classification_rules"]
+            if not isinstance(rules, (tuple, list)):
+                raise ValueError(
+                    f"{request.module_name} classification_rules must be an "
+                    "ordered tuple or list."
+                )
+            return {
+                self.labels_kwarg: labels,
+                self.measurement_values_by_rule_kwarg: tuple(
+                    CellProfilerObjectMeasurementVectorBinding.for_object(
+                        request,
+                        object_ref=object_spec,
+                        feature_name=_classification_rule_measurement_feature(
+                            rule,
+                            request.module_name,
+                        ),
+                        labels=measurement_labels,
+                        image_number=image_number,
+                    )
+                    .vector()
+                    .slice_aligned_value
+                    for rule in rules
+                ),
+            }
+        bound_values = {
+            parameter_name: (
+                CellProfilerObjectMeasurementVectorBinding.for_object(
+                    request,
+                    object_ref=object_spec,
+                    feature_name=CellProfilerStringKwargAuthority.required(
+                        request.kwargs,
+                        kwarg_name,
+                        request.module_name,
+                    ),
+                    labels=measurement_labels,
+                    image_number=image_number,
+                    source=(
+                        CellProfilerObjectMeasurementVectorSource
+                        .CURRENT_OBJECT_SHAPE_FEATURE
+                    ),
+                )
+                .vector()
+                .slice_aligned_value
+            )
+            for parameter_name, kwarg_name in (
+                type(self).measurement_kwarg_by_parameter.items()
+            )
+            if kwarg_name in request.kwargs
+        }
+        return {
+            self.labels_kwarg: labels,
+            **bound_values,
+        }
+
+
+def _classification_rule_measurement_feature(
+    rule: CellProfilerRuntimeValue,
+    module_name: str,
+) -> str:
+    if not isinstance(rule, Mapping):
+        raise ValueError(f"{module_name} classification rule must be a mapping.")
+    value = rule.get("measurement_feature")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{module_name} classification rule requires non-empty "
+            "'measurement_feature'."
+        )
+    return value
+
+
+class ClassifyObjectsSingleMeasurementModule(
+    ClassifyObjectsMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    ColumnarFieldsMeasurementRecordMixin,
+    ClassifyObjectsMeasurementInputPolicy,
+    MeasurementDebugViewModule,
+    BinderSettingsSourceModule,
+):
+    module_name = 'ClassifyObjectsSingleMeasurement'
+    function_name = 'classify_objects_single_measurement'
+    function_variants = ('classify_objects_two_measurements',)
+    validated = True
+    aliases = ('ClassifyObjects', 'ClassifyObjectsTwoMeasurements')
+    confidence = 0.0
+    classification_decision_count_setting = SettingNameFamily(
+        "Make each classification decision on how many measurements?"
+    )
+    input_objects_setting = SettingNameFamily("Select the object to be classified")
+    single_measurement_feature_setting = SettingNameFamily(
+        "Select the measurement to classify by"
+    )
+    first_measurement_feature_setting = SettingNameFamily(
+        "Select the first measurement"
+    )
+    second_measurement_feature_setting = SettingNameFamily(
+        "Select the second measurement"
+    )
+    bin_spacing_setting = SettingNameFamily("Select bin spacing")
+    bin_count_setting = SettingNameFamily("Number of bins")
+    low_threshold_setting = SettingNameFamily("Lower threshold")
+    high_threshold_setting = SettingNameFamily("Upper threshold")
+    wants_low_bin_setting = SettingNameFamily(
+        "Use a bin for objects below the threshold?"
+    )
+    wants_high_bin_setting = SettingNameFamily(
+        "Use a bin for objects above the threshold?"
+    )
+    custom_thresholds_setting = SettingNameFamily(
+        "Enter the custom thresholds separating the values between bins"
+    )
+    bin_names_setting = SettingNameFamily("Enter the bin names separated by commas")
+    threshold_method_setting = SettingNameFamily("Method to select the cutoff")
+    threshold_value_setting = SettingNameFamily("Enter the cutoff value")
+    low_low_bin_name_setting = SettingNameFamily("Enter the low-low bin name")
+    low_high_bin_name_setting = SettingNameFamily("Enter the low-high bin name")
+    high_low_bin_name_setting = SettingNameFamily("Enter the high-low bin name")
+    high_high_bin_name_setting = SettingNameFamily("Enter the high-high bin name")
+    retain_image_setting = SettingNameFamily(
+        "Retain an image of the classified objects?"
+    )
+    output_image_setting = SettingNameFamily("Name the output image")
+
+    classification_decision_default = "Single measurement"
+    measurement_feature_default = ""
+    bin_spacing_default = "Evenly spaced bins"
+    bin_count_default = "3"
+    low_threshold_default = "0.0"
+    high_threshold_default = "1.0"
+    wants_low_bin_default = "No"
+    wants_high_bin_default = "No"
+    custom_thresholds_default = "0,1"
+    bin_names_default = ""
+    threshold_method_default = "Mean"
+    threshold_value_default = "0.5"
+    low_low_bin_name_default = "low_low"
+    low_high_bin_name_default = "low_high"
+    high_low_bin_name_default = "high_low"
+    high_high_bin_name_default = "high_high"
+
+    @classmethod
+    def settings_source(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+    ) -> "CellProfilerKwargs":
+        if cls.uses_two_measurements(module):
+            return cls._two_measurement_kwargs(module, binder)
+        return cls._single_measurement_kwargs(module, binder)
+
+    @classmethod
+    def indexed_setting_value(
+        cls,
+        module: "ModuleBlock",
+        setting_name: str | SettingNameFamily,
+        *,
+        default: str,
+        value_index: int = 0,
+    ) -> str:
+        values = setting_values(module, setting_name)
+        if not values:
+            return default
+        if value_index < len(values):
+            return values[value_index]
+        return values[-1]
+
+    @classmethod
+    def uses_two_measurements(cls, module: "ModuleBlock") -> bool:
+        value = cls.indexed_setting_value(
+            module,
+            cls.classification_decision_count_setting,
+            default=cls.classification_decision_default,
+        ).lower()
+        if "two" in value:
+            return True
+        if "single" in value:
+            return False
+        raise ValueError(
+            f"Unsupported ClassifyObjects measurement count setting: {value!r}."
+        )
+
+    @classmethod
+    def function_name_for_module(cls, module: "ModuleBlock") -> str:
+        if cls.uses_two_measurements(module):
+            return cls.function_variants[0]
+        return str(cls.function_name)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+    ) -> "ResolvedModuleFunction":
+        del default_function_name
+        return super().resolve_function(
+            module,
+            default_function_name=cls.function_name_for_module(module),
+        )
+
+
+    @staticmethod
+    def _canonical_setting_name(setting_name: str | SettingNameFamily) -> str:
+        if isinstance(setting_name, SettingNameFamily):
+            return setting_name.canonical
+        return setting_name
+
+    @classmethod
+    def _typed_setting_value(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+        setting_name: str | SettingNameFamily,
+        *,
+        default: str,
+        value_index: int = 0,
+    ) -> Any:
+        return binder.parse_value(
+            cls._canonical_setting_name(setting_name),
+            cls.indexed_setting_value(
+                module,
+                setting_name,
+                default=default,
+                value_index=value_index,
+            ),
+        )
+
+    @classmethod
+    def _required_indexed_setting_value(
+        cls,
+        module: "ModuleBlock",
+        setting_name: str | SettingNameFamily,
+        *,
+        default: str,
+        value_index: int = 0,
+    ) -> str:
+        value = cls.indexed_setting_value(
+            module,
+            setting_name,
+            default=default,
+            value_index=value_index,
+        ).strip()
+        if not value:
+            raise ValueError(f"ClassifyObjects requires setting {setting_name!r}.")
+        return value
+
+    @staticmethod
+    def _bin_choice(value: str) -> str:
+        normalized = value.strip().lower()
+        if "custom" in normalized:
+            return "custom"
+        if "even" in normalized:
+            return "even"
+        raise ValueError(f"Unsupported ClassifyObjects bin spacing: {value!r}.")
+
+    @staticmethod
+    def _threshold_method(value: str) -> str:
+        normalized = value.strip().lower()
+        if "median" in normalized:
+            return "median"
+        if "mean" in normalized:
+            return "mean"
+        if "custom" in normalized:
+            return "custom"
+        raise ValueError(f"Unsupported ClassifyObjects threshold method: {value!r}.")
+
+    @classmethod
+    def _single_measurement_kwargs(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+    ) -> "CellProfilerKwargs":
+        measurement_features = setting_values(
+            module,
+            cls.single_measurement_feature_setting,
+        )
+        if len(measurement_features) > 1:
+            return {
+                "classification_rules": tuple(
+                    cls._single_measurement_rule_kwargs(module, binder, index)
+                    for index in range(len(measurement_features))
+                ),
+            }
+        return cls._single_measurement_rule_kwargs(module, binder, 0)
+
+    @classmethod
+    def _single_measurement_rule_kwargs(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+        value_index: int,
+    ) -> "CellProfilerKwargs":
+        bin_names = cls.indexed_setting_value(
+            module,
+            cls.bin_names_setting,
+            default=cls.bin_names_default,
+            value_index=value_index,
+        )
+        return {
+            "measurement_feature": cls._required_indexed_setting_value(
+                module,
+                cls.single_measurement_feature_setting,
+                default=cls.measurement_feature_default,
+                value_index=value_index,
+            ),
+            "bin_choice": cls._bin_choice(
+                cls.indexed_setting_value(
+                    module,
+                    cls.bin_spacing_setting,
+                    default=cls.bin_spacing_default,
+                    value_index=value_index,
+                )
+            ),
+            "bin_count": cls._typed_setting_value(
+                module,
+                binder,
+                cls.bin_count_setting,
+                default=cls.bin_count_default,
+                value_index=value_index,
+            ),
+            "low_threshold": cls._typed_setting_value(
+                module,
+                binder,
+                cls.low_threshold_setting,
+                default=cls.low_threshold_default,
+                value_index=value_index,
+            ),
+            "high_threshold": cls._typed_setting_value(
+                module,
+                binder,
+                cls.high_threshold_setting,
+                default=cls.high_threshold_default,
+                value_index=value_index,
+            ),
+            "wants_low_bin": cls._typed_setting_value(
+                module,
+                binder,
+                cls.wants_low_bin_setting,
+                default=cls.wants_low_bin_default,
+                value_index=value_index,
+            ),
+            "wants_high_bin": cls._typed_setting_value(
+                module,
+                binder,
+                cls.wants_high_bin_setting,
+                default=cls.wants_high_bin_default,
+                value_index=value_index,
+            ),
+            "custom_thresholds": cls.indexed_setting_value(
+                module,
+                cls.custom_thresholds_setting,
+                default=cls.custom_thresholds_default,
+                value_index=value_index,
+            ),
+            "bin_names": bin_names or None,
+        }
+
+    @classmethod
+    def _two_measurement_kwargs(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+    ) -> "CellProfilerKwargs":
+        return {
+            "measurement1_feature": cls._required_indexed_setting_value(
+                module,
+                cls.first_measurement_feature_setting,
+                default=cls.measurement_feature_default,
+            ),
+            "measurement2_feature": cls._required_indexed_setting_value(
+                module,
+                cls.second_measurement_feature_setting,
+                default=cls.measurement_feature_default,
+            ),
+            "threshold1_method": cls._threshold_method(
+                cls.indexed_setting_value(
+                    module,
+                    cls.threshold_method_setting,
+                    default=cls.threshold_method_default,
+                )
+            ),
+            "threshold1_value": cls._typed_setting_value(
+                module,
+                binder,
+                cls.threshold_value_setting,
+                default=cls.threshold_value_default,
+            ),
+            "threshold2_method": cls._threshold_method(
+                cls.indexed_setting_value(
+                    module,
+                    cls.threshold_method_setting,
+                    default=cls.threshold_method_default,
+                    value_index=-1,
+                )
+            ),
+            "threshold2_value": cls._typed_setting_value(
+                module,
+                binder,
+                cls.threshold_value_setting,
+                default=cls.threshold_value_default,
+                value_index=-1,
+            ),
+            "low_low_name": cls.indexed_setting_value(
+                module,
+                cls.low_low_bin_name_setting,
+                default=cls.low_low_bin_name_default,
+            ),
+            "low_high_name": cls.indexed_setting_value(
+                module,
+                cls.low_high_bin_name_setting,
+                default=cls.low_high_bin_name_default,
+            ),
+            "high_low_name": cls.indexed_setting_value(
+                module,
+                cls.high_low_bin_name_setting,
+                default=cls.high_low_bin_name_default,
+            ),
+            "high_high_name": cls.indexed_setting_value(
+                module,
+                cls.high_high_bin_name_setting,
+                default=cls.high_high_bin_name_default,
+            ),
+        }
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        inputs = [
+            builder.require_artifact(ArtifactSpec(name, ArtifactKind.OBJECT_LABELS), module)
+            for value in setting_values(module, cls.input_objects_setting)
+            for name in split_symbol_names(value)
+        ]
+        outputs = []
+        if optional_setting_value(module, cls.retain_image_setting) in {"Yes", "yes", "True", "true"}:
+            output_name = optional_setting_value(module, cls.output_image_setting)
+            if output_name is not None:
+                outputs.append(builder.declare_artifact(ArtifactSpec(output_name, ArtifactKind.IMAGE), module))
+        outputs.append(
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module)
+        )
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -28,6 +583,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
 
 CLASSIFICATION_RESULT_FIELDS = [
     "slice_index",

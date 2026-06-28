@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.measurement_lookup import CellProfilerMeasurementFeature
+from openhcs.interop.cellprofiler.setting_names import (
+    RepeatedSettingSequence,
+    block_setting_value,
+    normalized_symbol_name,
+    repeating_setting_blocks,
+)
+from openhcs.interop.cellprofiler.settings_binder import parse_cellprofiler_bool
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -22,7 +31,9 @@ from openhcs.core.measurement_feature_queries import (
     normalize_measurement_token,
     ordered_measurement_feature_candidates,
 )
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 from openhcs.core.runtime_semantics import (
+    parent_child_relationship_artifact_name,
     DenseObjectLabelExtentDomainDeclaration,
     DenseObjectLabelStack,
     ObjectShapeMeasurementFeature,
@@ -47,6 +58,19 @@ from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    ModuleSettingsSourceModule,
+    ObjectDebugViewModule,
+    PlaneRuntimeArtifactModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
 from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
@@ -55,6 +79,761 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
     object_label_value_with_dense_labels,
 )
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    ObjectRowsWithMeasurementsInputPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    CellProfilerObjectMeasurementVectorBinding,
+    ObjectInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_tables import (
+    object_measurement_tables_for_object,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerKwargDict,
+    CellProfilerKwargs,
+    CellProfilerRuntimeValue,
+)
+from openhcs.interop.cellprofiler.runtime.processing_contracts import (
+    MEASUREMENT_TABLES_BOUND_KEY,
+    MEASUREMENT_VALUES_BOUND_KEY,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_profile import (
+    CellProfilerRuntimeProfileLogger,
+)
+
+
+_FILTER_OBJECTS_ADDITIONAL_OBJECT_COUNT_KWARG = "additional_object_count"
+_FILTER_OBJECTS_ENCLOSING_OBJECT_NAME_KWARG = "enclosing_object_name"
+_FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG = "measurement_features"
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsKwargSettings:
+    """Typed FilterObjects settings projected from CellProfiler kwargs."""
+
+    additional_object_count: int
+    enclosing_object_name: str | None
+    measurement_features: tuple[str, ...]
+
+    @classmethod
+    def from_kwargs(cls, kwargs: CellProfilerKwargs) -> "FilterObjectsKwargSettings":
+        raw_additional_count = kwargs.get(_FILTER_OBJECTS_ADDITIONAL_OBJECT_COUNT_KWARG)
+        if raw_additional_count is None:
+            additional_object_count = 0
+        else:
+            additional_object_count = int(raw_additional_count)
+        raw_enclosing_name = kwargs.get(_FILTER_OBJECTS_ENCLOSING_OBJECT_NAME_KWARG)
+        if raw_enclosing_name is None:
+            enclosing_object_name = None
+        else:
+            enclosing_object_name = str(raw_enclosing_name)
+        raw_measurement_features = kwargs.get(_FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG)
+        if raw_measurement_features is None:
+            measurement_features = ()
+        else:
+            measurement_features = tuple(str(value) for value in raw_measurement_features)
+        return cls(
+            additional_object_count=additional_object_count,
+            enclosing_object_name=enclosing_object_name,
+            measurement_features=measurement_features,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsRuntimeInputPlan:
+    """Runtime object-label partition for one FilterObjects invocation."""
+
+    object_specs: tuple[ArtifactSpec, ...]
+    enclosing_spec: ArtifactSpec | None
+    settings: FilterObjectsKwargSettings
+    relationship_spec: ArtifactSpec | None = None
+    measurement_relationship_specs: tuple[ArtifactSpec, ...] = ()
+
+    @classmethod
+    def from_inputs(
+        cls,
+        runtime_inputs: tuple[ArtifactSpec, ...],
+        kwargs: CellProfilerKwargs,
+    ) -> "FilterObjectsRuntimeInputPlan":
+        object_inputs = ArtifactSpecCollection(runtime_inputs).of_kind(
+            ArtifactKind.OBJECT_LABELS
+        )
+        settings = FilterObjectsKwargSettings.from_kwargs(kwargs)
+        object_count = settings.additional_object_count + 1
+        enclosing_name = settings.enclosing_object_name
+        object_specs = object_inputs[:object_count]
+        enclosing_spec = None
+        relationship_spec = None
+        measurement_relationship_specs: list[ArtifactSpec] = []
+        if enclosing_name is not None:
+            enclosing_spec = ArtifactSpecCollection(object_inputs).by_name(
+                enclosing_name
+            )
+            if enclosing_spec is None:
+                raise RuntimeError(
+                    "FilterObjects enclosing object input "
+                    f"{enclosing_name!r} was not declared in the runtime contract."
+                )
+            if object_specs:
+                relationship_spec = ArtifactSpecCollection(
+                    runtime_inputs
+                ).by_name_and_kind(
+                    parent_child_relationship_artifact_name(
+                        enclosing_name,
+                        object_specs[0].name,
+                    ),
+                    ArtifactKind.RELATIONSHIPS,
+                )
+        if object_specs:
+            for child_object_name in (
+                CellProfilerMeasurementFeature.child_count_object_names(
+                    settings.measurement_features
+                )
+            ):
+                relationship = ArtifactSpecCollection(runtime_inputs).by_name_and_kind(
+                    parent_child_relationship_artifact_name(
+                        object_specs[0].name,
+                        child_object_name,
+                    ),
+                    ArtifactKind.RELATIONSHIPS,
+                )
+                if relationship is not None:
+                    measurement_relationship_specs.append(relationship)
+        return cls(
+            object_specs=object_specs,
+            enclosing_spec=enclosing_spec,
+            settings=settings,
+            relationship_spec=relationship_spec,
+            measurement_relationship_specs=ArtifactSpecCollection(
+                measurement_relationship_specs
+            ).unique(conflict_context="CellProfiler input spec"),
+        )
+
+    @property
+    def primary_object_spec(self) -> ArtifactSpec | None:
+        if not self.object_specs:
+            return None
+        return self.object_specs[0]
+
+    def bind_measurement_inputs(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        """Return FilterObjects measurement bindings owned by this runtime plan."""
+        scoped_request = request.with_object_inputs(self.object_specs)
+        measurement_values = self.measurement_vector(scoped_request)
+        if measurement_values is not None:
+            return {MEASUREMENT_VALUES_BOUND_KEY: measurement_values}
+        measurement_tables = self.measurement_tables(scoped_request)
+        if measurement_tables is None:
+            return {}
+        return {MEASUREMENT_TABLES_BOUND_KEY: measurement_tables}
+
+    def measurement_vector(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> CellProfilerRuntimeValue | None:
+        object_spec = self.primary_object_spec
+        if object_spec is None:
+            return None
+        feature_names = self.settings.measurement_features
+        if len(feature_names) != 1:
+            return None
+        feature_name = str(feature_names[0])
+        labels = request.labels_for(object_spec)
+        return (
+            CellProfilerObjectMeasurementVectorBinding.for_object(
+                request,
+                object_ref=object_spec,
+                feature_name=feature_name,
+                labels=labels,
+            )
+            .vector()
+            .slice_aligned_value
+        )
+
+    def measurement_tables(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> tuple[MeasurementTable, ...] | None:
+        object_spec = self.primary_object_spec
+        if object_spec is None:
+            return None
+        feature_names = self.settings.measurement_features
+        if not feature_names:
+            return None
+        labels = request.labels_for(object_spec)
+        tables_by_identity: dict[int, MeasurementTable] = {}
+        for feature_name in feature_names:
+            binding = CellProfilerObjectMeasurementVectorBinding.for_object(
+                request,
+                object_ref=object_spec,
+                feature_name=str(feature_name),
+                labels=labels,
+            )
+            tables = binding.measurement_tables(
+                request.adapter,
+                match_group=False,
+            )
+            for table in tables:
+                table_identity = id(table)
+                if table_identity not in tables_by_identity:
+                    tables_by_identity[table_identity] = table
+        if not tables_by_identity:
+            return object_measurement_tables_for_object(request.adapter, object_spec.name)
+        return tuple(tables_by_identity.values())
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsBoundMeasurementInputs:
+    """Measurement binding profile for FilterObjects logging."""
+
+    bound: CellProfilerKwargs
+
+    @property
+    def measurement_tables(self) -> tuple[MeasurementTable, ...]:
+        value = self.bound.get(MEASUREMENT_TABLES_BOUND_KEY)
+        if value is None:
+            return ()
+        return tuple(value)
+
+    @property
+    def measurement_values(self) -> CellProfilerRuntimeValue | None:
+        return self.bound.get(MEASUREMENT_VALUES_BOUND_KEY)
+
+    @property
+    def measurement_values_type(self) -> str:
+        measurement_values = self.measurement_values
+        if measurement_values is None:
+            return "none"
+        return type(measurement_values).__name__
+
+
+class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
+    """Bind ordered primary/additional object rows for FilterObjects."""
+
+    supported_non_object_input_kinds = frozenset({ArtifactKind.RELATIONSHIPS})
+
+    def bind(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        runtime_inputs = request.runtime_inputs
+        if not runtime_inputs:
+            runtime_inputs = request.object_inputs
+        plan = FilterObjectsRuntimeInputPlan.from_inputs(
+            runtime_inputs,
+            request.kwargs,
+        )
+        bound = super().bind(request.with_object_inputs(plan.object_specs))
+        bound.update(plan.bind_measurement_inputs(request))
+        bound_measurements = FilterObjectsBoundMeasurementInputs(bound)
+        measurement_values = bound_measurements.measurement_values
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "filterobjects_bound_measurements",
+            0.0,
+            module=request.module_name,
+            table_count=len(bound_measurements.measurement_tables),
+            has_measurement_values=measurement_values is not None,
+            measurement_values_type=bound_measurements.measurement_values_type,
+            measurement_features=len(plan.settings.measurement_features),
+        )
+        if plan.enclosing_spec is not None:
+            bound["enclosing_object_labels"] = request.labels_for(plan.enclosing_spec)
+        if plan.relationship_spec is not None:
+            bound["parent_child_relationship"] = request.current_plane_relationship_for(
+                plan.relationship_spec,
+            )
+        if plan.measurement_relationship_specs:
+            bound["parent_child_relationships"] = tuple(
+                request.current_plane_relationship_for(relationship_spec)
+                for relationship_spec in plan.measurement_relationship_specs
+            )
+        return bound
+
+
+class FilterObjectsModule(
+    PlaneRuntimeArtifactModule,
+    FilterObjectsInputPolicy,
+    ObjectDebugViewModule,
+    ModuleSettingsSourceModule,
+):
+    module_name = 'FilterObjects'
+    function_name = 'filter_objects'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    input_setting = SettingNameFamily(
+        "Select the object to filter",
+        aliases=("Select the objects to filter", "Select the input objects"),
+    )
+    output_setting = "Name the output objects"
+    mode_setting = SettingNameFamily(
+        "Filter using classifier rules or measurements?",
+        aliases=("Select the filtering mode",),
+    )
+    method_setting = "Select the filtering method"
+    measurement_setting = "Select the measurement to filter by"
+    use_minimum_setting = "Filter using a minimum measurement value?"
+    minimum_setting = "Minimum value"
+    use_maximum_setting = "Filter using a maximum measurement value?"
+    maximum_setting = "Maximum value"
+    main_outline_setting = (
+        "Retain the outlines of filtered objects for use later in the pipeline "
+        "(for example, in SaveImages)?"
+    )
+    outline_image_setting = "Name the outline image"
+    additional_input_setting = "Select additional object to relabel"
+    additional_output_setting = "Name the relabeled objects"
+    additional_outline_setting = "Save outlines of relabeled objects?"
+    enclosing_object_setting = "Select the objects that contain the filtered objects"
+    per_object_assignment_setting = "Assign overlapping child to"
+
+    class OutputRole(str, Enum):
+        """Closed runtime output roles emitted by a FilterObjects invocation."""
+
+        MEASUREMENTS = "measurements"
+        FILTERED_OBJECTS = "filtered_objects"
+        RELATIONSHIPS = "relationships"
+        OUTLINE_IMAGE = "outline_image"
+
+    @dataclass(frozen=True, slots=True)
+    class Output:
+        """One ordered artifact output produced by FilterObjects."""
+
+        role: "FilterObjectsModule.OutputRole"
+        name: str
+
+    @dataclass(frozen=True, slots=True)
+    class SymbolRequirement:
+        """Fail-loud FilterObjects symbol-setting validation."""
+
+        value: str
+        setting_name: str | SettingNameFamily
+
+        def validate(self, module: "ModuleBlock") -> None:
+            if normalized_symbol_name(self.value) is not None:
+                return
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) has an empty "
+                f"FilterObjects symbol in setting {self.setting_name!r}."
+            )
+
+    @dataclass(frozen=True, slots=True)
+    class ObjectPair:
+        """Shared input/output object-name pair for FilterObjects rows."""
+
+        input_object_name: str
+        output_object_name: str
+
+        @property
+        def filtered_object_output(self) -> "FilterObjectsModule.Output":
+            return FilterObjectsModule.Output(
+                FilterObjectsModule.OutputRole.FILTERED_OBJECTS,
+                self.output_object_name,
+            )
+
+        @property
+        def relationship_output(self) -> "FilterObjectsModule.Output":
+            return FilterObjectsModule.Output(
+                FilterObjectsModule.OutputRole.RELATIONSHIPS,
+                parent_child_relationship_artifact_name(
+                    self.input_object_name,
+                    self.output_object_name,
+                ),
+            )
+
+    @dataclass(frozen=True, slots=True)
+    class AdditionalObjectRow(ObjectPair):
+        """One additional object set relabeled using the primary filter mask."""
+
+        retain_outline: bool = False
+        outline_image_name: str | None = None
+
+        @classmethod
+        def from_block(
+            cls,
+            module: "ModuleBlock",
+            block: Sequence["ModuleSetting"],
+        ) -> "FilterObjectsModule.AdditionalObjectRow":
+            return cls(
+                input_object_name=block_setting_value(
+                    block,
+                    FilterObjectsModule.additional_input_setting,
+                ),
+                output_object_name=block_setting_value(
+                    block,
+                    FilterObjectsModule.additional_output_setting,
+                ),
+                retain_outline=parse_cellprofiler_bool(
+                    block_setting_value(
+                        block,
+                        FilterObjectsModule.additional_outline_setting,
+                        default="No",
+                    )
+                ),
+                outline_image_name=normalized_symbol_name(
+                    block_setting_value(block, FilterObjectsModule.outline_image_setting)
+                ),
+            ).validated(module)
+
+        def validated(
+            self,
+            module: "ModuleBlock",
+        ) -> "FilterObjectsModule.AdditionalObjectRow":
+            FilterObjectsModule.SymbolRequirement(
+                self.input_object_name,
+                FilterObjectsModule.additional_input_setting,
+            ).validate(module)
+            FilterObjectsModule.SymbolRequirement(
+                self.output_object_name,
+                FilterObjectsModule.additional_output_setting,
+            ).validate(module)
+            if self.retain_outline and self.outline_image_name is None:
+                raise ValueError(
+                    f"Module {module.name}({module.module_num}) retains an "
+                    "additional FilterObjects outline without an outline image name."
+                )
+            return self
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRule:
+        """One measurement limit rule used by FilterObjects."""
+
+        feature_name: str
+        use_minimum: bool
+        min_value: float | None
+        use_maximum: bool
+        max_value: float | None
+
+        @classmethod
+        def from_block(
+            cls,
+            module: "ModuleBlock",
+            block: Sequence["ModuleSetting"],
+        ) -> "FilterObjectsModule.MeasurementRule":
+            return cls(
+                feature_name=block_setting_value(
+                    block,
+                    FilterObjectsModule.measurement_setting,
+                ),
+                use_minimum=parse_cellprofiler_bool(
+                    block_setting_value(
+                        block,
+                        FilterObjectsModule.use_minimum_setting,
+                        default="No",
+                    )
+                ),
+                min_value=FilterObjectsModule.optional_float(
+                    block_setting_value(block, FilterObjectsModule.minimum_setting)
+                ),
+                use_maximum=parse_cellprofiler_bool(
+                    block_setting_value(
+                        block,
+                        FilterObjectsModule.use_maximum_setting,
+                        default="No",
+                    )
+                ),
+                max_value=FilterObjectsModule.optional_float(
+                    block_setting_value(block, FilterObjectsModule.maximum_setting)
+                ),
+            ).validated(module)
+
+        def validated(
+            self,
+            module: "ModuleBlock",
+        ) -> "FilterObjectsModule.MeasurementRule":
+            if self.feature_name.strip():
+                return self
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) has an empty "
+                "FilterObjects measurement rule."
+            )
+
+    @dataclass(frozen=True, slots=True)
+    class Plan(ObjectPair):
+        """Complete typed FilterObjects artifact and runtime plan."""
+
+        retain_outline: bool
+        outline_image_name: str | None
+        additional_rows: tuple["FilterObjectsModule.AdditionalObjectRow", ...]
+        enclosing_object_name: str | None
+        per_object_assignment: str
+
+        @property
+        def input_object_names(self) -> tuple[str, ...]:
+            ordered_names = (
+                *(pair.input_object_name for pair in self.object_pairs),
+                *(
+                    ()
+                    if self.enclosing_object_name is None
+                    else (self.enclosing_object_name,)
+                ),
+            )
+            return tuple(dict.fromkeys(ordered_names))
+
+        @property
+        def outputs(self) -> tuple["FilterObjectsModule.Output", ...]:
+            outline_outputs = tuple(
+                FilterObjectsModule.Output(
+                    FilterObjectsModule.OutputRole.OUTLINE_IMAGE,
+                    name,
+                )
+                for name in self.outline_image_names
+            )
+            return (
+                FilterObjectsModule.Output(
+                    FilterObjectsModule.OutputRole.MEASUREMENTS,
+                    "",
+                ),
+                *(pair.filtered_object_output for pair in self.object_pairs),
+                *(pair.relationship_output for pair in self.object_pairs),
+                *outline_outputs,
+            )
+
+        @property
+        def object_pairs(self) -> tuple["FilterObjectsModule.ObjectPair", ...]:
+            return (self, *self.additional_rows)
+
+        @property
+        def outline_image_names(self) -> tuple[str, ...]:
+            names: list[str] = []
+            if self.retain_outline:
+                if self.outline_image_name is None:
+                    raise RuntimeError("FilterObjects retained outline has no name.")
+                names.append(self.outline_image_name)
+            names.extend(
+                row.outline_image_name
+                for row in self.additional_rows
+                if row.retain_outline and row.outline_image_name is not None
+            )
+            return tuple(names)
+
+        @property
+        def outline_object_indices(self) -> tuple[int, ...]:
+            indices: list[int] = []
+            if self.retain_outline:
+                indices.append(0)
+            indices.extend(
+                index
+                for index, row in enumerate(self.additional_rows, start=1)
+                if row.retain_outline
+            )
+            return tuple(indices)
+
+    @classmethod
+    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+        """Return absorbed-function kwargs for a typed FilterObjects plan."""
+        plan = cls.plan(module)
+        measurement_rules = cls.measurement_rules(module)
+        return {
+            "mode": cls.mode_value(module),
+            "filter_method": optional_setting_value(module, cls.method_setting)
+            or "Limits",
+            "measurement_features": tuple(
+                rule.feature_name for rule in measurement_rules
+            ),
+            "measurement_min_values": tuple(
+                rule.min_value for rule in measurement_rules
+            ),
+            "measurement_max_values": tuple(
+                rule.max_value for rule in measurement_rules
+            ),
+            "measurement_use_minimum": tuple(
+                rule.use_minimum for rule in measurement_rules
+            ),
+            "measurement_use_maximum": tuple(
+                rule.use_maximum for rule in measurement_rules
+            ),
+            "additional_object_count": len(plan.additional_rows),
+            "outline_object_indices": plan.outline_object_indices,
+            "enclosing_object_name": plan.enclosing_object_name,
+            "per_object_assignment": plan.per_object_assignment,
+        }
+
+    @classmethod
+    def plan(cls, module: "ModuleBlock") -> "FilterObjectsModule.Plan":
+        """Return the typed FilterObjects compile/runtime plan."""
+        plan = cls.Plan(
+            input_object_name=required_setting_value(module, cls.input_setting),
+            output_object_name=required_setting_value(module, cls.output_setting),
+            retain_outline=parse_cellprofiler_bool(
+                optional_setting_value(module, cls.main_outline_setting) or "No"
+            ),
+            outline_image_name=cls.main_outline_image_name(module),
+            additional_rows=cls.additional_rows(module),
+            enclosing_object_name=normalized_symbol_name(
+                optional_setting_value(module, cls.enclosing_object_setting) or ""
+            ),
+            per_object_assignment=(
+                optional_setting_value(module, cls.per_object_assignment_setting)
+                or "Both parents"
+            ),
+        )
+        cls.SymbolRequirement(plan.input_object_name, cls.input_setting).validate(
+            module
+        )
+        cls.SymbolRequirement(plan.output_object_name, cls.output_setting).validate(
+            module
+        )
+        if plan.retain_outline and plan.outline_image_name is None:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) retains "
+                "filtered-object outlines without an outline image name."
+            )
+        return plan
+
+    @classmethod
+    def additional_rows(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["FilterObjectsModule.AdditionalObjectRow", ...]:
+        """Return ordered additional relabel rows from parsed settings."""
+        if module.iter_settings():
+            blocks = repeating_setting_blocks(
+                module.iter_settings(),
+                start_name=cls.additional_input_setting,
+            )
+            return tuple(
+                cls.AdditionalObjectRow.from_block(module, block)
+                for block in blocks
+            )
+        input_names = setting_values(module, cls.additional_input_setting)
+        output_names = setting_values(module, cls.additional_output_setting)
+        outline_flags = setting_values(module, cls.additional_outline_setting)
+        outline_names = setting_values(module, cls.outline_image_setting)[1:]
+        row_count = max(len(input_names), len(output_names), len(outline_flags))
+        return tuple(
+            cls.AdditionalObjectRow(
+                input_object_name=RepeatedSettingSequence(input_names).at(index),
+                output_object_name=RepeatedSettingSequence(output_names).at(index),
+                retain_outline=parse_cellprofiler_bool(
+                    RepeatedSettingSequence(outline_flags, default="No").at(index)
+                ),
+                outline_image_name=normalized_symbol_name(
+                    RepeatedSettingSequence(outline_names).at(index)
+                ),
+            ).validated(module)
+            for index in range(row_count)
+        )
+
+    @classmethod
+    def measurement_rules(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["FilterObjectsModule.MeasurementRule", ...]:
+        """Return ordered measurement limit rules from parsed settings."""
+        if module.iter_settings():
+            blocks = repeating_setting_blocks(
+                module.iter_settings(),
+                start_name=cls.measurement_setting,
+            )
+            return tuple(
+                cls.MeasurementRule.from_block(module, block)
+                for block in blocks
+            )
+        feature_names = setting_values(module, cls.measurement_setting)
+        use_minimum = setting_values(module, cls.use_minimum_setting)
+        min_values = setting_values(module, cls.minimum_setting)
+        use_maximum = setting_values(module, cls.use_maximum_setting)
+        max_values = setting_values(module, cls.maximum_setting)
+        return tuple(
+            cls.MeasurementRule(
+                feature_name=RepeatedSettingSequence(feature_names).at(index),
+                use_minimum=parse_cellprofiler_bool(
+                    RepeatedSettingSequence(use_minimum, default="No").at(index)
+                ),
+                min_value=cls.optional_float(
+                    RepeatedSettingSequence(min_values).at(index)
+                ),
+                use_maximum=parse_cellprofiler_bool(
+                    RepeatedSettingSequence(use_maximum, default="No").at(index)
+                ),
+                max_value=cls.optional_float(
+                    RepeatedSettingSequence(max_values).at(index)
+                ),
+            ).validated(module)
+            for index in range(len(feature_names))
+        )
+
+    @classmethod
+    def child_count_object_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
+        """Return child object names needed by Children_<object>_Count rules."""
+        return CellProfilerMeasurementFeature.child_count_object_names(
+            tuple(rule.feature_name for rule in cls.measurement_rules(module))
+        )
+
+
+    @classmethod
+    def main_outline_image_name(cls, module: "ModuleBlock") -> str | None:
+        names = setting_values(module, cls.outline_image_setting)
+        if not names:
+            return None
+        return normalized_symbol_name(names[0])
+
+    @classmethod
+    def mode_value(cls, module: "ModuleBlock") -> str:
+        value = optional_setting_value(module, cls.mode_setting)
+        if value is None:
+            return "Measurements"
+        if "border" in value.strip().lower():
+            return "Border"
+        return value
+
+    @staticmethod
+    def optional_float(raw_value: str | None) -> float | None:
+        if raw_value is None:
+            return None
+        stripped = raw_value.strip()
+        if not stripped:
+            return None
+        return float(stripped)
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+
+        plan = cls.plan(module)
+        inputs = [
+            builder.require_artifact(ArtifactSpec(name, ArtifactKind.OBJECT_LABELS), module)
+            for name in plan.input_object_names
+        ]
+        if plan.enclosing_object_name is not None:
+            relationship = builder.optional_artifact(
+                ArtifactSpec(
+                    parent_child_relationship_artifact_name(plan.enclosing_object_name, plan.input_object_name),
+                    ArtifactKind.RELATIONSHIPS,
+                )
+            )
+            if relationship is not None:
+                inputs.append(relationship)
+        for child_object_name in cls.child_count_object_names(module):
+            relationship = builder.optional_artifact(
+                ArtifactSpec(
+                    parent_child_relationship_artifact_name(plan.input_object_name, child_object_name),
+                    ArtifactKind.RELATIONSHIPS,
+                )
+            )
+            if relationship is not None:
+                inputs.append(relationship)
+        outputs = []
+        for output in plan.outputs:
+            if output.role is cls.OutputRole.MEASUREMENTS:
+                spec = ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS)
+            elif output.role is cls.OutputRole.FILTERED_OBJECTS:
+                spec = ArtifactSpec(output.name, ArtifactKind.OBJECT_LABELS)
+            elif output.role is cls.OutputRole.OUTLINE_IMAGE:
+                spec = ArtifactSpec(output.name, ArtifactKind.IMAGE)
+            elif output.role is cls.OutputRole.RELATIONSHIPS:
+                spec = ArtifactSpec(output.name, ArtifactKind.RELATIONSHIPS)
+            else:
+                raise ValueError(f"Unsupported FilterObjects output role {output.role.value!r}.")
+            outputs.append(builder.declare_artifact(spec, module))
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
 
 
 class FilterMethod(Enum):

@@ -465,6 +465,29 @@ def test_numba_propagation_result_matches_native_reference_values():
     np.testing.assert_allclose(accelerated.distances, expected_distances)
 
 
+def test_numba_zero_image_propagation_matches_uniform_image_path():
+    labels = np.zeros((9, 9), dtype=np.int32)
+    labels[1, 1] = 2
+    labels[1, 7] = 1
+    labels[7, 4] = 3
+    mask = np.ones(labels.shape, dtype=bool)
+    mask[4, 1:7] = False
+    backend = secondary_propagation_backend(
+        backend_provider=CellProfilerBackendProvider.NUMBA,
+    )
+
+    reference = backend.propagate_result(
+        np.zeros(labels.shape, dtype=np.float64),
+        labels,
+        mask,
+        1,
+    )
+    accelerated = backend.propagate_zero_image_result(labels, mask, 1)
+
+    np.testing.assert_array_equal(accelerated.labels, reference.labels)
+    np.testing.assert_allclose(accelerated.distances, reference.distances)
+
+
 def test_numba_self_centered_radial_distribution_matches_native_reference():
     image = np.arange(25, dtype=np.float32).reshape((5, 5))
     labels = np.array(

@@ -19,59 +19,25 @@ from openhcs.core.pipeline.function_contracts import (
     object_label_measurement_execution_from_callable,
 )
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
+from openhcs.core.runtime_semantics import RuntimePlaneAxis
 from openhcs.core.runtime_values import (
     ObjectLabelDenseDataStrategy,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelValue,
     SparseIJVLabelRows,
 )
-from openhcs.interop.cellprofiler.runtime.module_names import (
-    CELLPROFILER_MEASURE_COLOCALIZATION_MODULE,
-    CELLPROFILER_MEASURE_GRANULARITY_MODULE,
-    CELLPROFILER_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE,
-    CELLPROFILER_MEASURE_OBJECT_INTENSITY_MODULE,
-    CELLPROFILER_MEASURE_OBJECT_SIZE_SHAPE_MODULE,
-    CELLPROFILER_MEASURE_TEXTURE_MODULE,
-)
 from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerFunction,
     CellProfilerRuntimeValue,
 )
 from openhcs.interop.cellprofiler.runtime.policy_registry import (
-    CellProfilerModulePolicyAutoRegisterMeta,
-    CellProfilerModulePolicyLookupMixin,
-    CellProfilerModulePolicyRegistryKey,
     EnumStrategyLabelRegistryMixin,
 )
-from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 
-_MEASURE_OBJECT_SIZE_SHAPE_MODULE = CELLPROFILER_MEASURE_OBJECT_SIZE_SHAPE_MODULE
-_MEASURE_OBJECT_INTENSITY_MODULE = CELLPROFILER_MEASURE_OBJECT_INTENSITY_MODULE
-_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE = (
-    CELLPROFILER_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE
-)
-_MEASURE_TEXTURE_MODULE = CELLPROFILER_MEASURE_TEXTURE_MODULE
-_MEASURE_COLOCALIZATION_MODULE = CELLPROFILER_MEASURE_COLOCALIZATION_MODULE
-_MEASURE_GRANULARITY_MODULE = CELLPROFILER_MEASURE_GRANULARITY_MODULE
 
 
 class CellProfilerPerObjectMeasurementPolicy:
     """Predicate for modules that need one absorbed call per object set."""
-
-    module_names: ClassVar[tuple[str, ...]] = (
-        _MEASURE_OBJECT_SIZE_SHAPE_MODULE,
-        _MEASURE_OBJECT_INTENSITY_MODULE,
-        _MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE,
-        _MEASURE_TEXTURE_MODULE,
-        _MEASURE_COLOCALIZATION_MODULE,
-        _MEASURE_GRANULARITY_MODULE,
-    )
-    # Per-object measurements usually measure each source image independently.
-    # Channel-pair functions consume a composed image payload and declare that
-    # exception here.
-    composed_image_modules: ClassVar[tuple[str, ...]] = (
-        _MEASURE_COLOCALIZATION_MODULE,
-    )
 
     @classmethod
     def matches(
@@ -79,13 +45,29 @@ class CellProfilerPerObjectMeasurementPolicy:
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
     ) -> bool:
-        return canonical_module_name(module_name) in cls.module_names and bool(
-            object_inputs
+        from openhcs.processing.backends.cellprofiler.module_classes import (
+            CellProfilerModule,
+            PerObjectMeasurementExecutionModule,
+        )
+
+        module_type = CellProfilerModule.for_module(module_name)
+        return bool(object_inputs) and module_type is not None and issubclass(
+            module_type,
+            PerObjectMeasurementExecutionModule,
         )
 
     @classmethod
     def measures_images_independently(cls, module_name: str) -> bool:
-        return canonical_module_name(module_name) not in cls.composed_image_modules
+        from openhcs.processing.backends.cellprofiler.module_classes import (
+            CellProfilerModule,
+            ComposedImageObjectMeasurementExecutionModule,
+        )
+
+        module_type = CellProfilerModule.for_module(module_name)
+        return module_type is None or not issubclass(
+            module_type,
+            ComposedImageObjectMeasurementExecutionModule,
+        )
 
 
 class MeasurementLabelExecutionModeStrategy(
@@ -171,6 +153,8 @@ class ObjectLabelValueMeasurementLabelExecutionModeStrategy(
             raise TypeError(
                 "Object-label execution strategy requires an object-label runtime value."
             )
+        if labels.plane_axis is RuntimePlaneAxis.SOURCE_BINDING:
+            return ImagePayloadExecutionMode.NATURAL
         if ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels) is not None:
             return ImagePayloadExecutionMode.NATURAL
         return MeasurementLabelExecutionModeStrategy.resolve(
@@ -204,11 +188,17 @@ class SparseIJVMeasurementLabelExecutionModeStrategy(
 
 
 class CellProfilerObjectMeasurementExecutionDomainPolicy(
-    CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=CellProfilerModulePolicyAutoRegisterMeta,
 ):
     """Choose CellProfiler object-measurement execution domain by module semantics."""
+
+    @classmethod
+    def for_module(
+        cls,
+        module_name: str,
+    ) -> "CellProfilerObjectMeasurementExecutionDomainPolicy":
+        del module_name
+        return DefaultObjectMeasurementExecutionDomainPolicy()
 
     @abstractmethod
     def execution_mode(
@@ -226,8 +216,6 @@ class DefaultObjectMeasurementExecutionDomainPolicy(
     CellProfilerObjectMeasurementExecutionDomainPolicy
 ):
     """Apply the function/domain object-measurement contract uniformly."""
-
-    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def execution_mode(
         self,

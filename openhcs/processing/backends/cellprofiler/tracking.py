@@ -2,6 +2,215 @@
 
 from __future__ import annotations
 
+from openhcs.constants.constants import VariableComponents
+from openhcs.core.measurement_row_materialization import (
+    measurement_row_has_object_identity,
+)
+from openhcs.core.runtime_semantics import MeasurementScope, measurement_row_mapping
+from openhcs.core.runtime_values import image_payload_metadata
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeBoundParameterName,
+)
+from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_int,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ModuleSettingsSourceModule,
+    ObjectMeasurementRowsModule,
+    RelationshipDebugViewModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
+    CellProfilerObjectMeasurementRowPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    FieldsFromRowsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    TrackingMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+
+class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
+    """TrackObjects emits object rows and image-level tracking counts together."""
+
+    explicit_row_ownership_required = True
+
+    def row_is_object_scoped(self, row: "CellProfilerRuntimeValue") -> bool:
+        row_mapping = measurement_row_mapping(row)
+        return measurement_row_has_object_identity(row_mapping)
+
+    def image_row_source_image_name(
+        self,
+        source_image_name: str | None,
+    ) -> str | None:
+        del source_image_name
+        return MeasurementScope.IMAGE.value
+
+
+class TrackObjectsModule(
+    TrackingMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    FieldsFromRowsMeasurementRecordMixin,
+    RelationshipDebugViewModule,
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+    ObjectMeasurementRowsModule,
+    TrackObjectsObjectMeasurementRowPolicy,
+    ArtifactContractModule,
+):
+    module_name = 'TrackObjects'
+    function_name = 'track_objects'
+    validated = True
+    contract = 'pure_3d'
+    confidence = 1.0
+
+    ignored_settings = (
+        "Average cell diameter in pixels",
+        "Cost of cell to empty matching",
+        "Filter objects by lifetime?",
+        "Filter using a maximum lifetime?",
+        "Filter using a minimum lifetime?",
+        "Gap closing cost",
+        "Maximum gap displacement in pixel units",
+        "Maximum lifetime",
+        "Maximum merge score",
+        "Maximum mitosis distance in pixel units",
+        "Maximum split score",
+        "Maximum temporal gap in frames",
+        "Merge alternative cost",
+        "Minimum lifetime",
+        "Mitosis alternative cost",
+        "Number of standard deviations for search radius",
+        "Run the second phase of the LAP algorithm?",
+        "Save color-coded image?",
+        "Name the output image",
+        "Search radius limit, in pixel units",
+        "Select display option",
+        "Select object measurement to use for tracking",
+        "Select the movement model",
+        "Split alternative cost",
+        "Use advanced configuration parameters",
+        "Weight of area difference in function matching cost",
+    )
+    required_variable_components = (VariableComponents.TIMEPOINT,)
+    tracked_objects_setting = "Select the objects to track"
+    image_number_start_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("image_number_start")
+    )
+
+    def invocation_runtime_kwargs(
+        self,
+        *,
+        module_name: str,
+        plan: "CellProfilerModuleRuntimePlan",
+        image_request: "CellProfilerImageRequest",
+        adapter: "CellProfilerRuntimeAdapter",
+        current_image: "CellProfilerRuntimeValue",
+        runtime_kwargs: "CellProfilerKwargs",
+        object_input_source_image_name: Callable[[], str | None],
+    ) -> "CellProfilerKwargs":
+        """Bind the first CellProfiler image number for tracked source paths."""
+        del module_name, plan
+        source_paths = image_payload_metadata(current_image).source_image_paths
+        if not source_paths:
+            source_paths = adapter.cellprofiler_source_paths_for_image_name(
+                image_request.source_image_name or object_input_source_image_name()
+            )
+        return {
+            **runtime_kwargs,
+            type(self).image_number_start_kwarg: (
+                adapter.cellprofiler_image_number_start_for_source_paths(source_paths)
+            ),
+        }
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        tracked_objects = builder.require_artifact(
+            ArtifactSpec(
+                required_setting_value(module, cls.tracked_objects_setting),
+                ArtifactKind.OBJECT_LABELS,
+            ),
+            module,
+        )
+        outputs = [
+            builder.declare_artifact(
+                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+                module,
+            )
+        ]
+        return assembler.assemble_contract(module, builder, inputs=[tracked_objects], outputs=outputs)
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: "SettingsBinder",
+        param_mapping: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str] = frozenset(),
+    ) -> "BoundModuleSettings":
+        generic = cls._bind_generic_settings(
+            module,
+            binder=binder,
+            param_mapping=param_mapping,
+            use_declaration=False,
+        )
+        method = module.get_setting("Choose a tracking method", "Overlap").strip()
+        tracking_method = normalize_cellprofiler_setting_name(method)
+        if tracking_method not in {"overlap", "distance"}:
+            raise NotImplementedError(
+                "TrackObjects tracking method is not supported by the converter: "
+                f"{method!r}"
+            )
+        object_name = module.get_setting(cls.tracked_objects_setting, "Objects").strip()
+        if not object_name:
+            raise ValueError("TrackObjects requires a non-empty tracked object name.")
+        pixel_radius = parse_cellprofiler_int(
+            module.get_setting("Maximum pixel distance to consider matches", "50")
+        )
+        unmapped_kwargs = dict(generic.unmapped_kwargs)
+        for setting_name in (
+            "Choose a tracking method",
+            "Select the objects to track",
+            "Maximum pixel distance to consider matches",
+        ):
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=BoundModuleSettings(
+                {
+                    **dict(generic.kwargs),
+                    "object_name": object_name,
+                    "tracking_method": tracking_method,
+                    "pixel_radius": pixel_radius,
+                },
+                unmapped_kwargs,
+            ),
+            ignored_unmapped_settings=ignored_unmapped_settings,
+        )
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,6 +241,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendAuthority,
 )
 from openhcs.processing.materialization import csv_materializer
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
 
 
 class TrackingMethod(Enum):

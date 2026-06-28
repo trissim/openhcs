@@ -197,6 +197,79 @@ class ObjectIntensityArrays(ObjectIntensityFeatureValues[np.ndarray]):
             quantile_result=tuple(column[image_index] for column in quantile_result),
         )
 
+
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityForegroundIndex:
+    """Prepared foreground coordinates for sparse 3-D object-intensity kernels."""
+
+    shape: tuple[int, int, int]
+    z_indices: np.ndarray
+    y_indices: np.ndarray
+    x_indices: np.ndarray
+    object_indexes: np.ndarray
+    edge_flags: np.ndarray
+
+    @classmethod
+    def from_3d_labels(
+        cls,
+        labels: np.ndarray,
+        label_to_index: np.ndarray,
+    ) -> "ObjectIntensityForegroundIndex":
+        label_array = np.ascontiguousarray(labels, dtype=np.int32)
+        if label_array.ndim != 3:
+            raise ValueError(
+                "ObjectIntensityForegroundIndex requires 3-D labels, got "
+                f"shape {label_array.shape!r}."
+            )
+        z_indices, y_indices, x_indices = (
+            np.ascontiguousarray(axis, dtype=np.int64)
+            for axis in np.nonzero(label_array > 0)
+        )
+        object_indexes = np.ascontiguousarray(
+            label_to_index[label_array[z_indices, y_indices, x_indices]],
+            dtype=np.int64,
+        )
+        valid = object_indexes >= 0
+        if not bool(np.all(valid)):
+            z_indices = np.ascontiguousarray(z_indices[valid], dtype=np.int64)
+            y_indices = np.ascontiguousarray(y_indices[valid], dtype=np.int64)
+            x_indices = np.ascontiguousarray(x_indices[valid], dtype=np.int64)
+            object_indexes = np.ascontiguousarray(object_indexes[valid], dtype=np.int64)
+        edge_flags = _object_intensity_foreground_edges_3d_numba(
+            label_array,
+            z_indices,
+            y_indices,
+            x_indices,
+        )
+        return cls(
+            shape=(
+                int(label_array.shape[0]),
+                int(label_array.shape[1]),
+                int(label_array.shape[2]),
+            ),
+            z_indices=z_indices,
+            y_indices=y_indices,
+            x_indices=x_indices,
+            object_indexes=object_indexes,
+            edge_flags=np.ascontiguousarray(edge_flags, dtype=np.bool_),
+        )
+
+    @property
+    def voxel_count(self) -> int:
+        """Return the number of foreground voxels represented by this index."""
+        return int(self.object_indexes.size)
+
+    def matches_shape(self, shape: tuple[int, int, int]) -> bool:
+        """Return whether this index was prepared for the requested image shape."""
+        return self.shape == shape
+
+    def foreground_fraction(self) -> float:
+        """Return foreground occupancy relative to the full 3-D volume."""
+        volume = int(self.shape[0]) * int(self.shape[1]) * int(self.shape[2])
+        if volume <= 0:
+            return 0.0
+        return float(self.voxel_count) / float(volume)
+
 def _object_intensity_quantiles(
     image: np.ndarray,
     labels: np.ndarray,
@@ -1119,3 +1192,272 @@ def _is_inner_boundary_voxel(
     if x_index + 1 < x_size and labels[z_index, y_index, x_index + 1] != label:
         return True
     return False
+
+
+@njit(cache=True)
+def _object_intensity_foreground_edges_3d_numba(
+    labels: np.ndarray,
+    z_indices: np.ndarray,
+    y_indices: np.ndarray,
+    x_indices: np.ndarray,
+) -> np.ndarray:
+    edge_flags = np.zeros(z_indices.size, dtype=np.bool_)
+    for index in range(z_indices.size):
+        z_index = int(z_indices[index])
+        y_index = int(y_indices[index])
+        x_index = int(x_indices[index])
+        label = int(labels[z_index, y_index, x_index])
+        edge_flags[index] = _is_inner_boundary_voxel(
+            labels,
+            z_index,
+            y_index,
+            x_index,
+            label,
+        )
+    return edge_flags
+
+
+@njit(cache=True)
+def _object_intensity_scan_3d_sparse_batch_numba(
+    images: np.ndarray,
+    z_indices: np.ndarray,
+    y_indices: np.ndarray,
+    x_indices: np.ndarray,
+    object_indexes: np.ndarray,
+    edge_flags: np.ndarray,
+    object_count: int,
+) -> ObjectIntensity3DScanResult:
+    image_count = images.shape[0]
+    counts = np.zeros((image_count, object_count), dtype=np.float64)
+    sums = np.zeros((image_count, object_count), dtype=np.float64)
+    sumsq = np.zeros((image_count, object_count), dtype=np.float64)
+    min_values = np.full((image_count, object_count), np.inf, dtype=np.float64)
+    max_values = np.full((image_count, object_count), -np.inf, dtype=np.float64)
+    sum_x = np.zeros((image_count, object_count), dtype=np.float64)
+    sum_y = np.zeros((image_count, object_count), dtype=np.float64)
+    sum_z = np.zeros((image_count, object_count), dtype=np.float64)
+    weighted_x = np.zeros((image_count, object_count), dtype=np.float64)
+    weighted_y = np.zeros((image_count, object_count), dtype=np.float64)
+    weighted_z = np.zeros((image_count, object_count), dtype=np.float64)
+    max_x = np.zeros((image_count, object_count), dtype=np.float64)
+    max_y = np.zeros((image_count, object_count), dtype=np.float64)
+    max_z = np.zeros((image_count, object_count), dtype=np.float64)
+
+    edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_sums = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_sumsq = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_min_values = np.full(
+        (image_count, object_count),
+        np.inf,
+        dtype=np.float64,
+    )
+    edge_max_values = np.full(
+        (image_count, object_count),
+        -np.inf,
+        dtype=np.float64,
+    )
+
+    for foreground_index in range(object_indexes.size):
+        object_index = int(object_indexes[foreground_index])
+        z_index = int(z_indices[foreground_index])
+        y_index = int(y_indices[foreground_index])
+        x_index = int(x_indices[foreground_index])
+        is_edge = edge_flags[foreground_index]
+        for image_index in range(image_count):
+            value = images[image_index, z_index, y_index, x_index]
+            if not np.isfinite(value):
+                continue
+
+            counts[image_index, object_index] += 1.0
+            sums[image_index, object_index] += value
+            sumsq[image_index, object_index] += value * value
+            sum_x[image_index, object_index] += x_index
+            sum_y[image_index, object_index] += y_index
+            sum_z[image_index, object_index] += z_index
+            weighted_x[image_index, object_index] += x_index * value
+            weighted_y[image_index, object_index] += y_index * value
+            weighted_z[image_index, object_index] += z_index * value
+            if value < min_values[image_index, object_index]:
+                min_values[image_index, object_index] = value
+            if value >= max_values[image_index, object_index]:
+                max_values[image_index, object_index] = value
+                max_x[image_index, object_index] = x_index
+                max_y[image_index, object_index] = y_index
+                max_z[image_index, object_index] = z_index
+
+            if is_edge:
+                edge_counts[image_index, object_index] += 1.0
+                edge_sums[image_index, object_index] += value
+                edge_sumsq[image_index, object_index] += value * value
+                if value < edge_min_values[image_index, object_index]:
+                    edge_min_values[image_index, object_index] = value
+                if value > edge_max_values[image_index, object_index]:
+                    edge_max_values[image_index, object_index] = value
+
+    means = np.zeros((image_count, object_count), dtype=np.float64)
+    stds = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_means = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_stds = np.zeros((image_count, object_count), dtype=np.float64)
+    mass_displacement = np.zeros((image_count, object_count), dtype=np.float64)
+    center_mass_x = np.zeros((image_count, object_count), dtype=np.float64)
+    center_mass_y = np.zeros((image_count, object_count), dtype=np.float64)
+    center_mass_z = np.zeros((image_count, object_count), dtype=np.float64)
+    for image_index in range(image_count):
+        for object_index in range(object_count):
+            if counts[image_index, object_index] > 0.0:
+                means[image_index, object_index] = (
+                    sums[image_index, object_index]
+                    / counts[image_index, object_index]
+                )
+                variance = (
+                    sumsq[image_index, object_index]
+                    / counts[image_index, object_index]
+                    - means[image_index, object_index]
+                    * means[image_index, object_index]
+                )
+                if variance < 0.0 and variance > -1e-15:
+                    variance = 0.0
+                stds[image_index, object_index] = np.sqrt(variance)
+                center_x = sum_x[image_index, object_index] / counts[
+                    image_index,
+                    object_index,
+                ]
+                center_y = sum_y[image_index, object_index] / counts[
+                    image_index,
+                    object_index,
+                ]
+                center_z = sum_z[image_index, object_index] / counts[
+                    image_index,
+                    object_index,
+                ]
+                if sums[image_index, object_index] != 0.0:
+                    center_mass_x[image_index, object_index] = (
+                        weighted_x[image_index, object_index]
+                        / sums[image_index, object_index]
+                    )
+                    center_mass_y[image_index, object_index] = (
+                        weighted_y[image_index, object_index]
+                        / sums[image_index, object_index]
+                    )
+                    center_mass_z[image_index, object_index] = (
+                        weighted_z[image_index, object_index]
+                        / sums[image_index, object_index]
+                    )
+                diff_x = center_x - center_mass_x[image_index, object_index]
+                diff_y = center_y - center_mass_y[image_index, object_index]
+                diff_z = center_z - center_mass_z[image_index, object_index]
+                mass_displacement[image_index, object_index] = np.sqrt(
+                    diff_x * diff_x + diff_y * diff_y + diff_z * diff_z
+                )
+            else:
+                min_values[image_index, object_index] = 0.0
+                max_values[image_index, object_index] = 0.0
+
+            if edge_counts[image_index, object_index] > 0.0:
+                edge_means[image_index, object_index] = (
+                    edge_sums[image_index, object_index]
+                    / edge_counts[image_index, object_index]
+                )
+                edge_variance = (
+                    edge_sumsq[image_index, object_index]
+                    / edge_counts[image_index, object_index]
+                    - edge_means[image_index, object_index]
+                    * edge_means[image_index, object_index]
+                )
+                if edge_variance < 0.0 and edge_variance > -1e-15:
+                    edge_variance = 0.0
+                edge_stds[image_index, object_index] = np.sqrt(edge_variance)
+            else:
+                edge_min_values[image_index, object_index] = 0.0
+                edge_max_values[image_index, object_index] = 0.0
+
+    return (
+        counts,
+        sums,
+        means,
+        stds,
+        min_values,
+        max_values,
+        edge_sums,
+        edge_means,
+        edge_stds,
+        edge_min_values,
+        edge_max_values,
+        mass_displacement,
+        center_mass_x,
+        center_mass_y,
+        center_mass_z,
+        max_x,
+        max_y,
+        max_z,
+    )
+
+
+@njit(cache=True)
+def _object_intensity_quantiles_3d_sparse_batch_numba(
+    images: np.ndarray,
+    z_indices: np.ndarray,
+    y_indices: np.ndarray,
+    x_indices: np.ndarray,
+    object_indexes: np.ndarray,
+    counts: np.ndarray,
+    mad_fraction: float,
+) -> ObjectIntensity3DQuantileResult:
+    image_count = images.shape[0]
+    object_count = counts.shape[1]
+    lower = np.zeros((image_count, object_count), dtype=np.float64)
+    median = np.zeros((image_count, object_count), dtype=np.float64)
+    upper = np.zeros((image_count, object_count), dtype=np.float64)
+    mad = np.zeros((image_count, object_count), dtype=np.float64)
+
+    total_count = 0
+    for image_index in range(image_count):
+        for object_index in range(object_count):
+            total_count += int(counts[image_index, object_index])
+    if total_count <= 0:
+        return lower, median, upper, mad
+
+    offsets = np.empty((image_count, object_count + 1), dtype=np.int64)
+    cursor = 0
+    for image_index in range(image_count):
+        offsets[image_index, 0] = cursor
+        for object_index in range(object_count):
+            cursor += int(counts[image_index, object_index])
+            offsets[image_index, object_index + 1] = cursor
+
+    write_offsets = offsets[:, :-1].copy()
+    values = np.empty(total_count, dtype=np.float64)
+    for foreground_index in range(object_indexes.size):
+        object_index = int(object_indexes[foreground_index])
+        z_index = int(z_indices[foreground_index])
+        y_index = int(y_indices[foreground_index])
+        x_index = int(x_indices[foreground_index])
+        for image_index in range(image_count):
+            value = float(images[image_index, z_index, y_index, x_index])
+            if not np.isfinite(value):
+                continue
+            offset = write_offsets[image_index, object_index]
+            values[offset] = value
+            write_offsets[image_index, object_index] = offset + 1
+
+    for image_index in range(image_count):
+        for object_index in range(object_count):
+            start = int(offsets[image_index, object_index])
+            count = int(counts[image_index, object_index])
+            if count <= 0:
+                continue
+            group = values[start:start + count]
+            (
+                lower[image_index, object_index],
+                median[image_index, object_index],
+                upper[image_index, object_index],
+            ) = _quartiles_from_dense_group_partition(group)
+            mad[image_index, object_index] = (
+                _median_absolute_deviation_from_dense_group_partition(
+                    group,
+                    median[image_index, object_index],
+                    mad_fraction,
+                )
+            )
+
+    return lower, median, upper, mad

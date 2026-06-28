@@ -45,8 +45,8 @@ def test_cellprofiler_measurement_scope_has_product_namespace_owner():
         is measurement_scope.CellProfilerMeasurementTargetScope
     )
     assert (
-        benchmark_scope.CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG
-        == measurement_scope.CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG
+        benchmark_scope.CellProfilerMeasurementTargetScope.BOTH
+        is measurement_scope.CellProfilerMeasurementTargetScope.BOTH
     )
 
 
@@ -71,8 +71,8 @@ def test_cellprofiler_module_roles_have_product_namespace_owner():
         module_roles.cellprofiler_module_role
     )
     assert (
-        cellprofiler.INFRASTRUCTURE_MODULE_NAMES
-        is module_roles.INFRASTRUCTURE_MODULE_NAMES
+        cellprofiler.cellprofiler_infrastructure_import_note
+        is module_roles.cellprofiler_infrastructure_import_note
     )
 
 

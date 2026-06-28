@@ -2,6 +2,654 @@
 
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpecCollection
+from openhcs.core.measurement_row_materialization import (
+    MEASUREMENT_OBJECT_NAME_FIELD,
+)
+from openhcs.core.measurement_feature_queries import MeasurementFeatureQuery
+from openhcs.core.runtime_semantics import measurement_row_mapping
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+)
+from openhcs.interop.cellprofiler.measurement_lookup import count_feature_object_name
+from openhcs.interop.cellprofiler.runtime.binding_authorities import (
+    CellProfilerStringKwargAuthority,
+)
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeBoundParameterName,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    ObjectLabelCountAuthority,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    CellProfilerObjectInputPolicyMixin,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    CellProfilerMeasurementVector,
+    CellProfilerObjectMeasurementVectorBatchBinding,
+    CellProfilerObjectMeasurementVectorBinding,
+    MeasurementImageOperandVectorResolution,
+    ObjectInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerKwargDict,
+    CellProfilerRuntimeValue,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_profile import (
+    CellProfilerRuntimeProfileLogger,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingsBinder,
+    coerce_cellprofiler_enum,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    OptionalSettingSymbol,
+    SettingNameFamily,
+)
+from openhcs.core.registry_strategies import enum_member_with_payload
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    MeasurementDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    NoSourceMeasurementRecordMixin,
+    TableMeasurementRecordRowsMixin,
+)
+
+
+class CalculateMathInputPolicy(CellProfilerObjectInputPolicyMixin):
+    """Bind CalculateMath operands from runtime measurement/object state."""
+
+    binds_without_declared_inputs = True
+    supported_non_object_input_kinds = frozenset({ArtifactKind.MEASUREMENTS})
+    operand1_value_kwarg = RuntimeBoundParameterName("operand1_value")
+    operand2_value_kwarg = RuntimeBoundParameterName("operand2_value")
+
+    def bind(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        started_at = time.perf_counter()
+        operand_bindings = self.object_operand_bindings(request)
+        if operand_bindings is not None:
+            vectors = CellProfilerObjectMeasurementVectorBatchBinding(
+                operand_bindings
+            ).vectors()
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "calculate_math_bind_total",
+                time.perf_counter() - started_at,
+            )
+            return self.operand_value_kwargs(
+                vectors[0].calculate_math_operand_value,
+                vectors[1].calculate_math_operand_value,
+            )
+
+        operand1_started_at = time.perf_counter()
+        operand1_value = self.operand_value(
+            request,
+            feature_kwarg="operand1_feature",
+            object_kwarg="operand1_object_name",
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "calculate_math_operand_bind",
+            time.perf_counter() - operand1_started_at,
+            operand="1",
+        )
+        operand2_started_at = time.perf_counter()
+        operand2_value = self.operand_value(
+            request,
+            feature_kwarg="operand2_feature",
+            object_kwarg="operand2_object_name",
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "calculate_math_operand_bind",
+            time.perf_counter() - operand2_started_at,
+            operand="2",
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "calculate_math_bind_total",
+            time.perf_counter() - started_at,
+        )
+        return self.operand_value_kwargs(operand1_value, operand2_value)
+
+    def operand_value_kwargs(
+        self,
+        operand1_value: CellProfilerRuntimeValue,
+        operand2_value: CellProfilerRuntimeValue,
+    ) -> CellProfilerKwargDict:
+        """Return CalculateMath operand kwargs."""
+        return {
+            self.operand1_value_kwarg: operand1_value,
+            self.operand2_value_kwarg: operand2_value,
+        }
+
+    def object_operand_bindings(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> tuple[CellProfilerObjectMeasurementVectorBinding, ...] | None:
+        bindings: list[CellProfilerObjectMeasurementVectorBinding] = []
+        for feature_kwarg, object_kwarg in (
+            ("operand1_feature", "operand1_object_name"),
+            ("operand2_feature", "operand2_object_name"),
+        ):
+            feature_name = CellProfilerStringKwargAuthority.required(
+                request.kwargs,
+                feature_kwarg,
+                "CalculateMath",
+            )
+            object_name = CellProfilerStringKwargAuthority.optional(
+                request.kwargs,
+                object_kwarg,
+            )
+            if (
+                object_name is None
+                or count_feature_object_name(feature_name) is not None
+            ):
+                return None
+            object_spec = ArtifactSpecCollection(request.object_inputs).by_name(
+                object_name
+            )
+            if object_spec is None:
+                return None
+            bindings.append(
+                CellProfilerObjectMeasurementVectorBinding.for_object(
+                    request,
+                    object_ref=object_spec,
+                    feature_name=feature_name,
+                )
+            )
+        return tuple(bindings)
+
+    def operand_value(
+        self,
+        request: ObjectInputBindingRequest,
+        *,
+        feature_kwarg: str,
+        object_kwarg: str,
+    ) -> CellProfilerRuntimeValue:
+        feature_name = CellProfilerStringKwargAuthority.required(
+            request.kwargs,
+            feature_kwarg,
+            "CalculateMath",
+        )
+        object_name = CellProfilerStringKwargAuthority.optional(
+            request.kwargs,
+            object_kwarg,
+        )
+        count_object_name = count_feature_object_name(feature_name)
+        if count_object_name is not None:
+            return float(
+                ObjectLabelCountAuthority.count_from_adapter(
+                    request.adapter,
+                    count_object_name,
+                )
+            )
+        if object_name is None:
+            return self.image_operand_value(request, feature_name)
+
+        return (
+            CellProfilerObjectMeasurementVectorBinding.for_object(
+                request,
+                object_ref=object_name,
+                feature_name=feature_name,
+            )
+            .vector()
+            .calculate_math_operand_value
+        )
+
+    def image_operand_value(
+        self,
+        request: ObjectInputBindingRequest,
+        feature_name: str,
+    ) -> CellProfilerRuntimeValue:
+        declared_measurement_tables = request.declared_measurement_tables()
+        if declared_measurement_tables:
+            declared_slice_values = MeasurementImageOperandVectorResolution(
+                measurement_tables=declared_measurement_tables,
+                feature_name=feature_name,
+            ).resolve()
+            if declared_slice_values is not None:
+                return CellProfilerMeasurementVector(
+                    declared_slice_values
+                ).slice_aligned_value
+            return MeasurementFeatureQuery(
+                feature_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            ).scalar_value(declared_measurement_tables)
+
+        tables_started_at = time.perf_counter()
+        measurement_resolution = MeasurementImageOperandVectorResolution.from_runtime_feature(
+            request.adapter,
+            feature_name,
+            current_image=request.current_image,
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "calculate_math_measurement_tables",
+            time.perf_counter() - tables_started_at,
+            feature=feature_name,
+            count=len(measurement_resolution.measurement_tables),
+        )
+        slice_started_at = time.perf_counter()
+        slice_values = measurement_resolution.resolve()
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "calculate_math_image_operand_slices",
+            time.perf_counter() - slice_started_at,
+            feature=feature_name,
+            sliced=slice_values is not None,
+        )
+        if slice_values is None:
+            scalar_started_at = time.perf_counter()
+            scalar_value = MeasurementFeatureQuery(
+                feature_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            ).scalar_value(measurement_resolution.measurement_tables)
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "calculate_math_image_operand_scalar",
+                time.perf_counter() - scalar_started_at,
+                feature=feature_name,
+            )
+            return scalar_value
+        return CellProfilerMeasurementVector(slice_values).slice_aligned_value
+
+
+class HomogeneousObjectNameMeasurementRecordMixin:
+    """Preserve table-level object ownership for homogeneous object rows."""
+
+    @classmethod
+    def measurement_record(
+        cls,
+        request: "CellProfilerOutputRecordRequest",
+    ) -> "CellProfilerMeasurementRecord":
+        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
+            CellProfilerMeasurementFieldSchema,
+            CellProfilerMeasurementRecord,
+        )
+
+        rows = cls.measurement_record_rows(request)
+        object_name = cls.homogeneous_row_object_name(rows)
+        if object_name is None:
+            object_name = cls.measurement_record_object_name(request, rows)
+        source_context = cls.measurement_record_source_context(request, rows)
+        if (
+            object_name is None
+            and CellProfilerMeasurementFieldSchema.rows_declare_object_name(rows)
+        ):
+            source_context = source_context.without_source()
+        rows, fields = cls.measurement_record_fields(request, rows)
+        return CellProfilerMeasurementRecord(
+            rows=rows,
+            object_name=object_name,
+            source_context=source_context,
+            fields=fields,
+        )
+
+    @staticmethod
+    def homogeneous_row_object_name(rows: list[CellProfilerKwargDict]) -> str | None:
+        names = tuple(
+            dict.fromkeys(
+                str(row_mapping[MEASUREMENT_OBJECT_NAME_FIELD])
+                for row in rows
+                if (
+                    row_mapping := measurement_row_mapping(row)
+                ).get(MEASUREMENT_OBJECT_NAME_FIELD)
+                not in (None, "")
+            )
+        )
+        if len(names) == 1:
+            return names[0]
+        return None
+
+
+class CalculateMathRoundingMethod(Enum):
+    """CalculateMath rounding modes and their CellProfiler UI literals."""
+
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "CalculateMathRoundingMethod":
+        return enum_member_with_payload(
+            cls,
+            absorbed_value,
+            payload_attribute="cellprofiler_literals",
+            payload=(absorbed_value, *cellprofiler_literals),
+        )
+
+    NOT_ROUNDED = ("not_rounded", "Not rounded")
+    DECIMAL_PLACES = (
+        "decimal_places",
+        "Rounded to a specified number of decimal places",
+    )
+    FLOOR = ("floor", "Rounded down to the next-lowest integer")
+    CEILING = ("ceiling", "Rounded up to the next-highest integer")
+
+    @classmethod
+    def from_cellprofiler_literal(
+        cls,
+        value: "CalculateMathRoundingMethod | str",
+    ) -> "CalculateMathRoundingMethod":
+        """Return the rounding mode named by a CellProfiler setting literal."""
+        return coerce_cellprofiler_enum(cls, value)
+
+
+@dataclass(frozen=True, slots=True)
+class CalculateMathSettingValue:
+    """One CalculateMath setting with default and required-setting semantics."""
+
+    module: "ModuleBlock"
+    setting_name: str | SettingNameFamily
+    default: str | None = None
+
+    @property
+    def value(self) -> str:
+        value = optional_setting_value(self.module, self.setting_name)
+        if value is not None:
+            return value
+        if self.default is not None:
+            return self.default
+        raise ValueError(f"CalculateMath requires setting {self.setting_name!r}.")
+
+
+@dataclass(frozen=True, slots=True)
+class IndexedCalculateMathSettingValue:
+    """Repeated CalculateMath setting value selected by operand index."""
+
+    module: "ModuleBlock"
+    setting_name: str
+    index: int
+    default: str
+
+    @property
+    def value(self) -> str:
+        values = self.module.get_setting_values(self.setting_name)
+        if self.index < len(values):
+            return values[self.index]
+        return self.default
+
+
+@dataclass(frozen=True, slots=True)
+class TypedCalculateMathSettingValue:
+    """CalculateMath setting parsed through the shared settings binder."""
+
+    module: "ModuleBlock"
+    binder: SettingsBinder
+    setting_name: str
+    default: str
+    index: int = 0
+
+    @property
+    def value(self) -> Any:
+        return self.binder.parse_value(
+            self.setting_name,
+            IndexedCalculateMathSettingValue(
+                self.module,
+                self.setting_name,
+                self.index,
+                self.default,
+            ).value,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CalculateMathObjectSetting:
+    """Optional CalculateMath object selector normalized as an artifact symbol."""
+
+    module: "ModuleBlock"
+    setting_name: SettingNameFamily
+
+    @property
+    def object_name(self) -> str | None:
+        return OptionalSettingSymbol(self.module, self.setting_name).value
+
+
+@dataclass(frozen=True, slots=True)
+class CalculateMathOperandSettings:
+    """One CalculateMath operand settings row."""
+
+    module: "ModuleBlock"
+    binder: SettingsBinder
+    object_setting: SettingNameFamily
+    measurement_setting: SettingNameFamily
+    operand_index: int
+
+    @property
+    def feature_name(self) -> str:
+        return CalculateMathSettingValue(
+            self.module,
+            self.measurement_setting,
+        ).value
+
+    @property
+    def object_name(self) -> str | None:
+        return CalculateMathObjectSetting(
+            self.module,
+            self.object_setting,
+        ).object_name
+
+    @property
+    def multiplicand(self) -> Any:
+        return TypedCalculateMathSettingValue(
+            self.module,
+            self.binder,
+            "Multiply the above operand by",
+            "1.0",
+            self.operand_index,
+        ).value
+
+    @property
+    def exponent(self) -> Any:
+        return TypedCalculateMathSettingValue(
+            self.module,
+            self.binder,
+            "Raise the power of above operand by",
+            "1.0",
+            self.operand_index,
+        ).value
+
+
+@dataclass(frozen=True, slots=True)
+class CalculateMathBoundSettings:
+    """Runtime kwargs for absorbed CalculateMath execution."""
+
+    module: "ModuleBlock"
+    binder: SettingsBinder
+    settings: type[Any]
+
+    @property
+    def operand1(self) -> CalculateMathOperandSettings:
+        return CalculateMathOperandSettings(
+            module=self.module,
+            binder=self.binder,
+            object_setting=self.settings.numerator_objects_setting,
+            measurement_setting=self.settings.numerator_measurement_setting,
+            operand_index=0,
+        )
+
+    @property
+    def operand2(self) -> CalculateMathOperandSettings:
+        return CalculateMathOperandSettings(
+            module=self.module,
+            binder=self.binder,
+            object_setting=self.settings.denominator_objects_setting,
+            measurement_setting=self.settings.denominator_measurement_setting,
+            operand_index=1,
+        )
+
+    def typed_setting(self, setting_name: str, default: str) -> Any:
+        return TypedCalculateMathSettingValue(
+            self.module,
+            self.binder,
+            setting_name,
+            default,
+        ).value
+
+    @property
+    def kwargs(self) -> dict[str, Any]:
+        return {
+            "output_name": CalculateMathSettingValue(
+                self.module,
+                self.settings.output_measurement_setting,
+                default="Measurement",
+            ).value,
+            "operation": CalculateMathSettingValue(
+                self.module,
+                self.settings.operation_setting,
+                default="None",
+            ).value,
+            "operand1_feature": self.operand1.feature_name,
+            "operand2_feature": self.operand2.feature_name,
+            "operand1_object_name": self.operand1.object_name,
+            "operand2_object_name": self.operand2.object_name,
+            "operand1_multiplicand": self.operand1.multiplicand,
+            "operand1_exponent": self.operand1.exponent,
+            "operand2_multiplicand": self.operand2.multiplicand,
+            "operand2_exponent": self.operand2.exponent,
+            "take_log10": self.typed_setting("Take log10 of result?", "No"),
+            "final_multiplicand": self.typed_setting("Multiply the result by", "1.0"),
+            "final_exponent": self.typed_setting(
+                "Raise the power of result by",
+                "1.0",
+            ),
+            "final_addend": self.typed_setting("Add to the result", "0.0"),
+            "rounding": CalculateMathRoundingMethod.from_cellprofiler_literal(
+                CalculateMathSettingValue(
+                    self.module,
+                    "How should the output value be rounded?",
+                    default="Not rounded",
+                ).value
+            ),
+            "rounding_digits": self.typed_setting(
+                "Enter how many decimal places the value should be rounded to",
+                "0",
+            ),
+            "constrain_lower_bound": self.typed_setting(
+                "Constrain the result to a lower bound?",
+                "No",
+            ),
+            "lower_bound": self.typed_setting("Enter the lower bound", "0.0"),
+            "constrain_upper_bound": self.typed_setting(
+                "Constrain the result to an upper bound?",
+                "No",
+            ),
+            "upper_bound": self.typed_setting("Enter the upper bound", "1.0"),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CalculateMathObjectDependencies:
+    """Object dependencies referenced by CalculateMath measurement operands."""
+
+    module: "ModuleBlock"
+    settings: type[Any]
+
+    @property
+    def object_names(self) -> tuple[str, ...]:
+        names = (
+            CalculateMathObjectSetting(
+                self.module,
+                self.settings.numerator_objects_setting,
+            ).object_name,
+            CalculateMathObjectSetting(
+                self.module,
+                self.settings.denominator_objects_setting,
+            ).object_name,
+            count_feature_object_name(
+                optional_setting_value(
+                    self.module,
+                    self.settings.numerator_measurement_setting,
+                )
+            ),
+            count_feature_object_name(
+                optional_setting_value(
+                    self.module,
+                    self.settings.denominator_measurement_setting,
+                )
+            ),
+        )
+        return tuple(dict.fromkeys(name for name in names if name is not None))
+
+
+def calculate_math_bound_kwargs(
+    module: "ModuleBlock",
+    binder: SettingsBinder,
+) -> dict[str, Any]:
+    """Return absorbed-function kwargs for runtime CalculateMath operands."""
+    return CalculateMathBoundSettings(
+        module=module,
+        binder=binder,
+        settings=CalculateMathModule,
+    ).kwargs
+
+
+def calculate_math_object_dependencies(module: "ModuleBlock") -> tuple[str, ...]:
+    """Return object names referenced by CalculateMath measurement operands."""
+    return CalculateMathObjectDependencies(
+        module,
+        CalculateMathModule,
+    ).object_names
+
+
+class CalculateMathModule(
+    HomogeneousObjectNameMeasurementRecordMixin,
+    TableMeasurementRecordRowsMixin,
+    NoSourceMeasurementRecordMixin,
+    MeasurementDebugViewModule,
+    CalculateMathInputPolicy,
+    BinderSettingsSourceModule,
+):
+    module_name = 'CalculateMath'
+    function_name = 'calculate_math'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    output_measurement_setting = SettingNameFamily("Name the output measurement")
+    operation_setting = SettingNameFamily("Operation")
+    numerator_objects_setting = SettingNameFamily("Select the numerator objects")
+    numerator_measurement_setting = SettingNameFamily("Select the numerator measurement")
+    denominator_objects_setting = SettingNameFamily("Select the denominator objects")
+    denominator_measurement_setting = SettingNameFamily(
+        "Select the denominator measurement"
+    )
+    settings_source = staticmethod(calculate_math_bound_kwargs)
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        inputs = [
+            builder.require_artifact(ArtifactSpec(name, ArtifactKind.OBJECT_LABELS), module)
+            for name in calculate_math_object_dependencies(module)
+        ]
+        inputs.extend(builder.measurement_outputs())
+        outputs = [
+            builder.declare_artifact(
+                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+                module,
+            )
+        ]
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
+
 from abc import ABC, abstractmethod
 from types import MappingProxyType
 from dataclasses import dataclass, replace
@@ -20,11 +668,12 @@ from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import ColumnarRows
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
-from openhcs.interop.cellprofiler.calculate_math_settings import (
-    CalculateMathRoundingMethod as RoundingMethod,
-)
-from openhcs.interop.cellprofiler.image_math_settings import (
+RoundingMethod = CalculateMathRoundingMethod
+from openhcs.processing.backends.cellprofiler.image_math import (
     ImageMathOperation as MathOperation,
+)
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
 )
 
 

@@ -8,9 +8,11 @@ import skimage.segmentation
 
 from benchmark.cellprofiler_library import (
     canonical_module_name,
+    function_inventory,
     get_contract,
     get_function,
     list_modules,
+    validated_contracts,
 )
 from benchmark.cellprofiler_library.functions.align import AlignShiftMeasurement, align
 from benchmark.cellprofiler_library.functions.closing import closing
@@ -54,6 +56,7 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationCostesThresholds,
     ColocalizationImagePairContext,
     ColocalizationObjectLabelContext,
+    ObjectColocalizationMetricArrays,
     costes_backend,
     measure_colocalization_objects_batch,
     object_colocalization_threshold_reductions,
@@ -92,7 +95,7 @@ from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
 from openhcs.interop.cellprofiler.semantic_defaults import (
     CellProfilerSemanticDefaultContract,
 )
-from benchmark.cellprofiler_semantics.crop import CropShape, RemovalMethod
+from openhcs.processing.backends.cellprofiler.crop import CropModule
 from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
@@ -109,16 +112,103 @@ from openhcs.core.runtime_values import image_payload_data, image_payload_mask
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler.morphology import CellProfilerDeclumpMethod
+from openhcs.constants.constants import VariableComponents
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    InfrastructureCellProfilerModule,
+)
 
 
 def test_absorbed_registry_resolves_every_declared_function():
     unresolved_modules = tuple(
         module_name
         for module_name in list_modules()
-        if get_contract(module_name) is not None and get_function(module_name) is None
+        if get_contract(module_name) is not None
+        and not issubclass(
+            CellProfilerModule.__registry__[module_name],
+            InfrastructureCellProfilerModule,
+        )
+        and get_function(module_name) is None
     )
 
     assert unresolved_modules == ()
+
+
+def test_absorbed_catalog_is_derived_from_cellprofiler_module_classes():
+    module_registry = CellProfilerModule.__registry__
+    contracts = validated_contracts()
+
+    assert set(list_modules()) == set(module_registry)
+    assert set(contracts) == set(module_registry)
+
+    for module_name, module_type in module_registry.items():
+        payload = get_contract(module_name)
+        assert payload is not None
+        assert payload["function_name"] == module_type.function_name
+        assert payload["contract"] == module_type.contract
+        assert payload["category"] == module_type.category
+        assert payload["confidence"] == module_type.confidence
+        assert payload["validated"] == module_type.validated
+        assert tuple(payload.get("aliases", ())) == module_type.aliases
+        assert (
+            tuple(payload.get("function_variants", ()))
+            == module_type.function_variants
+        )
+
+
+def test_track_objects_requires_timepoint_on_module_class_only():
+    track_objects = CellProfilerModule.__registry__["TrackObjects"]
+
+    assert track_objects.required_variable_components == (
+        VariableComponents.TIMEPOINT,
+    )
+    assert "function_step" not in get_contract("TrackObjects")
+
+
+def test_all_declared_cellprofiler_module_functions_resolve():
+    inventory = function_inventory()
+    missing = []
+
+    for module_name, module_type in CellProfilerModule.__registry__.items():
+        if issubclass(module_type, InfrastructureCellProfilerModule):
+            continue
+        for function_name in module_type.declared_function_names():
+            if function_name not in inventory:
+                missing.append(f"{module_name}.{function_name}: inventory")
+                continue
+            if get_function(module_name, function_name=function_name) is None:
+                missing.append(f"{module_name}.{function_name}: function")
+
+    assert missing == []
+
+
+def test_all_cellprofiler_module_aliases_canonicalize():
+    for module_type in CellProfilerModule.__registry__.values():
+        canonical_name = module_type.module_name
+        for alias in module_type.aliases:
+            assert canonical_module_name(alias) == canonical_name
+            assert get_contract(alias) == get_contract(canonical_name)
+            assert get_function(alias) is get_function(canonical_name)
+
+
+def test_cellprofiler_module_rejects_primary_function_variant():
+    with pytest.raises(ValueError, match="primary function"):
+
+        class InvalidPrimaryVariantModule(CellProfilerModule):
+            module_name = "__InvalidPrimaryVariantModule__"
+            function_name = "invalid_primary_variant"
+            validated = True
+            function_variants = ("invalid_primary_variant",)
+
+
+def test_cellprofiler_module_rejects_duplicate_alias_owner():
+    with pytest.raises(ValueError, match="duplicates CellProfiler module"):
+
+        class InvalidDuplicateAliasModule(CellProfilerModule):
+            module_name = "__InvalidDuplicateAliasModule__"
+            function_name = "invalid_duplicate_alias"
+            validated = True
+            aliases = ("MeasureCorrelation",)
 
 
 def test_active_absorbed_cellprofiler_functions_import_cleanly():
@@ -937,6 +1027,14 @@ def test_colocalization_threshold_batch_aligns_aligned_image_stack_context() -> 
         kwargs["object_label_context"].value_for_slice(0),
         ColocalizationObjectLabelContext,
     )
+    assert kwargs["object_label_context"].value_for_slice(0).slice_index == 0
+    assert kwargs["object_label_context"].value_for_slice(1).slice_index == 1
+
+    rows = ObjectColocalizationMetricArrays.empty(2).rows_for(
+        np.asarray((1, 2), dtype=np.int32),
+        slice_index=1,
+    )
+    assert rows.columns["slice_index"].tolist() == [1, 1]
 
 
 def test_colocalization_threshold_batch_caches_semantic_label_context() -> None:
@@ -3799,7 +3897,7 @@ def test_crop_preserves_hwc_color_image_domain() -> None:
 
     cropped, mask, measurements = crop(
         image,
-        removal_method=RemovalMethod.ALL,
+        removal_method=CropModule.RemovalMethod.ALL,
         left_right_rectangle_positions=(2, 7),
         top_bottom_rectangle_positions=(1, 6),
         dtype_config=DtypeConfig(),
@@ -3826,7 +3924,7 @@ def test_crop_no_removal_returns_masked_zeroed_image_domain() -> None:
 
     cropped, mask, measurements = crop(
         image,
-        removal_method=RemovalMethod.NO,
+        removal_method=CropModule.RemovalMethod.NO,
         left_right_rectangle_positions=(1, 4),
         top_bottom_rectangle_positions=(1, 3),
         dtype_config=DtypeConfig(),
@@ -3873,8 +3971,8 @@ def test_crop_previous_cropping_accepts_typed_mask_input() -> None:
     cropped, crop_mask, measurements = crop(
         image,
         mask_plane=previous_mask,
-        crop_shape=CropShape.CROPPING,
-        removal_method=RemovalMethod.EDGES,
+        crop_shape=CropModule.Shape.CROPPING,
+        removal_method=CropModule.RemovalMethod.EDGES,
         dtype_config=DtypeConfig(),
     )
 
@@ -3893,8 +3991,8 @@ def test_crop_objects_accepts_dense_label_stack_as_foreground_union() -> None:
 
     cropped, mask, measurements = crop(
         image,
-        crop_shape=CropShape.OBJECTS,
-        removal_method=RemovalMethod.NO,
+        crop_shape=CropModule.Shape.OBJECTS,
+        removal_method=CropModule.RemovalMethod.NO,
         cropping_labels=labels,
         dtype_config=DtypeConfig(),
     )

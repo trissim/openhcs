@@ -11,7 +11,6 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -167,7 +166,15 @@ class CellProfilerSemanticDefaultContract(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def registered_contracts(cls) -> tuple["CellProfilerSemanticDefaultContract", ...]:
-        return tuple(contract_type() for contract_type in cls.__registry__.values())
+        from openhcs.processing.backends.cellprofiler.module_classes import (
+            CellProfilerModule,
+        )
+
+        return tuple(
+            contract
+            for module_type in CellProfilerModule.__registry__.values()
+            for contract in module_type.semantic_default_contracts()
+        )
 
     def validate(self) -> None:
         semantics = SourceModuleSemantics(self.source_path)
@@ -275,82 +282,3 @@ class SourceVolumetricPixelDataExecutionContract(CellProfilerSemanticDefaultCont
             self.required_execution_mode,
             contract.runtime_image_execution_mode,
         )
-
-
-class MedianFilterSemanticDefaultContract(SourceCallKeywordDefaultContract):
-    contract_key = "MedianFilter.semantic_defaults"
-    module_name = "MedianFilter"
-    source_filename = "medianfilter.py"
-
-    def source_call_keywords(self) -> tuple[SourceCallKeyword, ...]:
-        from openhcs.processing.backends.cellprofiler.median_filter import medianfilter
-
-        return (
-            SourceCallKeyword(
-                callable_name="medianfilter",
-                keyword_name="mode",
-                absorbed_callable=medianfilter,
-            ),
-        )
-
-
-class MedianFilterExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
-    contract_key = "MedianFilter.execution_domain"
-    module_name = "MedianFilter"
-    source_filename = "medianfilter.py"
-    callable_name = "medianfilter"
-
-    @property
-    def absorbed_callable(self) -> Callable[..., Any]:
-        from openhcs.processing.backends.cellprofiler.median_filter import medianfilter
-
-        return medianfilter
-
-
-class WatershedBasicSemanticDefaultContract(SourceDictSemanticDefaultContract):
-    contract_key = "Watershed.basic_defaults"
-    module_name = "Watershed"
-    source_filename = "watershed.py"
-    source_dict_name = "basic_mode_defaults"
-
-    def source_dict_fields(self) -> tuple[SourceDictField, ...]:
-        from openhcs.processing.backends.cellprofiler.watershed import (
-            WatershedParameters,
-        )
-
-        return tuple(
-            SourceDictField(source_key, absorbed_value)
-            for source_key, absorbed_value in WatershedParameters.basic_default_values().items()
-        )
-
-    def normalize_source_value(self, value: object) -> object:
-        return value.casefold() if isinstance(value, str) else value
-
-    def normalize_absorbed_value(self, value: object) -> object:
-        return value.value if isinstance(value, Enum) else value
-
-
-class WatershedExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
-    contract_key = "Watershed.execution_domain"
-    module_name = "Watershed"
-    source_filename = "watershed.py"
-    callable_name = "watershed"
-
-    @property
-    def absorbed_callable(self) -> Callable[..., Any]:
-        from openhcs.processing.backends.cellprofiler.watershed import watershed
-
-        return watershed
-
-
-class ThresholdExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
-    contract_key = "Threshold.execution_domain"
-    module_name = "Threshold"
-    source_filename = "threshold.py"
-    callable_name = "threshold"
-
-    @property
-    def absorbed_callable(self) -> Callable[..., Any]:
-        from openhcs.processing.backends.cellprofiler.thresholding import threshold
-
-        return threshold

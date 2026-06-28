@@ -2,6 +2,88 @@
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
+from openhcs.interop.cellprofiler.semantic_defaults import (
+    SourceCallKeyword,
+    SourceCallKeywordDefaultContract,
+    SourceVolumetricPixelDataExecutionContract,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_int,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+class MedianFilterSemanticDefaultContract(SourceCallKeywordDefaultContract):
+    contract_key = "MedianFilter.semantic_defaults"
+    source_filename = "medianfilter.py"
+
+    def source_call_keywords(self) -> tuple[SourceCallKeyword, ...]:
+        return (
+            SourceCallKeyword(
+                callable_name="medianfilter",
+                keyword_name="mode",
+                absorbed_callable=medianfilter,
+            ),
+        )
+
+
+class MedianFilterExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
+    contract_key = "MedianFilter.execution_domain"
+    source_filename = "medianfilter.py"
+    callable_name = "medianfilter"
+
+    @property
+    def absorbed_callable(self) -> Callable[..., Any]:
+        return medianfilter
+
+
+class MedianfilterModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'Medianfilter'
+    function_name = 'medianfilter'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
+    semantic_default_contract_types = (
+        MedianFilterSemanticDefaultContract,
+        MedianFilterExecutionDomainContract,
+    )
+    semantic_default_contract_module_name = "MedianFilter"
+    setting_bindings = (
+        SettingToKeywordBinding("Window", "window_size", parse_cellprofiler_int),
+    )
+
+
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar

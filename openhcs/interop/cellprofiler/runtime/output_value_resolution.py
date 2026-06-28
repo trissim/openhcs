@@ -7,9 +7,10 @@ from inspect import unwrap
 
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.pipeline.function_contracts import special_output_specs_from_callable
 from openhcs.core.runtime_output_matching import RuntimeReturnedOutputMatcher
+from openhcs.core.special_output_declarations import SpecialOutputDeclaration
 from openhcs.core.special_outputs import SpecialOutputKindClassifier, special_output_name
-from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
 from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerFunction,
     CellProfilerKwargDict,
@@ -38,9 +39,11 @@ class CellProfilerCallableOutputSpecs:
         )
 
     @staticmethod
-    def callable_special_outputs(func: CellProfilerFunction) -> CellProfilerRuntimeValues:
+    def callable_special_outputs(
+        func: CellProfilerFunction,
+    ) -> tuple[SpecialOutputDeclaration, ...]:
         contract = CallableContract.from_callable(func)
-        candidates: list[CellProfilerRuntimeValue] = [func]
+        candidates: list[CellProfilerFunction] = [func]
         raw_func = contract.raw_processing_function
         if callable(raw_func):
             candidates.append(raw_func)
@@ -48,11 +51,8 @@ class CellProfilerCallableOutputSpecs:
         if unwrapped not in candidates:
             candidates.append(unwrapped)
         for candidate in candidates:
-            raw_outputs = MappingValueLookup(
-                vars(candidate),
-                "__special_outputs__",
-            ).value_or(())
-            if isinstance(raw_outputs, tuple) and raw_outputs:
+            raw_outputs = special_output_specs_from_callable(candidate)
+            if raw_outputs:
                 return raw_outputs
         return ()
 

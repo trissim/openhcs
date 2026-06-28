@@ -19,16 +19,13 @@ from openhcs.core.aligned_image_payload import (
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.image_shapes import is_color_image_slice
-from openhcs.core.image_stack_layout import ImageStackLayout, ImageStackLayoutUnstackRequest
 from openhcs.core.measurement_lookup_dialect import runtime_measurement_lookup_dialect
 from openhcs.core.memory import detect_memory_type, stack_slices
 from openhcs.core.runtime_output_matching import RuntimeOutputRole
 from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
     Pure2DSliceBatchExecutor,
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
-    object_label_measurement_execution_from_callable,
 )
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_semantics import RuntimePlaneAxis
@@ -349,67 +346,8 @@ class CellProfilerFunctionContractExecutor:
         image: CellProfilerRuntimeValue,
         **kwargs: CellProfilerRuntimeValue,
     ) -> CellProfilerRuntimeValue:
-        """Execute each natural file-level stack, preserving OpenHCS outer axes."""
-        if (
-            object_label_measurement_execution_from_callable(func)
-            is ObjectLabelMeasurementExecution.FULL_STACK
-        ):
-            return self.execute_pure_3d(func, image, **kwargs)
-
-        image_data = image_payload_data(image)
-        if not ImageStackLayout.is_unambiguous_stack(image_data):
-            return self.execute_pure_3d(func, image, **kwargs)
-
-        memory_type = detect_memory_type(image_data)
-        slices = ImageStackLayoutUnstackRequest(
-            image,
-            memory_type,
-            0,
-            image_data,
-        ).slices()
-        slice_count = len(slices)
-        if slice_count <= 1:
-            return self.execute_pure_3d(func, image, **kwargs)
-        aggregation_plane_axis = (
-            SourceImagePlaneAxisPolicy.for_request(
-                SourceImagePlaneAxisRequest(image)
-            ).axis()
-            or RuntimePlaneAxis.RUNTIME_SLICE
-        )
-
-        def execute_full_stack_slice(
-            slice_func: CellProfilerFunction,
-            slice_payload: CellProfilerRuntimeValue,
-            slice_kwargs: CellProfilerKwargs,
-            slice_index: int,
-            slice_count: int,
-        ) -> CellProfilerRuntimeValue:
-            return self.execute_pure_3d(
-                slice_func,
-                slice_payload,
-                **self.slice_pure_2d_kwargs(slice_kwargs, slice_index, slice_count),
-            )
-
-        slice_results, _slice_execute_seconds = self.execute_pure_2d_slice_batch(
-            func,
-            tuple(slices),
-            kwargs,
-            execute_full_stack_slice,
-        )
-        result_batch = Pure2DSliceResultBatch.from_results(slice_results)
-        stacked_main_output = self.output_aggregation_contract.aggregate_main_outputs(
-            result_batch.main_outputs,
-            memory_type,
-            plane_axis=aggregation_plane_axis,
-        )
-        if not result_batch.auxiliary_groups:
-            return stacked_main_output
-        return (stacked_main_output, *self.output_aggregation_contract.aggregate_auxiliary_outputs(
-            result_batch.auxiliary_groups,
-            memory_type,
-            plane_axis=aggregation_plane_axis,
-        ),
-        )
+        """Execute one full-stack invocation, preserving volumetric semantics."""
+        return self.execute_pure_3d(func, image, **kwargs)
 
     def _execute_aligned_multi_image_stack(
         self,
@@ -455,14 +393,14 @@ class CellProfilerFunctionContractExecutor:
         stacked_main_output = self.output_aggregation_contract.aggregate_main_outputs(
             result_batch.main_outputs,
             memory_type,
-            plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         )
         if not result_batch.auxiliary_groups:
             return stacked_main_output
         return (stacked_main_output, *self.output_aggregation_contract.aggregate_auxiliary_outputs(
             result_batch.auxiliary_groups,
             memory_type,
-            plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         ),
         )
 
@@ -555,19 +493,6 @@ class CellProfilerFunctionContractExecutor:
             auxiliary_groups=len(result_batch.auxiliary_groups),
         )
         return result
-
-    def execute_flexible(
-        self,
-        func: CellProfilerFunction,
-        image: CellProfilerRuntimeValue,
-        **kwargs: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        slice_by_slice = False
-        if "slice_by_slice" in kwargs:
-            slice_by_slice = bool(kwargs.pop("slice_by_slice"))
-        if slice_by_slice:
-            return self.execute_pure_2d(func, image, **kwargs)
-        return self.execute_pure_3d(func, image, **kwargs)
 
     def execute_volumetric_to_slice(
         self,

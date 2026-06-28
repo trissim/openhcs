@@ -405,6 +405,101 @@ def _propagate_labels_and_distances_numba(
 
 
 @njit(cache=True)
+def _propagate_labels_and_distances_zero_image_numba(
+    seed_labels: np.ndarray,
+    mask: np.ndarray,
+    weight: float,
+    max_distance: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    height, width = seed_labels.shape
+    output = np.zeros((height, width), dtype=np.int32)
+    distances = np.empty((height, width), dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            if seed_labels[y, x] > 0:
+                distances[y, x] = 0.0
+            else:
+                distances[y, x] = -1.0
+
+    capacity = height * width * 8
+    heap_values = np.empty(capacity, dtype=np.float64)
+    heap_labels = np.empty(capacity, dtype=np.int32)
+    heap_ys = np.empty(capacity, dtype=np.int32)
+    heap_xs = np.empty(capacity, dtype=np.int32)
+    heap_size = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(seed_labels[y, x])
+            if (
+                label > 0
+                and mask[y, x]
+                and _propagation_seed_frontier_pixel(seed_labels, mask, y, x)
+            ):
+                heap_size = _propagation_heap_push(
+                    heap_values,
+                    heap_labels,
+                    heap_ys,
+                    heap_xs,
+                    heap_size,
+                    0.0,
+                    label,
+                    y,
+                    x,
+                )
+
+    delta_y = np.array((-1, -1, -1, 0, 0, 1, 1, 1), dtype=np.int32)
+    delta_x = np.array((-1, 0, 1, -1, 1, -1, 0, 1), dtype=np.int32)
+    while heap_size > 0:
+        heap_size, value, label, y1, x1 = _propagation_heap_pop(
+            heap_values,
+            heap_labels,
+            heap_ys,
+            heap_xs,
+            heap_size,
+        )
+        if max_distance >= 0.0 and value > max_distance:
+            break
+        if output[y1, x1] != 0:
+            continue
+        output[y1, x1] = label
+        d0 = distances[y1, x1]
+        for index in range(8):
+            y2 = y1 + int(delta_y[index])
+            x2 = x1 + int(delta_x[index])
+            if y2 < 0 or y2 >= height or x2 < 0 or x2 >= width:
+                continue
+            if output[y2, x2] > 0 or not mask[y2, x2]:
+                continue
+            dy = y2 - y1
+            if dy < 0:
+                dy = -dy
+            dx = x2 - x1
+            if dx < 0:
+                dx = -dx
+            distance = np.sqrt(float(dy + dx) * weight * weight) + d0
+            if max_distance >= 0.0 and distance > max_distance:
+                continue
+            if distances[y2, x2] == -1.0 or distances[y2, x2] > distance:
+                distances[y2, x2] = distance
+                heap_size = _propagation_heap_push(
+                    heap_values,
+                    heap_labels,
+                    heap_ys,
+                    heap_xs,
+                    heap_size,
+                    distance,
+                    label,
+                    y2,
+                    x2,
+                )
+    for y in range(height):
+        for x in range(width):
+            if seed_labels[y, x] > 0:
+                output[y, x] = seed_labels[y, x]
+    return output, distances
+
+
+@njit(cache=True)
 def _propagation_seed_frontier_pixel(
     seed_labels: np.ndarray,
     mask: np.ndarray,

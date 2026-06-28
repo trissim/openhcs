@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeVar
 
+from openhcs.interop.cellprofiler_setting_normalization import (
+    normalize_cellprofiler_setting_name,
+)
+
 from .parser import ModuleBlock
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
@@ -112,14 +116,6 @@ def parse_cellprofiler_float(value: str) -> float:
 def parse_cellprofiler_int(value: str) -> int:
     """Parse a numeric CellProfiler setting as int, accepting decimal spelling."""
     return int(float(value))
-
-
-def normalize_cellprofiler_setting_name(name: str) -> str:
-    """Normalize a CellProfiler setting label into a snake_case key."""
-    without_parentheses = re.sub(r"\([^)]*\)", "", name)
-    without_questions = without_parentheses.replace("?", "")
-    words = re.sub(r"[^\w\s]", " ", without_questions).lower().split()
-    return "_".join(words)
 
 
 def _member_literals(enum_type: type[Enum], member: Enum) -> frozenset[str]:

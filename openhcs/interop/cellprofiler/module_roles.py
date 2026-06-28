@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
-from types import MappingProxyType
-from typing import ClassVar
+from typing import TYPE_CHECKING
 
-from metaclass_registry import AutoRegisterMeta
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 
-from .module_semantics import (
-    CELLPROFILER_MODULE_SEMANTICS,
-    CellProfilerModuleCategory,
-    cellprofiler_module_semantics,
-)
+from .parser import ModuleBlock
+from .source_schema import SetupModuleCompiler
+
+if TYPE_CHECKING:
+    from .symbol_table import ModuleArtifactContracts
+
 
 class CellProfilerModuleRole(Enum):
     """Semantic role for one parsed CellProfiler module."""
@@ -21,20 +22,6 @@ class CellProfilerModuleRole(Enum):
     INFRASTRUCTURE = auto()
     PROCESSING = auto()
     DISABLED = auto()
-
-
-INFRASTRUCTURE_MODULE_NAMES = frozenset(
-    semantics.module_name
-    for semantics in CELLPROFILER_MODULE_SEMANTICS.values()
-    if semantics.category
-    in {
-        CellProfilerModuleCategory.INPUT,
-        CellProfilerModuleCategory.FILE_PROCESSING,
-    }
-)
-INFRASTRUCTURE_MODULE_NAMES_BY_KEY = MappingProxyType(
-    {module_name.casefold(): module_name for module_name in INFRASTRUCTURE_MODULE_NAMES}
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,70 +36,78 @@ class CellProfilerModuleRoleSpec:
         return self.role is CellProfilerModuleRole.INFRASTRUCTURE
 
 
+@dataclass(frozen=True)
+class ArtifactSpecKey:
+    """Scope-free artifact identity used while pruning generated CP steps."""
+
+    kind: ArtifactKind
+    name: str
+
+    @classmethod
+    def from_spec(cls, spec: ArtifactSpec) -> "ArtifactSpecKey":
+        return cls(kind=spec.kind, name=spec.name)
+
+
 def cellprofiler_module_role(module_name: str) -> CellProfilerModuleRoleSpec:
     """Classify one CellProfiler module name from parser output."""
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+        InfrastructureCellProfilerModule,
+    )
+
     normalized_name = module_name.strip()
     if not normalized_name:
         raise ValueError("CellProfiler module name cannot be empty.")
-    semantics = cellprofiler_module_semantics(normalized_name)
-    canonical_infrastructure_name = None
-    if semantics is not None and semantics.is_infrastructure:
-        canonical_infrastructure_name = semantics.module_name
+    module_type = CellProfilerModule.for_module(normalized_name)
+    canonical_module_name = (
+        str(module_type.module_name)
+        if module_type is not None
+        else normalized_name
+    )
+    is_infrastructure = (
+        module_type is not None
+        and issubclass(module_type, InfrastructureCellProfilerModule)
+    ) or SetupModuleCompiler.for_module(normalized_name) is not None
     role = (
         CellProfilerModuleRole.INFRASTRUCTURE
-        if canonical_infrastructure_name is not None
+        if is_infrastructure
         else CellProfilerModuleRole.PROCESSING
     )
     return CellProfilerModuleRoleSpec(
-        module_name=canonical_infrastructure_name or normalized_name,
+        module_name=canonical_module_name,
         role=role,
     )
 
-
-class CellProfilerInfrastructureImportNote(metaclass=AutoRegisterMeta):
-    """Auto-registered note for OpenHCS-owned infrastructure module handling."""
-
-    __registry_key__ = "module_name"
-    __skip_if_no_key__ = True
-
-    module_name: ClassVar[str | None] = None
-    note_text: ClassVar[str | None] = None
-
-    @classmethod
-    def for_module(cls, module_name: str) -> "CellProfilerInfrastructureImportNote":
-        role = cellprofiler_module_role(module_name)
-        note_type = cls.__registry__.get(role.module_name)
-        if note_type is None:
-            return DefaultInfrastructureImportNote(role.module_name)
-        return note_type()
-
-    @property
-    def text(self) -> str:
-        """Return the generated-source note for this infrastructure module."""
-        return self.note_text or ""
-
-
-@dataclass(frozen=True, slots=True)
-class DefaultInfrastructureImportNote(CellProfilerInfrastructureImportNote):
-    """Default generated-source note for infrastructure modules."""
-
-    note_text: str
-
-
-class LoadDataInfrastructureImportNote(CellProfilerInfrastructureImportNote):
-    """Declare OpenHCS source metadata handling for LoadData."""
-
-    module_name = "LoadData"
-    note_text = "LoadData -> handled by plate_path + openhcs_metadata.json"
-
-
-class ExportToSpreadsheetInfrastructureImportNote(CellProfilerInfrastructureImportNote):
-    """Declare OpenHCS table materialization handling for ExportToSpreadsheet."""
-
-    module_name = "ExportToSpreadsheet"
-    note_text = "ExportToSpreadsheet -> handled by @special_outputs(csv_materializer(...))"
-
-
 def cellprofiler_infrastructure_import_note(module_name: str) -> str:
     """Return the generated-source note for an OpenHCS-owned infrastructure module."""
-    return CellProfilerInfrastructureImportNote.for_module(module_name).text
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    module_type = CellProfilerModule.for_module(module_name)
+    if (
+        module_type is not None
+        and module_type.infrastructure_import_note is not None
+    ):
+        return module_type.infrastructure_import_note
+    role = cellprofiler_module_role(module_name)
+    return f"{role.module_name} -> handled by OpenHCS infrastructure"
+
+
+def cellprofiler_infrastructure_retained_artifacts(
+    module: ModuleBlock,
+    *,
+    contracts_by_module_num: Mapping[int, "ModuleArtifactContracts"],
+) -> frozenset[ArtifactSpecKey]:
+    """Return artifacts retained by one OpenHCS-owned infrastructure module."""
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    module_type = CellProfilerModule.for_module(module.name)
+    if module_type is None:
+        return frozenset()
+    return module_type.infrastructure_retained_artifacts(
+        module,
+        contracts_by_module_num=contracts_by_module_num,
+    )

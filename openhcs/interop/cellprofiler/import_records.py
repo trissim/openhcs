@@ -7,6 +7,7 @@ from pathlib import Path
 
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline import Pipeline
+from openhcs.core.config import PipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.interop.cellprofiler.module_roles import CellProfilerModuleRole
 from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
@@ -102,6 +103,7 @@ class CellProfilerPipelineImportResult:
     generated_module_path: Path
     artifact_contracts: tuple[ModuleArtifactContract, ...] = ()
     semantic_contracts: tuple[ModuleArtifactContracts, ...] = ()
+    pipeline_config: PipelineConfig | None = None
     registered_functions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -119,6 +121,14 @@ class CellProfilerPipelineImportResult:
             raise TypeError(
                 "CellProfilerPipelineImportResult.source_schema must be "
                 f"PipelineImageSchema, got {type(self.source_schema).__name__}."
+            )
+        if self.pipeline_config is not None and not isinstance(
+            self.pipeline_config,
+            PipelineConfig,
+        ):
+            raise TypeError(
+                "CellProfilerPipelineImportResult.pipeline_config must be "
+                f"PipelineConfig or None, got {type(self.pipeline_config).__name__}."
             )
         object.__setattr__(
             self,

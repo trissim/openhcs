@@ -5,6 +5,7 @@ Original: medialaxis
 
 import numpy as np
 from openhcs.core.memory.decorators import numpy as numpy_backend
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -35,3 +36,11 @@ def medialaxis(
     skeleton = skimage_medial_axis(binary)
     
     return skeleton.astype(np.float32)
+
+
+class MedialaxisModule(CellProfilerModule):
+    module_name = 'Medialaxis'
+    function_name = 'medialaxis'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0

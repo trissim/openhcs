@@ -32,10 +32,7 @@ from openhcs.core.callable_contract import (
     CallableContract,
     attach_callable_contract_metadata,
 )
-from openhcs.core.callable_contract import (
-    DECLARED_PROCESSING_CONTRACT_ATTR,
-    PROCESSING_CONTRACT_ATTR,
-)
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -62,6 +59,7 @@ class CellProfilerFunctionRuntimeMetadata:
 
     module_name: str
     function_name: str
+    processing_contract: ProcessingContract
     declared_processing_contract: str | None
 
     @classmethod
@@ -82,11 +80,20 @@ class CellProfilerFunctionRuntimeMetadata:
         module_name = metadata.get(CELLPROFILER_MODULE_ATTR)
         if module_name is None:
             return None
+        processing_contract = metadata.get(
+            FunctionContractAttribute.processing_contract
+        )
+        if not isinstance(processing_contract, ProcessingContract):
+            raise TypeError(
+                f"CellProfiler function {func.__name__!r} has no declared "
+                "ProcessingContract metadata."
+            )
         return cls(
             module_name=str(module_name),
             function_name=func.__name__,
+            processing_contract=processing_contract,
             declared_processing_contract=metadata.get(
-                DECLARED_PROCESSING_CONTRACT_ATTR,
+                FunctionContractAttribute.declared_processing_contract,
             ),
         )
 
@@ -254,11 +261,30 @@ def _make_processing_wrapper(
     wrapper.__signature__ = inspect.signature(func)
     wrapper.__annotations__ = inspect.get_annotations(func, eval_str=False).copy()
     callable_contract = CallableContract.from_callable(func)
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    module_type = CellProfilerModule.for_module(module_name)
+    if module_type is None:
+        raise KeyError(
+            "CellProfiler-compatible processing function requires a "
+            f"CellProfilerModule declaration for {module_name!r}."
+        )
     wrapper.input_memory_type = callable_contract.input_memory_type
     wrapper.output_memory_type = callable_contract.output_memory_type
-    setattr(wrapper, PROCESSING_CONTRACT_ATTR, contract)
-    setattr(wrapper, DECLARED_PROCESSING_CONTRACT_ATTR, contract.name)
+    setattr(wrapper, FunctionContractAttribute.processing_contract, contract)
+    setattr(
+        wrapper,
+        FunctionContractAttribute.declared_processing_contract,
+        contract.name,
+    )
     setattr(wrapper, CELLPROFILER_MODULE_ATTR, module_name)
+    setattr(
+        wrapper,
+        FunctionContractAttribute.allowed_group_by,
+        module_type.allowed_group_by,
+    )
     attach_callable_contract_metadata(
         wrapper,
         raw_processing_function=func,

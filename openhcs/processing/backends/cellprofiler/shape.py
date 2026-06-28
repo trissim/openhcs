@@ -2,12 +2,143 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_bool,
+)
+from openhcs.core.runtime_semantics import (
+    ObjectShapeMeasurementFeature,
+    ObjectShapeZernikeFeatureContract,
+    ShapeObjectFeatureValueTable,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+    ObjectMeasurementRowsModule,
+    PerObjectMeasurementExecutionModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
+    DenseColumnarObjectMeasurementRowsMixin,
+    FeatureAnchoredCompactObjectMeasurementRowPolicy,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    CurrentPayloadMeasurementRecordMixin,
+    TableMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    LabelsObjectInputPolicy,
+)
+
+class MeasureObjectSizeShapeObjectMeasurementRowPolicy(
+    DenseColumnarObjectMeasurementRowsMixin,
+    FeatureAnchoredCompactObjectMeasurementRowPolicy
+):
+    """Object shape rows are object-qualified, not image-source-qualified."""
+
+    measured_object_features = (
+        ObjectShapeMeasurementFeature.CENTER_X,
+        ObjectShapeMeasurementFeature.CENTER_Y,
+    )
+    retained_unmeasured_compact_features = (
+        ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER,
+        ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER,
+        ObjectShapeMeasurementFeature.MAXIMUM_RADIUS,
+        ObjectShapeMeasurementFeature.MEAN_RADIUS,
+        ObjectShapeMeasurementFeature.MEDIAN_RADIUS,
+    )
+
+    def retains_unmeasured_compact_row(
+        self,
+        row_mapping: "MeasurementRowMapping",
+        *,
+        object_id_field: str,
+        axis_fields: "Sequence[str]",
+    ) -> bool:
+        """Preserve CP-emitted zero-only shape rows without measuring them."""
+        del object_id_field, axis_fields
+        return any(
+            self.measurement_value_is_present(row_mapping.get(feature.value))
+            for feature in type(self).retained_unmeasured_compact_features
+        )
+
+    def table_source_image_name(
+        self,
+        measurement_images: tuple["CellProfilerMeasurementImage", ...],
+        source_image_name: str | None,
+    ) -> str | None:
+        del measurement_images, source_image_name
+        return None
+
+
+class MeasureObjectSizeShapeModule(
+    LabelsObjectInputPolicy,
+    TableMeasurementRecordRowsMixin,
+    CurrentPayloadMeasurementRecordMixin,
+    PerObjectMeasurementExecutionModule,
+    ObjectMeasurementRowsModule,
+    MeasureObjectSizeShapeObjectMeasurementRowPolicy,
+):
+    module_name = 'MeasureObjectSizeShape'
+    function_name = 'measure_object_size_shape'
+    validated = True
+    confidence = 1.0
+    ignored_settings = (
+        "Select objects to measure",
+        "Select object sets to measure",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Calculate the Zernike features?",
+            "calculate_zernikes",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Calculate the advanced features?",
+            "calculate_advanced",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+
+        inputs = [
+            builder.require_artifact(ArtifactSpec(name, ArtifactKind.OBJECT_LABELS), module)
+            for value in setting_values(module, SettingNameFamily("Select objects to measure", aliases=("Select object sets to measure",)))
+            for name in split_symbol_names(value)
+        ]
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module)
+        ]
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 import logging
 import time
+from types import MappingProxyType
 
 import numpy as np
 import scipy.ndimage
@@ -27,8 +158,6 @@ from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelDomainScope,
     ObjectLabelRepresentation,
-    ObjectShapeMeasurementFeature,
-    ShapeObjectFeatureValueTable,
     dense_object_label_id_domain,
     dense_object_label_measurement_row_domain,
     indexed_measurement_feature_name,
@@ -36,6 +165,7 @@ from openhcs.core.runtime_semantics import (
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     DenseObjectLabelSliceStackRequest,
     ObjectLabelDataPlaneStackContract,
     ObjectLabelPayload,
@@ -68,10 +198,62 @@ from openhcs.processing.backends.cellprofiler.secondary_numba_propagation_labels
 from openhcs.processing.materialization import csv_materializer
 from openhcs.processing.backends.cellprofiler.zernike import shape_zernike_moments
 
-_ZERNIKE_MAX_ORDER = 9
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 ShapeFeatureArrays = tuple[dict[str, np.ndarray], np.ndarray]
+
+
+class ShapeObjectMeasurementRows(ColumnarRows):
+    """Dense AreaShape rows that already span their declared object domain."""
+
+    __slots__ = ("_columns", "_rows")
+
+    def __init__(
+        self,
+        columns: Mapping[str, tuple[object, ...]],
+        rows: tuple[Mapping[str, object], ...],
+    ) -> None:
+        self._columns = columns
+        self._rows = rows
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: list[dict[str, object]],
+    ) -> "ShapeObjectMeasurementRows":
+        row_tuple = tuple(MappingProxyType(dict(row)) for row in rows)
+        if not row_tuple:
+            return cls(MappingProxyType({}), ())
+        field_names = tuple(row_tuple[0])
+        if any(tuple(row) != field_names for row in row_tuple[1:]):
+            raise ValueError("AreaShape columnar rows require homogeneous fields.")
+        columns = {
+            field_name: tuple(row[field_name] for row in row_tuple)
+            for field_name in field_names
+        }
+        return cls(MappingProxyType(columns), row_tuple)
+
+    @property
+    def columns(self) -> Mapping[str, tuple[object, ...]]:
+        return self._columns
+
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        return True
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def __getitem__(self, index: int) -> Mapping[str, object]:
+        return self._rows[index]
+
+    def row_mappings(self) -> tuple[Mapping[str, object], ...]:
+        return self._rows
+
+
 MARCHING_CUBES_CELL_OFFSETS = np.asarray(
     (
         (0, 0, 0),
@@ -178,6 +360,23 @@ class ObjectSizeShapeFeatureArrayOwner(ABC, metaclass=AutoRegisterMeta):
             calculate_zernikes=self.calculate_zernikes,
             shape_backend_provider=self.shape_backend_provider,
             zernike_backend_provider=self.zernike_backend_provider,
+        )
+
+    def apply_label_source_coordinate_offset(
+        self,
+        labels: object,
+        feature_values: dict[str, np.ndarray],
+        *,
+        local_offset_yx: tuple[int, int] = (0, 0),
+    ) -> None:
+        """Project AreaShape coordinate arrays through object-label source metadata."""
+        if not isinstance(labels, ObjectLabelValue):
+            return
+        labels.apply_source_spatial_coordinate_offset(
+            feature_values,
+            x_fields=ShapeCoordinateFeatureFields.x_fields(),
+            y_fields=ShapeCoordinateFeatureFields.y_fields(),
+            local_offset_yx=local_offset_yx,
         )
 
 
@@ -542,6 +741,7 @@ class ObjectSizeShapeMeasurementRowsRequest(ObjectSizeShapeFeatureArrayOwner):
         feature_values, measured_labels = self.feature_arrays_for_labels(
             label_array,
         )
+        self.apply_label_source_coordinate_offset(self.labels, feature_values)
         return ShapeObjectFeatureValueTable.from_feature_arrays(
             feature_values,
             measured_labels,
@@ -580,7 +780,7 @@ def measure_object_size_shape(
     shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     slice_index: int | None = None,
-) -> tuple[np.ndarray, list[dict[str, object]]]:
+) -> tuple[np.ndarray, ShapeObjectMeasurementRows]:
     """Measure CellProfiler AreaShape rows for labeled objects."""
     total_started_at = time.perf_counter()
     label_array = object_label_dense_array(labels, dtype=np.int32)
@@ -612,13 +812,14 @@ def measure_object_size_shape(
         shape_backend_provider=shape_backend_provider,
         zernike_backend_provider=zernike_backend_provider,
     ).rows()
+    measurement_rows = ShapeObjectMeasurementRows.from_rows(rows)
     runtime_profiler.log(
         "moss_total",
         time.perf_counter() - total_started_at,
         function="measure_object_size_shape",
-        objects=len(rows),
+        objects=len(measurement_rows),
     )
-    return image, rows
+    return image, measurement_rows
 
 
 def prepare_measure_object_size_shape() -> None:
@@ -684,6 +885,7 @@ class DensePlaneStackObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner
         feature_values, measured_labels = self.feature_arrays_for_labels(
             labels_2d,
         )
+        self.apply_label_source_coordinate_offset(self.labels, feature_values)
         slice_domain = self.labels.object_label_domain().project_slice(
             slice_index,
             self.plane_count,
@@ -769,11 +971,11 @@ class SparseIJVObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
         )
         if len(measured_labels) == 0:
             return self.empty_row(object_id)
-        SparseIJVShapeFeatureOffset(
-            feature_values=feature_values,
-            offset_y=min_y,
-            offset_x=min_x,
-        ).apply()
+        self.apply_label_source_coordinate_offset(
+            self.labels,
+            feature_values,
+            local_offset_yx=(min_y, min_x),
+        )
         return ShapeObjectFeatureValueTable.from_feature_arrays(
             feature_values,
             np.asarray([object_id], dtype=np.int32),
@@ -797,24 +999,8 @@ class SparseIJVObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
 
 
 @dataclass(frozen=True, slots=True)
-class SparseIJVShapeFeatureOffset:
-    """Translate local sparse-object AreaShape coordinates back to source XY."""
-
-    feature_values: dict[str, np.ndarray]
-    offset_y: int
-    offset_x: int
-
-    def apply(self) -> None:
-        for field in self.x_fields():
-            if field in self.feature_values:
-                self.feature_values[field] = (
-                    np.asarray(self.feature_values[field], dtype=float) + self.offset_x
-                )
-        for field in self.y_fields():
-            if field in self.feature_values:
-                self.feature_values[field] = (
-                    np.asarray(self.feature_values[field], dtype=float) + self.offset_y
-                )
+class ShapeCoordinateFeatureFields:
+    """AreaShape feature fields whose values live in object-label XY coordinates."""
 
     @staticmethod
     def x_fields() -> tuple[str, ...]:
@@ -1340,7 +1526,7 @@ def _zernike_features(
     zernike_numbers, zernike_values = shape_zernike_moments(
         labels,
         measured_labels,
-        max_order=_ZERNIKE_MAX_ORDER,
+        max_order=ObjectShapeZernikeFeatureContract.max_order,
         backend_provider=backend_provider,
     )
     return {
@@ -1955,6 +2141,10 @@ def _color_labels_numpy(labels: np.ndarray) -> np.ndarray:
     label_array = np.asarray(labels, dtype=np.int32)
     if label_array.size == 0:
         return np.zeros(label_array.shape, dtype=int)
+    if not _has_touching_foreground_labels_numba(
+        np.ascontiguousarray(label_array),
+    ):
+        return (label_array != 0).astype(int)
     neighbor_counts, neighbor_starts, neighbor_labels = _find_label_neighbors_numpy(
         label_array,
     )
@@ -1991,6 +2181,33 @@ def _color_labels_numpy(labels: np.ndarray) -> np.ndarray:
         else:
             colors_by_label[connected_labels[index]] = int(neighbor_colors.size + 1)
     return colors_by_label[label_array]
+
+
+@njit(cache=True)
+def _has_touching_foreground_labels_numba(labels: np.ndarray) -> bool:
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            label = labels[y, x]
+            if label <= 0:
+                continue
+            if x + 1 < width:
+                neighbor = labels[y, x + 1]
+                if neighbor > 0 and neighbor != label:
+                    return True
+            if y + 1 < height:
+                neighbor = labels[y + 1, x]
+                if neighbor > 0 and neighbor != label:
+                    return True
+                if x + 1 < width:
+                    neighbor = labels[y + 1, x + 1]
+                    if neighbor > 0 and neighbor != label:
+                        return True
+                if x > 0:
+                    neighbor = labels[y + 1, x - 1]
+                    if neighbor > 0 and neighbor != label:
+                        return True
+    return False
 
 
 def _find_label_neighbors_numpy(

@@ -3,6 +3,8 @@ Converted from CellProfiler: MeasureImageAreaOccupied
 Measures the total area in an image that is occupied by objects or foreground.
 """
 
+from openhcs.interop.cellprofiler.setting_names import split_symbol_names
+
 import numpy as np
 from typing import Optional, Sequence, Tuple
 from dataclasses import dataclass
@@ -15,8 +17,213 @@ from openhcs.processing.backends.analysis.region_properties import (
     label_area_and_rounded_perimeter_2d,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import (
+    composed_image_payload,
+    special_inputs,
+    special_outputs,
+)
 from openhcs.processing.materialization import csv_materializer
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    MeasurementDebugViewModule,
+    ModuleSettingsSourceModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    block_setting_value,
+    optional_setting_value,
+    repeating_setting_blocks,
+    required_setting_value,
+)
+from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    ObjectRowsInputPolicy,
+)
+
+
+class MeasureImageAreaOccupiedBinaryModule(
+    ObjectRowsInputPolicy,
+    MeasurementDebugViewModule,
+    ModuleSettingsSourceModule,
+):
+    module_name = 'MeasureImageAreaOccupiedBinary'
+    function_name = 'measure_image_area_occupied'
+    validated = True
+    aliases = ('MeasureImageAreaOccupied',)
+    function_variants = (
+        'measure_image_area_occupied_binary',
+        'measure_image_area_occupied_objects',
+        'measure_image_volume_occupied_binary',
+        'measure_image_volume_occupied_objects',
+    )
+    contract = 'flexible'
+    confidence = 1.0
+    mode_setting = SettingNameFamily(
+        "Measure the area occupied in a binary image, or in objects?",
+        aliases=("Measure the area occupied by",),
+    )
+    binary_image_setting = SettingNameFamily(
+        "Select a binary image to measure",
+        aliases=("Select binary images to measure",),
+    )
+    objects_setting = SettingNameFamily(
+        "Select objects to measure",
+        aliases=("Select object sets to measure",),
+    )
+    retain_image_setting = "Retain a binary image of the object regions?"
+    output_image_setting = "Name the output binary image"
+
+    class Operand(str, Enum):
+        BINARY_IMAGE = "binary_image"
+        OBJECTS = "objects"
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRow:
+        operand: "MeasureImageAreaOccupiedBinaryModule.Operand"
+        input_name: str
+        binary_image_name: str | None
+        objects_name: str | None
+        retained_image_name: str | None
+
+    @classmethod
+    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+        rows = cls.measurement_rows(module)
+        return {
+            "operand_choices": tuple(row.operand.value for row in rows),
+            "input_names": tuple(row.input_name for row in rows),
+            "retained_image_names": tuple(row.retained_image_name for row in rows),
+        }
+
+    @classmethod
+    def measurement_rows(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["MeasureImageAreaOccupiedBinaryModule.MeasurementRow", ...]:
+        rows: list[MeasureImageAreaOccupiedBinaryModule.MeasurementRow] = []
+        for block in repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=cls.mode_setting,
+        ):
+            rows.extend(cls._expanded_rows_from_block(module, block))
+        return tuple(rows)
+
+    @classmethod
+    def _expanded_rows_from_block(
+        cls,
+        module: "ModuleBlock",
+        block: Sequence["ModuleSetting"],
+    ) -> tuple["MeasureImageAreaOccupiedBinaryModule.MeasurementRow", ...]:
+        operand = cls._operand_from_literal(block_setting_value(block, cls.mode_setting))
+        binary_image_name = normalized_symbol_name(
+            block_setting_value(block, cls.binary_image_setting)
+        )
+        objects_name = normalized_symbol_name(block_setting_value(block, cls.objects_setting))
+        input_name = cls._input_name_for_operand(
+            module,
+            operand,
+            binary_image_name=binary_image_name,
+            objects_name=objects_name,
+        )
+        retained_image_name = cls._retained_image_name(block)
+        expanded_input_names = cls._expanded_input_names(
+            module,
+            operand,
+            input_name=input_name,
+            block=block,
+        )
+        return tuple(
+            cls.MeasurementRow(
+                operand=operand,
+                input_name=expanded_input_name,
+                binary_image_name=(
+                    expanded_input_name if operand is cls.Operand.BINARY_IMAGE else None
+                ),
+                objects_name=expanded_input_name if operand is cls.Operand.OBJECTS else None,
+                retained_image_name=retained_image_name,
+            )
+            for expanded_input_name in expanded_input_names
+        )
+
+    @classmethod
+    def _operand_from_literal(cls, value: str) -> "MeasureImageAreaOccupiedBinaryModule.Operand":
+        normalized = value.strip().lower()
+        if "binary" in normalized:
+            return cls.Operand.BINARY_IMAGE
+        if "object" in normalized:
+            return cls.Operand.OBJECTS
+        raise ValueError(f"Unsupported MeasureImageAreaOccupied mode {value!r}.")
+
+    @classmethod
+    def _input_name_for_operand(
+        cls,
+        module: "ModuleBlock",
+        operand: "MeasureImageAreaOccupiedBinaryModule.Operand",
+        *,
+        binary_image_name: str | None,
+        objects_name: str | None,
+    ) -> str:
+        if operand is cls.Operand.BINARY_IMAGE:
+            input_name = binary_image_name
+            role = "binary image"
+        else:
+            input_name = objects_name
+            role = "object"
+        if input_name is None:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) has an area-occupied "
+                f"row with no {role} input."
+            )
+        return input_name
+
+    @classmethod
+    def _expanded_input_names(
+        cls,
+        module: "ModuleBlock",
+        operand: "MeasureImageAreaOccupiedBinaryModule.Operand",
+        *,
+        input_name: str,
+        block: Sequence["ModuleSetting"],
+    ) -> tuple[str, ...]:
+        if operand is cls.Operand.BINARY_IMAGE:
+            return (
+                split_symbol_names(block_setting_value(block, cls.binary_image_setting))
+                or (input_name,)
+            )
+        return split_symbol_names(block_setting_value(block, cls.objects_setting)) or (
+            input_name,
+        )
+
+    @classmethod
+    def _retained_image_name(
+        cls,
+        block: Sequence["ModuleSetting"],
+    ) -> str | None:
+        retain_literal = block_setting_value(block, cls.retain_image_setting)
+        if retain_literal.strip().lower() != "yes":
+            return None
+        return normalized_symbol_name(block_setting_value(block, cls.output_image_setting))
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        rows = cls.measurement_rows(module)
+        if not rows:
+            raise ValueError(f"Module {module.name}({module.module_num}) declares no MeasureImageAreaOccupied measurement rows.")
+        inputs = []
+        retained_images = []
+        for row in rows:
+            if row.operand is cls.Operand.BINARY_IMAGE and row.binary_image_name is not None:
+                inputs.append(builder.require_artifact(ArtifactSpec(row.binary_image_name, ArtifactKind.IMAGE), module))
+            if row.operand is cls.Operand.OBJECTS and row.objects_name is not None:
+                inputs.append(builder.require_artifact(ArtifactSpec(row.objects_name, ArtifactKind.OBJECT_LABELS), module))
+            if row.retained_image_name is not None:
+                retained_images.append(builder.declare_artifact(ArtifactSpec(row.retained_image_name, ArtifactKind.IMAGE), module))
+        measurements = builder.declare_artifact(
+            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+            module,
+        )
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=[*retained_images, measurements])
 
 
 class OperandChoice(Enum):
@@ -133,6 +340,7 @@ class ObjectLabelsAreaOccupiedRequest:
         return object_region_mask, measurement
 
 
+@composed_image_payload
 @numpy(contract=ProcessingContract.FLEXIBLE)
 @special_outputs(("area_measurements", csv_materializer(
     fields=["slice_index", "area_occupied", "perimeter", "total_area"],

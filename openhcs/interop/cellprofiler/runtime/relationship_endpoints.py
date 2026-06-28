@@ -10,6 +10,7 @@ from openhcs.core.runtime_semantics import (
     parent_child_relationship_artifact_endpoints,
     parent_child_relationship_artifact_name,
 )
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.output_record_request import (
@@ -70,6 +71,13 @@ class RelationshipEndpointResolver:
 
     request: CellProfilerOutputRecordRequest
 
+    @classmethod
+    def for_request(
+        cls,
+        request: CellProfilerOutputRecordRequest,
+    ) -> "RelationshipEndpointResolver":
+        return cls(request)
+
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
         return self.request.contract.declared_input_collection().of_kind(
@@ -80,6 +88,12 @@ class RelationshipEndpointResolver:
     def object_outputs(self) -> tuple[ArtifactSpec, ...]:
         return self.request.contract.output_collection().of_kind(
             ArtifactKind.OBJECT_LABELS
+        )
+
+    @property
+    def relationship_outputs(self) -> tuple[ArtifactSpec, ...]:
+        return self.request.contract.declared_output_collection().of_kind(
+            ArtifactKind.RELATIONSHIPS
         )
 
     def endpoint_specs(
@@ -93,6 +107,7 @@ class RelationshipEndpointResolver:
         self,
         relationship_spec: ArtifactSpec,
     ) -> RelationshipEndpointContract:
+        """Return the endpoint contract for one relationship artifact."""
         matches = self.artifact_name_matches(relationship_spec)
         match_contract = RelationshipEndpointMatches(
             matches,
@@ -128,6 +143,9 @@ class RelationshipEndpointResolver:
                         ArtifactKind.OBJECT_LABELS,
                     ),
                 )
+        module_contract = self.module_relationship_endpoint_contract(relationship_spec)
+        if module_contract is not None:
+            return module_contract
         raise NotImplementedError(
             f"{self.request.module_name} relationship output "
             f"'{relationship_spec.name}' cannot be mapped to object endpoints from "
@@ -151,3 +169,58 @@ class RelationshipEndpointResolver:
                 child_spec.name,
             )
         )
+
+    def distance_measurements_apply(
+        self,
+        relationship_spec: ArtifactSpec,
+    ) -> bool:
+        """Return whether relationship-distance rows belong to this artifact."""
+        module_type = CellProfilerModule.for_module(self.request.module_name)
+        if module_type is None:
+            return False
+        return module_type.relationship_distance_measurements_apply(
+            self,
+            relationship_spec,
+        )
+
+    def module_relationship_endpoint_contract(
+        self,
+        relationship_spec: ArtifactSpec,
+    ) -> RelationshipEndpointContract | None:
+        module_type = CellProfilerModule.for_module(self.request.module_name)
+        if module_type is None:
+            return None
+        return module_type.relationship_endpoint_contract(
+            self,
+            relationship_spec,
+        )
+
+    def indexed_object_input_contract(
+        self,
+        input_indices: tuple[int, int],
+    ) -> RelationshipEndpointContract:
+        parent_index, child_index = input_indices
+        return RelationshipEndpointContract(
+            self.object_input_at(parent_index),
+            self.object_input_at(child_index),
+        )
+
+    def object_input_at(self, index: int) -> ArtifactSpec:
+        try:
+            return self.object_inputs[index]
+        except IndexError as exc:
+            raise NotImplementedError(
+                f"{self.request.module_name} primary relationship endpoint "
+                f"requires object input index {index}, got inputs="
+                f"{[spec.name for spec in self.object_inputs]}."
+            ) from exc
+
+    def relationship_output_at(self, index: int) -> ArtifactSpec:
+        try:
+            return self.relationship_outputs[index]
+        except IndexError as exc:
+            raise NotImplementedError(
+                f"{self.request.module_name} primary relationship endpoint "
+                f"requires relationship output index {index}, got outputs="
+                f"{[spec.name for spec in self.relationship_outputs]}."
+            ) from exc

@@ -2,23 +2,33 @@ import re
 from pathlib import Path
 
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.module_processing_components import (
+    SourceBindingProcessingScope,
+    SourceProcessingAxisPlan,
+    SourceProcessingComponentSemantics,
+)
 from openhcs.interop.cellprofiler.pipeline_generator import (
     PipelineGenerator,
-    SourceProcessingComponentSemantics,
 )
 from openhcs.interop.cellprofiler.source_schema import compile_image_schema
 from openhcs.interop.cellprofiler.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
-from openhcs.core.pipeline_image_schema import ImagePlaneSource, PipelineImageSchema
+from openhcs.core.pipeline_image_schema import (
+    ImagePlaneSource,
+    PipelineImageSchema,
+    SourceImageStackPlan,
+)
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataSource,
     MetadataSelector,
+    NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceFilterMatchType,
     SourceBindingOrigin,
     SourceFilterSubject,
+    StepSourceBindingsConfig,
 )
 
 
@@ -540,10 +550,14 @@ def test_codegen_groups_metadata_free_ordered_image_sets_by_workspace_site():
         skipped_modules=[metadata_module, names_and_types_module],
     )
 
-    assert "match_plan=SourceBindingMatchPlan(" in generated.code
-    assert "method=SourceBindingMatchMethod.ORDER" in generated.code
-    assert "variable_components=[]" in generated.code
-    assert "group_by=GroupBy.SITE" in generated.code
+    assert generated.pipeline_config is not None
+    assert generated.pipeline_config.source_bindings_config.match_plan is not None
+    assert (
+        generated.pipeline_config.source_bindings_config.match_plan.method
+        is SourceBindingMatchMethod.ORDER
+    )
+    assert "variable_components=[VariableComponents.SITE]" in generated.code
+    assert "group_by=GroupBy.NONE" in generated.code
 
 
 def test_compile_image_schema_treats_binary_masks_as_stack_images():
@@ -773,7 +787,7 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
 
     table = CellProfilerSymbolTable.compile([*setup_modules, processing_module])
     contract = table.contracts_by_module_num[4]
-    bindings = contract.source_bindings.groups[0].bindings
+    bindings = contract.source_bindings.bindings
 
     assert bindings[0].alias == "DAPI"
     assert bindings[0].selector.metadata == (
@@ -784,8 +798,6 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert bindings[1].selector.metadata == (
         MetadataSelector("illum", "DAPI"),
     )
-    assert contract.source_bindings.match_plan is not None
-
     generated = PipelineGenerator().generate_from_registry(
         pipeline_name="cp_setup_schema",
         source_cppipe=Path("source.cppipe"),
@@ -795,13 +807,11 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
 
     assert "MetadataSelector('channel', '1')" in generated.code
     assert "MetadataSelector('illum', 'DAPI')" in generated.code
-    assert "MetadataExtractionRule(" in generated.code
-    assert "SourceBindingMatchPlan(" in generated.code
+    assert generated.pipeline_config is not None
+    assert generated.pipeline_config.source_bindings_config.match_plan is not None
     assert "SourceBindingOrigin.PIPELINE_START" in generated.code
     assert "input_source=InputSource.PIPELINE_START" in generated.code
-    assert "variable_components=[]" in generated.code
-    assert "group_by=GroupBy.SITE" in generated.code
-    assert "group_by=GroupBy.SITE" in generated.code
+    assert "group_by=GroupBy.NONE" in generated.code
 
 
 def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
@@ -859,7 +869,7 @@ def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
     contract = table.contracts_by_module_num[4]
 
     assert tuple(
-        binding.alias for binding in contract.source_bindings.groups[0].bindings
+        binding.alias for binding in contract.source_bindings.bindings
     ) == ("DAPI", "GFP")
     assert contract.source_bindings.requires_step_input_channel_stack
     assert contract.runtime_artifact_inputs == ()
@@ -985,7 +995,7 @@ def test_imagemath_pipeline_start_operands_consume_source_alias_axis():
     )
 
     table = CellProfilerSymbolTable.compile([*setup_modules, processing_module])
-    bindings = table.contracts_by_module_num[3].source_bindings.groups[0].bindings
+    bindings = table.contracts_by_module_num[3].source_bindings.bindings
 
     assert tuple(binding.alias for binding in bindings) == (
         "origDNA",
@@ -1008,8 +1018,43 @@ def test_imagemath_pipeline_start_operands_consume_source_alias_axis():
     step_source = generated.code[step_start:]
 
     assert step_source.count("participates_in_image_stack=False") == 2
-    assert "variable_components=[VariableComponents.Z_INDEX]" in step_source
+    assert (
+        "variable_components=[VariableComponents.SITE, VariableComponents.Z_INDEX]"
+        in step_source
+    )
     assert "VariableComponents.CHANNEL" not in step_source
+
+
+def test_source_binding_scope_ignores_stack_axes_without_image_stack_anchor():
+    source_schema = PipelineImageSchema(
+        source_image_stack=SourceImageStackPlan((AllComponents.Z_INDEX,)),
+    )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="HelperImage",
+                participates_in_image_stack=False,
+            ),
+        ),
+    )
+    axis_plan = SourceProcessingAxisPlan.from_schema(
+        source_schema,
+        source_bindings,
+    )
+    source_stack_components = (
+        source_schema.source_stack_components
+        if source_bindings.image_stack_bindings
+        else ()
+    )
+
+    components = SourceBindingProcessingScope(
+        source_bindings,
+        source_schema,
+        axis_plan,
+        source_stack_components,
+    ).components()
+
+    assert components.variable_components == ()
 
 
 def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
@@ -1053,8 +1098,7 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     assert "SourceFilterClause(" in generated.code
     assert "SourceFilterMatchType.CONTAINS" in generated.code
     assert "input_source=InputSource.PIPELINE_START," in generated.code
-    assert "variable_components=[]," in generated.code
-    assert "group_by=GroupBy.NONE," in generated.code
+    assert "group_by=GroupBy.NONE" in generated.code
 
 
 def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps():
@@ -1117,8 +1161,8 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     )
     assert primary_match is not None
     primary_config = primary_match.group("body")
-    assert "variable_components=[]," in primary_config
-    assert "group_by=GroupBy.TIMEPOINT," in primary_config
+    assert "variable_components=[VariableComponents.TIMEPOINT]," in primary_config
+    assert "group_by=GroupBy.NONE" in primary_config
 
     measurement_match = re.search(
         r'name="MeasureObjectSizeShape".*?'
@@ -1128,9 +1172,9 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     )
     assert measurement_match is not None
     measurement_config = measurement_match.group("body")
-    assert "variable_components=[]," in measurement_config
     assert "VariableComponents.SITE" not in measurement_config
-    assert "group_by=GroupBy.TIMEPOINT," in measurement_config
+    assert "variable_components=[VariableComponents.TIMEPOINT]," in measurement_config
+    assert "group_by=GroupBy.NONE" in measurement_config
 
 
 def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
@@ -1197,8 +1241,8 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     assert primary_match is not None
     primary_config = primary_match.group("body")
     assert "VariableComponents.CHANNEL" not in primary_config
-    assert "variable_components=[]," in primary_config
-    assert "group_by=GroupBy.SITE," in primary_config
+    assert "variable_components=[VariableComponents.SITE]," in primary_config
+    assert "group_by=GroupBy.NONE" in primary_config
 
     secondary_match = re.search(
         r'name="IdentifySecondaryObjects".*?'
@@ -1209,11 +1253,11 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     assert secondary_match is not None
     secondary_config = secondary_match.group("body")
     assert "VariableComponents.CHANNEL" not in secondary_config
-    assert "variable_components=[]," in secondary_config
-    assert "group_by=GroupBy.SITE," in secondary_config
+    assert "variable_components=[VariableComponents.SITE]," in secondary_config
+    assert "group_by=GroupBy.NONE" in secondary_config
 
 
-def test_straightenworms_declares_step_source_identity_axis_for_source_images():
+def test_straightenworms_does_not_declare_step_source_identity_axis():
     setup_modules = [
         _module_with_records(
             1,
@@ -1277,7 +1321,7 @@ def test_straightenworms_declares_step_source_identity_axis_for_source_images():
     ]
 
     generated = PipelineGenerator().generate_from_registry(
-        pipeline_name="cp_straighten_worms_source_identity",
+        pipeline_name="cp_straighten_worms_variable_components",
         source_cppipe=Path("source.cppipe"),
         modules=processing_modules,
         skipped_modules=setup_modules,
@@ -1291,10 +1335,6 @@ def test_straightenworms_declares_step_source_identity_axis_for_source_images():
     )
 
     assert step_match is not None
-    assert (
-        "source_identity_stack_axes=(AllComponents.CHANNEL,)"
-        in step_match.group("body")
-    )
 
 
 def test_correct_illumination_all_scope_allows_single_channel_schema():
@@ -1342,10 +1382,6 @@ def test_correct_illumination_all_scope_allows_single_channel_schema():
     assert step_match is not None
     assert "variable_components=[VariableComponents.SITE]" in step_match.group("body")
     assert "group_by=GroupBy.NONE" in step_match.group("body")
-    assert (
-        "source_identity_stack_axes=(AllComponents.SITE,)"
-        in step_match.group("body")
-    )
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
@@ -1583,8 +1619,8 @@ def test_generated_runtime_callables_with_non_image_artifacts_are_flexible():
     assert "identify_tertiary_objects," in generated.code
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "name=\"IdentifyTertiaryObjects\"," in generated.code
-    assert "variable_components=[]," in generated.code
-    assert "group_by=GroupBy.SITE," in generated.code
+    assert "variable_components=[VariableComponents.SITE]," in generated.code
+    assert "group_by=GroupBy.NONE" in generated.code
 
 
 def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():

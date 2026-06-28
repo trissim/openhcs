@@ -1,9 +1,7 @@
 """Converted from CellProfiler: ImageMath."""
 
-from openhcs.interop.cellprofiler.image_math_settings import (
-    ImageMathOperation as MathOperation,
-)
 from openhcs.processing.backends.cellprofiler.image_math import (
+    ImageMathOperation as MathOperation,
     ImageMathMaskPolicy,
     ImageMathOperationStrategy,
     image_math,

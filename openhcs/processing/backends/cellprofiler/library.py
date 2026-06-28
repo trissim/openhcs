@@ -5,19 +5,21 @@ from __future__ import annotations
 import ast
 import inspect
 import importlib
-import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openhcs.core.callable_contract import PROCESSING_CONTRACT_ATTR
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+if TYPE_CHECKING:
+    from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 
 _LIBRARY_ROOT = Path(__file__).parent
-_CONTRACTS_PATH = _LIBRARY_ROOT / "contracts.json"
 _FUNCTIONS_PACKAGE = "benchmark.cellprofiler_library.functions"
 _BACKEND_FUNCTIONS_PACKAGE = "openhcs.processing.backends.cellprofiler"
 _INTEROP_FUNCTIONS_PACKAGE = "openhcs.interop.cellprofiler"
@@ -77,6 +79,23 @@ class AbsorbedFunctionMetadata:
             category=str(payload.get("category", "image_operation")),
             confidence=float(payload.get("confidence", 0.5)),
             validated=bool(payload.get("validated", False)),
+        )
+
+    @classmethod
+    def from_module_class(
+        cls,
+        module_type: type[CellProfilerModule],
+    ) -> "AbsorbedFunctionMetadata":
+        """Project compatibility metadata from one registered module class."""
+        return cls(
+            module_name=str(module_type.module_name),
+            aliases=tuple(module_type.aliases),
+            function_name=str(module_type.function_name),
+            function_variants=tuple(module_type.function_variants),
+            contract=str(module_type.contract),
+            category=str(module_type.category),
+            confidence=float(module_type.confidence),
+            validated=bool(module_type.validated),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -161,22 +180,19 @@ class AbsorbedFunctionModuleExports:
         return tuple(names)
 
 
-_contracts: Mapping[str, AbsorbedFunctionMetadata] = MappingProxyType({})
-_canonical_module_names: Mapping[str, str] = MappingProxyType({})
-_function_locations: Mapping[str, AbsorbedFunctionLocation] = MappingProxyType({})
-_default_function_contracts: Mapping[str, ProcessingContract] = MappingProxyType({})
 _function_cache: dict[tuple[str, str], Callable[..., Any]] = {}
+
+
+def _cellprofiler_module_root() -> type["CellProfilerModule"]:
+    """Return the module declaration root without import-time registry cycles."""
+    from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
+
+    return CellProfilerModule
 
 
 def canonical_module_name(module_name: str) -> str:
     """Return the canonical absorbed module name for a CellProfiler module name."""
-    normalized = module_name.strip()
-    if not normalized:
-        raise ValueError("CellProfiler module name cannot be empty.")
-    return _canonical_module_names.get(
-        _module_lookup_key(normalized),
-        normalized,
-    )
+    return _cellprofiler_module_root().canonical_module_name(module_name)
 
 
 def get_function(
@@ -186,7 +202,7 @@ def get_function(
 ) -> Callable[..., Any] | None:
     """Return the absorbed function for a CellProfiler module, if registered."""
     canonical_name = canonical_module_name(module_name)
-    metadata = _contracts.get(canonical_name)
+    metadata = _absorbed_contracts().get(canonical_name)
     if metadata is None:
         return None
 
@@ -196,7 +212,7 @@ def get_function(
     if cached is not None:
         return cached
 
-    location = _function_locations.get(resolved_function_name)
+    location = _absorbed_function_locations().get(resolved_function_name)
     if location is None:
         return None
 
@@ -224,7 +240,7 @@ def require_function(
         return function
 
     canonical_name = canonical_module_name(module_name)
-    metadata = _contracts.get(canonical_name)
+    metadata = _absorbed_contracts().get(canonical_name)
     if metadata is None:
         raise KeyError(f"No absorbed CellProfiler module registered: {module_name!r}")
     resolved_function_name = function_name or metadata.function_name
@@ -236,7 +252,7 @@ def require_function(
 
 def get_contract(module_name: str) -> dict[str, Any] | None:
     """Return contract metadata for one absorbed CellProfiler module."""
-    metadata = _contracts.get(canonical_module_name(module_name))
+    metadata = _absorbed_contracts().get(canonical_module_name(module_name))
     if metadata is None:
         return None
     return metadata.to_json()
@@ -244,26 +260,26 @@ def get_contract(module_name: str) -> dict[str, Any] | None:
 
 def list_modules() -> list[str]:
     """List absorbed CellProfiler module names."""
-    return list(_contracts.keys())
+    return list(_absorbed_contracts().keys())
 
 
 def validated_contracts() -> Mapping[str, dict[str, Any]]:
     """Return validated absorbed module contracts keyed by canonical module name."""
     return {
         module_name: metadata.to_json()
-        for module_name, metadata in _contracts.items()
+        for module_name, metadata in _absorbed_contracts().items()
         if metadata.validated
     }
 
 
 def function_inventory() -> Mapping[str, AbsorbedFunctionLocation]:
     """Return the derived absorbed function location index."""
-    return _function_locations
+    return _absorbed_function_locations()
 
 
 def function_source_path(function_name: str) -> Path | None:
     """Return the source file for an absorbed function, if registered."""
-    location = _function_locations.get(function_name)
+    location = _absorbed_function_locations().get(function_name)
     if location is None:
         return None
     return location.callable_source_path() or location.source_path
@@ -276,31 +292,33 @@ def coerce_absorbed_processing_contract(
 ) -> ProcessingContract | None:
     """Return or install nominal processing metadata for an executable function.
 
-    The JSON catalog is the ingestion contract for canonical module functions.
-    This boundary converts that external declaration into a nominal
+    The current compatibility catalog supplies canonical module-function
+    metadata until the absorbed module catalog is generated from registered
+    class declarations. This boundary converts that declaration into a nominal
     ProcessingContract attribute exactly once. Downstream executable registries
     only consume callable metadata; undecorated helper functions stay private to
     their implementation modules.
     """
-    raw_contract = vars(function).get(PROCESSING_CONTRACT_ATTR)
+    processing_contract_key = FunctionContractAttribute.processing_contract
+    raw_contract = vars(function).get(processing_contract_key)
     if isinstance(raw_contract, ProcessingContract):
         return raw_contract
     if raw_contract is not None:
         raise TypeError(
             f"Absorbed CellProfiler function {function_name!r} declares "
-            f"{PROCESSING_CONTRACT_ATTR} as {type(raw_contract).__name__}; "
+            f"{processing_contract_key} as {type(raw_contract).__name__}; "
             "expected ProcessingContract."
         )
 
-    declared_contract = _default_function_contracts.get(function_name)
+    declared_contract = _absorbed_default_function_contracts().get(function_name)
     if declared_contract is None:
         return None
     canonical_name = canonical_module_name(module_name)
-    metadata = _contracts.get(canonical_name)
+    metadata = _absorbed_contracts().get(canonical_name)
     if metadata is None or function_name not in metadata.declared_function_names:
         return None
 
-    setattr(function, PROCESSING_CONTRACT_ATTR, declared_contract)
+    setattr(function, processing_contract_key, declared_contract)
     return declared_contract
 
 
@@ -309,7 +327,7 @@ def coerce_registered_absorbed_processing_contract(
     function: Callable[..., Any],
 ) -> ProcessingContract | None:
     """Install nominal processing metadata for a registered absorbed function."""
-    for metadata in _contracts.values():
+    for metadata in _absorbed_contracts().values():
         if metadata.function_name != function_name:
             continue
         return coerce_absorbed_processing_contract(
@@ -320,26 +338,30 @@ def coerce_registered_absorbed_processing_contract(
     return None
 
 
+@lru_cache(maxsize=1)
+def _absorbed_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
+    """Return the declaration-derived absorbed module catalog."""
+    return _load_contracts()
+
+
+@lru_cache(maxsize=1)
+def _absorbed_default_function_contracts() -> Mapping[str, ProcessingContract]:
+    """Return function processing contracts derived from module declarations."""
+    return _load_default_function_contracts(_absorbed_contracts())
+
+
+@lru_cache(maxsize=1)
+def _absorbed_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
+    """Return function locations filtered by declared module function names."""
+    return _discover_function_locations(_absorbed_contracts())
+
+
 def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
-    if not _CONTRACTS_PATH.exists():
-        return MappingProxyType({})
-    raw_registry = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
-    contracts = {
-        module_name: AbsorbedFunctionMetadata.from_json(module_name, payload)
-        for module_name, payload in raw_registry.items()
-    }
+    contracts = {}
+    for module_type in _cellprofiler_module_root().__registry__.values():
+        metadata = AbsorbedFunctionMetadata.from_module_class(module_type)
+        contracts[metadata.module_name] = metadata
     return MappingProxyType(contracts)
-
-
-def _load_canonical_module_names(
-    contracts: Mapping[str, AbsorbedFunctionMetadata],
-) -> Mapping[str, str]:
-    canonical_names: dict[str, str] = {}
-    for module_name, metadata in contracts.items():
-        _register_module_name(canonical_names, module_name, module_name)
-        for alias in metadata.aliases:
-            _register_module_name(canonical_names, alias, module_name)
-    return MappingProxyType(canonical_names)
 
 
 def _load_default_function_contracts(
@@ -362,34 +384,22 @@ def _load_default_function_contracts(
     return MappingProxyType(declared_contracts)
 
 
-def _register_module_name(
-    canonical_names: dict[str, str],
-    module_name: str,
-    canonical_name: str,
-) -> None:
-    normalized = module_name.strip()
-    if not normalized:
-        raise ValueError(
-            f"Absorbed CellProfiler module {canonical_name!r} declares an empty alias."
-        )
-    key = _module_lookup_key(normalized)
-    existing = canonical_names.get(key)
-    if existing is not None and existing != canonical_name:
-        raise ValueError(
-            f"CellProfiler module name {normalized!r} maps to both "
-            f"{existing!r} and {canonical_name!r}."
-        )
-    canonical_names[key] = canonical_name
-
-
-def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
+def _discover_function_locations(
+    contracts: Mapping[str, AbsorbedFunctionMetadata],
+) -> Mapping[str, AbsorbedFunctionLocation]:
     locations: dict[str, AbsorbedFunctionLocation] = {}
+    declared_function_names = {
+        function_name
+        for metadata in contracts.values()
+        for function_name in metadata.declared_function_names
+    }
     _register_function_locations(
         locations,
         package=_BACKEND_FUNCTIONS_PACKAGE,
         root=_LIBRARY_ROOT,
         replace_existing=False,
         declared_only=True,
+        declared_function_names=declared_function_names,
     )
     interop_spec = importlib.util.find_spec(_INTEROP_FUNCTIONS_PACKAGE)
     if interop_spec is not None and interop_spec.submodule_search_locations:
@@ -399,6 +409,7 @@ def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
             root=Path(next(iter(interop_spec.submodule_search_locations))),
             replace_existing=False,
             declared_only=True,
+            declared_function_names=declared_function_names,
         )
     _register_function_locations(
         locations,
@@ -406,6 +417,7 @@ def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
         root=_FUNCTIONS_ROOT,
         replace_existing=False,
         declared_only=False,
+        declared_function_names=declared_function_names,
     )
     return MappingProxyType(locations)
 
@@ -417,12 +429,8 @@ def _register_function_locations(
     root: Path,
     replace_existing: bool,
     declared_only: bool,
+    declared_function_names: set[str],
 ) -> None:
-    declared_function_names = {
-        function_name
-        for metadata in _contracts.values()
-        for function_name in metadata.declared_function_names
-    }
     for file_path in sorted(root.glob("*.py")):
         if file_path.name == "__init__.py":
             continue
@@ -508,10 +516,6 @@ def _function_variant_tuple(
     return variants
 
 
-def _module_lookup_key(module_name: str) -> str:
-    return module_name.strip().casefold()
-
-
 def _is_public_api_export(name: str, value: object) -> bool:
     return (
         not name.startswith("_")
@@ -520,10 +524,6 @@ def _is_public_api_export(name: str, value: object) -> bool:
     )
 
 
-_contracts = _load_contracts()
-_canonical_module_names = _load_canonical_module_names(_contracts)
-_default_function_contracts = _load_default_function_contracts(_contracts)
-_function_locations = _discover_function_locations()
 __all__ = tuple(
     name
     for name, value in globals().items()

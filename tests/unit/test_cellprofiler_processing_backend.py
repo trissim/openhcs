@@ -9,9 +9,13 @@ import numpy as np
 import pytest
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.callable_contract import PROCESSING_CONTRACT_ATTR
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+def _processing_contract(function):
+    return vars(function)[FunctionContractAttribute.processing_contract]
 
 
 def test_openhcs_product_code_does_not_import_benchmark_package() -> None:
@@ -106,7 +110,7 @@ def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     assert function.__module__ == "openhcs.processing.backends.cellprofiler"
     assert function.input_memory_type == MemoryType.NUMPY.value
     assert function.output_memory_type == MemoryType.NUMPY.value
-    assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_2D
+    assert _processing_contract(function) is ProcessingContract.PURE_2D
     assert (
         function
         is cellprofiler.get_cellprofiler_function("identify_primary_objects")
@@ -209,7 +213,7 @@ def test_cellprofiler_processing_backend_exports_module_function_variants() -> N
     assert function is cellprofiler.identify_objects_in_grid_with_guides
     assert function.input_memory_type == MemoryType.NUMPY.value
     assert function.output_memory_type == MemoryType.NUMPY.value
-    assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_2D
+    assert _processing_contract(function) is ProcessingContract.PURE_2D
 
 
 def test_cellprofiler_processing_backend_exports_resize_volumetric_variant() -> None:
@@ -223,7 +227,7 @@ def test_cellprofiler_processing_backend_exports_resize_volumetric_variant() -> 
     assert function is cellprofiler.resize_volumetric
     assert function.input_memory_type == MemoryType.NUMPY.value
     assert function.output_memory_type == MemoryType.NUMPY.value
-    assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_3D
+    assert _processing_contract(function) is ProcessingContract.PURE_3D
 
 
 def test_cellprofiler_processing_backend_exports_resize_objects_volumetric_variant() -> None:
@@ -237,7 +241,7 @@ def test_cellprofiler_processing_backend_exports_resize_objects_volumetric_varia
     assert function is cellprofiler.resize_objects_3d
     assert function.input_memory_type == MemoryType.NUMPY.value
     assert function.output_memory_type == MemoryType.NUMPY.value
-    assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_3D
+    assert _processing_contract(function) is ProcessingContract.PURE_3D
 
 
 def test_cellprofiler_processing_backend_submodule_import_is_lazy() -> None:
@@ -255,6 +259,33 @@ def test_cellprofiler_processing_backend_submodule_import_is_lazy() -> None:
     )
 
     assert result.returncode == 0
+
+
+def test_measure_object_size_shape_projects_dense_label_source_spatial_origin() -> None:
+    from openhcs.core.runtime_values import ObjectLabelPayload
+    from openhcs.core.source_spatial_domain import SourceSpatialDomain
+    from openhcs.processing.backends.cellprofiler.shape import measure_object_size_shape
+
+    labels = np.zeros((5, 5), dtype=np.int32)
+    labels[1:3, 2:4] = 1
+    payload = ObjectLabelPayload(
+        labels=labels,
+        source_spatial_domain=SourceSpatialDomain(
+            origin_yx=(10, 20),
+            source_shape_yx=(100, 100),
+        ),
+    )
+
+    _image, rows = measure_object_size_shape.__wrapped__(
+        np.zeros_like(labels, dtype=np.float32),
+        payload,
+        calculate_advanced=False,
+        calculate_zernikes=False,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["Center_X"] == 22.5
+    assert rows[0]["Center_Y"] == 11.5
 
 
 def test_openhcs_registry_discovers_cellprofiler_backend_contracts() -> None:
@@ -398,6 +429,18 @@ def test_threshold_diagnostics_scale_policy_accepts_uint16_unit_interval_proof()
     )
 
     assert unit_interval_scale_for_threshold_diagnostics(image, metadata) == 65535
+
+
+def test_threshold_diagnostics_quantized_codes_use_uint16_for_uint16_scale() -> None:
+    from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagnostics_quantized import (
+        quantized_threshold_codes,
+    )
+
+    image = np.asarray([[0.0, 1.0]], dtype=np.float32)
+    codes = quantized_threshold_codes(image, 65535)
+
+    assert codes.dtype == np.uint16
+    np.testing.assert_array_equal(codes, np.asarray([[0, 65535]], dtype=np.uint16))
 
 
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
@@ -577,6 +620,39 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
             MemoryType.NUMPY,
             backend_provider=CellProfilerBackendProvider.CENTROSOME,
         )
+
+
+def test_watershed_sparse_peak_markers_match_mahotas_dense_connectivity() -> None:
+    import mahotas
+    from openhcs.processing.backends.cellprofiler.watershed import (
+        _sparse_connected_peak_markers_3d,
+    )
+
+    peaks = np.zeros((12, 14, 16), dtype=bool)
+    peak_coordinates = np.array(
+        (
+            (1, 1, 1),
+            (1, 1, 9),
+            (1, 1, 10),
+            (8, 8, 8),
+            (11, 13, 15),
+        ),
+        dtype=np.int64,
+    )
+    peaks[
+        peak_coordinates[:, 0],
+        peak_coordinates[:, 1],
+        peak_coordinates[:, 2],
+    ] = True
+    connectivity = np.ones((16, 16, 16), dtype=bool)
+
+    expected, expected_count = mahotas.label(peaks, connectivity)
+    actual_tuple = _sparse_connected_peak_markers_3d(peaks, connectivity)
+
+    assert actual_tuple is not None
+    actual, actual_count = actual_tuple
+    assert actual_count == expected_count
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_numba_neighbor_topology_outline_frontier_matches_dense_reference() -> None:
@@ -971,6 +1047,35 @@ def test_threshold_application_smoothing_is_mask_normalized() -> None:
             truncate=4.0,
         ),
         mask,
+    )
+
+    assert sigma == pytest.approx(1.0)
+    np.testing.assert_allclose(smoothed, expected, rtol=0.0, atol=5e-15)
+
+
+def test_threshold_application_smoothing_matches_scipy_unmasked() -> None:
+    import scipy.ndimage as ndi
+
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        ThresholdApplicationSmoothing,
+    )
+
+    image = np.linspace(0.0, 1.0, 121, dtype=np.float64).reshape(11, 11)
+
+    smoothed, sigma = ThresholdApplicationSmoothing(1.3488).smooth(image, None)
+    expected = ndi.gaussian_filter(
+        image,
+        sigma=1.0,
+        mode="constant",
+        cval=0,
+        truncate=4.0,
+    )
+    expected /= ndi.gaussian_filter(
+        np.ones(image.shape, dtype=np.float64),
+        sigma=1.0,
+        mode="constant",
+        cval=0,
+        truncate=4.0,
     )
 
     assert sigma == pytest.approx(1.0)

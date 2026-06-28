@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.settings_binder import parse_cellprofiler_bool
+
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -48,7 +50,87 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
     object_label_value_with_dense_labels,
 )
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    coerce_cellprofiler_enum,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ModuleSettingsSourceModule,
+    ObjectDebugViewModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    ColumnarFieldsMeasurementRecordMixin,
+    NoFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    OutputObjectThresholdMeasurementRecordRowsMixin,
+    RelationshipMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    PairedPrimarySecondaryObjectInputPolicy,
+    PrimaryObjectLabelInputPolicy,
+)
+
+class IdentifyTertiaryObjectsModule(
+    PairedPrimarySecondaryObjectInputPolicy,
+    RelationshipMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    ColumnarFieldsMeasurementRecordMixin,
+    ObjectDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'IdentifyTertiaryObjects'
+    function_name = 'identify_tertiary_objects'
+    validated = True
+    confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Shrink smaller object prior to subtraction?",
+            "shrink_primary",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+
+        larger = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select the larger identified objects"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        smaller = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select the smaller identified objects"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        output = builder.declare_artifact(
+            ArtifactSpec(required_setting_value(module, "Name the tertiary objects to be identified"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(parent_child_relationship_artifact_name(larger.name, output.name), ArtifactKind.RELATIONSHIPS), module),
+            builder.declare_artifact(ArtifactSpec(parent_child_relationship_artifact_name(smaller.name, output.name), ArtifactKind.RELATIONSHIPS), module),
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
+            output,
+        ]
+        return assembler.assemble_contract(module, builder, inputs=[larger, smaller], outputs=outputs)
+
+
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
     collapse_singleton_plane_stack,
@@ -62,10 +144,11 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerThresholdMethod,
     CellProfilerThresholdRequest,
     CellProfilerThresholdResult,
-    CellProfilerThresholdSettings,
     CellProfilerThresholdScope,
+    CellProfilerThresholdSettings,
     CellProfilerVarianceMethod,
     ThresholdPrimitiveBackendStrategy,
+    ThresholdSettingsModule,
     normalize_cellprofiler_image,
     threshold_primitives,
     unit_interval_scale_for_threshold_diagnostics,
@@ -86,6 +169,7 @@ from openhcs.processing.backends.cellprofiler.enum_attributes import (
 from openhcs.processing.backends.cellprofiler.secondary_numba_propagation_labels import (
     _distance_to_positive_labels_numba,
     _nearest_label_expansion_numba,
+    _propagate_labels_and_distances_zero_image_numba,
     _propagate_labels_and_distances_numba,
 )
 from openhcs.processing.backends.cellprofiler.watershed import (
@@ -516,6 +600,24 @@ class SecondaryPropagationBackendStrategy(
         filtered[source_labels > 0] = source_labels[source_labels > 0]
         return filtered
 
+    def propagate_zero_image_result(
+        self,
+        labels: np.ndarray,
+        mask: np.ndarray,
+        regularization: float,
+        *,
+        max_distance: float | None = None,
+    ) -> LabelPropagationResult:
+        """Propagate seed labels when the propagation image has uniform intensity."""
+        label_array = np.asarray(labels, dtype=np.int32)
+        return self.propagate_result(
+            np.zeros(label_array.shape, dtype=np.float64),
+            label_array,
+            mask,
+            regularization,
+            max_distance=max_distance,
+        )
+
 
 class NumbaSecondaryPropagationBackendStrategy(
     SecondaryPropagationBackendStrategy,
@@ -536,6 +638,7 @@ class NumbaSecondaryPropagationBackendStrategy(
         mask = np.ones(labels.shape, dtype=np.bool_)
         self.propagate_result(image, labels, mask, 0.1)
         self.propagate_result(image, labels, mask, 1.0, max_distance=2.0)
+        self.propagate_zero_image_result(labels, mask, 1.0)
 
     def propagate_result(
         self,
@@ -562,6 +665,35 @@ class NumbaSecondaryPropagationBackendStrategy(
             )
         propagated, distances = _propagate_labels_and_distances_numba(
             np.ascontiguousarray(image_array),
+            np.ascontiguousarray(label_array),
+            np.ascontiguousarray(mask_array),
+            float(regularization),
+            -1.0 if max_distance is None else float(max_distance),
+        )
+        return LabelPropagationResult(labels=propagated, distances=distances)
+
+    def propagate_zero_image_result(
+        self,
+        labels: np.ndarray,
+        mask: np.ndarray,
+        regularization: float,
+        *,
+        max_distance: float | None = None,
+    ) -> LabelPropagationResult:
+        label_array = np.asarray(labels, dtype=np.int32)
+        mask_array = np.asarray(mask, dtype=np.bool_)
+        if label_array.ndim != 2 or mask_array.ndim != 2:
+            raise NotImplementedError(
+                "Numba secondary propagation backend currently supports 2-D arrays."
+            )
+        if label_array.shape != mask_array.shape:
+            raise ValueError("labels and mask must have the same shape.")
+        if np.max(label_array) == 0:
+            return LabelPropagationResult(
+                labels=label_array.copy(),
+                distances=np.zeros(label_array.shape, dtype=np.float64),
+            )
+        propagated, distances = _propagate_labels_and_distances_zero_image_numba(
             np.ascontiguousarray(label_array),
             np.ascontiguousarray(mask_array),
             float(regularization),
@@ -1105,6 +1237,72 @@ def identify_secondary_objects(
     )
 
 
+class IdentifySecondaryObjectsModule(
+    PrimaryObjectLabelInputPolicy,
+    OutputObjectThresholdMeasurementRecordRowsMixin,
+    RelationshipMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    NoFieldsMeasurementRecordMixin,
+    ObjectDebugViewModule,
+    ThresholdSettingsModule,
+):
+    module_name = 'IdentifySecondaryObjects'
+    function_name = 'identify_secondary_objects'
+    validated = True
+    confidence = 1.0
+    ignored_settings = (
+        "Select the input objects",
+        "Name the objects to be identified",
+        "Select the input image",
+        "Discard the associated primary objects?",
+        "Name the new primary objects",
+    )
+
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Select the method to identify the secondary objects",
+            "method",
+        ),
+        SettingToKeywordBinding(
+            "Number of pixels by which to expand the primary objects",
+            "distance_to_dilate",
+        ),
+        SettingToKeywordBinding("Regularization factor", "regularization_factor"),
+        SettingToKeywordBinding("Fill holes in identified objects?", "fill_holes"),
+        SettingToKeywordBinding(
+            "Discard secondary objects touching the border of the image?",
+            "discard_edge_objects",
+        ),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+
+        input_objects = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select the input objects"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        image = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select the input image"), ArtifactKind.IMAGE),
+            module,
+        )
+        output_name = required_setting_value(module, "Name the objects to be identified")
+        output_objects = builder.declare_artifact(ArtifactSpec(output_name, ArtifactKind.OBJECT_LABELS), module)
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
+            builder.declare_artifact(
+                ArtifactSpec(parent_child_relationship_artifact_name(input_objects.name, output_objects.name), ArtifactKind.RELATIONSHIPS),
+                module,
+            ),
+            output_objects,
+        ]
+        return assembler.assemble_contract(module, builder, inputs=[input_objects, image], outputs=outputs)
+
+
+
 @processing_prepare(identify_secondary_objects)
 def _prepare_identify_secondary_objects() -> None:
     """Compile secondary-object threshold, distance, and propagation kernels."""
@@ -1563,6 +1761,7 @@ __all__ = public_names_from_objects(
     DistanceOnlySegmentationStrategy,
     GradientWatershedSegmentationStrategy,
     ImageWatershedSegmentationStrategy,
+    IdentifySecondaryObjectsModule,
     LabelPropagationResult,
     NumbaSecondaryDistanceTransformBackendStrategy,
     NumbaSecondaryPropagationBackendStrategy,

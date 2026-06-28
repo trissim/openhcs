@@ -18,12 +18,10 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
 )
 from openhcs.interop.cellprofiler.runtime.processing_contracts import (
     CellProfilerProcessingContractAuthority,
-    Pure2DSliceCountPolicy,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
@@ -81,20 +79,12 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
             contract=contract.name,
         )
         execute_started_at = time.perf_counter()
-        if contract is ProcessingContract.FLEXIBLE and kwargs.get("slice_by_slice"):
-            result = executor.execute_flexible(func, image, **kwargs)
-        elif (
-            contract is ProcessingContract.PURE_2D
-            and Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs) is not None
-        ):
-            result = executor.execute_pure_2d(func, image, **kwargs)
-        else:
-            result = contract.execute(
-                executor,
-                func,
-                image,
-                **kwargs,
-            )
+        result = contract.execute(
+            executor,
+            func,
+            image,
+            **kwargs,
+        )
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_natural_contract_execute",
             time.perf_counter() - execute_started_at,

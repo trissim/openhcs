@@ -2,6 +2,223 @@
 
 from __future__ import annotations
 
+from enum import Enum
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_float,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageMeasurementInputModule,
+    ImageProcessingDebugViewModule,
+    MeasurementDebugViewModule,
+    ModuleSettingsSourceModule,
+    ObjectMeasurementInputModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+    ObjectMeasurementRowsModule,
+    PerObjectMeasurementExecutionModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
+    DeclaredObjectMeasurementRowPolicy,
+    DenseColumnarObjectMeasurementRowsMixin,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_completion import (
+    MissingObjectMeasurementValuePolicy,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    LabelsObjectInputPolicy,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+
+class RescaleIntensityAutomaticHigh(Enum):
+    """Automatic upper-bound policies exposed by RescaleIntensity settings."""
+
+    CUSTOM = "custom"
+    EACH_IMAGE = "each_image"
+
+
+class RescaleIntensityAutomaticLow(Enum):
+    """Automatic lower-bound policies exposed by RescaleIntensity settings."""
+
+    CUSTOM = "custom"
+    EACH_IMAGE = "each_image"
+
+
+class RescaleIntensityMethod(Enum):
+    """RescaleIntensity method literals exposed by CellProfiler settings."""
+
+    STRETCH = "stretch"
+    MANUAL_INPUT_RANGE = "manual_input_range"
+    MANUAL_IO_RANGE = "manual_io_range"
+    DIVIDE_BY_IMAGE_MINIMUM = "divide_by_image_minimum"
+    DIVIDE_BY_IMAGE_MAXIMUM = "divide_by_image_maximum"
+    DIVIDE_BY_VALUE = "divide_by_value"
+
+
+class MeasureImageIntensityModule(
+    ImageMeasurementInputModule,
+    ObjectMeasurementInputModule,
+    MeasurementDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'MeasureImageIntensity'
+    function_name = 'measure_image_intensity'
+    validated = True
+    confidence = 1.0
+    object_gate_setting = SettingNameFamily(
+        "Select the input objects",
+        aliases=(
+            "Select input objects",
+            "Select input object sets",
+            "Objects",
+        ),
+    )
+    object_measurement_setting = object_gate_setting
+    ignored_settings = (
+        "Measure the intensity only from areas enclosed by objects?",
+        "calculate_custom_percentiles",
+        "specify_percentiles_to_measure",
+    )
+
+    @classmethod
+    def ignored_settings_for(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        from openhcs.interop.cellprofiler.setting_names import is_blank_symbol_name
+
+        ignored = tuple(cls.ignored_settings)
+        value = cls.setting_value(module, cls.object_gate_setting, include_blank=True)
+        if value is not None and (not value.strip() or is_blank_symbol_name(value)):
+            return (*ignored, cls.object_gate_setting)
+        return ignored
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        return cls.measurement_artifact_contract_from_declared_settings(
+            assembler,
+            builder,
+            module,
+        )
+
+
+class RescaleIntensityModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'RescaleIntensity'
+    function_name = 'rescale_intensity'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    image_input_settings = (
+        "Select the input image",
+        "Select image to match in maximum intensity",
+    )
+    image_output_settings = ("Name the output image",)
+    ignored_settings = (
+        "Select the input image",
+        "Name the output image",
+        "Select image to match in maximum intensity",
+        "Divisor measurement",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Rescaling method",
+            "rescale_method",
+            cellprofiler_enum_value_setting_parser(RescaleIntensityMethod),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate the minimum intensity",
+            "automatic_low",
+            cellprofiler_enum_value_setting_parser(RescaleIntensityAutomaticLow),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate the maximum intensity",
+            "automatic_high",
+            cellprofiler_enum_value_setting_parser(RescaleIntensityAutomaticHigh),
+        ),
+        SettingToKeywordBinding(
+            "Lower intensity limit for the input image",
+            "source_low",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Upper intensity limit for the input image",
+            "source_high",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Divisor value",
+            "divisor_value",
+            parse_cellprofiler_float,
+        ),
+    )
+    range_settings = {
+        "Intensity range for the input image": ("source_low", "source_high"),
+        "Intensity range for the output image": ("dest_low", "dest_high"),
+    }
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: "SettingsBinder",
+        param_mapping: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str] = frozenset(),
+    ) -> "BoundModuleSettings":
+        del param_mapping
+        bound = cls._bind_declared_settings(
+            module,
+            binder=binder,
+            param_mapping={},
+        )
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting_name, target_names in cls.range_settings.items():
+            value = optional_setting_value(module, setting_name)
+            if value is None:
+                continue
+            parsed_range = binder.parse_value(setting_name, value)
+            if not isinstance(parsed_range, tuple) or len(parsed_range) != 2:
+                raise ValueError(
+                    f"{module.name} {setting_name!r} must contain two values, "
+                    f"got {value!r}."
+                )
+            kwargs[target_names[0]], kwargs[target_names[1]] = parsed_range
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
+            ignored_unmapped_settings=ignored_unmapped_settings,
+        )
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
@@ -55,6 +272,9 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.interop.cellprofiler.runtime.measurement_execution_support import (
+    PreparedObjectMeasurementInvocation,
+)
 from openhcs.core.measurement_image_alignment import ReplicatedChannelMonochromeProjection
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -70,11 +290,14 @@ from openhcs.processing.backends.cellprofiler.enum_attributes import (
 from openhcs.processing.backends.cellprofiler.intensity_object_quantiles_numba import (
     ObjectIntensityArrays,
     ObjectIntensityFeatureValues,
+    ObjectIntensityForegroundIndex,
     _object_intensity_quantiles,
     _object_intensity_quantiles_3d_batch_numba,
     _object_intensity_quantiles_3d_numba,
+    _object_intensity_quantiles_3d_sparse_batch_numba,
     _object_intensity_scan_3d_batch_numba,
     _object_intensity_scan_3d_numba,
+    _object_intensity_scan_3d_sparse_batch_numba,
     _object_intensity_scan_numba,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -448,6 +671,7 @@ class ObjectIntensityPreparedLabels:
     projection: ConsecutiveObjectLabelIdProjection
     relabeled_labels: np.ndarray
     label_to_index: np.ndarray
+    foreground_index: ObjectIntensityForegroundIndex | None = None
 
     @classmethod
     def from_source(
@@ -462,6 +686,14 @@ class ObjectIntensityPreparedLabels:
             dtype=np.int32,
         )
         label_to_index = cls.label_to_index_for_projection(projection)
+        foreground_index = (
+            ObjectIntensityForegroundIndex.from_3d_labels(
+                relabeled_labels,
+                label_to_index,
+            )
+            if relabeled_labels.ndim == 3
+            else None
+        )
         return cls(
             source=labels,
             dense_labels=label_array,
@@ -472,6 +704,7 @@ class ObjectIntensityPreparedLabels:
             projection=projection,
             relabeled_labels=relabeled_labels,
             label_to_index=label_to_index,
+            foreground_index=foreground_index,
         )
 
     @classmethod
@@ -504,13 +737,23 @@ class ObjectIntensityPreparedLabels:
         self,
         relabeled_labels: np.ndarray,
     ) -> "ObjectIntensityPreparedLabels":
+        relabeled = np.ascontiguousarray(relabeled_labels, dtype=np.int32)
+        foreground_index = (
+            ObjectIntensityForegroundIndex.from_3d_labels(
+                relabeled,
+                self.label_to_index,
+            )
+            if relabeled.ndim == 3
+            else None
+        )
         return type(self)(
             source=self.source,
             dense_labels=self.dense_labels,
             object_domain=self.object_domain,
             projection=self.projection,
-            relabeled_labels=np.ascontiguousarray(relabeled_labels, dtype=np.int32),
+            relabeled_labels=relabeled,
             label_to_index=self.label_to_index,
+            foreground_index=foreground_index,
         )
 
     @property
@@ -744,6 +987,7 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
+    sparse_foreground_max_fraction: ClassVar[float] = 0.60
 
     def measure(
         self,
@@ -887,6 +1131,16 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
 
         image_batch = np.ascontiguousarray(np.stack(image_arrays, axis=0))
         label_array = np.ascontiguousarray(relabeled_labels, dtype=np.int32)
+        sparse_foreground_index = self._sparse_foreground_index_for_batch(
+            labels,
+            image_shape,
+        )
+        if sparse_foreground_index is not None:
+            return self._measure_sparse_prepared_batch(
+                image_batch,
+                labels,
+                sparse_foreground_index,
+            )
 
         scan_started_at = time.perf_counter()
         scan_result = _object_intensity_scan_3d_batch_numba(
@@ -929,6 +1183,82 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
             for image_index in range(len(images))
         )
 
+    def _sparse_foreground_index_for_batch(
+        self,
+        labels: ObjectIntensityPreparedLabels,
+        image_shape: tuple[int, ...],
+    ) -> ObjectIntensityForegroundIndex | None:
+        """Return the prepared sparse index when it is cheaper than dense scan."""
+        if len(image_shape) != 3:
+            return None
+        foreground_index = labels.foreground_index
+        if foreground_index is None:
+            return None
+        shape_3d = (
+            int(image_shape[0]),
+            int(image_shape[1]),
+            int(image_shape[2]),
+        )
+        if not foreground_index.matches_shape(shape_3d):
+            return None
+        if foreground_index.foreground_fraction() > self.sparse_foreground_max_fraction:
+            return None
+        return foreground_index
+
+    def _measure_sparse_prepared_batch(
+        self,
+        image_batch: np.ndarray,
+        labels: ObjectIntensityPreparedLabels,
+        foreground_index: ObjectIntensityForegroundIndex,
+    ) -> tuple[ObjectIntensityArrays, ...]:
+        """Measure sparse 3-D foreground voxels for a prepared label domain."""
+        scan_started_at = time.perf_counter()
+        scan_result = _object_intensity_scan_3d_sparse_batch_numba(
+            image_batch,
+            foreground_index.z_indices,
+            foreground_index.y_indices,
+            foreground_index.x_indices,
+            foreground_index.object_indexes,
+            foreground_index.edge_flags,
+            labels.object_count,
+        )
+        RuntimeProfileLogger.log(
+            logger,
+            "object_intensity_scan_3d_sparse_batch",
+            time.perf_counter() - scan_started_at,
+            images=image_batch.shape[0],
+            objects=labels.object_count,
+            foreground_voxels=foreground_index.voxel_count,
+        )
+        quantile_started_at = time.perf_counter()
+        quantile_result = _object_intensity_quantiles_3d_sparse_batch_numba(
+            image_batch,
+            foreground_index.z_indices,
+            foreground_index.y_indices,
+            foreground_index.x_indices,
+            foreground_index.object_indexes,
+            scan_result[0].astype(np.int64, copy=False),
+            1.0 / 3.0,
+        )
+        RuntimeProfileLogger.log(
+            logger,
+            "object_intensity_quantiles_3d_sparse_batch",
+            time.perf_counter() - quantile_started_at,
+            images=image_batch.shape[0],
+            objects=labels.object_count,
+            foreground_voxels=foreground_index.voxel_count,
+        )
+        object_labels = labels.object_labels
+        return tuple(
+            ObjectIntensityArrays.from_3d_scan_batch_result(
+                object_labels=object_labels,
+                scan_result=scan_result,
+                quantile_result=quantile_result,
+                image_index=image_index,
+            )
+            for image_index in range(image_batch.shape[0])
+        )
+
     def _measure_3d(
         self,
         image_array: np.ndarray,
@@ -951,6 +1281,21 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
         object_labels = labels.object_labels
         if labels.object_count == 0:
             return ObjectIntensityArrays.empty(object_labels)
+        image_shape = (
+            int(image_array.shape[0]),
+            int(image_array.shape[1]),
+            int(image_array.shape[2]),
+        )
+        sparse_foreground_index = self._sparse_foreground_index_for_batch(
+            labels,
+            image_shape,
+        )
+        if sparse_foreground_index is not None:
+            return self._measure_sparse_prepared_batch(
+                np.ascontiguousarray(image_array)[np.newaxis, ...],
+                labels,
+                sparse_foreground_index,
+            )[0]
         scan_started_at = time.perf_counter()
         arrays = _object_intensity_scan_3d_numba(
             np.ascontiguousarray(image_array),
@@ -1139,14 +1484,16 @@ def _object_intensity_prepared_labels_for_batch_group(
     group: tuple[tuple[int, RuntimeBatchInvocationRequest], ...],
 ) -> ObjectIntensityPreparedLabels | None:
     first_request = group[0][1]
+    if not isinstance(first_request, PreparedObjectMeasurementInvocation):
+        return None
     context = ObjectIntensityMeasurementContext.from_runtime_request(first_request)
-    labels = context.labels
+    labels = first_request.completion_label_payload
     if not isinstance(labels, ObjectLabelValue):
         return None
     if labels.plane_axis is RuntimePlaneAxis.SOURCE_BINDING:
         return None
     return ObjectIntensityPreparedLabels.from_measurement(
-        image=first_request.image,
+        image=image_payload_data(first_request.image),
         labels=labels,
         slice_index=context.slice_index,
     )
@@ -1177,12 +1524,23 @@ def _object_intensity_batch_groups(
 def _object_intensity_batch_key(
     request: RuntimeBatchInvocationRequest,
 ) -> tuple[tuple[str, Hashable], ...] | None:
+    if request.execution_mode is not ImagePayloadExecutionMode.FULL_STACK:
+        return None
     semantic_group_key = request.semantic_group_key
     if semantic_group_key is None:
         return None
     context = ObjectIntensityMeasurementContext.from_runtime_request(request)
+    label_source = context.labels
+    if isinstance(request, PreparedObjectMeasurementInvocation):
+        label_source = request.completion_label_payload
+    label_identity: tuple[tuple[str, Hashable], ...] = ()
+    if isinstance(label_source, ObjectLabelValue):
+        label_identity = (
+            ("object_labels", label_source.object_label_semantic_identity()),
+        )
     return (
         ("semantic_group_key", semantic_group_key),
+        *label_identity,
         *context.batch_key_items(),
     )
 
@@ -1551,6 +1909,41 @@ measurement_image_batch_executor(measure_object_intensity_measurement_image_batc
 )
 pure_2d_batch_executor(measure_object_intensity_batch)(measure_object_intensity)
 
+
+class MeasureObjectIntensityObjectMeasurementRowPolicy(
+    DenseColumnarObjectMeasurementRowsMixin,
+    DeclaredObjectMeasurementRowPolicy,
+):
+    """Object-intensity rows are dense columnar rows over the declared domain."""
+
+    missing_value_policy = MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
+
+
+class MeasureObjectIntensityModule(
+    LabelsObjectInputPolicy,
+    PerObjectMeasurementExecutionModule,
+    ObjectMeasurementRowsModule,
+    MeasureObjectIntensityObjectMeasurementRowPolicy,
+    ImageMeasurementInputModule,
+    ObjectMeasurementInputModule,
+):
+    module_name = 'MeasureObjectIntensity'
+    function_name = 'measure_object_intensity'
+    validated = True
+    confidence = 1.0
+    ignored_settings = (
+        "Select images to measure",
+        "Select objects to measure",
+        "Hidden",
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        return cls.measurement_artifact_contract_from_declared_settings(
+            assembler,
+            builder,
+            module,
+        )
 
 __all__ = public_names_from_objects(
     NumbaNumpyObjectIntensityBackendStrategy,

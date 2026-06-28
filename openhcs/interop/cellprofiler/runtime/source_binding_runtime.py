@@ -24,7 +24,7 @@ from openhcs.core.memory import detect_memory_type
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.process_local_cache import (
     IdentityBoundProcessCache,
-    ProcessLocalBoundedCache,
+    RegisteredProcessLocalBoundedCache,
 )
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -168,15 +168,17 @@ class StepInputSourcePayloadCacheKey:
         storage_backend: str,
         source_backend: str,
         filemanager: CellProfilerFileManager,
-        context: SourceBindingRuntimeContext,
+        context: SourceBindingRuntimeContext | None = None,
         selected_sources: tuple[ParsedSourceCandidate, ...],
     ) -> "StepInputSourcePayloadCacheKey":
+        resolved_context = context or SourceBindingRuntimeContext.empty()
         return cls(
             storage_backend=storage_backend,
             source_backend=source_backend,
             filemanager=filemanager,
             selected_sources=tuple(
-                candidate.cache_identity(context) for candidate in selected_sources
+                candidate.cache_identity(resolved_context)
+                for candidate in selected_sources
             ),
         )
 
@@ -247,9 +249,7 @@ class SourceBindingMatchedPlaneResolution:
                     return matched_index
             if candidate_context.universe.axis_scope.has_component:
                 return None
-        for index, binding in enumerate(
-            adapter.source_binding_plan.bindings_for_group(adapter.group_key)
-        ):
+        for index, binding in enumerate(adapter.source_binding_plan.bindings):
             if binding.alias == alias:
                 return index
         return None
@@ -289,9 +289,7 @@ class SourceBindingAxisPlaneResolution:
             return cls(source_aliases=(), indexes=())
         resolved_aliases = SourceBindingAxisAliasResolution(
             requested_aliases=source_aliases,
-            group_bindings=adapter.source_binding_plan.bindings_for_group(
-                adapter.group_key
-            ),
+            bindings=adapter.source_binding_plan.bindings,
         ).aliases()
         return cls(
             source_aliases=resolved_aliases,
@@ -379,9 +377,7 @@ class SourceBindingAxisResolutionAuthority:
         """Return source aliases that declare the adapter's active binding axis."""
         return tuple(
             binding.alias
-            for binding in adapter.source_binding_plan.bindings_for_group(
-                adapter.group_key
-            )
+            for binding in adapter.source_binding_plan.bindings
         )
 
     @classmethod
@@ -403,14 +399,14 @@ class SourceBindingAxisResolutionAuthority:
         if key in memo.axis_sizes:
             return memo.axis_sizes[key]
 
-        bindings = adapter.source_binding_plan.bindings_for_group(adapter.group_key)
+        bindings = adapter.source_binding_plan.bindings
         if not bindings:
             memo.axis_sizes[key] = None
             return None
 
         resolved_aliases = SourceBindingAxisAliasResolution(
             requested_aliases=key,
-            group_bindings=bindings,
+            bindings=bindings,
         ).aliases()
         candidate_counts = tuple(
             len(candidate_context.universe.plane_candidates.candidates)
@@ -715,42 +711,48 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             request.adapter.source_binding_plan,
             step_input_candidates,
         )
-        parsed_candidates = request.adapter.source_candidates(pipeline_input_files)
         match_started_at = time.perf_counter()
-        initially_matched = SourceCandidateMatcher.match_candidates(
-            candidates=parsed_candidates,
-            binding=request.binding,
+        selected_files = self._current_step_matched_candidates(
+            request,
+            step_input_candidates=step_input_candidates,
             inherit_components=inherit_components,
         )
-        matched = SourceBindingMatchCandidateUniverse(
-            step_input_candidates=step_input_candidates,
-            target_candidates=initially_matched,
-            pipeline_candidates=parsed_candidates,
-        ).image_set_candidates(
-            request.alias,
-            SourceBindingImageSetMatchScope(
-                plan=request.adapter.source_binding_plan.match_plan,
-                binding_group=request.adapter.source_binding_plan.bindings_for_group(
-                    request.adapter.group_key
-                ),
-            ),
-        )
+        parsed_candidates = step_input_candidates
+        if not selected_files:
+            parsed_candidates = request.adapter.source_candidates(pipeline_input_files)
+            initially_matched = SourceCandidateMatcher.match_candidates(
+                candidates=parsed_candidates,
+                binding=request.binding,
+                inherit_components=inherit_components,
+            )
+            selected_files = SourceBindingMatchCandidateUniverse(
+                step_input_candidates=step_input_candidates,
+                target_candidates=initially_matched,
+                pipeline_candidates=parsed_candidates,
+            ).image_set_candidates(
+                request.alias,
+                self._match_scope(request),
+            )
         AdapterProfileLog.source_candidates(
             SourceCandidateProfileEvent(
                 label="source_candidates_match",
                 seconds=time.perf_counter() - match_started_at,
                 alias=request.alias,
                 source=SourceBindingOrigin.PIPELINE_START,
-                count=len(matched),
+                count=len(selected_files),
             )
         )
         selected_files = self.require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
                 request,
-                matched=matched,
+                matched=selected_files,
                 candidates=parsed_candidates,
                 source_description="pipeline start",
             )
+        )
+        selected_files = _prefer_current_source_candidates(
+            request.adapter.source_binding_context,
+            selected_files,
         )
         load_started_at = time.perf_counter()
         payload = _load_pipeline_start_stack(
@@ -767,6 +769,79 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             )
         )
         return payload
+
+    def _current_step_matched_candidates(
+        self,
+        request: SourceBindingResolutionRequest,
+        *,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+        inherit_components: Mapping[str, str],
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        """Resolve pipeline-start aliases from the current input universe when possible."""
+        if not step_input_candidates:
+            return ()
+        if not SourceCandidateMatcher.supports_metadata_selectors(
+            step_input_candidates,
+            request.binding,
+        ):
+            return ()
+        current_matches = SourceCandidateMatcher.match_candidates(
+            candidates=step_input_candidates,
+            binding=request.binding,
+            inherit_components=inherit_components,
+        )
+        if not current_matches:
+            return ()
+        selected_sources = SourceBindingMatchCandidateUniverse(
+            step_input_candidates=step_input_candidates,
+            target_candidates=current_matches,
+            pipeline_candidates=step_input_candidates,
+        ).image_set_candidates(
+            request.alias,
+            self._match_scope(request),
+        )
+        if not selected_sources:
+            return ()
+        selected_paths = tuple(source.path for source in selected_sources)
+        current_payload_selection = CurrentStepPayloadSelector.from_pipeline_start(
+            adapter=request.adapter,
+            current_image=request.current_image,
+        ).resolve(
+            selected_paths=selected_paths,
+            current_image=request.current_image,
+        )
+        if not current_payload_selection.is_matched:
+            return ()
+        return selected_sources
+
+    @staticmethod
+    def _match_scope(
+        request: SourceBindingResolutionRequest,
+    ) -> SourceBindingImageSetMatchScope:
+        return SourceBindingImageSetMatchScope(
+            plan=request.adapter.source_binding_plan.match_plan,
+            bindings=request.adapter.source_binding_plan.bindings,
+        )
+
+
+def _prefer_current_source_candidates(
+    context: SourceBindingRuntimeContext,
+    selected_sources: tuple[ParsedSourceCandidate, ...],
+) -> tuple[ParsedSourceCandidate, ...]:
+    """Narrow selected pipeline sources to current step-input identities."""
+    current_paths = tuple(
+        context.step_input_source_paths.get(path, path)
+        for path in context.current_step_input_files
+    )
+    current_identity = ParsedSourceCandidatePathIdentity.from_paths(current_paths)
+    if current_identity.is_empty:
+        return selected_sources
+    current_sources = tuple(
+        source
+        for source in selected_sources
+        if source.path_identity.intersects(current_identity)
+    )
+    return current_sources or selected_sources
 
 @dataclass(frozen=True, slots=True)
 class CurrentStepPayloadSelection:
@@ -981,7 +1056,7 @@ class CurrentStepPayloadSelector:
 
 @dataclass(slots=True)
 class StepInputSourcePayloadProcessCache(
-    ProcessLocalBoundedCache[
+    RegisteredProcessLocalBoundedCache[
         StepInputSourcePayloadCacheKey,
         StepInputPayloadCacheValue,
     ]
@@ -993,7 +1068,7 @@ class StepInputSourcePayloadProcessCache(
 
 @dataclass(slots=True)
 class PipelineStartSourcePayloadProcessCache(
-    ProcessLocalBoundedCache[
+    RegisteredProcessLocalBoundedCache[
         PipelineStartSourcePayloadCacheKey,
         PipelineStartPayloadCacheValue,
     ]
@@ -1082,13 +1157,10 @@ class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
 
     def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[ImagePayloadValue]:
         context = RequireProcessingContextBoundaryPolicy(request.adapter).context
-        load_kwargs: dict[str, Any] = {}
-        if request.backend == Backend.ZARR.value:
-            load_kwargs["zarr_config"] = context.global_config.zarr_config
         loaded_images = context.filemanager.load_batch(
             list(request.storage_paths),
             request.backend,
-            **load_kwargs,
+            **request.source_load_plan.filemanager_load_kwargs(request.backend),
         )
         return [
             self.source_payload_with_metadata(
@@ -1341,6 +1413,7 @@ def _load_pipeline_start_stack(
             adapter=adapter,
             selected_sources=selected_sources,
             backend=backend,
+            source_load_plan=adapter.source_load_plan,
         )
         loaded_payloads = tuple(
             PipelineStartSourceFileLoader.for_paths(storage_paths).load_slices(load_request)

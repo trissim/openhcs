@@ -11,10 +11,6 @@ import numpy as np
 import pytest
 import tifffile
 
-from openhcs.interop.cellprofiler.runtime import (
-    CellProfilerModuleContractRegistry,
-    cellprofiler_runtime_adapter_factory,
-)
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     bind_generated_pipeline_runtime,
     GeneratedPipelineContractSidecar,
@@ -22,8 +18,11 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     GeneratedPipelineSemanticContractsModule,
     materialize_generated_pipeline_import_module,
 )
-from openhcs.interop.cellprofiler.runtime.output_recording import (
-    IdentifyObjectsMeasurementRecordBuilder,
+from openhcs.interop.cellprofiler.runtime.module_execution import (
+    cellprofiler_runtime_adapter_factory,
+)
+from openhcs.processing.backends.cellprofiler.primary_objects import (
+    IdentifyPrimaryObjectsModule,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
@@ -47,8 +46,9 @@ from openhcs.core.runtime_semantics import (
 from openhcs.core.source_bindings import (
     ComponentSelector,
     CompiledSourceBindingPlan,
-    GroupedSourceBindings,
+    CompiledSourceUniversePlan,
     NamedSourceBinding,
+    SourceBindingCompilationRequest,
     SourceBindingRuntimeContext,
     SourceSelector,
     StepSourceBindingsConfig,
@@ -64,8 +64,16 @@ from openhcs.core.runtime_values import (
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
+    CompiledFunctionPattern,
     FunctionInvocationKey,
 )
+from openhcs.core.compiled_step_plan import (
+    RuntimeArtifactMaterializationPlan,
+    SequentialRuntimeFilterPlan,
+)
+from openhcs.core.source_load_plan import SourceLoadPlan
+from openhcs.core.step_dependencies import StepInputDependency
+from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.core.steps.function_runtime import (
     ComponentArtifactPlans,
     FunctionCoreExecutor,
@@ -124,7 +132,7 @@ def test_identify_objects_threshold_measurements_keep_source_payload():
         single_output_object_name=lambda: "Mitochondria",
     )
 
-    record = IdentifyObjectsMeasurementRecordBuilder().build(request)
+    record = IdentifyPrimaryObjectsModule.measurement_record(request)
 
     assert record.source_context.source_image_payload is source_payload
 
@@ -172,24 +180,52 @@ def _execute_function_core(request: _CoreExecutionRequest):
         artifact_input_keys=tuple(request.artifact_inputs),
         artifact_output_keys=tuple(request.artifact_outputs),
     )
+    compiled_group = CompiledFunctionGroup(
+        group_key=request.group_key,
+        invocations=(invocation,),
+    )
+    execution_plan = FunctionStepExecutionPlan(
+        step_index=0,
+        step_scope_id="test::function_step",
+        step_name="test",
+        axis_id=request.context.axis_id,
+        input_dir=Path("/plate/Images"),
+        output_dir=Path("/plate/Output"),
+        variable_components=(),
+        group_by=None,
+        sequential_filter_plan=SequentialRuntimeFilterPlan.disabled(),
+        main_input_dependency=StepInputDependency.unresolved(),
+        source_binding_plan=request.source_binding_plan,
+        source_universe_plan=CompiledSourceUniversePlan.empty(),
+        source_load_plan=SourceLoadPlan(),
+        artifact_inputs=request.artifact_inputs,
+        artifact_outputs=request.artifact_outputs,
+        read_backend=Backend.MEMORY.value,
+        write_backend=Backend.MEMORY.value,
+        input_memory_type=contract.input_memory_type,
+        output_memory_type=contract.output_memory_type,
+        zarr_config=None,
+        device_id=0,
+        get_paths_for_axis=lambda _input_dir, _axis_id: [],
+        pipeline_position=0,
+        output_plate_root="/plate",
+        sub_dir="Output",
+        analysis_results_dir=None,
+        input_conversion=None,
+        materialized_output=None,
+        runtime_artifact_materialization=RuntimeArtifactMaterializationPlan.disabled(),
+        streaming_configs=(),
+        compiled_function_pattern=CompiledFunctionPattern(
+            groups=(compiled_group,),
+            is_grouped=False,
+        ),
+        artifact_inputs_by_group={},
+        artifact_outputs_by_group={},
+    )
     runtime_scope = FunctionRuntimeScope(
         context=request.context,
-        execution_plan=SimpleNamespace(
-            step_index=0,
-            step_scope_id="test::function_step",
-            step_name="test",
-            axis_id=request.context.axis_id,
-            input_memory_type=contract.input_memory_type,
-            device_id=0,
-                source_binding_plan=request.source_binding_plan,
-                group_by_value=None,
-                source_identity_stack_axes=frozenset(),
-                group_projects_runtime_plane=False,
-            ),
-        compiled_group=CompiledFunctionGroup(
-            group_key=request.group_key,
-            invocations=(invocation,),
-        ),
+        execution_plan=execution_plan,
+        compiled_group=compiled_group,
         artifacts=ComponentArtifactPlans(
             inputs=request.artifact_inputs,
             outputs=request.artifact_outputs,
@@ -330,10 +366,6 @@ def _source_setup_modules() -> list[ModuleBlock]:
 def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
     namespace: dict = {"__name__": "test_generated_cellprofiler_pipeline"}
     runtime_contracts = generated.runtime_module_contracts_by_module_num
-    CellProfilerModuleContractRegistry.register(
-        namespace["__name__"],
-        runtime_contracts,
-    )
     exec(
         compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"),
         namespace,
@@ -375,10 +407,6 @@ def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() 
     generated = _generated_pipeline(_relationship_pipeline_modules())
     namespace: dict = {"__name__": "test_generated_cellprofiler_reordered_pipeline"}
     runtime_contracts = generated.runtime_module_contracts_by_module_num
-    CellProfilerModuleContractRegistry.register(
-        namespace["__name__"],
-        runtime_contracts,
-    )
     exec(
         compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"),
         namespace,
@@ -453,6 +481,13 @@ def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
         encoding="utf-8"
     )
 
+    spec = importlib.util.spec_from_file_location(module_name, import_module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    assert "pipeline_steps" in vars(module)
+
 
 def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
     tmp_path: Path,
@@ -484,7 +519,7 @@ def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
         expected_fingerprint=fingerprint,
     )
     assert restored == generated.artifact_contracts
-    assert restored[0].source_bindings.groups[0].bindings[0].alias == SOURCE_IMAGE
+    assert restored[0].source_bindings.bindings[0].alias == SOURCE_IMAGE
 
     spec = importlib.util.spec_from_file_location(module_name, import_module_path)
     assert spec is not None and spec.loader is not None
@@ -542,8 +577,10 @@ def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
     measurement_step = namespace["pipeline_steps"][1]
 
     assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert measurement_step.processing_config.variable_components == []
-    assert measurement_step.processing_config.group_by is GroupBy.SITE
+    assert measurement_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert measurement_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
@@ -552,8 +589,10 @@ def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
     filter_step = namespace["pipeline_steps"][2]
 
     assert filter_step.name == FILTER_OBJECTS
-    assert filter_step.processing_config.variable_components == []
-    assert filter_step.processing_config.group_by is GroupBy.SITE
+    assert filter_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert filter_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
@@ -562,8 +601,10 @@ def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
     relate_step = namespace["pipeline_steps"][2]
 
     assert relate_step.name == RELATE_OBJECTS
-    assert relate_step.processing_config.variable_components == []
-    assert relate_step.processing_config.group_by is GroupBy.SITE
+    assert relate_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert relate_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_scopes_grid_guided_object_outputs_per_image_set():
@@ -572,8 +613,10 @@ def test_generator_scopes_grid_guided_object_outputs_per_image_set():
     identify_grid_step = namespace["pipeline_steps"][2]
 
     assert identify_grid_step.name == "IdentifyObjectsInGrid"
-    assert identify_grid_step.processing_config.variable_components == []
-    assert identify_grid_step.processing_config.group_by is GroupBy.SITE
+    assert identify_grid_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert identify_grid_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_scopes_multi_object_measurements_per_image_set():
@@ -582,8 +625,10 @@ def test_generator_scopes_multi_object_measurements_per_image_set():
     area_occupied_step = namespace["pipeline_steps"][2]
 
     assert area_occupied_step.name == "MeasureImageAreaOccupied"
-    assert area_occupied_step.processing_config.variable_components == []
-    assert area_occupied_step.processing_config.group_by is GroupBy.SITE
+    assert area_occupied_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert area_occupied_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
@@ -592,8 +637,10 @@ def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
     calculate_math_step = namespace["pipeline_steps"][3]
 
     assert calculate_math_step.name == "CalculateMath"
-    assert calculate_math_step.processing_config.variable_components == []
-    assert calculate_math_step.processing_config.group_by is GroupBy.SITE
+    assert calculate_math_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert calculate_math_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measurements():
@@ -602,8 +649,10 @@ def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measuremen
     measurement_step = namespace["pipeline_steps"][3]
 
     assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert measurement_step.processing_config.variable_components == []
-    assert measurement_step.processing_config.group_by is GroupBy.SITE
+    assert measurement_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert measurement_step.processing_config.group_by is GroupBy.NONE
 
 
 def test_generator_binds_canonical_morphology_alias_structuring_element():
@@ -761,9 +810,10 @@ def _run_generated_step(
             context=context,
             artifact_inputs=_artifact_input_plans(contract),
             artifact_outputs=_artifact_output_plans(contract),
-            source_binding_plan=CompiledSourceBindingPlan.from_config(
-                step.source_bindings
-            ),
+            source_binding_plan=SourceBindingCompilationRequest.from_module_contracts(
+                config=step.source_bindings,
+                contracts=(contract.module_contract,),
+            ).compile(),
             source_binding_context=source_binding_context,
         )
     )
@@ -1453,20 +1503,17 @@ def test_runtime_adapter_receives_step_input_source_binding_context():
     )
     source_binding_plan = CompiledSourceBindingPlan.from_config(
         StepSourceBindingsConfig(
-            groups=(
-                GroupedSourceBindings(
-                    bindings=(
-                        NamedSourceBinding(
-                            alias=SOURCE_IMAGE,
-                            selector=SourceSelector(
-                                components=(
-                                    ComponentSelector(AllComponents.CHANNEL, "1"),
-                                ),
-                            ),
+            bindings=(
+                NamedSourceBinding(
+                    alias=SOURCE_IMAGE,
+                    selector=SourceSelector(
+                        components=(
+                            ComponentSelector(AllComponents.CHANNEL, "1"),
                         ),
                     ),
                 ),
-            )
+            ),
+            enabled=True,
         )
     )
     selected_output = _execute_function_core(

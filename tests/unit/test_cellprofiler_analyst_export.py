@@ -20,20 +20,10 @@ from openhcs.interop.cellprofiler.analyst_export import (
     CellProfilerExecutionExportContext,
     CellProfilerObjectTableMode,
 )
-from openhcs.interop.cellprofiler.export_to_database_settings import (
-    DATABASE_TYPE_SETTING,
-    EXPERIMENT_NAME_SETTING,
-    OBJECTS_CHOICE_SETTING,
-    OBJECTS_LIST_SETTING,
-    OBJECT_TABLE_MODE_SETTING,
-    RELATIONSHIP_TABLE_SETTING,
-    SAVE_CPA_PROPERTIES_SETTING,
-    SQLITE_FILE_SETTING,
-    TABLE_PREFIX_SETTING,
-    WANT_TABLE_PREFIX_SETTING,
-    export_to_database_settings,
-)
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.processing.backends.cellprofiler.export_to_database import (
+    ExportToDatabaseModule,
+)
 
 
 AXIS_ID = "A01_s1"
@@ -124,28 +114,55 @@ def test_cellprofiler_analyst_projection_requires_cpa_identity_columns():
         CellProfilerAnalystProjectionBuilder().build(_request({AXIS_ID: store}))
 
 
-def test_export_to_database_settings_parse_module_block_without_stringly_callers():
+def test_export_to_database_declaration_parses_module_block_without_stringly_callers():
     module = ModuleBlock(
         name="ExportToDatabase",
         module_num=9,
         setting_records=[
-            ModuleSetting(DATABASE_TYPE_SETTING.canonical, "SQLite"),
-            ModuleSetting(SQLITE_FILE_SETTING.canonical, "analysis.db"),
-            ModuleSetting(EXPERIMENT_NAME_SETTING.canonical, "AdvancedSegmentation"),
-            ModuleSetting(WANT_TABLE_PREFIX_SETTING.canonical, "Yes"),
-            ModuleSetting(TABLE_PREFIX_SETTING.canonical, "Adv_"),
-            ModuleSetting(SAVE_CPA_PROPERTIES_SETTING.canonical, "Yes"),
-            ModuleSetting(OBJECTS_CHOICE_SETTING.canonical, "Select..."),
-            ModuleSetting(OBJECTS_LIST_SETTING.canonical, "Nuclei, Cells"),
-            ModuleSetting(RELATIONSHIP_TABLE_SETTING.canonical, "No"),
             ModuleSetting(
-                OBJECT_TABLE_MODE_SETTING.canonical,
+                ExportToDatabaseModule.database_type_setting.canonical,
+                "SQLite",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.sqlite_file_setting.canonical,
+                "analysis.db",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.experiment_name_setting.canonical,
+                "AdvancedSegmentation",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.want_table_prefix_setting.canonical,
+                "Yes",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.table_prefix_setting.canonical,
+                "Adv_",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.save_cpa_properties_setting.canonical,
+                "Yes",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.objects_choice_setting.canonical,
+                "Select...",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.objects_list_setting.canonical,
+                "Nuclei, Cells",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.relationship_table_setting.canonical,
+                "No",
+            ),
+            ModuleSetting(
+                ExportToDatabaseModule.object_table_mode_setting.canonical,
                 "One table per object type",
             ),
         ],
     )
 
-    settings = export_to_database_settings(module)
+    settings = ExportToDatabaseModule.database_export_settings(module)
 
     assert settings.sqlite_file == "analysis.db"
     assert settings.experiment_name == "AdvancedSegmentation"

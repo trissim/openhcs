@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from inspect import unwrap
 
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
@@ -57,10 +58,12 @@ def resolve_processing_contract(
 def _callable_processing_contract(
     function: Callable[..., object],
 ) -> ProcessingContract | None:
-    raw_value = vars(unwrap(function)).get("__processing_contract__")
+    raw_value = vars(unwrap(function)).get(
+        FunctionContractAttribute.processing_contract
+    )
     if isinstance(raw_value, ProcessingContract):
         return raw_value
-    value = vars(function).get("__processing_contract__")
+    value = vars(function).get(FunctionContractAttribute.processing_contract)
     if isinstance(value, ProcessingContract):
         return value
     return None

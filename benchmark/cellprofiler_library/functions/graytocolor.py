@@ -1,9 +1,9 @@
 """Benchmark-library facade for CellProfiler GrayToColor."""
 
-from openhcs.interop.cellprofiler.gray_to_color_settings import GrayToColorScheme
 from openhcs.processing.backends.cellprofiler.color import (
     CMYKGrayToColorRunner,
     CompositeGrayToColorRunner,
+    GrayToColorModule,
     GrayToColorRequest,
     GrayToColorSchemeRunner,
     RGBGrayToColorRunner,
@@ -15,8 +15,7 @@ __all__ = [
     "CMYKGrayToColorRunner",
     "CompositeGrayToColorRunner",
     "GrayToColorRequest",
-    "GrayToColorScheme",
-    "GrayToColorSchemeRunner",
+        "GrayToColorSchemeRunner",
     "RGBGrayToColorRunner",
     "StackGrayToColorRunner",
     "gray_to_color",

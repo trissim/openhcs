@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from inspect import Parameter, signature
 import logging
 import os
 import time
@@ -16,9 +17,45 @@ from numba import njit
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    coerce_cellprofiler_enum,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_int,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    ColumnarFieldsMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    TableMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    LABEL_PAYLOAD_FINAL,
+    _label_payload_small_removed,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    ObjectInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    CellProfilerObjectInputPolicyMixin,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerFunction,
+    CellProfilerKwargDict,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    MeasurementDebugViewModule,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -169,6 +206,115 @@ class WithinNeighborDistancePlanner(NeighborDistancePlanner):
             neighbor_distance,
             int(neighbor_distance),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class MeasureObjectNeighborsObjectInputParameters:
+    """Callable-signature authority for MeasureObjectNeighbors object inputs."""
+
+    measured_labels: str
+    small_removed_labels: str
+    neighbor_labels: str
+    small_removed_neighbor_labels: str
+    neighbors_are_same_objects: str
+
+    primary_image_parameter_count: ClassVar[int] = 1
+    object_binding_parameter_count: ClassVar[int] = 5
+    supported_parameter_kinds: ClassVar[frozenset] = frozenset(
+        (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+    )
+
+    @classmethod
+    def from_callable(
+        cls,
+        func: CellProfilerFunction,
+    ) -> "MeasureObjectNeighborsObjectInputParameters":
+        parameters = tuple(signature(func).parameters.values())
+        start = cls.primary_image_parameter_count
+        stop = start + cls.object_binding_parameter_count
+        object_parameters = parameters[start:stop]
+        if len(object_parameters) != cls.object_binding_parameter_count:
+            raise TypeError(
+                "MeasureObjectNeighbors callable must declare contiguous "
+                "object-binding parameters after its primary image parameter."
+            )
+        unsupported = tuple(
+            parameter
+            for parameter in object_parameters
+            if parameter.kind not in cls.supported_parameter_kinds
+        )
+        if unsupported:
+            raise TypeError(
+                "MeasureObjectNeighbors object-binding parameters must be "
+                "positional-or-keyword or keyword-only parameters."
+            )
+        return cls(*(parameter.name for parameter in object_parameters))
+
+    @property
+    def bound_parameter_names(self) -> tuple[str, ...]:
+        return (
+            self.measured_labels,
+            self.small_removed_labels,
+            self.neighbor_labels,
+            self.small_removed_neighbor_labels,
+            self.neighbors_are_same_objects,
+        )
+
+
+class MeasureObjectNeighborsInputPolicy(CellProfilerObjectInputPolicyMixin):
+    """Bind MeasureObjectNeighbors object-label inputs."""
+
+    def bound_parameter_names(
+        self,
+        plan: "CellProfilerModuleRuntimePlan",
+    ) -> tuple[str, ...]:
+        if not plan.object_inputs:
+            return ()
+        return (
+            MeasureObjectNeighborsObjectInputParameters
+            .from_callable(plan.func)
+            .bound_parameter_names
+        )
+
+    def bind(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        if len(request.object_inputs) not in (1, 2):
+            raise NotImplementedError(
+                "MeasureObjectNeighbors requires one or two object runtime "
+                f"inputs, got {[spec.name for spec in request.object_inputs]}."
+            )
+
+        parameters = MeasureObjectNeighborsObjectInputParameters.from_callable(
+            request.func
+        )
+        measured = request.object_inputs[0]
+        neighbor = request.object_inputs[-1]
+        measured_payload = request.label_payload_for(measured)
+        neighbor_payload = (
+            measured_payload
+            if measured == neighbor
+            else request.label_payload_for(neighbor)
+        )
+        same_objects = measured == neighbor
+        neighbor_labels = None
+        small_removed_neighbor_labels = None
+        if not same_objects:
+            neighbor_labels = LABEL_PAYLOAD_FINAL.value(neighbor_payload)
+            small_removed_neighbor_labels = _label_payload_small_removed(
+                neighbor_payload
+            )
+
+        return {
+            parameters.measured_labels: LABEL_PAYLOAD_FINAL.value(measured_payload),
+            parameters.small_removed_labels: _label_payload_small_removed(
+                measured_payload
+            ),
+            parameters.neighbor_labels: neighbor_labels,
+            parameters.small_removed_neighbor_labels: small_removed_neighbor_labels,
+            parameters.neighbors_are_same_objects: same_objects,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,15 +711,16 @@ def neighbor_topology_backend(
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
+@runtime_bound_parameters("slice_index")
 def measure_object_neighbors(
     image: np.ndarray,
     labels: np.ndarray,
-    neighbor_labels: np.ndarray | None = None,
     small_removed_labels: np.ndarray | None = None,
+    neighbor_labels: np.ndarray | None = None,
     small_removed_neighbor_labels: np.ndarray | None = None,
+    neighbors_are_same_objects: bool = True,
     distance_method: DistanceMethod | str = DistanceMethod.EXPAND,
     neighbor_distance: int = 5,
-    neighbors_are_same_objects: bool = True,
     consider_discarded_objects: bool = True,
     retain_neighbor_count_image: bool = False,
     neighbor_count_colormap: str = "Default",
@@ -1285,9 +1432,104 @@ def _closest_neighbors_numba(
     )
 
 
+class MeasureObjectNeighborsModule(
+    MeasureObjectNeighborsInputPolicy,
+    TableMeasurementRecordRowsMixin,
+    NoSourceMeasurementRecordMixin,
+    ColumnarFieldsMeasurementRecordMixin,
+    MeasurementDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'MeasureObjectNeighbors'
+    function_name = 'measure_object_neighbors'
+    validated = True
+    confidence = 1.0
+    ignored_settings = (
+        "Select objects to measure",
+        "Select neighboring objects to measure",
+        "Retain the image of objects colored by numbers of neighbors?",
+        "Retain the image of objects colored by percent of touching pixels?",
+        "Name the output image",
+        "Select colormap",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Method to determine neighbors",
+            "distance_method",
+        ),
+        SettingToKeywordBinding(
+            "Neighbor distance",
+            "neighbor_distance",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Consider objects discarded for touching image border?",
+            "consider_discarded_objects",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls,
+        module: "ModuleBlock",
+        bound: "BoundModuleSettings",
+    ) -> "BoundModuleSettings":
+        colormaps = module.get_setting_values("Select colormap")
+        kwargs = {
+            **dict(bound.kwargs),
+            "retain_neighbor_count_image": parse_cellprofiler_bool(
+                module.get_setting(
+                    "Retain the image of objects colored by numbers of neighbors?",
+                    "No",
+                )
+            ),
+            "neighbor_count_colormap": colormaps[0] if colormaps else "Default",
+            "retain_percent_touching_image": parse_cellprofiler_bool(
+                module.get_setting(
+                    "Retain the image of objects colored by percent of touching pixels?",
+                    "No",
+                )
+            ),
+            "percent_touching_colormap": (
+                colormaps[1]
+                if len(colormaps) > 1
+                else colormaps[0] if colormaps else "Default"
+            ),
+        }
+        return BoundModuleSettings(
+            kwargs,
+            bound.unmapped_kwargs,
+            bound.invocation_options,
+            bound.setting_coverage,
+        )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        measured = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select objects to measure"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        neighbors = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select neighboring objects to measure"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        output_names = setting_values(module, "Name the output image")
+        outputs = []
+        if optional_setting_value(module, "Retain the image of objects colored by numbers of neighbors?") in {"Yes", "yes", "True", "true"}:
+            outputs.append(builder.declare_artifact(ArtifactSpec(output_names[0], ArtifactKind.IMAGE), module))
+        if optional_setting_value(module, "Retain the image of objects colored by percent of touching pixels?") in {"Yes", "yes", "True", "true"}:
+            outputs.append(builder.declare_artifact(ArtifactSpec(output_names[1], ArtifactKind.IMAGE), module))
+        outputs.append(builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module))
+        return assembler.assemble_contract(module, builder, inputs=[measured, neighbors], outputs=outputs)
+
+
 __all__ = [
     "AdjacentNeighborDistancePlanner",
     "DistanceMethod",
+    "MeasureObjectNeighborsModule",
     "ExpandedNeighborDistancePlanner",
     "NeighborDistancePlan",
     "NeighborDistancePlanner",

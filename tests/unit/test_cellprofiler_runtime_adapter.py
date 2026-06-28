@@ -30,9 +30,11 @@ from openhcs.interop.cellprofiler.runtime.object_label_measurements import (
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     CellProfilerObjectMeasurementVectorBatchBinding,
     CellProfilerObjectMeasurementVectorBinding,
+    CurrentObjectShapeFeatureVectorSourceStrategy,
 )
 from openhcs.interop.cellprofiler.runtime.source_candidates import (
     CellProfilerImageNumberResolver,
+    PipelineStartSourceLoadRequest,
     ParsedSourceCandidate,
     ParsedSourceCandidateCollection,
 )
@@ -43,7 +45,6 @@ from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerModuleExecutor,
     ConcatenatedMeasurementColumnarRows,
-    CurrentObjectShapeFeatureVectorSourceStrategy,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
@@ -72,7 +73,6 @@ from openhcs.core.source_metadata import ORIGINAL_SOURCE_METADATA_FIELD
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
-    GroupedSourceBindings,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -94,6 +94,7 @@ from openhcs.core.source_matching import (
     SourceImageSetIdentity,
 )
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
+from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_semantics import (
@@ -121,7 +122,7 @@ from openhcs.core.runtime_values import (
     normalize_artifact_value,
     object_label_dense_array,
 SourceImageProvenancePlanes)
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, Backend
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -266,6 +267,32 @@ def test_parsed_source_candidate_collection_preserves_distinct_resolved_paths():
     )
 
     assert candidates.deduplicated() == candidates.candidates
+
+
+def test_pipeline_start_load_request_uses_backend_appropriate_storage_paths():
+    candidate = ParsedSourceCandidate(
+        path="A01_s001_w1_z001_t001.tif",
+        resolved_path="/source/A01_s001_w1_z001_t001.tif",
+        virtual_path="A01_s001_w1_z001_t001.tif",
+        filename="A01_s001_w1_z001_t001.tif",
+        metadata={"well": "A01", "channel": "1"},
+    )
+
+    virtual_request = PipelineStartSourceLoadRequest(
+        adapter=None,
+        selected_sources=(candidate,),
+        backend=Backend.VIRTUAL_WORKSPACE.value,
+        source_load_plan=SourceLoadPlan(),
+    )
+    disk_request = PipelineStartSourceLoadRequest(
+        adapter=None,
+        selected_sources=(candidate,),
+        backend=Backend.DISK.value,
+        source_load_plan=SourceLoadPlan(),
+    )
+
+    assert virtual_request.storage_paths == (candidate.path,)
+    assert disk_request.storage_paths == (candidate.resolved_path,)
 
 
 def test_step_input_payload_cache_key_projects_nested_source_metadata():
@@ -735,14 +762,16 @@ def _plan(name, kind):
     return ArtifactOutputPlan(name=name, path=f"/memory/{name}.pkl", kind=kind)
 
 
+def _compiled_source_binding_plan(
+    source_bindings: StepSourceBindingsConfig,
+) -> CompiledSourceBindingPlan:
+    return CompiledSourceBindingPlan.from_enabled_config(source_bindings)
+
+
 def _adapter(
     outputs,
     *,
-    source_bindings=StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),
-        )
-    ),
+    source_bindings=StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),
     source_binding_context=SourceBindingRuntimeContext.empty(),
     processing_context=None,
 ):
@@ -751,7 +780,7 @@ def _adapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs=outputs,
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=processing_context,
         filemanager=filemanager,
@@ -785,17 +814,11 @@ def _source_bound_image_adapter(outputs, images):
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs=outputs,
-        source_binding_plan=CompiledSourceBindingPlan.from_config(
-            StepSourceBindingsConfig(
-                groups=(
-                    GroupedSourceBindings(
-                        bindings=tuple(
+        source_binding_plan=_compiled_source_binding_plan(
+            StepSourceBindingsConfig(bindings=tuple(
                             _pipeline_start_contains_binding(alias)
                             for alias in images
-                        )
-                    ),
-                )
-            )
+                        ))
         ),
         source_binding_context=SourceBindingRuntimeContext(
             step_input_files=paths,
@@ -1023,6 +1046,37 @@ def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
     assert image.data.shape == (2, 2, 2)
     np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
     np.testing.assert_array_equal(image.data[1], np.full((2, 2), 2.0))
+
+
+def test_cellprofiler_adapter_caches_current_image_projection_until_image_write():
+    store = RuntimeValueStore()
+    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ArtifactKind.IMAGE)}
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        artifact_outputs=outputs,
+        filemanager=filemanager,
+    )
+    current_image = RuntimeImagePayloadContext(
+        np.zeros((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_path="/src/A01_s001_w1.tif"),
+    mask = None).payload()
+
+    adapter.add_image(DNA_IMAGE, np.full((2, 2), 1.0, dtype=np.float32))
+    first = adapter.get_image(DNA_IMAGE, current_image=current_image)
+    cached = adapter.get_image(DNA_IMAGE, current_image=current_image)
+
+    assert cached is first
+
+    adapter.add_image(DNA_IMAGE, np.full((2, 2), 2.0, dtype=np.float32))
+    refreshed = adapter.get_image(DNA_IMAGE, current_image=current_image)
+
+    assert refreshed is not first
+    np.testing.assert_array_equal(
+        image_payload_data(refreshed.data),
+        np.full((2, 2), 2.0, dtype=np.float32),
+    )
 
 
 def test_cellprofiler_adapter_source_path_cache_tracks_store_revision():
@@ -2701,18 +2755,12 @@ def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
 
 
 def test_cellprofiler_adapter_resolves_source_bound_objects():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=NUCLEI,
                         artifact_kind=ArtifactKind.OBJECT_LABELS,
                     ),
-                )
-            ),
-        )
-    )
+                ))
     adapter, _filemanager = _adapter({}, source_bindings=source_bindings)
     labels = np.ones((3, 3), dtype=np.uint16)
 
@@ -2724,18 +2772,12 @@ def test_cellprofiler_adapter_resolves_source_bound_objects():
 
 
 def test_cellprofiler_adapter_allows_measurements_for_source_bound_objects():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=NUCLEI,
                         artifact_kind=ArtifactKind.OBJECT_LABELS,
                     ),
-                )
-            ),
-        )
-    )
+                ))
     adapter, _filemanager = _adapter(
         {
             NUCLEI_MEASUREMENTS: _plan(
@@ -2929,10 +2971,8 @@ def test_cellprofiler_adapter_lists_measurement_tables_for_object_subject():
 def test_cellprofiler_adapter_offsets_repeated_scalar_measurement_tables():
     store = RuntimeValueStore()
     filemanager = FileManagerStub()
-    source_binding_plan = CompiledSourceBindingPlan.from_config(
-        StepSourceBindingsConfig(
-            groups=(GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),)
-        )
+    source_binding_plan = _compiled_source_binding_plan(
+        StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
     )
 
     for index, value in enumerate((11.0, 13.0), start=1):
@@ -2982,10 +3022,8 @@ def test_cellprofiler_adapter_aligns_multiplane_measurements_across_groups():
         NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
         NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
     }
-    source_binding_plan = CompiledSourceBindingPlan.from_config(
-        StepSourceBindingsConfig(
-            groups=(GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),)
-        )
+    source_binding_plan = _compiled_source_binding_plan(
+        StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
     )
 
     for group_key, value in (("site1", 5.0), ("site2", 7.0)):
@@ -3185,10 +3223,8 @@ def test_cellprofiler_adapter_multiplane_measurement_alignment_is_feature_scoped
     outputs = {
         NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
     }
-    source_binding_plan = CompiledSourceBindingPlan.from_config(
-        StepSourceBindingsConfig(
-            groups=(GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),)
-        )
+    source_binding_plan = _compiled_source_binding_plan(
+        StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
     )
 
     for group_key, feature_value in (
@@ -3299,14 +3335,8 @@ def test_cellprofiler_adapter_projects_duplicate_object_labels_to_current_runtim
             NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
             NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
         },
-        source_binding_plan=CompiledSourceBindingPlan.from_config(
-            StepSourceBindingsConfig(
-                groups=(
-                    GroupedSourceBindings(
-                        bindings=(NamedSourceBinding(alias=DNA_IMAGE),)
-                    ),
-                )
-            )
+        source_binding_plan=_compiled_source_binding_plan(
+            StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
         ),
         filemanager=filemanager,
         plane_projection=RuntimePlaneProjection.group(1),
@@ -3412,10 +3442,7 @@ def test_cellprofiler_adapter_measurements_require_object_reference():
 
 
 def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_stack():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=DNA_IMAGE,
                         selector=SourceSelector(
@@ -3424,10 +3451,7 @@ def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_
                             ),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3439,7 +3463,7 @@ def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -3458,20 +3482,14 @@ def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_
 
 
 def test_cellprofiler_adapter_source_binding_plane_uses_group_order_for_volumes():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(alias="origDNA"),
                     NamedSourceBinding(alias="origMemb"),
-                ),
-            ),
-        )
-    )
+                ))
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
     )
 
     assert adapter.source_binding_axis_size(("origDNA",)) == 2
@@ -3481,10 +3499,7 @@ def test_cellprofiler_adapter_source_binding_plane_uses_group_order_for_volumes(
 
 
 def test_source_binding_plane_keeps_full_alias_stack_unprojected():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="origDNA",
                         selector=SourceSelector(
@@ -3497,10 +3512,7 @@ def test_source_binding_plane_keeps_full_alias_stack_unprojected():
                             metadata=(MetadataSelector("ChannelNumber", "0"),),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     dna_files = tuple(f"A01_s001_w1_z00{index}_t001.tif" for index in (1, 2, 3))
     memb_files = tuple(f"A01_s001_w2_z00{index}_t001.tif" for index in (1, 2, 3))
     source_binding_context = SourceBindingRuntimeContext(
@@ -3530,7 +3542,7 @@ def test_source_binding_plane_keeps_full_alias_stack_unprojected():
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(FileManagerStub()),
         filemanager=FileManagerStub(),
@@ -3549,10 +3561,7 @@ def test_source_binding_axis_plane_resolution_keeps_composed_alias_axis():
 
 
 def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_unqualified():
-    single_source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    single_source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigComet",
                         selector=SourceSelector(
@@ -3565,10 +3574,7 @@ def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_
                             )
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3580,25 +3586,19 @@ def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_
     single_adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(single_source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(single_source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
     )
-    multi_source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    multi_source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(alias="OrigComet"),
                     NamedSourceBinding(alias="Other"),
-                ),
-            ),
-        )
-    )
+                ))
     multi_adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(multi_source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(multi_source_bindings),
     )
 
     assert single_adapter.source_binding_axis_plane_index(()) is None
@@ -3622,10 +3622,7 @@ def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metada
     er_archive_es_path = (
         "/plate/Archive_ES/images_Illum-corrected/plate1_A14_site1_Ch2.tif"
     )
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigDNA",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -3652,9 +3649,7 @@ def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metada
                             )
                         ),
                     ),
-                )
-            ),
-        ),
+                ),
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -3715,7 +3710,7 @@ def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metada
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope("A14", "site", "1"),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(FileManagerStub()),
         filemanager=FileManagerStub(),
@@ -3733,10 +3728,7 @@ def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metada
 
 
 def test_source_binding_axis_scope_uses_declared_component_not_any_equal_value():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigRNA",
                         selector=SourceSelector(
@@ -3749,16 +3741,13 @@ def test_source_binding_axis_scope_uses_declared_component_not_any_equal_value()
                             )
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     ch1_path = "/plate/images/plate1_A14_site1_Ch1.tif"
     ch2_path = "/plate/images/plate1_A14_site1_Ch2.tif"
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope("2", "site", "2"),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=SourceBindingRuntimeContext(
             step_input_files=(ch1_path, ch2_path),
             current_step_input_files=(ch2_path,),
@@ -3775,10 +3764,7 @@ def test_source_binding_axis_scope_uses_declared_component_not_any_equal_value()
 
 
 def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unprojected():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="DF_image",
                         selector=SourceSelector(
@@ -3791,10 +3777,7 @@ def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unpro
                             )
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w6_z001_t001.tif",
@@ -3805,7 +3788,7 @@ def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unpro
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -3815,10 +3798,7 @@ def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unpro
 
 
 def test_current_source_object_labels_project_source_binding_axis_without_plane_metadata():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigComet",
                         selector=SourceSelector(
@@ -3831,10 +3811,7 @@ def test_current_source_object_labels_project_source_binding_axis_without_plane_
                             )
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3846,7 +3823,7 @@ def test_current_source_object_labels_project_source_binding_axis_without_plane_
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -3876,10 +3853,7 @@ def test_current_source_object_labels_project_source_binding_axis_without_plane_
 
 
 def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_axis():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigComet",
                         selector=SourceSelector(
@@ -3892,10 +3866,7 @@ def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_
                             )
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3907,7 +3878,7 @@ def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -3950,10 +3921,7 @@ def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_
 
 
 def test_current_source_object_labels_resolve_ambiguous_exact_identity_through_source_binding_axis():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigComet",
                         selector=SourceSelector(
@@ -3966,10 +3934,7 @@ def test_current_source_object_labels_resolve_ambiguous_exact_identity_through_s
                             )
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3981,7 +3946,7 @@ def test_current_source_object_labels_resolve_ambiguous_exact_identity_through_s
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4206,10 +4171,7 @@ def test_current_source_object_labels_prefer_current_resolved_path_provenance():
 
 
 def test_cellprofiler_adapter_preserves_step_input_image_metadata():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=DNA_IMAGE,
                         selector=SourceSelector(
@@ -4218,10 +4180,7 @@ def test_cellprofiler_adapter_preserves_step_input_image_metadata():
                             ),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4233,7 +4192,7 @@ def test_cellprofiler_adapter_preserves_step_input_image_metadata():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4260,20 +4219,14 @@ def test_cellprofiler_adapter_preserves_step_input_image_metadata():
 
 
 def test_cellprofiler_adapter_resolves_source_metadata_from_runtime_context():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=DNA_IMAGE,
                         selector=SourceSelector(
                             metadata=(MetadataSelector("Compound", "DMSO"),),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4289,7 +4242,7 @@ def test_cellprofiler_adapter_resolves_source_metadata_from_runtime_context():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4307,10 +4260,7 @@ def test_cellprofiler_adapter_resolves_source_metadata_from_runtime_context():
 
 
 def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_2d_view():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=DNA_IMAGE,
                         selector=SourceSelector(
@@ -4319,10 +4269,7 @@ def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_
                             ),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",)
     )
@@ -4331,7 +4278,7 @@ def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4347,11 +4294,7 @@ def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_
 
 
 def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natural_2d_view():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),
-        )
-    )
+    source_bindings = StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",)
     )
@@ -4360,7 +4303,7 @@ def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natura
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4376,10 +4319,7 @@ def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natura
 
 
 def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_inherited_scope():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="Actin",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -4389,10 +4329,7 @@ def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_in
                             ),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4428,7 +4365,7 @@ def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_in
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4454,10 +4391,7 @@ def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_in
 
 
 def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="TypeI",
                         selector=SourceSelector(
@@ -4466,10 +4400,7 @@ def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
                             ),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "source_s001_w1_z001_t001.tif",
@@ -4485,7 +4416,7 @@ def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4503,10 +4434,7 @@ def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
 
 
 def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="TypeI",
                         selector=SourceSelector(
@@ -4515,10 +4443,7 @@ def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
                             ),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "source_s001_w1_z001_t001.tif",
@@ -4540,7 +4465,7 @@ def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4558,10 +4483,7 @@ def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
 
 
 def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_parser():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="IllumBlue",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -4569,10 +4491,7 @@ def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_pa
                             metadata=(MetadataSelector("illum", "DAPI"),),
                         ),
                     ),
-                ),
-            ),
-        )
-    )
+                ))
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",),
         pipeline_input_files=("/plate/Images/A01_s001_w1_z001_t001.tif",),
@@ -4588,7 +4507,7 @@ def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_pa
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4602,10 +4521,7 @@ def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_pa
 
 
 def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_path):
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="IllumBlue",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -4614,8 +4530,6 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_
                         ),
                     ),
                 ),
-            ),
-        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FOLDER_NAME,
@@ -4677,7 +4591,7 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4694,10 +4608,7 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_
 
 
 def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=DNA_IMAGE,
                         selector=SourceSelector(
@@ -4724,8 +4635,6 @@ def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector(
                         ),
                     ),
                 ),
-            ),
-        ),
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -4767,7 +4676,7 @@ def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4788,10 +4697,7 @@ def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector(
 
 
 def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigDNA",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -4806,8 +4712,6 @@ def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
                         ),
                     ),
                 ),
-            ),
-        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -4856,7 +4760,7 @@ def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=SourceBindingRuntimeContext(
             current_step_input_files=files,
             pipeline_input_files=files,
@@ -4883,10 +4787,7 @@ def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
 
 
 def test_cellprofiler_adapter_matches_metadata_keys_by_semantic_identity(tmp_path):
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="IllumBlue",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -4895,8 +4796,6 @@ def test_cellprofiler_adapter_matches_metadata_keys_by_semantic_identity(tmp_pat
                         ),
                     ),
                 ),
-            ),
-        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -4918,7 +4817,7 @@ def test_cellprofiler_adapter_matches_metadata_keys_by_semantic_identity(tmp_pat
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4939,10 +4838,7 @@ def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
                 source=MetadataSource.FILE_NAME,
                 pattern=r"IllumCh(?P<channel>[0-9]+)\.npy",
             ),
-        ),
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+        ),bindings=(
                     NamedSourceBinding(
                         alias="IllumBlue",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -4958,8 +4854,6 @@ def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
                         ),
                     ),
                 ),
-            ),
-        ),
     )
     expected = np.full((2, 2), 31.0, dtype=np.float32)
     illum_path = tmp_path / "IllumCh2.npy"
@@ -4975,7 +4869,7 @@ def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -4995,10 +4889,7 @@ def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
 
 
 def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadata():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="rawGFP",
                         selector=SourceSelector(
@@ -5016,8 +4907,6 @@ def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadat
                         ),
                     ),
                 ),
-            ),
-        ),
     )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
@@ -5030,7 +4919,7 @@ def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadat
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(FileManagerStub()),
         filemanager=FileManagerStub(),
@@ -5045,10 +4934,7 @@ def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadat
 
 
 def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="orig_color",
                         selector=SourceSelector(
@@ -5062,8 +4948,6 @@ def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
                         ),
                     ),
                 ),
-            ),
-        ),
     )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
@@ -5076,7 +4960,7 @@ def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(FileManagerStub()),
         filemanager=FileManagerStub(),
@@ -5092,10 +4976,7 @@ def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
 
 
 def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp_path):
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias=DNA_IMAGE,
                         selector=SourceSelector(
@@ -5120,8 +5001,6 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp
                         ),
                     ),
                 ),
-            ),
-        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -5166,7 +5045,7 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -5188,10 +5067,7 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp
 
 
 def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="rawGFP",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -5206,8 +5082,6 @@ def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
                         ),
                     ),
                 ),
-            ),
-        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_paths = (
@@ -5234,7 +5108,7 @@ def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -5255,10 +5129,7 @@ def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
 
 
 def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="BF_image",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -5299,8 +5170,6 @@ def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
                         ),
                     ),
                 ),
-            ),
-        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_paths = (
@@ -5324,7 +5193,7 @@ def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -5355,10 +5224,7 @@ def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
 
 
 def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order_matching():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="Sytox",
                         selector=SourceSelector(
@@ -5385,8 +5251,6 @@ def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order
                         ),
                     ),
                 ),
-            ),
-        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -5423,7 +5287,7 @@ def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -5441,10 +5305,7 @@ def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order
 
 
 def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_scope():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="RawData",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -5459,8 +5320,6 @@ def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_sc
                         ),
                     ),
                 ),
-            ),
-        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     filemanager = FileManagerStub()
@@ -5487,7 +5346,7 @@ def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_sc
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -5505,10 +5364,7 @@ def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_sc
 
 
 def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="RawData",
                         origin=SourceBindingOrigin.PIPELINE_START,
@@ -5523,8 +5379,6 @@ def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image()
                         ),
                     ),
                 ),
-            ),
-        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     filemanager = FileManagerStub()
@@ -5541,7 +5395,7 @@ def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image()
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
@@ -5562,18 +5416,13 @@ def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image()
 def test_cellprofiler_adapter_converts_declared_grayscale_rgb_sources():
     from skimage.color import rgb2gray
 
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="RawData",
                         origin=SourceBindingOrigin.PIPELINE_START,
                         selector=SourceSelector(),
                     ),
                 ),
-            ),
-        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     filemanager = FileManagerStub()
@@ -5601,7 +5450,7 @@ def test_cellprofiler_adapter_converts_declared_grayscale_rgb_sources():
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={},
-        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_plan=_compiled_source_binding_plan(source_bindings),
         source_binding_context=source_binding_context,
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,

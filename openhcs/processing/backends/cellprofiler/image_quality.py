@@ -2,6 +2,175 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+from openhcs.core.artifacts import ArtifactKind
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_int,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    MeasurementDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+
+
+class ImageQualityThresholdMethod(Enum):
+    """Threshold algorithms exposed by MeasureImageQuality settings."""
+
+    OTSU = "otsu"
+    LI = "li"
+    TRIANGLE = "triangle"
+    ISODATA = "isodata"
+    MINIMUM = "minimum"
+    MEAN = "mean"
+    YEN = "yen"
+
+
+class MeasureImageQualityModule(
+    MeasurementDebugViewModule,
+    CellProfilerModule,
+    ArtifactContractModule,
+):
+    module_name = 'MeasureImageQuality'
+    function_name = 'measure_image_quality'
+    validated = True
+    confidence = 1.0
+    image_selection_setting = "Calculate metrics for which images?"
+    all_loaded_images_selection = "All loaded images"
+    selected_images_selection = "Select..."
+    selected_images_setting = "Select the images to measure"
+    unsupported_settings = (
+        "Image count",
+        image_selection_setting,
+        "Include the image rescaling value?",
+        "Threshold count",
+        "Two-class or three-class thresholding?",
+        "Assign pixels in the middle intensity class to the foreground or the background?",
+        "Minimize the weighted variance or the entropy?",
+        "Typical fraction of the image covered by objects",
+        "Use all thresholding methods?",
+        "Scale count",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Calculate blur metrics?",
+            "calculate_blur",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Calculate saturation metrics?",
+            "calculate_saturation",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Calculate intensity metrics?",
+            "calculate_intensity",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Calculate thresholds?",
+            "calculate_threshold",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Spatial scale for blur measurements",
+            "blur_scale",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Select a thresholding method",
+            "threshold_method",
+            cellprofiler_enum_value_setting_parser(ImageQualityThresholdMethod),
+        ),
+    )
+
+    @classmethod
+    def ignored_settings_for(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        ignored = tuple(cls.unsupported_settings)
+        if (
+            cls.setting_value(module, cls.image_selection_setting)
+            == cls.all_loaded_images_selection
+        ):
+            return (*ignored, cls.selected_images_setting)
+        return ignored
+
+    @classmethod
+    def artifact_inputs(
+        cls,
+        module: "ModuleBlock",
+        source_schema: "PipelineImageSchema | None",
+    ) -> tuple["ModuleArtifactInput", ...]:
+        from openhcs.interop.cellprofiler.module_artifact_inputs import (
+            ModuleArtifactInput,
+        )
+        from openhcs.interop.cellprofiler.setting_names import required_setting_value
+
+        selection = required_setting_value(module, cls.image_selection_setting)
+        if selection == cls.selected_images_selection:
+            return tuple(
+                ModuleArtifactInput(name, ArtifactKind.IMAGE)
+                for value in setting_values(module, cls.selected_images_setting)
+                for name in split_symbol_names(value)
+            )
+        if selection != cls.all_loaded_images_selection:
+            raise ValueError(
+                f"Unsupported MeasureImageQuality image-selection mode "
+                f"{selection!r} in module {module.name}({module.module_num})."
+            )
+        if source_schema is None:
+            return ()
+        loaded_image_aliases = source_schema.loaded_image_aliases
+        if not loaded_image_aliases:
+            raise ValueError(
+                "MeasureImageQuality requested all loaded images, but the "
+                "pipeline source schema has no loaded image aliases."
+            )
+        return tuple(
+            ModuleArtifactInput(alias, ArtifactKind.IMAGE)
+            for alias in loaded_image_aliases
+        )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactSpec
+
+        inputs = tuple(
+            builder.require_artifact(ArtifactSpec(input_.name, input_.kind), module)
+            for input_ in cls.artifact_inputs(module, builder.source_schema)
+        )
+        measurements = builder.declare_artifact(
+            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+            module,
+        )
+        return assembler.assemble_contract(
+            module,
+            builder,
+            inputs=inputs,
+            outputs=[measurements],
+        )
+
+
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from collections import OrderedDict
@@ -16,17 +185,10 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.interop.cellprofiler.module_artifact_inputs import (
-    ModuleArtifactInput,
-    ModuleArtifactInputProvider,
-)
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.interop.cellprofiler.setting_names import required_setting_value
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -44,9 +206,11 @@ from openhcs.processing.materialization import csv_materializer
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
-MEASURE_IMAGE_QUALITY_IMAGE_SELECTION_SETTING = "Calculate metrics for which images?"
 
-
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+    threshold_primitives,
+)
 class ThresholdMethod(Enum):
     OTSU = "otsu"
     LI = "li"
@@ -55,52 +219,6 @@ class ThresholdMethod(Enum):
     MINIMUM = "minimum"
     MEAN = "mean"
     YEN = "yen"
-
-
-class MeasureImageQualityImageSelectionMode(Enum):
-    """Image-selection modes exposed by MeasureImageQuality settings."""
-
-    ALL_LOADED_IMAGES = "All loaded images"
-    SELECTED_IMAGES = "Select..."
-
-    @classmethod
-    def from_module(cls, module: ModuleBlock) -> "MeasureImageQualityImageSelectionMode":
-        value = required_setting_value(
-            module,
-            MEASURE_IMAGE_QUALITY_IMAGE_SELECTION_SETTING,
-        )
-        for mode in cls:
-            if value == mode.value:
-                return mode
-        raise ValueError(
-            f"Unsupported MeasureImageQuality image-selection mode {value!r} "
-            f"in module {module.name}({module.module_num})."
-        )
-
-
-class MeasureImageQualityArtifactInputProvider(ModuleArtifactInputProvider):
-    """Declare source-image inputs owned by MeasureImageQuality semantics."""
-
-    module_name = "MeasureImageQuality"
-
-    def inputs(
-        self,
-        module: ModuleBlock,
-        source_schema: PipelineImageSchema,
-    ) -> tuple[ModuleArtifactInput, ...]:
-        mode = MeasureImageQualityImageSelectionMode.from_module(module)
-        if mode is MeasureImageQualityImageSelectionMode.SELECTED_IMAGES:
-            return ()
-        loaded_image_aliases = source_schema.loaded_image_aliases
-        if not loaded_image_aliases:
-            raise ValueError(
-                "MeasureImageQuality requested all loaded images, but the "
-                "pipeline source schema has no loaded image aliases."
-            )
-        return tuple(
-            ModuleArtifactInput(alias, ArtifactKind.IMAGE)
-            for alias in loaded_image_aliases
-        )
 
 
 @dataclass(frozen=True)

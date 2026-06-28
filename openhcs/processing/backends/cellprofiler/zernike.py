@@ -833,7 +833,7 @@ def intensity_zernike_moments_batch(
 
 def _array_content_key(array: np.ndarray) -> tuple[str, tuple[int, ...], bytes]:
     contiguous = np.ascontiguousarray(array)
-    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
+    digest = hashlib.sha1(contiguous.view(np.uint8)).digest()
     return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
 
 

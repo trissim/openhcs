@@ -31,9 +31,7 @@ from openhcs.interop.cellprofiler.import_service import (
     CellProfilerPipelineImporter,
     CellProfilerPipelineImportRequest,
 )
-from openhcs.interop.cellprofiler.illumination_settings import (
-    CORRECT_ILLUMINATION_APPLY_SETTINGS,
-    CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
+from openhcs.processing.backends.cellprofiler.illumination import (
     IlluminationCalculationScope,
     IlluminationCorrectionMethod,
     IlluminationFilterSizeMethod,
@@ -42,48 +40,47 @@ from openhcs.interop.cellprofiler.illumination_settings import (
     IlluminationSmoothingMethod,
     IlluminationSplineBackgroundMode,
 )
-from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
-    EXPAND_OR_SHRINK_OBJECTS_SETTINGS,
+from openhcs.processing.backends.cellprofiler.morphology import (
     CellProfilerExpandShrinkOperation,
     ExpandShrinkMode,
-    ExpandShrinkOperationModeBinding,
-    expand_or_shrink_bound_kwargs,
-    expand_shrink_mode_for_operation,
 )
-from openhcs.interop.cellprofiler.intensity_distribution_settings import (
+from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     IntensityDistributionCenterChoice,
     IntensityDistributionZernikeMode,
     parse_intensity_distribution_center_choice,
     parse_intensity_distribution_zernike_mode,
 )
-from openhcs.interop.cellprofiler.image_module_settings import (
+from openhcs.processing.backends.cellprofiler.morphology import (
     CombineObjectsMethod,
+)
+from openhcs.processing.backends.cellprofiler.object_images import (
     ConvertObjectsToImageMode,
+)
+from openhcs.processing.backends.cellprofiler.image_quality import (
     ImageQualityThresholdMethod,
+)
+from openhcs.processing.backends.cellprofiler.image_geometry import (
     MaskImageSource,
+)
+from openhcs.processing.backends.cellprofiler.intensity import (
     RescaleIntensityAutomaticHigh,
     RescaleIntensityAutomaticLow,
     RescaleIntensityMethod,
+)
+from openhcs.processing.backends.cellprofiler.watershed import (
     WatershedDeclumpMethod,
     WatershedInputKeyword,
     WatershedMethod,
 )
-from openhcs.interop.cellprofiler.image_math_settings import (
-    IMAGE_MATH_SETTINGS,
-    ImageMathOperandFactorSetting,
-    ImageMathOperandFactorSettingResolver,
-    ImageMathOperandOrdinal,
+from openhcs.processing.backends.cellprofiler.image_math import (
     ImageMathOperation,
-    image_math_bound_kwargs,
     parse_image_math_operation,
 )
-from openhcs.interop.cellprofiler.mask_objects_settings import (
-    MASK_OBJECTS_SETTINGS,
+from openhcs.processing.backends.cellprofiler.morphology import (
     MaskObjectsNumberingChoice,
     MaskObjectsOverlapHandling,
 )
 from openhcs.interop.cellprofiler.artifact_semantics import (
-    ArtifactSettingClassifier,
     ArtifactSettingDirection,
     ArtifactSettingRole,
     ArtifactSettingSymbol,
@@ -97,26 +94,19 @@ from openhcs.interop.cellprofiler.compiler_registry import (
     register_cellprofiler_dialect_compiler,
 )
 from openhcs.interop.cellprofiler.module_roles import (
-    INFRASTRUCTURE_MODULE_NAMES,
-    INFRASTRUCTURE_MODULE_NAMES_BY_KEY,
-    CellProfilerInfrastructureImportNote,
+    ArtifactSpecKey,
     CellProfilerModuleRole,
     CellProfilerModuleRoleSpec,
     cellprofiler_infrastructure_import_note,
+    cellprofiler_infrastructure_retained_artifacts,
     cellprofiler_module_role,
 )
-from openhcs.interop.cellprofiler.module_runtime_semantics import (
-    CellProfilerWatershedRuntimeFamily,
-    ModuleRevisionRange,
-    ModuleRuntimeSemanticsBinding,
-    WatershedRuntimeSemanticsBinding,
-)
 from openhcs.interop.cellprofiler.module_semantics import (
-    CELLPROFILER_MODULE_SEMANTICS,
-    CELLPROFILER_MODULE_SEMANTICS_BY_KEY,
     CellProfilerModuleCategory,
     CellProfilerModuleDimensionality,
+    CellProfilerModuleSemanticFamily,
     CellProfilerModuleSemantics,
+    cellprofiler_module_semantics_family,
     cellprofiler_module_semantics,
 )
 from openhcs.interop.cellprofiler.parser import (
@@ -127,29 +117,15 @@ from openhcs.interop.cellprofiler.parser import (
 from openhcs.interop.cellprofiler.pipeline_compiler import (
     CellProfilerDialectCompiler,
 )
-from openhcs.interop.cellprofiler.relate_objects_settings import (
-    RELATE_OBJECTS_DISTANCE_SETTING,
-    RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
-    RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+from openhcs.processing.backends.cellprofiler.relationships import (
     RelateObjectsDistanceMethod,
-    parse_relate_objects_distance_method,
 )
 from openhcs.interop.cellprofiler.relationship_measurements import (
     RelationshipMeasurements,
 )
-from openhcs.interop.cellprofiler.resize_settings import (
-    RESIZE_FACTOR_SETTING,
-    RESIZE_FACTOR_X_SETTING,
-    RESIZE_FACTOR_Y_SETTING,
-    RESIZE_FACTOR_Z_SETTING,
-    RESIZE_HEIGHT_SETTING,
-    RESIZE_INTERPOLATION_SETTING,
-    RESIZE_METHOD_SETTING,
-    RESIZE_PLANES_SETTING,
-    RESIZE_WIDTH_SETTING,
-    ResizeInterpolationMethod,
+from openhcs.processing.backends.cellprofiler.image_geometry import (
+    InterpolationMethod as ResizeInterpolationMethod,
     ResizeMethod,
-    resize_bound_kwargs,
 )
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerImageExecutionContext,
@@ -175,19 +151,7 @@ from openhcs.interop.cellprofiler.source_schema import (
     SetupModuleCompiler,
     compile_image_schema,
 )
-from openhcs.interop.cellprofiler.straighten_worms_settings import (
-    STRAIGHTEN_WORMS_INPUT_IMAGE_SETTING,
-    STRAIGHTEN_WORMS_INPUT_OBJECTS_SETTING,
-    STRAIGHTEN_WORMS_OUTPUT_IMAGE_SETTING,
-    STRAIGHTEN_WORMS_OUTPUT_OBJECTS_SETTING,
-    StraightenWormsFlipMode,
-    StraightenWormsImageBinding,
-    straighten_worms_bound_kwargs,
-    straighten_worms_image_bindings,
-    straighten_worms_input_objects_name,
-    straighten_worms_output_objects_name,
-)
-from openhcs.interop.cellprofiler.structuring_element_settings import (
+from openhcs.processing.backends.cellprofiler.module_classes import (
     DEFAULT_STRUCTURING_ELEMENT_SETTING,
     STRUCTURING_ELEMENT_SETTING_NAME,
     CellProfilerStructuringElement,
@@ -195,21 +159,12 @@ from openhcs.interop.cellprofiler.structuring_element_settings import (
     StructuringElementSettingBinding,
     structuring_element_bound_kwargs,
 )
-from openhcs.interop.cellprofiler.untangle_worms_settings import (
-    UNTANGLE_WORMS_INPUT_IMAGE_SETTING,
-    UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING,
-    UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,
-    UNTANGLE_WORMS_TRAINING_FILE_NAME_SETTING,
-    UntangleWormsOverlapStyle,
-    untangle_worms_bound_kwargs,
-)
 from openhcs.interop.cellprofiler.worm_measurements import (
     WormControlPointAxis,
     WormControlPointMeasurementField,
     WormControlPointMeasurementSchema,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
-    CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
     CellProfilerMeasurementTargetScope,
     coerce_cellprofiler_measurement_target_scope,
 )

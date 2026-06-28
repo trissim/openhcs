@@ -3,9 +3,46 @@ Converted from CellProfiler: GaussianFilter
 Original: gaussianfilter
 """
 
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_float,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+
+class GaussianFilterModule(ImageProcessingDebugViewModule, CellProfilerModule):
+    module_name = 'GaussianFilter'
+    function_name = 'gaussian_filter'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding("Sigma", "sigma", parse_cellprofiler_float),
+    )
+
+
+
 import numpy as np
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

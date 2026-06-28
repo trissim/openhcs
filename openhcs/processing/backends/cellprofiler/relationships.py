@@ -2,6 +2,265 @@
 
 from __future__ import annotations
 
+from abc import ABC
+from enum import Enum
+from typing import ClassVar
+
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.interop.cellprofiler.runtime.artifact_binding import _callable_parameters
+from openhcs.interop.cellprofiler.runtime.bound_parameters import RuntimeBoundParameterName
+from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
+from openhcs.interop.cellprofiler.runtime.special_input_policies import (
+    CellProfilerSpecialInputPolicyMixin,
+    SpecialInputBindingRequest,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    PlaneRuntimeArtifactModule,
+    RelationshipDebugViewModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    parse_cellprofiler_bool,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    ColumnarFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    RelationshipMeasurementRecordRowsMixin,
+    SourceNameOnlyMeasurementRecordMixin,
+    TableMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
+    RelationshipEndpointContract,
+    RelationshipEndpointResolver,
+)
+
+
+class RelateObjectsDistanceMethod(Enum):
+    """CellProfiler RelateObjects child-parent distance calculation mode."""
+
+    NONE = ("none", False, False)
+    CENTROID = ("centroid", True, False)
+    MINIMUM = ("minimum", False, True)
+    BOTH = ("both", True, True)
+
+    def __init__(
+        self,
+        label: str,
+        calculates_centroid_distance: bool,
+        calculates_minimum_distance: bool,
+    ) -> None:
+        self._value_ = label
+        self._calculates_centroid_distance = calculates_centroid_distance
+        self._calculates_minimum_distance = calculates_minimum_distance
+
+    calculates_centroid_distance = AliasProperty[bool]("_calculates_centroid_distance")
+    calculates_minimum_distance = AliasProperty[bool]("_calculates_minimum_distance")
+
+
+DistanceMethod = RelateObjectsDistanceMethod
+
+
+class PrimaryObjectInputRelationshipModule(ABC):
+    """Relationship module declaration with indexed primary endpoints."""
+
+    primary_relationship_object_input_indices: ClassVar[tuple[int, int]] = (0, 1)
+    primary_relationship_output_index: ClassVar[int] = 0
+
+    @classmethod
+    def relationship_endpoint_contract(
+        cls,
+        resolver: RelationshipEndpointResolver,
+        relationship_spec: ArtifactSpec,
+    ) -> RelationshipEndpointContract | None:
+        if relationship_spec != resolver.relationship_output_at(
+            cls.primary_relationship_output_index
+        ):
+            return None
+        return resolver.indexed_object_input_contract(
+            cls.primary_relationship_object_input_indices
+        )
+
+
+class PrimaryObjectInputRelationshipDistanceModule(
+    PrimaryObjectInputRelationshipModule,
+    ABC,
+):
+    """Relationship module declaration whose primary relationship owns distances."""
+
+    @classmethod
+    def relationship_distance_measurements_apply(
+        cls,
+        resolver: RelationshipEndpointResolver,
+        relationship_spec: ArtifactSpec,
+    ) -> bool:
+        return relationship_spec == resolver.relationship_output_at(
+            cls.primary_relationship_output_index
+        )
+
+class RelateObjectsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
+    """Bind parent/child object labels in the current runtime plane."""
+
+    slice_index_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("slice_index")
+    )
+
+    def extra_bound_parameter_names(
+        self,
+        plan: CellProfilerModuleRuntimePlan,
+    ) -> tuple[str, ...]:
+        """Return the optional runtime slice index kwarg."""
+        if self.slice_index_kwarg in _callable_parameters(plan.func):
+            return (self.slice_index_kwarg,)
+        return ()
+
+    def bind(
+        self,
+        request: SpecialInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        if len(request.parameter_names) != len(request.special_input_specs):
+            raise NotImplementedError(
+                f"{request.module_name} declares special_inputs "
+                f"{list(request.parameter_names)}, but compiled runtime inputs are "
+                f"{[spec.name for spec in request.special_input_specs]}."
+            )
+        bound = {
+            parameter_name: (
+                request.current_plane_object_label_runtime_value(spec)
+                if spec.kind is ArtifactKind.OBJECT_LABELS
+                else request.runtime_value(spec)
+            )
+            for parameter_name, spec in zip(
+                request.parameter_names,
+                request.special_input_specs,
+                strict=True,
+            )
+        }
+        plane_index = request.relationship_runtime_slice_index()
+        if (
+            plane_index is not None
+            and request.func is not None
+            and self.slice_index_kwarg in _callable_parameters(request.func)
+        ):
+            if self.slice_index_kwarg not in bound:
+                bound[self.slice_index_kwarg] = plane_index
+        return bound
+
+
+class RelateObjectsModule(
+    PlaneRuntimeArtifactModule,
+    TableMeasurementRecordRowsMixin,
+    RelationshipMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    SourceNameOnlyMeasurementRecordMixin,
+    ColumnarFieldsMeasurementRecordMixin,
+    RelateObjectsSpecialInputPolicy,
+    RelationshipDebugViewModule,
+    PrimaryObjectInputRelationshipDistanceModule,
+    CellProfilerModule,
+):
+    module_name = 'RelateObjects'
+    function_name = 'relate_objects'
+    validated = True
+    contract = 'pure_2d'
+    confidence = 1.0
+    distance_setting = SettingNameFamily("Calculate child-parent distances?")
+    parent_objects_setting = SettingNameFamily(
+        "Select the parent objects",
+        aliases=("Parent objects",),
+    )
+    child_objects_setting = SettingNameFamily(
+        "Select the child objects",
+        aliases=("Child objects",),
+    )
+    per_parent_means_setting = SettingNameFamily(
+        "Calculate per-parent means for all child measurements?"
+    )
+    save_children_setting = SettingNameFamily(
+        "Do you want to save the children with parents as a new object set?"
+    )
+
+    @classmethod
+    def relationship_measurement_rows(cls, request):
+        """Return RelateObjects relationship rows including distance features."""
+        return RelateObjectsRelationshipMeasurementRows(request)
+
+    ignored_settings = (
+        distance_setting,
+        parent_objects_setting,
+        child_objects_setting,
+        per_parent_means_setting,
+        "Calculate distances to other parents?",
+        "Parent name",
+        save_children_setting,
+        "Name the output object",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            distance_setting,
+            "calculate_distances",
+            cellprofiler_enum_value_setting_parser(RelateObjectsDistanceMethod),
+        ),
+        SettingToKeywordBinding(
+            per_parent_means_setting,
+            "calculate_per_parent_means",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            save_children_setting,
+            "save_children_with_parents",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+
+        parent = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, cls.parent_objects_setting), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        child = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, cls.child_objects_setting), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(parent_child_relationship_artifact_name(parent.name, child.name), ArtifactKind.RELATIONSHIPS), module),
+            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
+        ]
+        save_children = optional_setting_value(module, cls.save_children_setting)
+        if save_children is not None and save_children.strip().lower() == "yes":
+            output_objects = builder.declare_artifact(
+                ArtifactSpec(required_setting_value(module, "Name the output object"), ArtifactKind.OBJECT_LABELS),
+                module,
+            )
+            outputs.insert(0, output_objects)
+            outputs.insert(
+                2,
+                builder.declare_artifact(
+                    ArtifactSpec(parent_child_relationship_artifact_name(child.name, output_objects.name), ArtifactKind.RELATIONSHIPS),
+                    module,
+                ),
+            )
+        return assembler.assemble_contract(module, builder, inputs=[parent, child], outputs=outputs)
+
+
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -18,12 +277,25 @@ from openhcs.core.pipeline.function_contracts import (
     special_outputs,
 )
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_invocation import RuntimeOutputBundle
-from openhcs.interop.cellprofiler.relate_objects_settings import (
-    RelateObjectsDistanceMethod as DistanceMethod,
+from openhcs.core.registry_strategies import GeneratedEnumClassSpec
+from openhcs.core.measurement_row_materialization import (
+    MEASUREMENT_OBJECT_LABEL_FIELD,
+    MEASUREMENT_OBJECT_NAME_FIELD,
 )
+from openhcs.core.runtime_invocation import RuntimeOutputBundle
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.interop.cellprofiler.relationship_measurements import (
     RelationshipMeasurements,
+)
+from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    FormattingMeasurementFeatureTemplate,
+)
+from openhcs.interop.cellprofiler.runtime.relationship_measurement_rows import (
+    CellProfilerRelationshipMeasurementPayloads,
+    RelationshipDistanceRowTuple,
+    RelationshipMeasurementRowList,
+    RelationshipMeasurementRows,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -43,6 +315,20 @@ from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.core.runtime_values import object_label_value_with_dense_labels
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_dataclass_materializer
+
+
+for _relate_objects_measurement_feature_template_spec in (
+    GeneratedEnumClassSpec(
+        class_name="RelateObjectsRelationshipMeasurementFeature",
+        base_type=FormattingMeasurementFeatureTemplate,
+        members={
+            "DISTANCE_CENTROID": "Distance_Centroid_{parent_object_name}",
+            "DISTANCE_MINIMUM": "Distance_Minimum_{parent_object_name}",
+            "MEAN_CHILD": "Mean_{child_object_name}_{child_feature_name}",
+        },
+    ),
+):
+    _relate_objects_measurement_feature_template_spec.declare_in(globals())
 
 
 class ObjectRelationshipBackendStrategy(
@@ -114,6 +400,225 @@ class ObjectRelationshipBackendStrategy(
             if 0 < child_id <= child_count:
                 parents_of[child_id - 1] = int(parent_id)
         return parents_of
+
+
+class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
+    """RelateObjects additionally projects configured child-parent distances."""
+
+    def rows(self) -> RelationshipMeasurementRowList:
+        rows: RelationshipMeasurementRowList = list(super().rows())
+        endpoint_resolver = RelationshipEndpointResolver.for_request(self.request)
+        for relationship_spec, payload in self.output_entries():
+            endpoint_contract = endpoint_resolver.endpoint_contract(
+                relationship_spec
+            )
+            if not endpoint_resolver.distance_measurements_apply(relationship_spec):
+                continue
+            rows.extend(
+                self.distance_rows(
+                    parent_object_name=endpoint_contract.parent.name,
+                    child_object_name=endpoint_contract.child.name,
+                    payload=payload,
+                )
+            )
+        return rows
+
+    def distance_rows(
+        self,
+        *,
+        parent_object_name: str,
+        child_object_name: str,
+        payload: ParentChildRelationshipPayload,
+    ) -> RelationshipDistanceRowTuple:
+        if not self.distance_measurements_declared():
+            return ()
+        sliced_pairs = self.payload_pairs_by_slice(
+            payload,
+            child_object_name=child_object_name,
+        )
+        if sliced_pairs is not None:
+            slice_count = len(sliced_pairs)
+            rows: RelationshipMeasurementRowList = []
+            for slice_index, pairs in sliced_pairs:
+                rows.extend(
+                    self.distance_rows_for_pairs(
+                        parent_object_name=parent_object_name,
+                        child_object_name=child_object_name,
+                        pairs=pairs,
+                        slice_index=slice_index,
+                        slice_count=slice_count,
+                    )
+                )
+            return tuple(rows)
+        return self.distance_rows_for_pairs(
+            parent_object_name=parent_object_name,
+            child_object_name=child_object_name,
+            pairs=tuple(
+                (int(parent_id), int(child_id))
+                for parent_id, child_id in zip(
+                    payload.parent_ids,
+                    payload.child_ids,
+                    strict=True,
+                )
+            ),
+            slice_index=None,
+        )
+
+    def distance_measurements_declared(self) -> bool:
+        return (
+            CellProfilerRelationshipMeasurementPayloads
+            .from_value(self.request.output_value)
+            .declares_distance_measurements
+        )
+
+    def per_parent_distance_means_enabled(self) -> bool:
+        value = MappingValueLookup(
+            self.request.call_kwargs,
+            "calculate_per_parent_means",
+        ).value_or(False)
+        return bool(value)
+
+    def distance_rows_for_pairs(
+        self,
+        *,
+        parent_object_name: str,
+        child_object_name: str,
+        pairs: tuple[tuple[int, int], ...],
+        slice_index: int | None,
+        slice_count: int | None = None,
+    ) -> RelationshipDistanceRowTuple:
+        if not pairs:
+            return ()
+        parent_labels = self.object_labels(
+            parent_object_name,
+            slice_index=slice_index,
+            slice_count=slice_count,
+        )
+        child_labels = self.object_labels(
+            child_object_name,
+            slice_index=slice_index,
+            slice_count=slice_count,
+        )
+        if parent_labels is None or child_labels is None:
+            return ()
+        parent_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
+            parent_labels,
+            dtype=np.int32,
+        )
+        child_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
+            child_labels,
+            dtype=np.int32,
+        )
+        parent_array, child_array = DenseObjectLabelPairAligner(
+            parent_array,
+            child_array,
+        ).aligned()
+        parent_count = 0
+        if child_array.size:
+            parent_count = int(child_array.max())
+        parents_of = np.zeros(parent_count, dtype=np.int32)
+        for parent_id, child_id in pairs:
+            if 0 < child_id <= len(parents_of):
+                parents_of[child_id - 1] = parent_id
+        backend = ObjectRelationshipBackendStrategy.for_memory_type()
+        centroid_distances = backend.centroid_distances(
+            parent_array,
+            child_array,
+            parents_of,
+        )
+        minimum_distances = backend.minimum_distances(
+            parent_array,
+            child_array,
+            parents_of,
+        )
+        centroid_feature = (
+            RelateObjectsRelationshipMeasurementFeature.DISTANCE_CENTROID.feature_name(
+                parent_object_name=parent_object_name
+            )
+        )
+        minimum_feature = (
+            RelateObjectsRelationshipMeasurementFeature.DISTANCE_MINIMUM.feature_name(
+                parent_object_name=parent_object_name
+            )
+        )
+        child_distance_rows = tuple(
+            self.axis_qualified_row(
+                {
+                    MEASUREMENT_OBJECT_NAME_FIELD: child_object_name,
+                    MEASUREMENT_OBJECT_LABEL_FIELD: child_id,
+                    centroid_feature: float(centroid_distances[child_id - 1]),
+                    minimum_feature: float(minimum_distances[child_id - 1]),
+                },
+                slice_index=slice_index,
+            )
+            for _parent_id, child_id in pairs
+            if 0 < child_id <= len(parents_of)
+        )
+        if not self.per_parent_distance_means_enabled():
+            return child_distance_rows
+        return (
+            *child_distance_rows,
+            *self.parent_mean_distance_rows(
+                parent_object_name=parent_object_name,
+                child_object_name=child_object_name,
+                pairs=pairs,
+                centroid_distances=centroid_distances,
+                minimum_distances=minimum_distances,
+                slice_index=slice_index,
+            ),
+        )
+
+    def parent_mean_distance_rows(
+        self,
+        *,
+        parent_object_name: str,
+        child_object_name: str,
+        pairs: tuple[tuple[int, int], ...],
+        centroid_distances: np.ndarray,
+        minimum_distances: np.ndarray,
+        slice_index: int | None,
+    ) -> RelationshipDistanceRowTuple:
+        distances_by_parent: dict[int, list[tuple[float, float]]] = {}
+        for parent_id, child_id in pairs:
+            if child_id <= 0 or child_id > len(centroid_distances):
+                continue
+            if parent_id not in distances_by_parent:
+                distances_by_parent[parent_id] = []
+            distances_by_parent[parent_id].append(
+                (
+                    float(centroid_distances[child_id - 1]),
+                    float(minimum_distances[child_id - 1]),
+                )
+            )
+        centroid_feature = (
+            RelateObjectsRelationshipMeasurementFeature.MEAN_CHILD.feature_name(
+                child_object_name=child_object_name,
+                child_feature_name="Distance_Centroid",
+            )
+        )
+        minimum_feature = (
+            RelateObjectsRelationshipMeasurementFeature.MEAN_CHILD.feature_name(
+                child_object_name=child_object_name,
+                child_feature_name="Distance_Minimum",
+            )
+        )
+        return tuple(
+            self.axis_qualified_row(
+                {
+                    MEASUREMENT_OBJECT_NAME_FIELD: parent_object_name,
+                    MEASUREMENT_OBJECT_LABEL_FIELD: parent_id,
+                    centroid_feature: float(
+                        np.mean([value[0] for value in distances])
+                    ),
+                    minimum_feature: float(
+                        np.mean([value[1] for value in distances])
+                    ),
+                },
+                slice_index=slice_index,
+            )
+            for parent_id, distances in sorted(distances_by_parent.items())
+            if distances
+        )
 
 
 class NumbaNumpyObjectRelationshipBackendStrategy(
@@ -330,7 +835,7 @@ def relate_objects(
     image: np.ndarray,
     parent_labels: np.ndarray,
     child_labels: np.ndarray,
-    calculate_distances: DistanceMethod | str = DistanceMethod.BOTH,
+    calculate_distances: RelateObjectsDistanceMethod | str = RelateObjectsDistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -370,7 +875,7 @@ def relate_objects(
     raw_parent_labels = parent_labels
     raw_child_labels = child_labels
     calculate_distances = coerce_cellprofiler_enum(
-        DistanceMethod,
+        RelateObjectsDistanceMethod,
         calculate_distances,
     )
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
@@ -773,8 +1278,10 @@ def _calculate_minimum_distances_numba(
 
 
 __all__ = public_names_from_objects(
+    DistanceMethod,
     NumbaNumpyObjectRelationshipBackendStrategy,
     ObjectRelationshipBackendStrategy,
+    RelationshipMeasurements,
     RelateObjectsResult,
     relate_objects,
 )

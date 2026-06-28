@@ -9,7 +9,7 @@ from functools import lru_cache
 import logging
 import math
 import time
-from typing import Callable, ClassVar, Protocol, Self, TypedDict, Unpack
+from typing import Any, Callable, ClassVar, Mapping, Protocol, Self, TypedDict, Unpack
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -24,6 +24,7 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_profile import RuntimeProfileLogger
+from openhcs.core.runtime_semantics import MeasurementScalarLiteral
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     RuntimeImagePayloadContext,
@@ -33,7 +34,30 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     normalize_image_payload_intensity,
 )
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.settings_binder import (
+    coerce_cellprofiler_enum,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    NoFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    ProducedImagePayloadMeasurementRecordMixin,
+    ProducedImageThresholdMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.semantic_defaults import (
+    SourceVolumetricPixelDataExecutionContract,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageProcessingDebugViewModule,
+    LastRepeatedSettingValuePolicy,
+    RepeatedSettingValuePolicy,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -60,6 +84,7 @@ from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagn
     QuantizedThresholdDiagnosticContext,
     _threshold_diagnostics_rectangular_mask_quantized_numba,
     _threshold_diagnostics_unmasked_finite_quantized_numba,
+    quantized_threshold_codes,
 )
 from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_otsu import (
     CELLPROFILER_LI_TOLERANCE,
@@ -84,6 +109,9 @@ from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_otsu 
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
+from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
+    VolumetricInputExecutionModePolicy,
+)
 
 
 CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
@@ -646,11 +674,40 @@ class ThresholdApplicationSmoothing:
     def enabled(self) -> bool:
         return self.sigma > 0.0
 
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def gaussian_kernel_1d(sigma: float) -> np.ndarray:
+        sigma_value = float(sigma)
+        if sigma_value <= 0.0:
+            return np.ones((1,), dtype=np.float64)
+        radius = max(
+            1,
+            int(round(CELLPROFILER_THRESHOLD_SMOOTHING_TRUNCATE_SIGMAS * sigma_value)),
+        )
+        coordinates = np.arange(-radius, radius + 1, dtype=np.float64)
+        kernel = np.exp(-0.5 * (coordinates / sigma_value) ** 2)
+        kernel /= np.sum(kernel)
+        kernel.setflags(write=False)
+        return kernel
+
     def gaussian_filter(self, array: np.ndarray) -> np.ndarray:
+        array_data = np.asarray(array, dtype=np.float64)
+        if array_data.ndim == 2:
+            import cv2
+
+            kernel = self.gaussian_kernel_1d(self.sigma)
+            return cv2.sepFilter2D(
+                array_data,
+                cv2.CV_64F,
+                kernel,
+                kernel,
+                borderType=cv2.BORDER_CONSTANT,
+            )
+
         from scipy import ndimage as ndi
 
         return ndi.gaussian_filter(
-            array,
+            array_data,
             sigma=self.sigma,
             mode=SCIPY_CONSTANT_BOUNDARY_MODE,
             cval=0,
@@ -659,16 +716,33 @@ class ThresholdApplicationSmoothing:
 
     @staticmethod
     @lru_cache(maxsize=32)
-    def full_mask_weight(shape: tuple[int, int], sigma: float) -> np.ndarray:
+    def full_mask_weight(shape: tuple[int, ...], sigma: float) -> np.ndarray:
+        mask = np.ones(shape, dtype=np.float64)
+        if len(shape) == 2:
+            import cv2
+
+            kernel = ThresholdApplicationSmoothing.gaussian_kernel_1d(sigma)
+            weight = cv2.sepFilter2D(
+                mask,
+                cv2.CV_64F,
+                kernel,
+                kernel,
+                borderType=cv2.BORDER_CONSTANT,
+            )
+            weight.setflags(write=False)
+            return weight
+
         from scipy import ndimage as ndi
 
-        return ndi.gaussian_filter(
-            np.ones(shape, dtype=np.float64),
+        weight = ndi.gaussian_filter(
+            mask,
             sigma=sigma,
             mode=SCIPY_CONSTANT_BOUNDARY_MODE,
             cval=0,
             truncate=4.0,
         )
+        weight.setflags(write=False)
+        return weight
 
     def smooth(
         self,
@@ -1105,6 +1179,17 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             quantized_binary[None, ...],
             proven_unit_interval_scale=255,
         )
+        quantized_uint16_image = (
+            np.rint(image32 * np.float32(MAX_QUANTIZED_THRESHOLD_DIAGNOSTIC_SCALE))
+            / np.float32(MAX_QUANTIZED_THRESHOLD_DIAGNOSTIC_SCALE)
+        )
+        quantized_uint16_binary = quantized_uint16_image > 0.5
+        self.diagnostics(
+            quantized_uint16_image[None, ...],
+            None,
+            quantized_uint16_binary[None, ...],
+            proven_unit_interval_scale=MAX_QUANTIZED_THRESHOLD_DIAGNOSTIC_SCALE,
+        )
         _quantized_log_tables(MAX_QUANTIZED_THRESHOLD_DIAGNOSTIC_SCALE)
 
     def diagnostics(
@@ -1148,9 +1233,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                             scale = int(proven_unit_interval_scale)
                             log_tables = _quantized_log_tables(scale)
                             context = QuantizedThresholdDiagnosticContext(
-                                codes=np.ascontiguousarray(
-                                    np.rint(image_array * scale).astype(np.int64),
-                                ),
+                                codes=quantized_threshold_codes(image_array, scale),
                                 binary_image=np.ascontiguousarray(binary_array),
                                 noise=_deterministic_normal_noise(image_array.shape),
                                 values=log_tables.values,
@@ -1176,9 +1259,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 scale = int(proven_unit_interval_scale)
                 log_tables = _quantized_log_tables(scale)
                 context = QuantizedThresholdDiagnosticContext(
-                    codes=np.ascontiguousarray(
-                        np.rint(image_array * scale).astype(np.int64),
-                    ),
+                    codes=quantized_threshold_codes(image_array, scale),
                     binary_image=np.ascontiguousarray(binary_array),
                     noise=_deterministic_normal_noise(image_array.shape),
                     values=log_tables.values,
@@ -1239,9 +1320,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 scale = int(request.proven_unit_interval_scale)
                 log_tables = _quantized_log_tables(scale)
                 context = QuantizedThresholdDiagnosticContext(
-                    codes=np.ascontiguousarray(
-                        np.rint(flat_image * scale).astype(np.int64),
-                    ),
+                    codes=quantized_threshold_codes(flat_image, scale),
                     binary_image=flat_binary,
                     noise=noise,
                     values=log_tables.values,
@@ -2841,6 +2920,7 @@ def threshold(
     """Apply CP-compatible thresholding and emit the module measurement row."""
     source_payload = image
     image = np.asarray(image_payload_data(source_payload), dtype=np.float32)
+    metadata = image_payload_metadata(source_payload)
     projected_mask = image_mask_for_data_domain(
         explicit_mask=mask,
         source_payload=source_payload,
@@ -2852,7 +2932,7 @@ def threshold(
 
     proven_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
         image,
-        image_payload_metadata(source_payload),
+        metadata,
     )
     settings = CellProfilerThresholdSettings(
         use_advanced_settings=use_advanced_settings,
@@ -3170,6 +3250,425 @@ def _numpy_threshold_sum_of_entropies(
     return float(np.sum(hfg * np.log2(hfg)) + np.sum(hbg * np.log2(hbg)))
 
 
+
+
+
+
+def _threshold_setting_token(value: Any) -> str:
+    """Return a stable comparison token for threshold setting values."""
+    if isinstance(value, Enum) and isinstance(value.value, str):
+        value = value.value
+    return " ".join(str(value).strip().lower().replace("-", " ").split())
+
+
+class ThresholdSettingScope(Enum):
+    """Serialized threshold strategy names used to select active method rows."""
+
+    GLOBAL = "global"
+    ADAPTIVE = "adaptive"
+
+    @classmethod
+    def from_module(cls, module: "ModuleBlock") -> "ThresholdSettingScope | None":
+        value = LastRepeatedSettingValuePolicy().value(module, "Threshold strategy")
+        token = _threshold_setting_token(value or "")
+        for scope in cls:
+            if token == scope.value:
+                return scope
+        return None
+
+
+class ThresholdMethodRowSelectionPolicy(
+    EnumKeyedStrategyMixin[ThresholdSettingScope],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Select the active threshold-method row for one threshold scope."""
+
+    __registry_key__ = "scope_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "scope"
+    __enum_label_attr__ = "scope_label"
+
+    scope: ClassVar[ThresholdSettingScope | None] = None
+    scope_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def selected_value(self, values: tuple[str, ...]) -> str:
+        """Return the CellProfiler threshold-method value active for this scope."""
+
+
+class GlobalThresholdMethodRowSelectionPolicy(ThresholdMethodRowSelectionPolicy):
+    """Global thresholding uses the first method row in upgraded CP settings."""
+
+    scope = ThresholdSettingScope.GLOBAL
+
+    def selected_value(self, values: tuple[str, ...]) -> str:
+        return values[0]
+
+
+class AdaptiveThresholdMethodRowSelectionPolicy(ThresholdMethodRowSelectionPolicy):
+    """Adaptive thresholding uses the local-method row in upgraded CP settings."""
+
+    scope = ThresholdSettingScope.ADAPTIVE
+
+    def selected_value(self, values: tuple[str, ...]) -> str:
+        return values[-1]
+
+
+class ThresholdMethodRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
+    """Resolve CP's global/local threshold method rows from threshold scope."""
+
+    setting_name = "Thresholding method"
+
+    def _resolve_repeated_value(
+        self,
+        module: "ModuleBlock",
+        setting_name: str | "SettingNameFamily",
+        values: tuple[str, ...],
+    ) -> str:
+        scope = ThresholdSettingScope.from_module(module)
+        if scope is not None:
+            return ThresholdMethodRowSelectionPolicy.for_enum_member(
+                scope
+            ).selected_value(values)
+        raise ValueError(
+            f"{module.name}({module.module_num}) has repeated "
+            f"{setting_name!r} rows but no supported threshold strategy."
+        )
+
+
+class LegacyCellProfilerThresholdVersionAuthority(ABC):
+    """Nominal authority for CellProfiler threshold-setting schema versions."""
+
+    setting_name: ClassVar[str] = "Threshold setting version"
+
+    @classmethod
+    def version_for(cls, module: "ModuleBlock") -> int | None:
+        value = CellProfilerModule.setting_value(module, cls.setting_name)
+        if value is None:
+            return None
+        return MeasurementScalarLiteral(value).integer_value
+
+    @classmethod
+    def is_legacy_v10_or_older(cls, module: "ModuleBlock") -> bool:
+        version = cls.version_for(module)
+        return version is not None and version <= 10
+
+
+class ThresholdSettingsModule(ImageProcessingDebugViewModule, CellProfilerModule):
+    """Module parent for declarations that consume CellProfiler threshold rows."""
+
+    include_threshold_advanced_setting: ClassVar[bool] = False
+    threshold_settings: ClassVar[Mapping[str, str]] = {
+        "Threshold strategy": "threshold_scope",
+        "Thresholding method": "threshold_method",
+        "Threshold smoothing scale": "threshold_smoothing_scale",
+        "Threshold correction factor": "threshold_correction_factor",
+        "Two-class or three-class thresholding?": "otsu_class_count",
+        "Assign pixels in the middle intensity class to the foreground or the background?": (
+            "assign_middle_to_foreground"
+        ),
+        "Log transform before thresholding?": "log_transform",
+        "Size of adaptive window": "adaptive_window_size",
+        "Lower outlier fraction": "lower_outlier_fraction",
+        "Upper outlier fraction": "upper_outlier_fraction",
+        "Averaging method": "averaging_method",
+        "Variance method": "variance_method",
+        "# of deviations": "number_of_deviations",
+        "Manual threshold": "manual_threshold",
+    }
+    ignored_threshold_settings: ClassVar[tuple[str, ...]] = (
+        "Threshold setting version",
+        "Select the measurement to threshold with",
+    )
+    float_threshold_settings: ClassVar[frozenset[str]] = frozenset(
+        {
+            "Threshold smoothing scale",
+            "Threshold correction factor",
+            "Lower outlier fraction",
+            "Upper outlier fraction",
+            "# of deviations",
+            "Manual threshold",
+        }
+    )
+    int_threshold_settings: ClassVar[frozenset[str]] = frozenset(
+        {"Size of adaptive window"}
+    )
+    bool_threshold_settings: ClassVar[frozenset[str]] = frozenset(
+        {"Log transform before thresholding?"}
+    )
+    legacy_threshold_method_names: ClassVar[Mapping[str, str]] = {
+        "robustbackground": "Robust Background",
+        "minimum cross entropy": "Minimum Cross-Entropy",
+    }
+    otsu_method_token: ClassVar[str] = "otsu"
+    three_class_otsu_token: ClassVar[str] = "three classes"
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: "SettingsBinder",
+        param_mapping: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str] = frozenset(),
+    ) -> "BoundModuleSettings":
+        if cls.setting_bindings:
+            bound = cls._bind_declared_settings(
+                module,
+                binder=binder,
+                param_mapping=param_mapping,
+            )
+        else:
+            bound = cls._bind_generic_settings(
+                module,
+                binder=binder,
+                param_mapping=param_mapping,
+            )
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        cls.bind_threshold_settings(module, binder, kwargs, unmapped_kwargs)
+        bound = BoundModuleSettings(
+            kwargs,
+            unmapped_kwargs,
+            bound.invocation_options,
+            bound.setting_coverage,
+        )
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=cls.postprocess_bound_settings(module, bound),
+            ignored_unmapped_settings=ignored_unmapped_settings,
+        )
+
+    @classmethod
+    def bind_threshold_settings(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+        kwargs: dict[str, Any],
+        unmapped_kwargs: dict[str, Any],
+    ) -> None:
+        if cls.include_threshold_advanced_setting:
+            cls._bind_optional_repeated_threshold_setting(
+                module,
+                binder,
+                "Use advanced settings?",
+                "use_advanced_settings",
+                kwargs,
+                unmapped_kwargs,
+                LastRepeatedSettingValuePolicy(),
+            )
+
+        for setting_name, parameter_name in cls.threshold_settings.items():
+            value = RepeatedSettingValuePolicy.for_setting(setting_name).value(
+                module,
+                setting_name,
+            )
+            if value is not None:
+                kwargs[parameter_name] = cls.parse_threshold_setting(
+                    binder,
+                    setting_name,
+                    value,
+                )
+            cls.consume_setting(unmapped_kwargs, setting_name)
+
+        cls.upgrade_legacy_threshold_kwargs(module, kwargs)
+        cls.bind_threshold_bounds(module, binder, kwargs, unmapped_kwargs)
+
+        for setting_name in cls.ignored_threshold_settings:
+            cls.consume_setting(unmapped_kwargs, setting_name)
+
+    @classmethod
+    def _bind_optional_repeated_threshold_setting(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+        setting_name: str,
+        parameter_name: str,
+        kwargs: dict[str, Any],
+        unmapped_kwargs: dict[str, Any],
+        policy: RepeatedSettingValuePolicy,
+    ) -> None:
+        value = policy.value(module, setting_name)
+        if value is not None:
+            kwargs[parameter_name] = binder.parse_value(setting_name, value)
+        cls.consume_setting(unmapped_kwargs, setting_name)
+
+    @classmethod
+    def bind_threshold_bounds(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+        kwargs: dict[str, Any],
+        unmapped_kwargs: dict[str, Any],
+    ) -> None:
+        setting_name = "Lower and upper bounds on threshold"
+        bounds = LastRepeatedSettingValuePolicy().value(module, setting_name)
+        if bounds is not None:
+            parsed_bounds = binder.parse_value(setting_name, bounds)
+            if not isinstance(parsed_bounds, tuple) or len(parsed_bounds) != 2:
+                raise ValueError(
+                    f"{module.name} threshold bounds must contain two values, "
+                    f"got {bounds!r}."
+                )
+            kwargs["threshold_min"] = parsed_bounds[0]
+            kwargs["threshold_max"] = parsed_bounds[1]
+        cls.consume_setting(unmapped_kwargs, setting_name)
+
+    @classmethod
+    def parse_threshold_setting(
+        cls,
+        binder: "SettingsBinder",
+        setting_name: str,
+        value: str,
+    ) -> Any:
+        """Parse threshold settings by semantic field, not generic literal shape."""
+        if setting_name in cls.float_threshold_settings:
+            return parse_cellprofiler_float(value)
+        if setting_name in cls.int_threshold_settings:
+            return parse_cellprofiler_int(value)
+        if setting_name in cls.bool_threshold_settings:
+            return parse_cellprofiler_bool(value)
+        return binder.parse_value(setting_name, value)
+
+    @classmethod
+    def upgrade_legacy_threshold_kwargs(
+        cls,
+        module: "ModuleBlock",
+        kwargs: dict[str, Any],
+    ) -> None:
+        if not LegacyCellProfilerThresholdVersionAuthority.is_legacy_v10_or_older(
+            module
+        ):
+            return
+
+        threshold_method = kwargs.get("threshold_method")
+        if threshold_method is not None:
+            method_token = _threshold_setting_token(threshold_method)
+            kwargs["threshold_method"] = cls.legacy_threshold_method_names.get(
+                method_token,
+                threshold_method,
+            )
+
+        if "log_transform" not in kwargs:
+            log_transform_default = cls.legacy_log_transform_default(module, kwargs)
+            if log_transform_default is not None:
+                kwargs["log_transform"] = log_transform_default
+
+    @classmethod
+    def legacy_log_transform_default(
+        cls,
+        module: "ModuleBlock",
+        kwargs: Mapping[str, Any],
+    ) -> bool | None:
+        if not LegacyCellProfilerThresholdVersionAuthority.is_legacy_v10_or_older(
+            module
+        ):
+            return None
+        threshold_method = _threshold_setting_token(
+            kwargs.get("threshold_method", "")
+        )
+        otsu_class_count = _threshold_setting_token(
+            kwargs.get("otsu_class_count", "")
+        )
+        return (
+            threshold_method == cls.otsu_method_token
+            and otsu_class_count == cls.three_class_otsu_token
+        )
+
+    @staticmethod
+    def consume_setting(unmapped_kwargs: dict[str, Any], setting_name: str) -> None:
+        unmapped_kwargs.pop(CellProfilerModule.normalize_setting_name(setting_name), None)
+
+
+class ThresholdExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
+    contract_key = "Threshold.execution_domain"
+    source_filename = "threshold.py"
+    callable_name = "threshold"
+
+    @property
+    def absorbed_callable(self) -> Callable[..., Any]:
+        return threshold
+
+
+class ThresholdModule(
+    ProducedImageThresholdMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    ProducedImagePayloadMeasurementRecordMixin,
+    NoFieldsMeasurementRecordMixin,
+    VolumetricInputExecutionModePolicy,
+    ThresholdSettingsModule,
+):
+    module_name = "Threshold"
+    function_name = "threshold"
+    validated = True
+    confidence = 1.0
+    semantic_default_contract_types = (ThresholdExecutionDomainContract,)
+    ignored_settings = (
+        "Select the input image",
+        "Name the output image",
+    )
+    threshold_parameter_aliases = {
+        "threshold_smoothing_scale": "smoothing",
+        "adaptive_window_size": "window_size",
+    }
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+        from openhcs.interop.cellprofiler.setting_names import required_setting_value
+
+        image = builder.require_artifact(
+            ArtifactSpec(
+                required_setting_value(module, "Select the input image"),
+                ArtifactKind.IMAGE,
+            ),
+            module,
+        )
+        output = builder.declare_artifact(
+            ArtifactSpec(
+                required_setting_value(module, "Name the output image"),
+                ArtifactKind.IMAGE,
+            ),
+            module,
+        )
+        measurements = builder.declare_artifact(
+            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+            module,
+        )
+        return assembler.assemble_contract(
+            module,
+            builder,
+            inputs=[image],
+            outputs=[output, measurements],
+        )
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls,
+        module: "ModuleBlock",
+        bound: BoundModuleSettings,
+    ) -> BoundModuleSettings:
+        kwargs = dict(bound.kwargs)
+        for source_name, target_name in cls.threshold_parameter_aliases.items():
+            if source_name in kwargs:
+                kwargs[target_name] = kwargs.pop(source_name)
+        manual_threshold = kwargs.pop("manual_threshold", None)
+        if (
+            manual_threshold is not None
+            and normalize_cellprofiler_setting_name(kwargs.get("threshold_method", ""))
+            == "manual"
+        ):
+            kwargs["predefined_threshold"] = manual_threshold
+        return BoundModuleSettings(
+            kwargs,
+            bound.unmapped_kwargs,
+            bound.invocation_options,
+            bound.setting_coverage,
+        )
+
+
 __all__ = public_names_from_objects(
     CentrosomeNumpyThresholdPrimitiveBackendStrategy,
     NumbaLogTransformConversion,
@@ -3190,6 +3689,7 @@ __all__ = public_names_from_objects(
     CellProfilerThresholdScope,
     CellProfilerVarianceMethod,
     ThresholdDiagnosticsBackendStrategy,
+    ThresholdModule,
     "ThresholdMethod",
     ThresholdPrimitiveBackendStrategy,
     ThresholdResult,

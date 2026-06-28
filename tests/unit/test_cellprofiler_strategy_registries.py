@@ -26,22 +26,13 @@ from benchmark.cellprofiler_library.functions.filterobjects import (
     PerObjectAssignmentStrategy,
 )
 from benchmark.cellprofiler_library.functions.graytocolor import GrayToColorSchemeRunner
-from openhcs.interop.cellprofiler.image_math_settings import (
-    ImageMathOperandFactorSettingResolver,
-)
 from openhcs.processing.backends.cellprofiler.image_math import (
     ImageMathOperationStrategy,
 )
-from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
-    ExpandShrinkOperationModeBinding,
-)
-from openhcs.interop.cellprofiler.grid_settings import (
-    FunctionNameVariantResolver,
-)
 from openhcs.interop.cellprofiler.parser import ModuleBlock
-from openhcs.interop.cellprofiler.module_runtime_semantics import ModuleRuntimeSemanticsBinding
-from openhcs.interop.cellprofiler.module_semantics import (
-    CellProfilerModuleSemanticTraits,
+from openhcs.processing.backends.cellprofiler.grid import (
+    DefineGridManualModule,
+    IdentifyObjectsInGridModule,
 )
 from openhcs.processing.backends.cellprofiler.secondary import (
     SecondarySegmentationStrategy,
@@ -95,8 +86,6 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         RoundingStrategy,
         ImageModeRenderer,
         ImageMathOperationStrategy,
-        ImageMathOperandFactorSettingResolver,
-        ExpandShrinkOperationModeBinding,
         IlluminationCorrectionStrategy,
         SmoothingFilterSizeStrategy,
         SmoothingPlaneStrategy,
@@ -114,11 +103,8 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         WatershedMethodStrategy,
         WatershedSeedStrategy,
         WatershedRuntimeStrategy,
-        ModuleRuntimeSemanticsBinding,
-        CellProfilerModuleSemanticTraits,
         MeasurementLabelExecutionModeStrategy,
         CellProfilerObjectMeasurementLabelArgumentPolicy,
-        FunctionNameVariantResolver,
     )
 
     for registry_class in registry_classes:
@@ -129,18 +115,7 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         ), registry_class.__name__
 
 
-def test_grid_function_name_variants_are_registered_by_module_name() -> None:
-    assert FunctionNameVariantResolver.__registry__ == {
-        "DefineGrid": type(
-            FunctionNameVariantResolver.for_module_name("DefineGrid")
-        ),
-        "IdentifyObjectsInGrid": type(
-            FunctionNameVariantResolver.for_module_name("IdentifyObjectsInGrid")
-        ),
-    }
-
-
-def test_grid_function_name_variants_resolve_expected_functions() -> None:
+def test_grid_function_name_variants_resolve_from_module_declarations() -> None:
     define_grid = ModuleBlock(
         name="DefineGrid",
         module_num=1,
@@ -157,24 +132,15 @@ def test_grid_function_name_variants_resolve_expected_functions() -> None:
         settings={"Select the guiding objects": "Nuclei"},
     )
 
-    assert (
-        FunctionNameVariantResolver.for_module_name("DefineGrid").function_name(
-            define_grid
-        )
-        == "define_grid_automatic"
+    assert DefineGridManualModule.resolve_function(define_grid).function_name == (
+        "define_grid_automatic"
     )
-    assert (
-        FunctionNameVariantResolver.for_module_name(
-            "IdentifyObjectsInGrid"
-        ).function_name(identify_without_guides)
-        == "identify_objects_in_grid"
-    )
-    assert (
-        FunctionNameVariantResolver.for_module_name(
-            "IdentifyObjectsInGrid"
-        ).function_name(identify_with_guides)
-        == "identify_objects_in_grid_with_guides"
-    )
+    assert IdentifyObjectsInGridModule.resolve_function(
+        identify_without_guides
+    ).function_name == "identify_objects_in_grid"
+    assert IdentifyObjectsInGridModule.resolve_function(
+        identify_with_guides
+    ).function_name == "identify_objects_in_grid_with_guides"
 
 
 def test_measurement_label_execution_mode_follows_object_label_domain():
@@ -227,6 +193,18 @@ def test_measurement_label_execution_mode_follows_object_label_domain():
                 )),
             ImagePayloadExecutionMode.FULL_STACK,
             runtime_slice_count=1,
+        )
+        is ImagePayloadExecutionMode.NATURAL
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            ObjectLabelPayload(
+                labels=np.zeros((3, 8, 8), dtype=np.int32),
+                plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+            ),
+            ImagePayloadExecutionMode.FULL_STACK,
         )
         is ImagePayloadExecutionMode.NATURAL
     )

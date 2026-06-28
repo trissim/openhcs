@@ -8,10 +8,6 @@ import numpy as np
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
-    object_label_measurement_execution_from_callable,
-)
 from openhcs.core.runtime_semantics import RuntimePlaneAxis, RuntimePlaneAxisProjector
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
@@ -99,11 +95,6 @@ class CurrentRuntimePlaneKwargProjectionContract:
         if (
             callable_contract.runtime_image_execution_mode
             is ImagePayloadExecutionMode.FULL_STACK
-        ):
-            return False
-        if (
-            object_label_measurement_execution_from_callable(self.func)
-            is ObjectLabelMeasurementExecution.FULL_STACK
         ):
             return False
         return (

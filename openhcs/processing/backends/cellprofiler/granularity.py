@@ -2,6 +2,159 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+from openhcs.interop.cellprofiler.settings_binder import (
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageMeasurementInputModule,
+    ModuleSettingsSourceModule,
+    ObjectMeasurementInputModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+    ObjectMeasurementRowsModule,
+    PerObjectMeasurementExecutionModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
+    CellProfilerObjectMeasurementRowPolicy,
+    DenseEmittedObjectMeasurementRowsMixin,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    LabelsObjectInputPolicy,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+class MeasureGranularityObjectMeasurementRowPolicy(
+    DenseEmittedObjectMeasurementRowsMixin,
+    CellProfilerObjectMeasurementRowPolicy,
+):
+    """Granularity rows are emitted over the complete dense object domain."""
+
+
+class MeasureGranularityModule(
+    LabelsObjectInputPolicy,
+    PerObjectMeasurementExecutionModule,
+    ObjectMeasurementRowsModule,
+    MeasureGranularityObjectMeasurementRowPolicy,
+    ImageMeasurementInputModule,
+    ObjectMeasurementInputModule,
+):
+    module_name = 'MeasureGranularity'
+    function_name = 'measure_granularity'
+    validated = True
+    function_variants = ('measure_granularity_objects',)
+    contract = 'unknown'
+    confidence = 1.0
+    object_measurement_setting = SettingNameFamily(
+        "Select objects to measure",
+        aliases=("Select an object to measure",),
+    )
+    ignored_settings = (
+        "Measure within objects?",
+        "image_count",
+        "object_count",
+    )
+    scalar_settings: ClassVar[Mapping[str, tuple[str, Callable[[str], Any]]]] = {
+        "Subsampling factor for granularity measurements": (
+            "subsample_size",
+            parse_cellprofiler_float,
+        ),
+        "Subsampling factor for background reduction": (
+            "background_subsample_size",
+            parse_cellprofiler_float,
+        ),
+        "Radius of structuring element": (
+            "element_radius",
+            parse_cellprofiler_int,
+        ),
+        "Range of the granular spectrum": (
+            "spectrum_length",
+            parse_cellprofiler_int,
+        ),
+    }
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+    ) -> "ResolvedModuleFunction":
+        object_values = setting_values(module, cls.object_measurement_setting)
+        if any(split_symbol_names(value) for value in object_values):
+            return super().resolve_function(
+                module,
+                default_function_name=cls.function_variants[0],
+            )
+        return super().resolve_function(
+            module,
+            default_function_name=default_function_name,
+        )
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: "SettingsBinder",
+        param_mapping: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str] = frozenset(),
+    ) -> "BoundModuleSettings":
+        bound = cls._bind_generic_settings(
+            module,
+            binder=binder,
+            param_mapping=param_mapping,
+        )
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting_name, (parameter_name, parse) in cls.scalar_settings.items():
+            values = setting_values(module, setting_name)
+            if not values:
+                continue
+            parsed_values = tuple(parse(value) for value in values)
+            first_value = parsed_values[0]
+            if any(value != first_value for value in parsed_values[1:]):
+                raise ValueError(
+                    f"Module {module.name}({module.module_num}) has per-row "
+                    f"{setting_name!r} values {parsed_values!r}; OpenHCS "
+                    "currently binds one granularity setting set per module."
+                )
+            kwargs[parameter_name] = first_value
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
+            ignored_unmapped_settings=ignored_unmapped_settings,
+        )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        return cls.measurement_artifact_contract_from_declared_settings(
+            assembler,
+            builder,
+            module,
+        )
+
+
+
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -11,7 +164,7 @@ import os
 import time
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 from scipy import ndimage as ndi
 
 from openhcs.core.runtime_profile import RuntimeProfileLogger
@@ -361,7 +514,7 @@ def granularity_array_content_key(
 ) -> tuple[str, tuple[int, ...], bytes]:
     """Return an exact content key for a granularity array."""
     contiguous = np.ascontiguousarray(array)
-    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
+    digest = hashlib.sha1(contiguous.view(np.uint8)).digest()
     return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
 
 
@@ -617,14 +770,14 @@ def clip_negative_inplace_numba(image: np.ndarray) -> None:
                 image[row, col] = 0.0
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def gray_erosion_offsets_reflect_numba(
     image: np.ndarray,
     offsets: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     result = np.empty((height, width), dtype=np.float64)
-    for row in range(height):
+    for row in prange(height):
         for col in range(width):
             best = np.inf
             for offset_index in range(offsets.shape[0]):
@@ -637,14 +790,14 @@ def gray_erosion_offsets_reflect_numba(
     return result
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def gray_dilation_offsets_reflect_numba(
     image: np.ndarray,
     offsets: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     result = np.empty((height, width), dtype=np.float64)
-    for row in range(height):
+    for row in prange(height):
         for col in range(width):
             best = -np.inf
             for offset_index in range(offsets.shape[0]):
@@ -676,6 +829,10 @@ def reconstruct_dilation_cross_numba(
 ) -> np.ndarray:
     """Morphological reconstruction by dilation with disk(1) connectivity."""
     height, width = seed.shape
+    total_pixels = height * width
+    queue_rows = np.empty(total_pixels, dtype=np.int64)
+    queue_cols = np.empty(total_pixels, dtype=np.int64)
+    queued = np.zeros((height, width), dtype=np.bool_)
     result = seed.copy()
 
     for row in range(height):
@@ -703,9 +860,6 @@ def reconstruct_dilation_cross_numba(
             result[row, col] = value
 
     total_pixels = height * width
-    queue_rows = np.empty(total_pixels, dtype=np.int64)
-    queue_cols = np.empty(total_pixels, dtype=np.int64)
-    queued = np.zeros((height, width), dtype=np.bool_)
     head = 0
     tail = 0
     queue_count = 0

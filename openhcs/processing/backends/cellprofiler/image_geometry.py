@@ -2,6 +2,328 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeImageInputOrigin,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerKwargDict,
+    CellProfilerRuntimeValue,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_profile import (
+    CellProfilerRuntimeProfileLogger,
+)
+from openhcs.interop.cellprofiler.runtime.special_input_policies import (
+    CellProfilerSpecialInputPolicyMixin,
+    SpecialInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ObjectArtifactInputModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+
+class MaskImageSource(Enum):
+    """Mask source domains exposed by MaskImage settings."""
+
+    OBJECTS = "objects"
+    IMAGE = "image"
+
+
+class MaskImageSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
+    """Bind mask object labels in the current runtime plane."""
+
+
+    def binding_current_image(
+        self,
+        *,
+        current_image: CellProfilerRuntimeValue,
+        primary_image: CellProfilerRuntimeValue | None,
+    ) -> CellProfilerRuntimeValue:
+        """Align mask labels to the image being masked."""
+        return primary_image if primary_image is not None else current_image
+
+    def bind(
+        self,
+        request: SpecialInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        if len(request.parameter_names) != len(request.special_input_specs):
+            raise NotImplementedError(
+                f"{request.module_name} declares special_inputs "
+                f"{list(request.parameter_names)}, but compiled runtime inputs are "
+                f"{[spec.name for spec in request.special_input_specs]}."
+            )
+        bound: CellProfilerKwargDict = {}
+        alignment_image: CellProfilerRuntimeValue | None = None
+        deferred_object_specs: list[tuple[str, ArtifactSpec]] = []
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "mask_image_special_input_specs",
+            0.0,
+            special_specs=tuple(
+                (spec.kind.value, spec.name) for spec in request.special_input_specs
+            ),
+            runtime_specs=tuple(
+                (spec.kind.value, spec.name) for spec in request.runtime_inputs
+            ),
+        )
+        for parameter_name, spec in zip(
+            request.parameter_names,
+            request.special_input_specs,
+            strict=True,
+        ):
+            if spec.kind is ArtifactKind.OBJECT_LABELS:
+                deferred_object_specs.append((parameter_name, spec))
+                continue
+            value = (
+                request.runtime_value_without_current_image_projection(spec)
+                if (
+                    spec.kind is ArtifactKind.IMAGE
+                    and request.binding_scope.image_origin(spec)
+                    is RuntimeImageInputOrigin.RUNTIME
+                )
+                else request.runtime_value(spec)
+            )
+            bound[parameter_name] = value
+            if spec.kind is ArtifactKind.IMAGE and alignment_image is None:
+                alignment_image = value
+        if alignment_image is None:
+            for spec in request.runtime_inputs:
+                if (
+                    spec.kind is ArtifactKind.IMAGE
+                    and request.binding_scope.image_origin(spec)
+                    is RuntimeImageInputOrigin.RUNTIME
+                ):
+                    alignment_image = (
+                        request.runtime_value_without_current_image_projection(spec)
+                    )
+                    break
+        for parameter_name, spec in deferred_object_specs:
+            bound[parameter_name] = request.current_image_aligned_object_label_runtime_value(
+                spec,
+                alignment_image=alignment_image,
+            )
+        return bound
+
+
+class MaskImageModule(
+    MaskImageSpecialInputPolicy,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'MaskImage'
+    function_name = 'mask_image'
+    validated = True
+    contract = 'flexible'
+    confidence = 1.0
+    image_input_settings = (
+        "Select the input image",
+        "Select image for mask",
+    )
+    object_input_settings = ("Select object for mask",)
+    image_output_settings = ("Name the output image",)
+    ignored_settings = (
+        "Select the input image",
+        "Name the output image",
+        "Select object for mask",
+        "Select image for mask",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Use objects or an image as a mask?",
+            "mask_source",
+            cellprofiler_enum_value_setting_parser(MaskImageSource),
+        ),
+        SettingToKeywordBinding(
+            "Invert the mask?",
+            "invert_mask",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+
+class ResizeModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    BinderSettingsSourceModule,
+):
+    module_name = 'Resize'
+    function_name = 'resize'
+    validated = True
+    function_variants = ('resize_volumetric',)
+    contract = 'unknown'
+    confidence = 1.0
+    image_input_settings = (
+        "Select the input image",
+        "Select the image with the desired dimensions",
+    )
+    image_output_settings = ("Name the output image",)
+    method_setting = SettingNameFamily("Resizing method")
+    factor_setting = SettingNameFamily("Resizing factor")
+    factor_x_setting = SettingNameFamily("X Resizing factor")
+    factor_y_setting = SettingNameFamily("Y Resizing factor")
+    factor_z_setting = SettingNameFamily("Z Resizing factor")
+    width_setting = SettingNameFamily(
+        "Width of the final image",
+        aliases=("Width (x) of the final image",),
+    )
+    height_setting = SettingNameFamily(
+        "Height of the final image",
+        aliases=("Height (y) of the final image",),
+    )
+    planes_setting = SettingNameFamily("# of planes (z) in the final image")
+    interpolation_setting = SettingNameFamily("Interpolation method")
+    volumetric_settings = (factor_z_setting, planes_setting)
+
+    @classmethod
+    def settings_source(
+        cls,
+        module: "ModuleBlock",
+        binder: "SettingsBinder",
+    ) -> "CellProfilerKwargs":
+        del binder
+        kwargs: dict[str, Any] = {}
+        resizing_method = optional_setting_value(module, cls.method_setting)
+        if resizing_method is not None:
+            kwargs["resize_method"] = cls.resize_method(resizing_method).value
+
+        resizing_factor = optional_setting_value(module, cls.factor_setting)
+        if resizing_factor is not None:
+            factor = parse_cellprofiler_float(resizing_factor)
+            kwargs["resizing_factor_x"] = factor
+            kwargs["resizing_factor_y"] = factor
+
+        factor_x = optional_setting_value(module, cls.factor_x_setting)
+        if factor_x is not None:
+            kwargs["resizing_factor_x"] = parse_cellprofiler_float(factor_x)
+
+        factor_y = optional_setting_value(module, cls.factor_y_setting)
+        if factor_y is not None:
+            kwargs["resizing_factor_y"] = parse_cellprofiler_float(factor_y)
+
+        factor_z = optional_setting_value(module, cls.factor_z_setting)
+        if factor_z is not None:
+            kwargs["resizing_factor_z"] = parse_cellprofiler_float(factor_z)
+
+        width = optional_setting_value(module, cls.width_setting)
+        if width is not None:
+            kwargs["specific_width"] = parse_cellprofiler_int(width)
+
+        height = optional_setting_value(module, cls.height_setting)
+        if height is not None:
+            kwargs["specific_height"] = parse_cellprofiler_int(height)
+
+        planes = optional_setting_value(module, cls.planes_setting)
+        if planes is not None:
+            kwargs["specific_planes"] = parse_cellprofiler_int(planes)
+
+        interpolation = optional_setting_value(module, cls.interpolation_setting)
+        if interpolation is not None:
+            kwargs["interpolation"] = coerce_cellprofiler_enum(
+                InterpolationMethod,
+                interpolation,
+            ).value
+
+        return kwargs
+
+    @staticmethod
+    def resize_method(value: str) -> ResizeMethod:
+        normalized = value.strip().lower()
+        if "fraction" in normalized or "multiple" in normalized:
+            return ResizeMethod.BY_FACTOR
+        if "specific" in normalized or "dimension" in normalized or "manual" in normalized:
+            return ResizeMethod.TO_SIZE
+        return coerce_cellprofiler_enum(ResizeMethod, value)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+    ) -> "ResolvedModuleFunction":
+        del default_function_name
+        function_name = (
+            cls.function_variants[0]
+            if any(setting_values(module, setting) for setting in cls.volumetric_settings)
+            else str(cls.function_name)
+        )
+        return super().resolve_function(module, default_function_name=function_name)
+
+
+class TileModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ModuleSettingsSourceModule,
+):
+    module_name = 'Tile'
+    function_name = 'tile'
+    validated = True
+    confidence = 1.0
+    image_input_settings = (
+        "Select an input image",
+        "Select an additional image to tile",
+    )
+    image_output_settings = ("Name the output image",)
+
+    @staticmethod
+    def settings_source(module: "ModuleBlock") -> "CellProfilerKwargs":
+        assembly_method = module.get_setting(
+            "Tile assembly method",
+            "Within cycles",
+        ).strip()
+        normalized_method = normalize_cellprofiler_setting_name(assembly_method)
+        if normalized_method != "within_cycles":
+            raise NotImplementedError(
+                "Tile assembly method is not supported by the converter: "
+                f"{assembly_method!r}"
+            )
+        return {
+            "rows": 1,
+            "columns": 1,
+            "place_first": "top_left",
+            "tile_style": "row",
+            "meander": False,
+            "auto_rows": False,
+            "auto_columns": True,
+        }
+
+
+
 from dataclasses import replace
 from dataclasses import dataclass
 from enum import Enum
@@ -1131,3 +1453,10 @@ def flip_and_rotate(
 
 def _is_stack_payload(payload: Any) -> bool:
     return is_grayscale_image_stack(payload) or is_color_image_stack(payload)
+
+
+class FlipAndRotateModule(CellProfilerModule):
+    module_name = 'FlipAndRotate'
+    function_name = 'flip_and_rotate'
+    validated = True
+    confidence = 1.0

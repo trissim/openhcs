@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -47,24 +49,80 @@ class CellProfilerSourceAstInspector:
         """Return documented settings from CellProfiler setting constructors."""
         settings: list[CellProfilerSourceSettingDocumentation] = []
         seen: set[str] = set()
+
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            setting = self.assigned_setting(node)
+            if setting is None:
                 continue
-            setting_name = self.call_setting_name(node)
-            if setting_name is None:
-                continue
-            key = _normalized_doc_key(setting_name)
+            key = _normalized_doc_key(setting.setting_name)
             if key in seen:
                 continue
             seen.add(key)
-            settings.append(
-                CellProfilerSourceSettingDocumentation(
-                    setting_name=setting_name,
-                    doc=self.call_keyword_string(node, "doc"),
-                    default_value=self.call_keyword_value_text(node, "value"),
-                )
-            )
+            settings.append(setting)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            setting = self.setting_documentation(node)
+            if setting is None:
+                continue
+            key = _normalized_doc_key(setting.setting_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            settings.append(setting)
         return tuple(settings)
+
+    def assigned_setting(
+        self,
+        node: ast.AST,
+    ) -> CellProfilerSourceSettingDocumentation | None:
+        """Return setting docs for ``self.<attribute> = Setting(...)`` nodes."""
+        if isinstance(node, ast.Assign):
+            attribute_name = next(
+                (
+                    attribute
+                    for target in node.targets
+                    if (attribute := self.self_attribute_name(target)) is not None
+                ),
+                None,
+            )
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            attribute_name = self.self_attribute_name(node.target)
+            value = node.value
+        else:
+            return None
+        if attribute_name is None or not isinstance(value, ast.Call):
+            return None
+        return self.setting_documentation(value, attribute_name=attribute_name)
+
+    def self_attribute_name(self, node: ast.AST) -> str | None:
+        """Return the attribute in a ``self.<name>`` assignment target."""
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        ):
+            return node.attr
+        return None
+
+    def setting_documentation(
+        self,
+        node: ast.Call,
+        *,
+        attribute_name: str | None = None,
+    ) -> "CellProfilerSourceSettingDocumentation | None":
+        """Return source docs for one CellProfiler setting constructor call."""
+        setting_name = self.call_setting_name(node)
+        if setting_name is None:
+            return None
+        return CellProfilerSourceSettingDocumentation(
+            setting_name=setting_name,
+            attribute_name=attribute_name,
+            doc=self.call_keyword_string(node, "doc"),
+            default_value=self.call_keyword_value_text(node, "value"),
+        )
 
     def call_setting_name(self, node: ast.Call) -> str | None:
         """Return the UI setting label owned by a documented setting call."""
@@ -122,6 +180,7 @@ class CellProfilerSourceSettingDocumentation:
     """Static documentation extracted from one CellProfiler source setting."""
 
     setting_name: str
+    attribute_name: str | None = None
     doc: str | None = None
     default_value: str | None = None
 
@@ -223,6 +282,24 @@ def render_cellprofiler_function_docstring(
     if documentation.returns:
         lines.extend(("", "Returns:", f"    {documentation.returns}"))
     return "\n".join(lines).rstrip()
+
+
+def cellprofiler_source_setting_parameter_mapping(
+    module_name: str,
+    parameter_names: Iterable[str],
+) -> dict[str, str]:
+    """Map normalized CP setting labels to same-named absorbed parameters.
+
+    CellProfiler modules usually store each UI setting on ``self.<attribute>``.
+    When that attribute is also an absorbed callable parameter, the source
+    declaration is the authority for translating UI label to runtime kwarg.
+    """
+    parameters = frozenset(parameter_names)
+    return {
+        _normalized_doc_key(setting.setting_name): setting.attribute_name
+        for setting in _source_module_documentation(module_name).settings
+        if setting.attribute_name in parameters
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,7 +493,7 @@ def _annotation_text(annotation: Any) -> str:
 def _default_text(default: Any) -> str | None:
     if default is inspect.Signature.empty:
         return None
-    if hasattr(default, "value") and default.__class__.__module__ != "builtins":
+    if isinstance(default, Enum):
         return repr(default.value)
     return repr(default)
 

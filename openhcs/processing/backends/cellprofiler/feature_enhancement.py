@@ -15,7 +15,17 @@ from numba import njit
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    coerce_cellprofiler_enum,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+)
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
@@ -107,6 +117,63 @@ def enhance_or_suppress_features(
         mask=image_payload_mask(image),
         metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
     ).payload()
+
+
+class EnhanceOrSuppressFeaturesModule(
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ImageProcessingDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = "EnhanceOrSuppressFeatures"
+    function_name = "enhance_or_suppress_features"
+    validated = True
+    confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
+    ignored_settings = (
+        "Select the input image",
+        "Name the output image",
+        "Rescale result image",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding("Select the operation", "method"),
+        SettingToKeywordBinding("Feature type", "enhance_method"),
+        SettingToKeywordBinding("Smoothing scale", "smoothing_value"),
+        SettingToKeywordBinding("Shear angle", "dic_angle"),
+        SettingToKeywordBinding("Decay", "dic_decay"),
+        SettingToKeywordBinding("Enhancement method", "neurite_method"),
+        SettingToKeywordBinding("Speed and accuracy", "speckle_accuracy"),
+        SettingToKeywordBinding("Range of hole sizes", "dark_hole_radius_range"),
+        SettingToKeywordBinding("Feature size", "feature_size"),
+    )
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls,
+        module: "ModuleBlock",
+        bound: BoundModuleSettings,
+    ) -> BoundModuleSettings:
+        kwargs = dict(bound.kwargs)
+        hole_sizes = kwargs.pop("dark_hole_radius_range", None)
+        if hole_sizes is not None:
+            if not isinstance(hole_sizes, tuple) or len(hole_sizes) != 2:
+                raise ValueError(
+                    f"{module.name} hole size range must contain two values, "
+                    f"got {hole_sizes!r}."
+                )
+            kwargs["dark_hole_radius_min"], kwargs["dark_hole_radius_max"] = (
+                hole_sizes
+            )
+        feature_size = kwargs.pop("feature_size", None)
+        if feature_size is not None:
+            kwargs["radius"] = feature_size / 2
+        return BoundModuleSettings(
+            kwargs,
+            bound.unmapped_kwargs,
+            bound.invocation_options,
+            bound.setting_coverage,
+        )
 
 
 @numpy
@@ -424,3 +491,11 @@ def _prepare_enhance_or_suppress_features() -> None:
         neurite_method=NeuriteMethod.TUBENESS,
         smoothing_value=2.0,
     )
+
+
+class MatchTemplateModule(CellProfilerModule):
+    module_name = 'MatchTemplate'
+    function_name = 'match_template'
+    validated = True
+    contract = 'flexible'
+    confidence = 1.0

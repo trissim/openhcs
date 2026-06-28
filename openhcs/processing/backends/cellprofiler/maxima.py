@@ -1,6 +1,7 @@
 """CellProfiler-compatible local maxima detection backend."""
 
 from __future__ import annotations
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -169,6 +170,13 @@ def find_maxima_with_mask(
     ).detect()
     return maxima[np.newaxis, ...], result
 
+
+class FindMaximaModule(CellProfilerModule):
+    module_name = 'FindMaxima'
+    function_name = 'find_maxima'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
 
 __all__ = public_names_from_objects(
     ExcludeMode,

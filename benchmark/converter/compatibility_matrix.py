@@ -12,13 +12,17 @@ from openhcs.processing.backends.cellprofiler.library import (
     get_contract,
     list_modules,
 )
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    CellProfilerModule,
+)
 from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
-from openhcs.interop.cellprofiler.module_settings_binding import (
+from openhcs.processing.backends.cellprofiler.module_classes import (
     ModuleSettingCoverageRecord,
     ModuleSettingRowRecord,
 )
@@ -47,7 +51,6 @@ from openhcs.interop.cellprofiler.processing_contract_resolution import (
     ProcessingContractResolutionSource,
     resolve_processing_contract,
 )
-from openhcs.interop.cellprofiler.symbol_table import ModuleContractBuilder
 
 
 INFRASTRUCTURE_COVERAGE_VALUE = "infrastructure"
@@ -637,7 +640,8 @@ def _module_importable(module_name: str) -> bool:
 
 
 def _artifact_contract_coverage(module_name: str) -> ArtifactContractCoverage:
-    if canonical_module_name(module_name) in ModuleContractBuilder.__registry__:
+    module_type = CellProfilerModule.for_module(module_name)
+    if module_type is not None and issubclass(module_type, ArtifactContractModule):
         return ArtifactContractCoverage.DECLARED_BUILDER
     return ArtifactContractCoverage.GENERIC_INFERENCE
 

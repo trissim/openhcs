@@ -10,6 +10,10 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    CellProfilerModule,
+    MeasurementDebugViewModule,
+)
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -456,6 +460,19 @@ def measure_object_overlap(
     
     return output_image, measurements
 
+
+class MeasureimageoverlapModule(MeasurementDebugViewModule, CellProfilerModule):
+    module_name = 'Measureimageoverlap'
+    function_name = 'measureimageoverlap'
+    validated = True
+    contract = 'flexible'
+    confidence = 1.0
+
+class MeasureObjectOverlapModule(MeasurementDebugViewModule, CellProfilerModule):
+    module_name = 'MeasureObjectOverlap'
+    function_name = 'measure_object_overlap'
+    validated = True
+    confidence = 1.0
 
 __all__ = public_names_from_objects(
     DecimationMethod,

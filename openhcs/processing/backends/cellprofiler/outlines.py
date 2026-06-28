@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+from openhcs.interop.cellprofiler.setting_names import (
+    required_setting_value,
+    optional_setting_value,
+    setting_values,
+    RepeatedSettingSequence,
+    SettingNameFamily,
+    block_setting_value,
+    normalized_symbol_name,
+    repeating_setting_blocks,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_float,
+)
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import skimage.color
@@ -28,6 +43,74 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.color import coerce_rgb_color
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    OverlayOutlinesInputPolicy,
+)
+
+class OverlayObjectsModule(CellProfilerModule):
+    module_name = 'OverlayObjects'
+    function_name = 'overlay_objects'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
+    input_image_setting = SettingNameFamily("Select the input image", aliases=("Input",))
+    input_objects_setting = SettingNameFamily("Select objects to display", aliases=("Objects",))
+    output_image_setting = SettingNameFamily("Name the output image")
+    setting_bindings = (
+        SettingToKeywordBinding("Opacity", "opacity", parse_cellprofiler_float),
+    )
+
+    @classmethod
+    def ignored_settings_for(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple[str | SettingNameFamily, ...]:
+        del module
+        return (
+            cls.input_image_setting,
+            cls.input_objects_setting,
+            cls.output_image_setting,
+        )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        image = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, cls.input_image_setting), ArtifactKind.IMAGE),
+            module,
+        )
+        objects = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, cls.input_objects_setting), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        output = builder.declare_artifact(
+            ArtifactSpec(required_setting_value(module, cls.output_image_setting), ArtifactKind.IMAGE),
+            module,
+        )
+        return assembler.assemble_contract(module, builder, inputs=[image, objects], outputs=[output])
+
+
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
     align_binary_mask_to_shape,
@@ -37,6 +120,254 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
+
+
+class OverlayOutlinesModule(
+    OverlayOutlinesInputPolicy,
+    ImageProcessingDebugViewModule,
+    ModuleSettingsSourceModule,
+):
+    module_name = 'OverlayOutlines'
+    function_name = 'overlay_outlines'
+    validated = True
+    contract = 'flexible'
+    confidence = 1.0
+    blank_image_setting = "Display outlines on a blank image?"
+    base_image_setting = "Select image on which to display outlines"
+    output_image_setting = "Name the output image"
+    display_mode_setting = SettingNameFamily(
+        "Outline display mode",
+        aliases=("Select outline display mode",),
+    )
+    max_type_setting = "Select method to determine brightness of outlines"
+    line_mode_setting = "How to outline"
+    outline_image_setting = SettingNameFamily(
+        "Select outlines to display",
+        aliases=("Select outline to display",),
+    )
+    objects_setting = SettingNameFamily(
+        "Select objects to display",
+        aliases=("Select object to display",),
+    )
+    source_kind_setting = "Load outlines from an image or objects?"
+    color_setting = "Select outline color"
+
+    class SourceKind(str, Enum):
+        IMAGE = "image"
+        OBJECTS = "objects"
+
+    @dataclass(frozen=True, slots=True)
+    class OutlineRow:
+        source_kind: "OverlayOutlinesModule.SourceKind"
+        image_name: str | None
+        objects_name: str | None
+        color: str
+
+        @property
+        def input_name(self) -> str:
+            if self.source_kind.value == "image":
+                if self.image_name is None:
+                    raise RuntimeError("Image outline row has no image input.")
+                return self.image_name
+            if self.objects_name is None:
+                raise RuntimeError("Object outline row has no object input.")
+            return self.objects_name
+
+        @property
+        def input_is_image(self) -> bool:
+            return self.source_kind.value == "image"
+
+    @classmethod
+    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+        rows = cls.outline_rows(module)
+        return {
+            "blank_image": cls.uses_blank_image(module),
+            "display_mode": optional_setting_value(module, cls.display_mode_setting)
+            or "Color",
+            "line_mode": optional_setting_value(module, cls.line_mode_setting)
+            or "Inner",
+            "max_type": optional_setting_value(module, cls.max_type_setting)
+            or "Max of image",
+            "outline_source_kinds": tuple(row.source_kind.value for row in rows),
+            "outline_colors": tuple(row.color for row in rows),
+        }
+
+    @classmethod
+    def uses_blank_image(cls, module: "ModuleBlock") -> bool:
+        value = optional_setting_value(module, cls.blank_image_setting)
+        return value is not None and value.strip().lower() == "yes"
+
+    @classmethod
+    def base_image_name(cls, module: "ModuleBlock") -> str | None:
+        if cls.uses_blank_image(module):
+            return None
+        return required_setting_value(module, cls.base_image_setting)
+
+    @classmethod
+    def output_image_name(cls, module: "ModuleBlock") -> str:
+        return required_setting_value(module, cls.output_image_setting)
+
+    @classmethod
+    def outline_rows(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["OverlayOutlinesModule.OutlineRow", ...]:
+        if module.iter_settings():
+            rows = cls._ordered_outline_rows(module)
+        else:
+            rows = cls._outline_rows_from_mapping(module)
+        if not rows:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) declares no "
+                "OverlayOutlines rows."
+            )
+        return rows
+
+    @classmethod
+    def _ordered_outline_rows(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["OverlayOutlinesModule.OutlineRow", ...]:
+        image_blocks = repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=cls.outline_image_setting,
+        )
+        if image_blocks:
+            return tuple(cls._outline_row_from_block(module, block) for block in image_blocks)
+        object_blocks = repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=cls.objects_setting,
+        )
+        if object_blocks:
+            return cls._outline_rows_from_mapping(module)
+        return ()
+
+    @classmethod
+    def _outline_row_from_block(
+        cls,
+        module: "ModuleBlock",
+        block: Sequence["ModuleSetting"],
+    ) -> "OverlayOutlinesModule.OutlineRow":
+        return cls._outline_row_from_fields(
+            module,
+            image_name=normalized_symbol_name(
+                block_setting_value(block, cls.outline_image_setting)
+            ),
+            objects_name=normalized_symbol_name(
+                block_setting_value(block, cls.objects_setting)
+            ),
+            source_kind_literal=block_setting_value(block, cls.source_kind_setting),
+            color=block_setting_value(block, cls.color_setting, default="Red"),
+        )
+
+    @classmethod
+    def _outline_rows_from_mapping(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["OverlayOutlinesModule.OutlineRow", ...]:
+        image_names = setting_values(module, cls.outline_image_setting)
+        object_names = setting_values(module, cls.objects_setting)
+        source_kind_values = setting_values(module, cls.source_kind_setting)
+        colors = setting_values(module, cls.color_setting)
+        row_count = max(
+            len(image_names),
+            len(object_names),
+            len(source_kind_values),
+            1 if object_names or image_names else 0,
+        )
+        return tuple(
+            cls._outline_row_from_fields(
+                module,
+                image_name=normalized_symbol_name(
+                    RepeatedSettingSequence(image_names).at(index)
+                ),
+                objects_name=normalized_symbol_name(
+                    RepeatedSettingSequence(object_names).at(index)
+                ),
+                source_kind_literal=RepeatedSettingSequence(source_kind_values).at(index),
+                color=RepeatedSettingSequence(colors, default="Red").at(index),
+            )
+            for index in range(row_count)
+        )
+
+    @classmethod
+    def _outline_row_from_fields(
+        cls,
+        module: "ModuleBlock",
+        *,
+        image_name: str | None,
+        objects_name: str | None,
+        source_kind_literal: str,
+        color: str,
+    ) -> "OverlayOutlinesModule.OutlineRow":
+        source_kind = cls._source_kind_from_fields(
+            source_kind_literal,
+            image_name=image_name,
+            objects_name=objects_name,
+        )
+        row = cls.OutlineRow(
+            source_kind=source_kind,
+            image_name=image_name,
+            objects_name=objects_name,
+            color=color,
+        )
+        cls._validate_outline_row(module, row)
+        return row
+
+    @classmethod
+    def _source_kind_from_fields(
+        cls,
+        value: str,
+        *,
+        image_name: str | None,
+        objects_name: str | None,
+    ) -> "OverlayOutlinesModule.SourceKind":
+        normalized = value.strip().lower()
+        if normalized.startswith("image"):
+            return cls.SourceKind.IMAGE
+        if normalized.startswith("object"):
+            return cls.SourceKind.OBJECTS
+        if image_name is not None and objects_name is None:
+            return cls.SourceKind.IMAGE
+        return cls.SourceKind.OBJECTS
+
+    @classmethod
+    def _validate_outline_row(
+        cls,
+        module: "ModuleBlock",
+        row: "OverlayOutlinesModule.OutlineRow",
+    ) -> None:
+        if row.input_is_image:
+            if row.image_name is None:
+                raise ValueError(
+                    f"Module {module.name}({module.module_num}) has an image "
+                    "outline row with no outline image input."
+                )
+            return
+        if row.objects_name is None:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) has an object "
+                "outline row with no object input."
+            )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        inputs = []
+        base_image_name = cls.base_image_name(module)
+        if base_image_name is not None:
+            inputs.append(builder.require_artifact(ArtifactSpec(base_image_name, ArtifactKind.IMAGE), module))
+        for row in cls.outline_rows(module):
+            kind = ArtifactKind.IMAGE if row.input_is_image else ArtifactKind.OBJECT_LABELS
+            inputs.append(builder.require_artifact(ArtifactSpec(row.input_name, kind), module))
+        output = builder.declare_artifact(
+            ArtifactSpec(cls.output_image_name(module), ArtifactKind.IMAGE),
+            module,
+        )
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=[output])
+
+
 
 
 class ObjectOutlineBackendStrategy(

@@ -1,10 +1,9 @@
 import numpy as np
 
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
-from openhcs.interop.cellprofiler.calculate_math_settings import (
+from openhcs.processing.backends.cellprofiler.measurement_math import (
     CalculateMathRoundingMethod,
 )
-from openhcs.interop.cellprofiler.image_math_settings import ImageMathOperation
 from openhcs.processing.backends.cellprofiler.measurement_math import (
     CalculateMathExecution,
     MathBounds,
@@ -12,6 +11,7 @@ from openhcs.processing.backends.cellprofiler.measurement_math import (
     MathFinalTransform,
     MathOperand,
 )
+from openhcs.processing.backends.cellprofiler.image_math import ImageMathOperation
 
 
 def test_calculate_math_aligned_vector_rows_preserve_slice_index() -> None:

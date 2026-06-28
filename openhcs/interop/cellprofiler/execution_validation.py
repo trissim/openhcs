@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from collections.abc import Iterable
 
@@ -18,29 +17,13 @@ from openhcs.core.runtime_exports import (
     RuntimeImageExportSpec,
     artifact_kind_exports_as_table,
 )
-from openhcs.interop.cellprofiler.save_images_settings import (
-    SAVE_IMAGES_FILE_FORMAT_SETTING,
-    SAVE_IMAGES_SOURCE_IMAGE_SETTING,
-    save_images_bit_depth,
-)
+from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 from openhcs.interop.cellprofiler.runtime_pipeline import (
     DirectPipelineExecution,
     PreparedGeneratedPipeline,
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-
-
-class CPPipeInfrastructureFeature(Enum):
-    """CellProfiler infrastructure behavior expected after conversion."""
-
-    EXPORT_TO_SPREADSHEET = "ExportToSpreadsheet"
-    SAVE_IMAGES = "SaveImages"
 
 
 class CPPipeExecutionValidationError(RuntimeError):
@@ -51,7 +34,8 @@ class CPPipeExecutionValidationError(RuntimeError):
 class CPPipeInfrastructureProfile:
     """External output semantics declared by CellProfiler infrastructure modules."""
 
-    features: frozenset[CPPipeInfrastructureFeature]
+    exports_tables: bool
+    exports_images: bool
     image_export_specs: tuple[RuntimeImageExportSpec, ...]
 
     @classmethod
@@ -76,19 +60,23 @@ class CPPipeInfrastructureProfile:
         modules: Iterable[ModuleBlock],
     ) -> "CPPipeInfrastructureProfile":
         module_tuple = tuple(modules)
-        features = _infrastructure_features(module_tuple)
+        module_types = tuple(
+            module_type
+            for module in module_tuple
+            for module_type in (CellProfilerModule.for_module(module.name),)
+            if module_type is not None
+        )
         return cls(
-            features=features,
+            exports_tables=any(
+                module_type.infrastructure_exports_tables
+                for module_type in module_types
+            ),
+            exports_images=any(
+                module_type.infrastructure_exports_images
+                for module_type in module_types
+            ),
             image_export_specs=_image_export_specs(module_tuple),
         )
-
-    @property
-    def exports_tables(self) -> bool:
-        return CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET in self.features
-
-    @property
-    def exports_images(self) -> bool:
-        return CPPipeInfrastructureFeature.SAVE_IMAGES in self.features
 
     @property
     def image_exports_without_table_exports(self) -> bool:
@@ -156,17 +144,6 @@ def _runtime_expectation(
     )
 
 
-def _infrastructure_features(
-    modules: Iterable[ModuleBlock],
-) -> frozenset[CPPipeInfrastructureFeature]:
-    module_names = {module.name for module in modules}
-    return frozenset(
-        feature
-        for feature in CPPipeInfrastructureFeature
-        if feature.value in module_names
-    )
-
-
 def _output_specs(
     prepared: PreparedGeneratedPipeline,
 ) -> tuple[ArtifactSpec, ...]:
@@ -181,15 +158,11 @@ def _image_export_specs(
     modules: Iterable[ModuleBlock],
 ) -> tuple[RuntimeImageExportSpec, ...]:
     return tuple(
-        RuntimeImageExportSpec(
-            artifact_name=image_name,
-            bit_depth=save_images_bit_depth(module),
-            file_format=optional_setting_value(module, SAVE_IMAGES_FILE_FORMAT_SETTING),
-        )
+        spec
         for module in modules
-        if module.name == CPPipeInfrastructureFeature.SAVE_IMAGES.value
-        for value in setting_values(module, SAVE_IMAGES_SOURCE_IMAGE_SETTING)
-        for image_name in split_symbol_names(value)
+        for module_type in (CellProfilerModule.for_module(module.name),)
+        if module_type is not None
+        for spec in module_type.image_export_specs(module)
     )
 
 

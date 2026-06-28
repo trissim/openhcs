@@ -5,7 +5,7 @@ from types import ModuleType
 from typing import get_args
 
 import pytest
-from python_introspect import SignatureAnalyzer, is_enableable
+from python_introspect import SignatureAnalyzer, UnifiedParameterAnalyzer, is_enableable
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
@@ -13,7 +13,6 @@ from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.source_bindings import (
-    GroupedSourceBindings,
     NamedSourceBinding,
     StepSourceBindingsConfig,
 )
@@ -23,11 +22,20 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     bind_generated_pipeline_runtime,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerProcessingContractAuthority,
     CellProfilerRuntimeCallable,
     cellprofiler_module_callable,
 )
-from openhcs.processing.backends.cellprofiler import crop
-from openhcs.processing.backends.cellprofiler.crop import CropShape
+from openhcs.processing.backends.cellprofiler import (
+    cellprofiler_function_runtime_metadata,
+    crop,
+    identify_tertiary_objects,
+)
+from openhcs.processing.backends.cellprofiler.crop import CropModule
+from openhcs.processing.backends.cellprofiler.neighbors import measure_object_neighbors
+from pyqt_reactive.services.function_pattern_code_document import (
+    FunctionPatternCodeDocumentService,
+)
 
 
 def crop_contract(
@@ -42,9 +50,107 @@ def crop_contract(
     )
 
 
+def declared_runtime_callable(func, contract):
+    metadata = cellprofiler_function_runtime_metadata(func)
+    if metadata is None:
+        processing_contract = CellProfilerProcessingContractAuthority.for_callable(func)
+        declared_processing_contract = processing_contract.name
+    else:
+        processing_contract = metadata.processing_contract
+        declared_processing_contract = metadata.declared_processing_contract
+    return cellprofiler_module_callable(
+        func,
+        contract,
+        processing_contract=processing_contract,
+        declared_processing_contract=declared_processing_contract,
+    )
+
+
+def test_cellprofiler_runtime_callable_hides_runtime_bound_object_inputs():
+    """Artifact-bound object inputs must not appear as editable step parameters."""
+    runtime_callable = declared_runtime_callable(
+        identify_tertiary_objects,
+        ModuleArtifactContract(
+            module_name="IdentifyTertiaryObjects",
+            runtime_artifact_inputs=(
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+            ),
+        ),
+    )
+
+    params = UnifiedParameterAnalyzer.analyze(runtime_callable)
+
+    assert "primary_labels" not in params
+    assert "secondary_labels" not in params
+    assert "shrink_primary" in params
+
+
+def test_cellprofiler_runtime_callable_rejects_unowned_object_input_policy_early():
+    """Runtime object-input semantics must be derived from the declared module."""
+    with pytest.raises(NotImplementedError, match="no nominal input binding policy"):
+        declared_runtime_callable(
+            identify_tertiary_objects,
+            ModuleArtifactContract(
+                module_name="IdentifyTertiaryObjects_MCP_TEMP",
+                runtime_artifact_inputs=(
+                    ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                    ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+                ),
+            ),
+        )
+
+
+def test_function_pattern_object_state_excludes_runtime_bound_inputs():
+    """Function-pattern ObjectStates must share callable-owned exclusions."""
+    runtime_callable = declared_runtime_callable(
+        identify_tertiary_objects,
+        ModuleArtifactContract(
+            module_name="IdentifyTertiaryObjects",
+            runtime_artifact_inputs=(
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+            ),
+        ),
+    )
+
+    exclusions = FunctionPatternCodeDocumentService.reserved_parameter_names(
+        runtime_callable
+    )
+
+    assert exclusions is not None
+    assert "image" in exclusions
+    assert "primary_labels" in exclusions
+    assert "secondary_labels" in exclusions
+
+
+def test_cellprofiler_runtime_callable_hides_declared_runtime_parameters():
+    """Function-owned runtime parameters must not appear as editable settings."""
+    runtime_callable = declared_runtime_callable(
+        measure_object_neighbors,
+        ModuleArtifactContract(
+            module_name="MeasureObjectNeighbors",
+            runtime_artifact_inputs=(
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Neighbors", ArtifactKind.OBJECT_LABELS),
+            ),
+        ),
+    )
+
+    params = UnifiedParameterAnalyzer.analyze(runtime_callable)
+
+    assert "labels" not in params
+    assert "neighbor_labels" not in params
+    assert "small_removed_labels" not in params
+    assert "small_removed_neighbor_labels" not in params
+    assert "neighbors_are_same_objects" not in params
+    assert "slice_index" not in params
+    assert "neighbor_distance" in params
+
+
 def test_cellprofiler_runtime_callable_analyzes_raw_backend_signature():
     """Runtime adapter parameters must not leak into UI-facing analysis."""
-    runtime_callable = cellprofiler_module_callable(
+    runtime_callable = declared_runtime_callable(
         crop,
         crop_contract(),
     )
@@ -59,14 +165,14 @@ def test_cellprofiler_runtime_callable_analyzes_raw_backend_signature():
     assert params["slice_by_slice"].param_type is bool
     assert params["slice_by_slice"].default_value is False
     assert "crop_shape" in params
-    assert CropShape in get_args(params["crop_shape"].param_type)
+    assert CropModule.Shape in get_args(params["crop_shape"].param_type)
     assert runtime_callable.__doc__ == crop.__doc__
 
 
 def test_cellprofiler_runtime_callable_rebuilds_with_nominal_equality():
     """ObjectState dirty projection must not depend on wrapper instance identity."""
     contract = crop_contract(outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),))
-    runtime_callable = cellprofiler_module_callable(crop, contract)
+    runtime_callable = declared_runtime_callable(crop, contract)
 
     assert copy.deepcopy(runtime_callable) == runtime_callable
     assert hash(copy.deepcopy(runtime_callable)) == hash(runtime_callable)
@@ -74,7 +180,7 @@ def test_cellprofiler_runtime_callable_rebuilds_with_nominal_equality():
 
 def test_cellprofiler_runtime_callable_tuple_stays_clean_in_object_state():
     contract = crop_contract(outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),))
-    runtime_callable = cellprofiler_module_callable(crop, contract)
+    runtime_callable = declared_runtime_callable(crop, contract)
     state = ObjectState(
         FunctionStep(
             func=(runtime_callable, {"crop_shape": "Rectangle"}),
@@ -146,17 +252,12 @@ def test_generated_runtime_binding_rejects_source_binding_contract_drift():
     module.pipeline_steps = [
         FunctionStep(
             func=crop,
-            source_bindings=StepSourceBindingsConfig(
-                groups=(
-                    GroupedSourceBindings(
-                        bindings=(
+            source_bindings=StepSourceBindingsConfig(bindings=(
                             NamedSourceBinding(
                                 alias="WrongBlue",
                                 artifact_kind=ArtifactKind.IMAGE,
                             ),
                         ),
-                    ),
-                ),
             ),
         )
     ]
@@ -178,17 +279,12 @@ def test_generated_runtime_binding_accepts_matching_source_binding_contract():
     module.pipeline_steps = [
         FunctionStep(
             func=crop,
-            source_bindings=StepSourceBindingsConfig(
-                groups=(
-                    GroupedSourceBindings(
-                        bindings=(
+            source_bindings=StepSourceBindingsConfig(bindings=(
                             NamedSourceBinding(
                                 alias="OrigBlue",
                                 artifact_kind=ArtifactKind.IMAGE,
                             ),
                         ),
-                    ),
-                ),
             ),
         )
     ]

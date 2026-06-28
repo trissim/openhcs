@@ -71,15 +71,6 @@ class CellProfilerFileManager(ABC):
         """Ensure a backend directory exists."""
 
 
-class CellProfilerGlobalConfig(ABC):
-    """Global config surface needed while loading source images."""
-
-    @property
-    @abstractmethod
-    def zarr_config(self) -> ZarrConfig | None:
-        """Return VFS zarr backend options."""
-
-
 class CellProfilerFilenameParser(ABC):
     """Microscope filename parser surface needed for source ordering."""
 
@@ -116,11 +107,6 @@ class CellProfilerProcessingContext(ABC):
     @abstractmethod
     def input_dir(self) -> str:
         """Return the processing input directory."""
-
-    @property
-    @abstractmethod
-    def global_config(self) -> CellProfilerGlobalConfig:
-        """Return the merged pipeline config."""
 
     @property
     @abstractmethod

@@ -3,14 +3,8 @@
 from __future__ import annotations
 
 from enum import Enum
-from types import MappingProxyType
 
 from openhcs.core.runtime_semantics import MeasurementScope, MeasurementScopeSelection
-
-
-CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG = (
-    "_cellprofiler_measurement_target_scope"
-)
 
 
 class CellProfilerMeasurementTargetScope(str, Enum):
@@ -19,6 +13,21 @@ class CellProfilerMeasurementTargetScope(str, Enum):
     IMAGE = "image"
     OBJECT = "object"
     BOTH = "both"
+
+    @property
+    def measurement_scope_selection(self) -> MeasurementScopeSelection:
+        """Return the OpenHCS measurement scopes represented by this target."""
+        match self:
+            case CellProfilerMeasurementTargetScope.IMAGE:
+                return MeasurementScopeSelection.of(MeasurementScope.IMAGE)
+            case CellProfilerMeasurementTargetScope.OBJECT:
+                return MeasurementScopeSelection.of(MeasurementScope.OBJECT)
+            case CellProfilerMeasurementTargetScope.BOTH:
+                return MeasurementScopeSelection.of(
+                    MeasurementScope.IMAGE,
+                    MeasurementScope.OBJECT,
+                )
+        raise TypeError(f"Unsupported CellProfiler measurement target {self!r}.")
 
 
 def coerce_cellprofiler_measurement_target_scope(
@@ -33,22 +42,6 @@ def coerce_cellprofiler_measurement_target_scope(
     return CellProfilerMeasurementTargetScope(str(value))
 
 
-CELLPROFILER_MEASUREMENT_SCOPE_SELECTIONS = MappingProxyType(
-    {
-        CellProfilerMeasurementTargetScope.IMAGE: MeasurementScopeSelection.of(
-            MeasurementScope.IMAGE,
-        ),
-        CellProfilerMeasurementTargetScope.OBJECT: MeasurementScopeSelection.of(
-            MeasurementScope.OBJECT,
-        ),
-        CellProfilerMeasurementTargetScope.BOTH: MeasurementScopeSelection.of(
-            MeasurementScope.IMAGE,
-            MeasurementScope.OBJECT,
-        ),
-    }
-)
-
-
 def cellprofiler_measurement_scope_selection(
     value: CellProfilerMeasurementTargetScope | str | None,
     default: MeasurementScopeSelection,
@@ -60,4 +53,4 @@ def cellprofiler_measurement_scope_selection(
         value,
         CellProfilerMeasurementTargetScope.BOTH,
     )
-    return CELLPROFILER_MEASUREMENT_SCOPE_SELECTIONS[target_scope]
+    return target_scope.measurement_scope_selection

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from enum import Enum
+from typing import Any, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -23,9 +24,18 @@ from openhcs.core.runtime_values import (
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.interop.cellprofiler.align_settings import (
-    AlignAdditionalMode,
-    AlignCropMode,
+from openhcs.processing.backends.cellprofiler.module_classes import ModuleSettingsSourceModule, ArtifactContractModule
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    AlignOutputMeasurementRecordRowsMixin,
+    NoFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -38,6 +48,146 @@ from openhcs.processing.backends.cellprofiler.alignment_mutual_information_offse
     mutual_information_offset_numba,
     mutual_information_offset_unmasked_numba,
 )
+
+
+class AlignModule(
+    AlignOutputMeasurementRecordRowsMixin,
+    NoObjectNameMeasurementRecordMixin,
+    NoSourceMeasurementRecordMixin,
+    NoFieldsMeasurementRecordMixin,
+    ModuleSettingsSourceModule,
+):
+    module_name = 'Align'
+    function_name = 'align'
+    validated = True
+    contract = 'flexible'
+    category = 'channel_operation'
+    confidence = 1.0
+    method_setting = "Select the alignment method"
+    v2_crop_setting = "Crop output images to retain just the aligned regions?"
+    crop_mode_setting = "Crop mode"
+    first_input_setting = "Select the first input image"
+    first_output_setting = "Name the first output image"
+    second_input_setting = "Select the second input image"
+    second_output_setting = "Name the second output image"
+    additional_input_setting = "Select the additional image"
+    additional_output_setting = "Name the output image"
+    additional_mode_setting = "Select how the alignment is to be applied"
+
+    class AdditionalMode(str, Enum):
+        SIMILARLY = "Similarly"
+
+        @classmethod
+        def from_literal(
+            cls,
+            value: "AlignModule.AdditionalMode | str",
+        ) -> "AlignModule.AdditionalMode":
+            return cellprofiler_enum_from_literal(cls, value)
+
+    class CropMode(str, Enum):
+        KEEP_SIZE = "Keep size"
+        CROP_TO_ALIGNED_REGION = "Crop to aligned region"
+        PAD_IMAGES = "Pad images"
+
+        @classmethod
+        def from_literal(
+            cls,
+            value: "AlignModule.CropMode | str",
+        ) -> "AlignModule.CropMode":
+            return cellprofiler_enum_from_literal(
+                cls,
+                value,
+                aliases={
+                    "yes": cls.CROP_TO_ALIGNED_REGION,
+                    "true": cls.CROP_TO_ALIGNED_REGION,
+                    "no": cls.KEEP_SIZE,
+                    "false": cls.KEEP_SIZE,
+                },
+            )
+
+    @classmethod
+    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+        kwargs: dict[str, Any] = {
+            "method": optional_setting_value(module, cls.method_setting)
+            or "Mutual Information",
+            "crop_mode": cls.crop_mode(module).value,
+        }
+        additional_modes = cls.additional_alignment_modes(module)
+        if additional_modes:
+            kwargs["additional_alignment_modes"] = tuple(
+                mode.value for mode in additional_modes
+            )
+        return kwargs
+
+    @classmethod
+    def input_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
+        return (
+            required_setting_value(module, cls.first_input_setting),
+            required_setting_value(module, cls.second_input_setting),
+            *setting_values(module, cls.additional_input_setting),
+        )
+
+    @classmethod
+    def output_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
+        return (
+            required_setting_value(module, cls.first_output_setting),
+            required_setting_value(module, cls.second_output_setting),
+            *setting_values(module, cls.additional_output_setting),
+        )
+
+
+    @classmethod
+    def crop_mode(cls, module: "ModuleBlock") -> "AlignModule.CropMode":
+        return cls.CropMode.from_literal(
+            optional_setting_value(module, cls.crop_mode_setting)
+            or optional_setting_value(module, cls.v2_crop_setting)
+            or "No"
+        )
+
+    @classmethod
+    def additional_alignment_modes(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple["AlignModule.AdditionalMode", ...]:
+        additional_inputs = setting_values(module, cls.additional_input_setting)
+        additional_outputs = setting_values(module, cls.additional_output_setting)
+        if len(additional_inputs) != len(additional_outputs):
+            raise ValueError(
+                f"Module Align({module.module_num}) has {len(additional_inputs)} "
+                f"additional inputs but {len(additional_outputs)} additional outputs."
+            )
+        raw_modes = setting_values(module, cls.additional_mode_setting)
+        if not raw_modes:
+            return (cls.AdditionalMode.SIMILARLY,) * len(additional_inputs)
+        modes = tuple(cls.AdditionalMode.from_literal(value) for value in raw_modes)
+        if len(modes) != len(additional_inputs):
+            raise ValueError(
+                f"Module Align({module.module_num}) has {len(modes)} additional "
+                f"alignment modes for {len(additional_inputs)} additional images."
+            )
+        return modes
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        inputs = [
+            builder.require_artifact(ArtifactSpec(name, ArtifactKind.IMAGE), module)
+            for name in cls.input_names(module)
+        ]
+        outputs = [
+            builder.declare_artifact(ArtifactSpec(name, ArtifactKind.IMAGE), module)
+            for name in cls.output_names(module)
+        ]
+        outputs.append(
+            builder.declare_artifact(
+                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+                module,
+            )
+        )
+        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+
+
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
@@ -106,7 +256,7 @@ class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
         )
 
 
-AlignAdditionalModes = tuple[AlignAdditionalMode | str, ...]
+AlignAdditionalModes = tuple[AlignModule.AdditionalMode | str, ...]
 AlignImageGeometry = tuple[tuple[int, int], tuple[int, int]]
 AlignGeometryPair = tuple[AlignImageGeometry, AlignImageGeometry]
 
@@ -262,7 +412,7 @@ class AlignAdditionalModePlan:
     additional_count: int
 
     @property
-    def normalized_modes(self) -> tuple[AlignAdditionalMode, ...]:
+    def normalized_modes(self) -> tuple[AlignModule.AdditionalMode, ...]:
         if self.additional_count == 0:
             if self.modes:
                 raise ValueError(
@@ -270,8 +420,10 @@ class AlignAdditionalModePlan:
                 )
             return ()
         if not self.modes:
-            return (AlignAdditionalMode.SIMILARLY,) * self.additional_count
-        normalized = tuple(AlignAdditionalMode.from_literal(mode) for mode in self.modes)
+            return (AlignModule.AdditionalMode.SIMILARLY,) * self.additional_count
+        normalized = tuple(
+            AlignModule.AdditionalMode.from_literal(mode) for mode in self.modes
+        )
         if len(normalized) != self.additional_count:
             raise ValueError(
                 "Align additional alignment mode count must match additional image "
@@ -289,11 +441,11 @@ class SimilarlyAlignedOutputGeometry:
     second_image: np.ndarray
     second_offset: tuple[int, int]
     second_shape: tuple[int, int]
-    crop_mode: AlignCropMode
+    crop_mode: AlignModule.CropMode
 
     @property
     def geometry(self) -> tuple[tuple[int, int], tuple[int, int]]:
-        if self.crop_mode is AlignCropMode.KEEP_SIZE:
+        if self.crop_mode is AlignModule.CropMode.KEEP_SIZE:
             return self.second_offset, tuple(np.asarray(self.additional_image).shape[:2])
         if tuple(np.asarray(self.additional_image).shape[:2]) != tuple(
             np.asarray(self.second_image).shape[:2]
@@ -306,7 +458,7 @@ class SimilarlyAlignedOutputGeometry:
 
 
 class AlignCropModeStrategy(
-    EnumKeyedStrategyMixin[AlignCropMode],
+    EnumKeyedStrategyMixin[AlignModule.CropMode],
     ABC,
     metaclass=AutoRegisterMeta,
 ):
@@ -317,11 +469,11 @@ class AlignCropModeStrategy(
     __enum_member_attr__ = "crop_mode"
     __enum_label_attr__ = "crop_mode_label"
 
-    crop_mode: ClassVar[AlignCropMode | None] = None
+    crop_mode: ClassVar[AlignModule.CropMode | None] = None
     crop_mode_label: ClassVar[str | None] = None
 
     @classmethod
-    def for_crop_mode(cls, crop_mode: AlignCropMode) -> "AlignCropModeStrategy":
+    def for_crop_mode(cls, crop_mode: AlignModule.CropMode) -> "AlignCropModeStrategy":
         return cls.for_enum_member(crop_mode)
 
     @abstractmethod
@@ -332,7 +484,7 @@ class AlignCropModeStrategy(
 class KeepSizeAlignCropModeStrategy(AlignCropModeStrategy):
     """Keep aligned images in their original shape."""
 
-    crop_mode = AlignCropMode.KEEP_SIZE
+    crop_mode = AlignModule.CropMode.KEEP_SIZE
 
     def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         return request.offsets, request.shapes
@@ -341,7 +493,7 @@ class KeepSizeAlignCropModeStrategy(AlignCropModeStrategy):
 class PadImagesAlignCropModeStrategy(AlignCropModeStrategy):
     """Pad both images to preserve all shifted content."""
 
-    crop_mode = AlignCropMode.PAD_IMAGES
+    crop_mode = AlignModule.CropMode.PAD_IMAGES
 
     def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         return align_offsets_for_padding(request.offsets, request.shapes)
@@ -350,7 +502,7 @@ class PadImagesAlignCropModeStrategy(AlignCropModeStrategy):
 class CropToOverlapAlignCropModeStrategy(AlignCropModeStrategy):
     """Crop both images to the overlapping aligned region."""
 
-    crop_mode = AlignCropMode.CROP_TO_ALIGNED_REGION
+    crop_mode = AlignModule.CropMode.CROP_TO_ALIGNED_REGION
 
     def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         return align_offsets_for_cropping(request.offsets, request.shapes)
@@ -362,7 +514,7 @@ class AlignExecution:
 
     image: object
     method: str
-    crop_mode: AlignCropMode | str
+    crop_mode: AlignModule.CropMode | str
     additional_alignment_modes: AlignAdditionalModes
     alignment_backend_provider: BackendProviderInput
 
@@ -385,7 +537,7 @@ class AlignExecution:
             second_mask=masks[1],
             alignment_backend_provider=self.alignment_backend_provider,
         ).offset()
-        normalized_crop_mode = AlignCropMode.from_literal(self.crop_mode)
+        normalized_crop_mode = AlignModule.CropMode.from_literal(self.crop_mode)
         offsets, shapes = align_offsets(
             ((0, 0), (row_offset, column_offset)),
             (first_image.shape[:2], second_image.shape[:2]),
@@ -413,7 +565,7 @@ class AlignExecution:
             zip(images[2:], masks[2:], metadata[2:], additional_modes, strict=True),
             start=2,
         ):
-            if mode is not AlignAdditionalMode.SIMILARLY:
+            if mode is not AlignModule.AdditionalMode.SIMILARLY:
                 raise ValueError(
                     f"Unsupported Align additional-image mode {mode.value!r}."
                 )
@@ -462,7 +614,7 @@ class AlignExecution:
 def align_offsets(
     offsets: AlignImageGeometry,
     shapes: AlignImageGeometry,
-    crop_mode: AlignCropMode,
+    crop_mode: AlignModule.CropMode,
 ) -> AlignGeometryPair:
     return AlignCropModeStrategy.for_crop_mode(crop_mode).apply(
         AlignCropRequest(
@@ -691,7 +843,7 @@ def align(
     image: np.ndarray,
     *,
     method: str = "Mutual Information",
-    crop_mode: AlignCropMode | str = AlignCropMode.KEEP_SIZE,
+    crop_mode: AlignModule.CropMode | str = AlignModule.CropMode.KEEP_SIZE,
     additional_alignment_modes: AlignAdditionalModes = (),
     alignment_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[object, ...]:

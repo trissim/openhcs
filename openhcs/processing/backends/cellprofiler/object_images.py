@@ -2,6 +2,105 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
+    CellProfilerObjectInputCountAuthority,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
+from openhcs.interop.cellprofiler.runtime.special_input_policies import (
+    NoSpecialImageInputsMixin,
+    SpecialInputBindingRequest,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+)
+from openhcs.processing.backends.cellprofiler.module_classes import (
+    ArtifactContractModule,
+    BinderSettingsSourceModule,
+    BoundModuleSettings,
+    CellProfilerModule,
+    ModuleSettingsSourceModule,
+    ObjectDebugViewModule,
+    ScopedMeasurementModule,
+    StructuringElementSettingsModule,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+    split_symbol_names,
+)
+from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdSettingsModule,
+)
+
+
+class ConvertObjectsToImageMode(Enum):
+    """Object-label rendering modes exposed by ConvertObjectsToImage settings."""
+
+    BINARY = "binary"
+    GRAYSCALE = "grayscale"
+    COLOR = "color"
+    UINT16 = "uint16"
+
+
+class ConvertObjectsToImageSpecialInputPolicy(
+    NoSpecialImageInputsMixin,
+):
+    """Bind object labels as payloads so rendered images inherit label provenance."""
+
+
+    def bind(
+        self,
+        request: SpecialInputBindingRequest,
+    ) -> CellProfilerKwargDict:
+        object_inputs = request.object_inputs
+        CellProfilerObjectInputCountAuthority.require_exact(
+            request.module_name,
+            object_inputs,
+            1,
+        )
+        return {"labels": request.object_label_payload(object_inputs[0])}
+
+
+class ConvertObjectsToImageModule(
+    ConvertObjectsToImageSpecialInputPolicy,
+    ObjectDebugViewModule,
+    CellProfilerModule,
+):
+    module_name = 'ConvertObjectsToImage'
+    function_name = 'convert_objects_to_image'
+    validated = True
+    contract = 'pure_3d'
+    confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Select the color format",
+            "image_mode",
+            cellprofiler_enum_value_setting_parser(ConvertObjectsToImageMode),
+        ),
+        SettingToKeywordBinding("Select the colormap", "colormap_value"),
+    )
+
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+
+        objects = builder.require_artifact(
+            ArtifactSpec(required_setting_value(module, "Select the input objects"), ArtifactKind.OBJECT_LABELS),
+            module,
+        )
+        output = builder.declare_artifact(
+            ArtifactSpec(required_setting_value(module, "Name the output image"), ArtifactKind.IMAGE),
+            module,
+        )
+        return assembler.assemble_contract(module, builder, inputs=[objects], outputs=[output])
+
+
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -217,6 +316,13 @@ def convert_objects_to_image(
         metadata=image_payload_metadata(labels).without_unit_interval_intensity_scale(),
     )
 
+
+class ConvertImageToObjectsModule(ObjectDebugViewModule, CellProfilerModule):
+    module_name = 'ConvertImageToObjects'
+    function_name = 'convert_image_to_objects'
+    validated = True
+    contract = 'unknown'
+    confidence = 1.0
 
 __all__ = public_names_from_objects(
     BinaryImageModeRenderer,

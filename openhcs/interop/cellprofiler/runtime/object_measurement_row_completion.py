@@ -15,6 +15,7 @@ from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_OBJECT_ID_FIELD,
     MEASUREMENT_OBJECT_LABEL_FIELD,
     MEASUREMENT_OBJECT_NUMBER_FIELD,
+    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
     measurement_object_label,
 )
 from openhcs.core.runtime_semantics import (
@@ -458,6 +459,9 @@ class ObjectMeasurementRowCompletionSchema:
             row[field_name] = missing_value
         row.update(axis_values)
         row[self.object_id_field] = object_id
+        object_identity = row_policy.object_identity_for_label_payload(label_payload)
+        if object_identity is not MeasurementObjectRowIdentity.LABEL_ID:
+            row[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = object_identity.value
         return row
 
     def axis_values_for_key(self, axis_key: CellProfilerRuntimeValueSequence) -> CellProfilerKwargDict:
@@ -766,6 +770,23 @@ class MeasurementObjectRowIdentityProjectionStrategy(
     def object_ids_for_label_ids(self, label_ids: tuple[int, ...]) -> tuple[int, ...]:
         """Return required exported object IDs for a source label-ID domain."""
 
+    def row_with_object_id(
+        self,
+        request: ObjectMeasurementRowIdentityProjectionRequest,
+        row: CellProfilerRuntimeValue,
+        object_id: int,
+    ) -> CellProfilerKwargDict:
+        """Return a row projected into this strategy's object identity domain."""
+        projected_row = request.row_with_object_id(row, object_id)
+        if request.row_policy.annotates_projected_object_identity(
+            measurement_row_mapping(projected_row),
+            object_identity=type(self).object_identity,
+        ):
+            projected_row[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = (
+                type(self).object_identity.value
+            )
+        return projected_row
+
 
 class LabelIdMeasurementObjectRowIdentityProjectionStrategy(
     MeasurementObjectRowIdentityProjectionStrategy
@@ -866,7 +887,7 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
                 ):
                     continue
                 ordinal = ordinal_state.next_unbound_ordinal(axis_key)
-            projected_rows.append(request.row_with_object_id(row, ordinal))
+            projected_rows.append(self.row_with_object_id(request, row, ordinal))
             projected_row_keys.append((ordinal, axis_key))
             if measured:
                 measured_projected_row_keys.append((ordinal, axis_key))
@@ -943,7 +964,7 @@ class RowSequenceMeasurementObjectRowIdentityProjectionStrategy(
                 continue
             ordinal = MappingValueLookup(ordinal_by_axis, axis_key).value_or(0) + 1
             ordinal_by_axis[axis_key] = ordinal
-            projected_rows.append(request.row_with_object_id(row, ordinal))
+            projected_rows.append(self.row_with_object_id(request, row, ordinal))
             projected_row_keys.append((ordinal, axis_key))
             if measured:
                 measured_projected_row_keys.append((ordinal, axis_key))

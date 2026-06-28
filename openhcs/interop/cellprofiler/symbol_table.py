@@ -9,23 +9,11 @@ supplied by the plate/input metadata.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import ClassVar, Iterable, Mapping
+from typing import Iterable, Mapping
 
-from metaclass_registry import AutoRegisterMeta
-
-from openhcs.interop.cellprofiler.crop_settings import (
-    CropShape,
-)
-from openhcs.interop.cellprofiler.relate_objects_settings import (
-    RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
-    RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
-    RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
-)
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
     NO_ARTIFACT_MATERIALIZATION,
@@ -38,14 +26,9 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
-from openhcs.core.registry_strategies import (
-    GeneratedLeafClassSpec,
-)
-from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
-    GroupedSourceBindings,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -59,6 +42,7 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
     SourceSelector,
+    SourceBindingsConfig,
     StepSourceBindingsConfig,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
@@ -66,118 +50,41 @@ from openhcs.processing.backends.cellprofiler.library import canonical_module_na
 from pycodify import FormatContext, to_source
 import openhcs.serialization.pycodify_formatters as _openhcs_pycodify_formatters
 
-from openhcs.interop.cellprofiler.align_settings import align_image_plan
-from openhcs.interop.cellprofiler.area_occupied_settings import (
-    AreaOccupiedOperand,
-    area_occupied_rows,
-)
-from openhcs.interop.cellprofiler.calculate_math_settings import (
-    calculate_math_object_dependencies,
-)
-from openhcs.interop.cellprofiler.color_to_gray_settings import (
-    color_to_gray_input_name,
-    color_to_gray_output_names,
-)
-from openhcs.interop.cellprofiler.crop_settings import (
-    crop_input_image_name,
-    crop_mask_image_name,
-    crop_objects_name,
-    crop_output_image_name,
-    crop_previous_mask_artifact_name,
-    crop_shape,
-)
-from openhcs.interop.cellprofiler.artifact_semantics import (
-    ArtifactSettingSymbol,
-    FunctionSpecialOutput,
-    artifact_setting_symbols,
-    function_special_outputs,
-)
-from openhcs.interop.cellprofiler.module_roles import INFRASTRUCTURE_MODULE_NAMES
+from openhcs.interop.cellprofiler.module_roles import cellprofiler_module_role
 from openhcs.interop.cellprofiler.module_artifact_inputs import (
     module_declared_artifact_inputs,
 )
-from openhcs.interop.cellprofiler.filter_objects_settings import (
-    FilterObjectsOutputRole,
-    filter_objects_child_count_object_names,
-    filter_objects_plan,
-)
-from openhcs.interop.cellprofiler.gray_to_color_settings import (
-    _GrayToColorInputNameResolver,
-)
-from openhcs.interop.cellprofiler.overlay_outlines_settings import (
-    OverlayOutlineSourceKind,
-    overlay_outline_rows,
-    overlay_outlines_base_image_name,
-    overlay_outlines_output_image_name,
-)
 from openhcs.interop.cellprofiler.source_schema import compile_image_schema
-from openhcs.interop.cellprofiler.setting_names import (
-    IMAGE_MEASUREMENT_SETTING,
-    OBJECT_MEASUREMENT_SETTING,
-    SettingNameFamilySpec,
-    SettingNameFamily,
-    optional_setting_value,
-    required_setting_value,
-    setting_names,
-    setting_values,
-    normalized_symbol_name,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.straighten_worms_settings import (
-    straighten_worms_image_bindings,
-    straighten_worms_input_objects_name,
-    straighten_worms_output_objects_name,
-)
-from openhcs.interop.cellprofiler.untangle_worms_settings import (
-    UNTANGLE_WORMS_INPUT_IMAGE_SETTING,
-    UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING,
-    UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,
-)
-from openhcs.interop.cellprofiler.unmix_colors_settings import (
-    unmix_colors_input_name,
-    unmix_colors_output_rows,
-)
-from openhcs.interop.cellprofiler.watershed_settings import (
-    WATERSHED_MARKERS_SETTING,
-    WATERSHED_MASK_SETTING,
-)
-
-
 class CellProfilerSymbolKind(str, Enum):
     """CellProfiler workspace symbol categories mapped to OpenHCS artifacts."""
 
-    IMAGE = "image"
-    OBJECTS = "objects"
-    MEASUREMENTS = "measurements"
-    RELATIONSHIPS = "relationships"
-    SPATIAL_GRID = "spatial_grid"
+    def __new__(cls, value: str, artifact_kind: ArtifactKind):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj._artifact_kind = artifact_kind
+        return obj
+
+    IMAGE = ("image", ArtifactKind.IMAGE)
+    OBJECTS = ("objects", ArtifactKind.OBJECT_LABELS)
+    MEASUREMENTS = ("measurements", ArtifactKind.MEASUREMENTS)
+    RELATIONSHIPS = ("relationships", ArtifactKind.RELATIONSHIPS)
+    SPATIAL_GRID = ("spatial_grid", ArtifactKind.SPATIAL_GRID)
 
     @property
     def artifact_kind(self) -> ArtifactKind:
-        return {
-            CellProfilerSymbolKind.IMAGE: ArtifactKind.IMAGE,
-            CellProfilerSymbolKind.OBJECTS: ArtifactKind.OBJECT_LABELS,
-            CellProfilerSymbolKind.MEASUREMENTS: ArtifactKind.MEASUREMENTS,
-            CellProfilerSymbolKind.RELATIONSHIPS: ArtifactKind.RELATIONSHIPS,
-            CellProfilerSymbolKind.SPATIAL_GRID: ArtifactKind.SPATIAL_GRID,
-        }[self]
+        return self._artifact_kind
 
     @classmethod
     def from_artifact_kind(cls, kind: ArtifactKind) -> "CellProfilerSymbolKind":
         """Return the CellProfiler workspace kind for an OpenHCS artifact kind."""
-        try:
-            return {
-                ArtifactKind.IMAGE: cls.IMAGE,
-                ArtifactKind.OBJECT_LABELS: cls.OBJECTS,
-                ArtifactKind.MEASUREMENTS: cls.MEASUREMENTS,
-                ArtifactKind.RELATIONSHIPS: cls.RELATIONSHIPS,
-                ArtifactKind.SPATIAL_GRID: cls.SPATIAL_GRID,
-            }[kind]
-        except KeyError as exc:
-            raise ValueError(
-                f"CellProfiler converter cannot map artifact kind {kind.value!r} "
-                "to a workspace symbol kind."
-            ) from exc
+        artifact_kind = ArtifactKind(kind)
+        for member in cls:
+            if member.artifact_kind is artifact_kind:
+                return member
+        raise ValueError(
+            f"CellProfiler converter cannot map artifact kind {artifact_kind.value!r} "
+            "to a workspace symbol kind."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,94 +221,7 @@ class ModuleArtifactContracts:
         )
 
 
-class ModuleInputRolePolicy(ABC, metaclass=AutoRegisterMeta):
-    """Nominal policy for modules where repeated input names carry distinct roles."""
-
-    __registry_key__ = "module_name"
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
-
-    @classmethod
-    def for_module(cls, module_name: str) -> "ModuleInputRolePolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DeduplicatingModuleInputRolePolicy,
-        )
-        return policy_type()
-
-    def preserve_duplicate_inputs(self, module: ModuleBlock) -> bool:
-        """Return whether input order and repeated names are semantic."""
-        del module
-        return False
-
-    def source_binding_participates_in_image_stack(
-        self,
-        module: ModuleBlock,
-        symbol: "CellProfilerSymbol",
-        input_symbols: tuple["CellProfilerSymbol", ...],
-    ) -> bool:
-        """Return whether an external source symbol anchors image-stack execution."""
-        del module, symbol, input_symbols
-        return True
-
-
-class DeduplicatingModuleInputRolePolicy(ModuleInputRolePolicy):
-    """Default CellProfiler workspace behavior: same name and kind is one artifact."""
-
-
-class RolePreservingModuleInputRolePolicy(ModuleInputRolePolicy):
-    """Base for modules whose positional input roles remain distinct after naming."""
-
-    def preserve_duplicate_inputs(self, module: ModuleBlock) -> bool:
-        del module
-        return True
-
-
-class WatershedInputRolePolicy(RolePreservingModuleInputRolePolicy):
-    """Preserve image/marker/mask roles even when the mask is the input image."""
-
-    module_name = "Watershed"
-
-
-class CorrectIlluminationApplyInputRolePolicy(RolePreservingModuleInputRolePolicy):
-    """Preserve repeated image/function pairs for paired illumination correction."""
-
-    module_name = "CorrectIlluminationApply"
-
-
-class PrimaryImageAnchoredInputRolePolicy(ModuleInputRolePolicy):
-    """Treat the first external image input as the source execution anchor."""
-
-    def source_binding_participates_in_image_stack(
-        self,
-        module: ModuleBlock,
-        symbol: "CellProfilerSymbol",
-        input_symbols: tuple["CellProfilerSymbol", ...],
-    ) -> bool:
-        del module
-        if symbol.kind is not CellProfilerSymbolKind.IMAGE:
-            return True
-        first_external_image = next(
-            (
-                candidate
-                for candidate in input_symbols
-                if candidate.is_external_source
-                and candidate.kind is CellProfilerSymbolKind.IMAGE
-            ),
-            None,
-        )
-        if first_external_image is None:
-            return True
-        return symbol.key == first_external_image.key
-
-
-class ImageMathInputRolePolicy(PrimaryImageAnchoredInputRolePolicy):
-    """Bind ImageMath source operands relative to the primary source image."""
-
-    module_name = "ImageMath"
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CellProfilerSymbolTable:
     """Compiled CellProfiler symbol table and per-module artifact contracts."""
 
@@ -450,145 +270,8 @@ class CellProfilerSymbolTable:
         return builder.build()
 
 
-class SymbolTableSettingRole(str, Enum):
-    """Semantic roles for common symbol-table CellProfiler setting families."""
-
-    INPUT_IMAGE = "input_image"
-    INPUT_OBJECTS = "input_objects"
-    OUTPUT_IMAGE = "output_image"
-    NEIGHBOR_COUNT_IMAGE = "neighbor_count_image"
-    PERCENT_TOUCHING_IMAGE = "percent_touching_image"
-    OUTPUT_OBJECTS = "output_objects"
-    IDENTIFY_PRIMARY_OUTPUT_OBJECTS = "identify_primary_output_objects"
-    IDENTIFY_SECONDARY_INPUT_OBJECTS = "identify_secondary_input_objects"
-    IDENTIFY_SECONDARY_OUTPUT_OBJECTS = "identify_secondary_output_objects"
-    IDENTIFY_TERTIARY_LARGER_OBJECTS = "identify_tertiary_larger_objects"
-    IDENTIFY_TERTIARY_SMALLER_OBJECTS = "identify_tertiary_smaller_objects"
-    IDENTIFY_TERTIARY_OUTPUT_OBJECTS = "identify_tertiary_output_objects"
-    CLASSIFY_OBJECTS_INPUT = "classify_objects_input"
-    DISPLAY_OBJECTS = "display_objects"
 
 
-class SymbolTableSettingNameCatalog:
-    """Authoritative CP setting-name families used by symbol-table contracts."""
-
-    _rows: ClassVar[Mapping[SymbolTableSettingRole, SettingNameFamilySpec]] = (
-        MappingProxyType(
-            {
-                SymbolTableSettingRole.INPUT_IMAGE: SettingNameFamilySpec(
-                    "Select the input image",
-                    aliases=(
-                        "Select an input image",
-                        "Select the input binary image",
-                        "Input",
-                    ),
-                ),
-                SymbolTableSettingRole.INPUT_OBJECTS: SettingNameFamilySpec(
-                    "Select the input objects",
-                    aliases=(
-                        "Select input objects",
-                        "Select input object sets",
-                        "Objects",
-                    ),
-                ),
-                SymbolTableSettingRole.OUTPUT_IMAGE: SettingNameFamilySpec(
-                    "Name the output image",
-                    aliases=("Name the output image file",),
-                ),
-                SymbolTableSettingRole.NEIGHBOR_COUNT_IMAGE: SettingNameFamilySpec(
-                    "Retain the image of objects colored by numbers of neighbors?"
-                ),
-                SymbolTableSettingRole.PERCENT_TOUCHING_IMAGE: SettingNameFamilySpec(
-                    "Retain the image of objects colored by percent of touching pixels?"
-                ),
-                SymbolTableSettingRole.OUTPUT_OBJECTS: SettingNameFamilySpec(
-                    "Name the output objects",
-                    aliases=(
-                        "Name the output object",
-                        "Name the objects to be identified",
-                        "Object",
-                    ),
-                ),
-                SymbolTableSettingRole.IDENTIFY_PRIMARY_OUTPUT_OBJECTS: SettingNameFamilySpec(
-                    "Name the primary objects to be identified",
-                    aliases=("Object",),
-                ),
-                SymbolTableSettingRole.IDENTIFY_SECONDARY_INPUT_OBJECTS: SettingNameFamilySpec(
-                    "Select the input objects"
-                ),
-                SymbolTableSettingRole.IDENTIFY_SECONDARY_OUTPUT_OBJECTS: SettingNameFamilySpec(
-                    "Name the objects to be identified"
-                ),
-                SymbolTableSettingRole.IDENTIFY_TERTIARY_LARGER_OBJECTS: SettingNameFamilySpec(
-                    "Select the larger identified objects"
-                ),
-                SymbolTableSettingRole.IDENTIFY_TERTIARY_SMALLER_OBJECTS: SettingNameFamilySpec(
-                    "Select the smaller identified objects"
-                ),
-                SymbolTableSettingRole.IDENTIFY_TERTIARY_OUTPUT_OBJECTS: SettingNameFamilySpec(
-                    "Name the tertiary objects to be identified"
-                ),
-                SymbolTableSettingRole.CLASSIFY_OBJECTS_INPUT: SettingNameFamilySpec(
-                    "Select the object to be classified"
-                ),
-                SymbolTableSettingRole.DISPLAY_OBJECTS: SettingNameFamilySpec(
-                    "Select objects to display",
-                    aliases=("Select object to display",),
-                ),
-            }
-        )
-    )
-
-    @classmethod
-    def family(cls, role: SymbolTableSettingRole) -> SettingNameFamily:
-        """Return the materialized setting-name family for a semantic role."""
-        return cls._rows[role].materialize()
-
-
-INPUT_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.INPUT_IMAGE
-)
-INPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.INPUT_OBJECTS
-)
-OUTPUT_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.OUTPUT_IMAGE
-)
-NEIGHBOR_COUNT_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.NEIGHBOR_COUNT_IMAGE
-)
-PERCENT_TOUCHING_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.PERCENT_TOUCHING_IMAGE
-)
-OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.OUTPUT_OBJECTS
-)
-IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.IDENTIFY_PRIMARY_OUTPUT_OBJECTS
-)
-IDENTIFY_SECONDARY_INPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.IDENTIFY_SECONDARY_INPUT_OBJECTS
-)
-IDENTIFY_SECONDARY_OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.IDENTIFY_SECONDARY_OUTPUT_OBJECTS
-)
-IDENTIFY_TERTIARY_LARGER_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.IDENTIFY_TERTIARY_LARGER_OBJECTS
-)
-IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.IDENTIFY_TERTIARY_SMALLER_OBJECTS
-)
-IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.IDENTIFY_TERTIARY_OUTPUT_OBJECTS
-)
-CLASSIFY_OBJECTS_INPUT_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.CLASSIFY_OBJECTS_INPUT
-)
-DISPLAY_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
-    SymbolTableSettingRole.DISPLAY_OBJECTS
-)
-PARENT_OBJECTS_SETTING = RELATE_OBJECTS_PARENT_OBJECTS_SETTING
-CHILD_OBJECTS_SETTING = RELATE_OBJECTS_CHILD_OBJECTS_SETTING
 
 
 class _SymbolTableBuilder:
@@ -598,9 +281,7 @@ class _SymbolTableBuilder:
         self._source_schema = source_schema
 
     def visit(self, module: ModuleBlock) -> None:
-        self._contracts.append(
-            ModuleContractBuilder.for_module(module.name).build(self, module)
-        )
+        self._contracts.append(_module_artifact_contract(self, module))
 
     def build(self) -> CellProfilerSymbolTable:
         return CellProfilerSymbolTable(
@@ -623,26 +304,30 @@ class _SymbolTableBuilder:
         external_symbols = CellProfilerSymbol.unique_by_key(symbols)
         if not external_symbols:
             return EMPTY_SOURCE_BINDINGS
-        role_policy = (
-            ModuleInputRolePolicy.for_module(module.name)
-            if module is not None
-            else DeduplicatingModuleInputRolePolicy()
-        )
+        module_type = None
+        if module is not None:
+            from openhcs.processing.backends.cellprofiler.module_classes import (
+                CellProfilerModule,
+            )
+
+            module_type = CellProfilerModule.for_module(module.name)
         bindings = tuple(
             self._source_binding_for_symbol(
                 symbol,
-                participates_in_image_stack=role_policy.source_binding_participates_in_image_stack(
-                    module,
-                    symbol,
-                    input_symbols,
+                participates_in_image_stack=(
+                    True
+                    if module is None or module_type is None
+                    else module_type.source_binding_participates_in_image_stack(
+                        module,
+                        symbol,
+                        input_symbols,
+                    )
                 ),
             )
             for symbol in external_symbols
         )
         return StepSourceBindingsConfig(
-            groups=(GroupedSourceBindings(bindings=bindings),),
-            metadata_rules=self._source_schema.metadata_rules,
-            match_plan=self._source_schema.match_plan,
+            bindings=bindings,
         )
 
     def external_image(self, name: str) -> CellProfilerSymbol:
@@ -703,6 +388,18 @@ class _SymbolTableBuilder:
             )
         return symbol
 
+    def require_artifact(
+        self,
+        spec: ArtifactSpec,
+        module: ModuleBlock,
+    ) -> CellProfilerSymbol:
+        """Require a typed artifact through the generic compiler boundary."""
+        return self.require(
+            spec.name,
+            CellProfilerSymbolKind.from_artifact_kind(spec.kind),
+            module,
+        )
+
     def optional(
         self,
         name: str,
@@ -711,6 +408,13 @@ class _SymbolTableBuilder:
         """Return a previously declared symbol if it exists."""
         normalized_name = _normalize_symbol_name(name)
         return self._symbols.get(CellProfilerSymbolKey(normalized_name, kind))
+
+    def optional_artifact(self, spec: ArtifactSpec) -> CellProfilerSymbol | None:
+        """Return a previously declared typed artifact if it exists."""
+        return self.optional(
+            spec.name,
+            CellProfilerSymbolKind.from_artifact_kind(spec.kind),
+        )
 
     def measurement_output_for_module_num(
         self,
@@ -755,6 +459,19 @@ class _SymbolTableBuilder:
             kind,
             module.module_num,
             sidecar_role=sidecar_role,
+        )
+
+    def declare_artifact(
+        self,
+        spec: ArtifactSpec,
+        module: ModuleBlock,
+    ) -> CellProfilerSymbol:
+        """Declare a typed artifact through the generic compiler boundary."""
+        return self.declare(
+            spec.name,
+            CellProfilerSymbolKind.from_artifact_kind(spec.kind),
+            module,
+            sidecar_role=spec.sidecar_role,
         )
 
     def _declare(
@@ -828,6 +545,35 @@ class _SymbolTableBuilder:
         )
 
 
+def _module_artifact_contract(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    """Compile one module contract from declaration SSOT, then generic inference."""
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    module_type = CellProfilerModule.for_module(module.name)
+    if module_type is not None:
+        contract = module_type.artifact_contract(
+            CellProfilerContractAssemblyMixin(),
+            builder,
+            module,
+        )
+        if contract is not None:
+            return contract
+
+    if cellprofiler_module_role(module.name).is_infrastructure:
+        return ModuleArtifactContracts(module.name, module.module_num)
+
+    raise ValueError(
+        f"Module {module.name}({module.module_num}) has no declared or "
+        "inferable CellProfiler artifact contract. Add artifact_contract() "
+        "to the module declaration before converting this module."
+    )
+
+
 def module_contract_literal(
     contract: ModuleArtifactContracts,
     *,
@@ -872,8 +618,31 @@ def module_contract_literal(
         output_specs += ","
     if len(contract.runtime_artifact_inputs) == 1:
         runtime_input_specs += ","
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    required_variable_components = tuple(
+        component
+        for module_type in (CellProfilerModule.for_module(contract.module_name),)
+        if module_type is not None
+        for component in module_type.required_variable_components
+    )
+    required_components_literal = ""
+    if required_variable_components:
+        required_components_literal = (
+            ", required_variable_components=("
+            + ", ".join(
+                f"VariableComponents.{component.name}"
+                for component in required_variable_components
+            )
+            + ("," if len(required_variable_components) == 1 else "")
+            + ")"
+        )
     if import_collector is not None:
         import_collector.update(artifact_literals.imports)
+        if required_variable_components:
+            import_collector.add(("openhcs.constants.constants", "VariableComponents"))
     return (
         "ModuleArtifactContract("
         f"module_name={contract.module_name!r}, "
@@ -881,6 +650,7 @@ def module_contract_literal(
         f"runtime_artifact_inputs=({runtime_input_specs}), "
         f"outputs=({output_specs})"
         f"{artifact_literals.declared_outputs_literal(contract)}"
+        f"{required_components_literal}"
         ")"
     )
 
@@ -937,14 +707,36 @@ def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
     """Render a deterministic Python literal for generated step source bindings."""
     if config.is_empty:
         return "EMPTY_SOURCE_BINDINGS"
+    return _source_bindings_literal(config, "StepSourceBindingsConfig")
+
+
+def source_bindings_config_literal(config: SourceBindingsConfig) -> str:
+    """Render a deterministic Python literal for generated pipeline source bindings."""
+    return _source_bindings_literal(config, "SourceBindingsConfig")
+
+
+def _source_bindings_literal(
+    config: SourceBindingsConfig,
+    constructor_name: str,
+) -> str:
+    """Render source-binding payload fields for one config declaration."""
     field_literals: list[str] = []
-    if config.groups:
-        group_literals = ", ".join(
-            _grouped_source_bindings_literal(group) for group in config.groups
+    if config.source_filters:
+        filter_literals_authority = SourceFilterClauseLiteralAuthority()
+        filter_literals = ", ".join(
+            filter_literals_authority.literal_for(clause)
+            for clause in config.source_filters
         )
-        if len(config.groups) == 1:
-            group_literals += ","
-        field_literals.append(f"groups=({group_literals})")
+        if len(config.source_filters) == 1:
+            filter_literals += ","
+        field_literals.append(f"source_filters=({filter_literals})")
+    if config.bindings:
+        binding_literals = ", ".join(
+            _named_source_binding_literal(binding) for binding in config.bindings
+        )
+        if len(config.bindings) == 1:
+            binding_literals += ","
+        field_literals.append(f"bindings=({binding_literals})")
     if config.metadata_rules:
         metadata_rule_literals = ", ".join(
             _metadata_extraction_rule_literal(rule) for rule in config.metadata_rules
@@ -956,22 +748,7 @@ def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
         field_literals.append(
             f"match_plan={_source_binding_match_plan_literal(config.match_plan)}"
         )
-    return f"StepSourceBindingsConfig({', '.join(field_literals)})"
-
-
-def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
-    binding_literals = ", ".join(
-        _named_source_binding_literal(binding) for binding in group.bindings
-    )
-    if len(group.bindings) == 1:
-        binding_literals += ","
-    group_key = "None" if group.group_key is None else repr(group.group_key)
-    return (
-        "GroupedSourceBindings("
-        f"group_key={group_key}, "
-        f"bindings=({binding_literals})"
-        ")"
-    )
+    return f"{constructor_name}({', '.join(field_literals)})"
 
 
 def _named_source_binding_literal(binding: NamedSourceBinding) -> str:
@@ -1093,216 +870,6 @@ def _source_binding_match_field_literal(field: SourceBindingMatchField) -> str:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class CropMaskInputRequest:
-    builder: _SymbolTableBuilder
-    module: ModuleBlock
-
-
-class CropMaskInputStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Nominal Crop side-input semantics for one closed crop shape."""
-
-    __registry_key__ = "shape"
-    __skip_if_no_key__ = True
-    shape: ClassVar[str | None] = None
-
-    @classmethod
-    def for_shape(cls, shape: CropShape) -> "CropMaskInputStrategy":
-        return cls.__registry__[shape.value]()
-
-    @abstractmethod
-    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
-        """Return artifact inputs needed by this crop shape."""
-
-
-class ResolvedCropMaskInputStrategy(CropMaskInputStrategy):
-    """Template method for crop shapes that consume one masking artifact."""
-
-    symbol_kind: ClassVar[CellProfilerSymbolKind | None] = None
-    missing_input_description: ClassVar[str | None] = None
-    artifact_name_resolver: ClassVar[Callable[[ModuleBlock], str | None] | None] = None
-
-    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
-        artifact_name = self._artifact_name(request.module)
-        if artifact_name is None:
-            raise ValueError(
-                f"Crop({request.module.module_num}) uses "
-                f"{self.missing_input_description} but does not declare "
-                "the required masking artifact."
-            )
-        symbol_kind = type(self).symbol_kind
-        if symbol_kind is None:
-            raise TypeError(f"{type(self).__name__}.symbol_kind must be set.")
-        return (
-            request.builder.require(
-                artifact_name,
-                symbol_kind,
-                request.module,
-            ),
-        )
-
-    def _artifact_name(self, module: ModuleBlock) -> str | None:
-        resolver = type(self).artifact_name_resolver
-        if resolver is None:
-            raise TypeError(
-                f"{type(self).__name__}.artifact_name_resolver must be set."
-            )
-        return resolver(module)
-
-
-for _crop_mask_input_strategy in (
-    GeneratedLeafClassSpec(
-        "PreviousCropMaskInputStrategy",
-        ResolvedCropMaskInputStrategy,
-        attributes={
-            "shape": CropShape.CROPPING.value,
-            "symbol_kind": CellProfilerSymbolKind.IMAGE,
-            "missing_input_description": "previous cropping",
-            "artifact_name_resolver": staticmethod(crop_previous_mask_artifact_name),
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "ImageCropMaskInputStrategy",
-        ResolvedCropMaskInputStrategy,
-        attributes={
-            "shape": CropShape.IMAGE.value,
-            "symbol_kind": CellProfilerSymbolKind.IMAGE,
-            "missing_input_description": "image-mask cropping",
-            "artifact_name_resolver": staticmethod(crop_mask_image_name),
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "ObjectsCropMaskInputStrategy",
-        ResolvedCropMaskInputStrategy,
-        attributes={
-            "shape": CropShape.OBJECTS.value,
-            "symbol_kind": CellProfilerSymbolKind.OBJECTS,
-            "missing_input_description": "object-mask cropping",
-            "artifact_name_resolver": staticmethod(crop_objects_name),
-        },
-    ),
-):
-    _crop_mask_input_strategy.declare_in(globals())
-
-
-class RectangleCropMaskInputStrategy(CropMaskInputStrategy):
-    shape = CropShape.RECTANGLE.value
-
-    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
-        del request
-        return ()
-
-
-class EllipseCropMaskInputStrategy(CropMaskInputStrategy):
-    shape = CropShape.ELLIPSE.value
-
-    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
-        del request
-        return ()
-
-
-@dataclass(frozen=True, slots=True)
-class ModuleArtifactNamePolicy:
-    """CellProfiler module-scoped generated artifact naming policy."""
-
-    module: ModuleBlock
-
-    @property
-    def measurement_name(self) -> str:
-        return f"{self.module.name}_{self.module.module_num}_measurements"
-
-    def indexed_output_image_name(
-        self,
-        output_names: tuple[str, ...],
-        index: int,
-    ) -> str:
-        try:
-            return _normalize_symbol_name(output_names[index])
-        except IndexError as exc:
-            raise ValueError(
-                f"Module {self.module.name}({self.module.module_num}) requested "
-                f"retained neighbor image {index + 1} but did not provide an "
-                "output image name."
-            ) from exc
-
-    def special_output_name(
-        self,
-        special: FunctionSpecialOutput,
-        output_names: dict[ArtifactKind, list[str]],
-        inputs: tuple[CellProfilerSymbol, ...],
-        setting_outputs: tuple[ArtifactSettingSymbol, ...],
-        *,
-        measurement_output_count: int,
-    ) -> str:
-        if special.kind is ArtifactKind.RELATIONSHIPS:
-            relationship_name = _relationship_output_name(inputs, setting_outputs)
-            if relationship_name is not None:
-                return relationship_name
-        names = output_names.get(special.kind)
-        if names:
-            return names.pop(0)
-        if special.kind is ArtifactKind.MEASUREMENTS:
-            if measurement_output_count == 1:
-                return self.measurement_name
-            return f"{self.module.name}_{self.module.module_num}_{special.name}"
-        return special.name
-
-
-class FilterObjectsOutputSymbolKindStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Nominal symbol-kind mapping for FilterObjects output roles."""
-
-    __registry_key__ = "role"
-    __skip_if_no_key__ = True
-    role: ClassVar[FilterObjectsOutputRole | None] = None
-
-    @classmethod
-    def for_role(
-        cls,
-        role: FilterObjectsOutputRole,
-    ) -> "FilterObjectsOutputSymbolKindStrategy":
-        strategy_type = cls.__registry__.get(role)
-        if strategy_type is None:
-            raise ValueError(f"Unsupported FilterObjects output role {role.value!r}.")
-        return strategy_type()
-
-    @abstractmethod
-    def symbol_kind(self) -> CellProfilerSymbolKind:
-        """Return the OpenHCS symbol kind for this output role."""
-
-
-class FilterObjectsFilteredObjectOutputStrategy(FilterObjectsOutputSymbolKindStrategy):
-    """Map relabeled FilterObjects outputs to object-label artifacts."""
-
-    role = FilterObjectsOutputRole.FILTERED_OBJECTS
-
-    def symbol_kind(self) -> CellProfilerSymbolKind:
-        return CellProfilerSymbolKind.OBJECTS
-
-
-class FilterObjectsOutlineImageOutputStrategy(FilterObjectsOutputSymbolKindStrategy):
-    """Map retained FilterObjects outlines to image artifacts."""
-
-    role = FilterObjectsOutputRole.OUTLINE_IMAGE
-
-    def symbol_kind(self) -> CellProfilerSymbolKind:
-        return CellProfilerSymbolKind.IMAGE
-
-
-class FilterObjectsRelationshipsOutputStrategy(FilterObjectsOutputSymbolKindStrategy):
-    """Map relabeled object lineage to directed relationship artifacts."""
-
-    role = FilterObjectsOutputRole.RELATIONSHIPS
-
-    def symbol_kind(self) -> CellProfilerSymbolKind:
-        return CellProfilerSymbolKind.RELATIONSHIPS
-
-
-def _overlay_outline_symbol_kind(
-    source_kind: OverlayOutlineSourceKind,
-) -> CellProfilerSymbolKind:
-    if source_kind is OverlayOutlineSourceKind.IMAGE:
-        return CellProfilerSymbolKind.IMAGE
-    return CellProfilerSymbolKind.OBJECTS
 
 
 class CellProfilerContractAssemblyMixin:
@@ -1317,10 +884,16 @@ class CellProfilerContractAssemblyMixin:
         outputs: Iterable[CellProfilerSymbol] = (),
         preserve_duplicate_inputs: bool = False,
     ) -> ModuleArtifactContracts:
+        from openhcs.processing.backends.cellprofiler.module_classes import (
+            CellProfilerModule,
+        )
+
+        module_type = CellProfilerModule.for_module(module.name)
         preserve_role_inputs = (
             preserve_duplicate_inputs
-            or ModuleInputRolePolicy.for_module(module.name).preserve_duplicate_inputs(
-                module
+            or (
+                module_type is not None
+                and module_type.preserve_duplicate_artifact_inputs(module)
             )
         )
         input_symbols = (
@@ -1342,1521 +915,95 @@ class CellProfilerContractAssemblyMixin:
             ),
         )
 
-    def setting_bool(
-        self,
-        module: ModuleBlock,
-        setting: str | SettingNameFamily,
-    ) -> bool:
-        value = optional_setting_value(module, setting)
-        if value is None:
-            return False
-        normalized = value.strip().lower()
-        if normalized in {"yes", "true", "1"}:
-            return True
-        if normalized in {"no", "false", "0"}:
-            return False
-        raise ValueError(
-            f"Unsupported boolean setting {value!r} in module "
-            f"{module.name}({module.module_num})."
-        )
-
-    def setting_symbol_names(
-        self,
-        module: ModuleBlock,
-        name: str | SettingNameFamily,
-    ) -> tuple[str, ...]:
-        symbols = self.optional_setting_symbol_names(module, name)
-        if not symbols:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) missing setting "
-                f"{setting_names(name)}."
-            )
-        return symbols
-
-    def optional_setting_symbol_names(
-        self,
-        module: ModuleBlock,
-        name: str | SettingNameFamily,
-    ) -> tuple[str, ...]:
-        return tuple(
-            symbol
-            for value in setting_values(module, name)
-            for symbol in _split_names(value)
-        )
-
-    def normalized_setting_symbol(
-        self,
-        module: ModuleBlock,
-        setting: str | SettingNameFamily,
-    ) -> str | None:
-        value = optional_setting_value(module, setting)
-        if value is None:
-            return None
-        return normalized_symbol_name(value)
-
-    def retained_output_image(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-        *,
-        retain_setting: str,
-        output_setting: str | SettingNameFamily,
-    ) -> tuple[CellProfilerSymbol, ...]:
-        if not _any_truthy_setting_value(module, retain_setting):
-            return ()
-        output_name = self.normalized_setting_symbol(module, output_setting)
-        if output_name is None:
-            return ()
-        return (builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module),)
-
-
-class ModuleContractBuilder(
-    CellProfilerContractAssemblyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Nominal family for per-module CellProfiler artifact contract compilation."""
-
-    __registry_key__ = "module_name"
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
-
-    @classmethod
-    def for_module(cls, module_name: str) -> "ModuleContractBuilder":
-        builder_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            UnsupportedModuleContractBuilder,
-        )
-        return builder_type()
-
-    @abstractmethod
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        """Compile artifact contracts for one parsed CellProfiler module."""
-
-
-class UnsupportedModuleContractBuilder(ModuleContractBuilder):
-    """Fail loudly for modules without declared or inferable artifact semantics."""
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        inferred_contract = InferredModuleContractPattern.first_match(
-            builder,
-            module,
-        )
-        if inferred_contract is not None:
-            return inferred_contract
-        raise ValueError(
-            f"Module {module.name}({module.module_num}) has no declared or "
-            "inferable CellProfiler artifact contract. Add a nominal contract "
-            "builder or an inference pattern before converting this module."
-        )
-
-
-class InferredModuleContractPattern(
-    CellProfilerContractAssemblyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Nominal family for deriving common CellProfiler artifact contracts."""
-
-    __registry_key__ = "pattern_name"
-    __skip_if_no_key__ = True
-    pattern_name: ClassVar[str | None] = None
-
-    @classmethod
-    def first_match(
-        cls,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts | None:
-        matching_pattern_types = tuple(
-            pattern_type
-            for pattern_type in cls.__registry__.values()
-            if pattern_type().matches(builder, module)
-        )
-        owning_pattern_types = tuple(
-            candidate_type
-            for candidate_type in matching_pattern_types
-            if not any(
-                other_type is not candidate_type
-                and issubclass(other_type, candidate_type)
-                for other_type in matching_pattern_types
-            )
-        )
-        if not owning_pattern_types:
-            return None
-        if len(owning_pattern_types) != 1:
-            names = tuple(pattern_type.__name__ for pattern_type in owning_pattern_types)
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) has ambiguous "
-                f"inferred artifact contract patterns: {names!r}."
-            )
-        return owning_pattern_types[0]().build(builder, module)
-
-    @abstractmethod
-    def matches(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> bool:
-        """Return whether this pattern owns inferred contracts for the module."""
-
-    @abstractmethod
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        """Build the contract after this pattern has matched the module."""
-
-    def build_if_matched(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts | None:
-        """Return a contract when this pattern fully matches the module."""
-        if not self.matches(builder, module):
-            return None
-        return self.build(builder, module)
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticSettingsContractCandidate:
-    """Typed carrier for semantic setting-derived contract inference."""
-
-    inputs: tuple[CellProfilerSymbol, ...] = ()
-    outputs: tuple[CellProfilerSymbol, ...] = ()
-
-    def __bool__(self) -> bool:
-        return bool(self.inputs or self.outputs)
-
-    @classmethod
-    def from_module(
-        cls,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> "SemanticSettingsContractCandidate":
-        """Resolve semantic setting symbols into a candidate contract payload."""
-        setting_symbols = artifact_setting_symbols(module)
-        special_outputs = function_special_outputs(module.name)
-        if not setting_symbols and not special_outputs:
-            return cls()
-
-        declared_inputs = tuple(
-            builder.require(
-                declared_input.name,
-                CellProfilerSymbolKind.from_artifact_kind(declared_input.kind),
-                module,
-            )
-            for declared_input in module_declared_artifact_inputs(
-                module,
-                builder.source_schema,
-            )
-        )
-        setting_inputs = tuple(
-            builder.require(
-                symbol.name,
-                CellProfilerSymbolKind.from_artifact_kind(symbol.role.artifact_kind),
-                module,
-            )
-            for symbol in setting_symbols
-            if symbol.role.is_input
-        )
-        inputs = (*declared_inputs, *setting_inputs)
-        outputs = _semantic_output_symbols(
-            builder,
-            module,
-            inputs,
-            tuple(symbol for symbol in setting_symbols if not symbol.role.is_input),
-            special_outputs,
-        )
-        return cls(inputs=inputs, outputs=outputs)
-
-    def assemble_with(
-        self,
-        pattern: CellProfilerContractAssemblyMixin,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts | None:
-        """Assemble the candidate when it carries real artifact flow."""
-        if not self.inputs and not self.outputs:
-            return None
-        return pattern.assemble_contract(
-            module,
-            builder,
-            inputs=self.inputs,
-            outputs=self.outputs,
-        )
-
-
-class SemanticSettingsContractPattern(InferredModuleContractPattern):
-    """Infer contracts from typed CellProfiler artifact-setting semantics."""
-
-    pattern_name = "semantic_settings"
-
-    def matches(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> bool:
-        return bool(
-            SemanticSettingsContractCandidate.from_module(builder, module)
-        )
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        contract = SemanticSettingsContractCandidate.from_module(
-            builder, module
-        ).assemble_with(self, builder, module)
-        if contract is None:
-            raise ValueError(
-                f"Semantic settings pattern selected {module.name}({module.module_num}) "
-                "without semantic artifact flow."
-            )
-        return contract
-
-
-class FallbackInferredModuleContractPattern(InferredModuleContractPattern, ABC):
-    """Base for inference patterns used only when semantic settings do not own a module."""
-
-    def matches(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> bool:
-        return (
-            not SemanticSettingsContractPattern().matches(builder, module)
-            and self.matches_fallback(builder, module)
-        )
-
-    @abstractmethod
-    def matches_fallback(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> bool:
-        """Return whether this fallback pattern owns a non-semantic module."""
-
-
-class InfrastructureModuleContractBuilder(ModuleContractBuilder):
-    """Compile setup/export modules as explicit no-artifact contract nodes."""
-
-    module_name = "__infrastructure__"
-
-    @classmethod
-    def register_infrastructure_modules(cls) -> None:
-        for module_name in INFRASTRUCTURE_MODULE_NAMES:
-            cls.__registry__[canonical_module_name(module_name)] = cls
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        del builder
-        return ModuleArtifactContracts(module.name, module.module_num)
-
-
-InfrastructureModuleContractBuilder.register_infrastructure_modules()
-
-
-class WatershedContractBuilder(ModuleContractBuilder):
-    """Compile Watershed image, marker/mask side inputs, objects, and measurements."""
-
-    module_name = "Watershed"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        inputs = [
-            builder.require(
-                _setting(module, INPUT_IMAGE_SETTING),
-                CellProfilerSymbolKind.IMAGE,
-                module,
-            )
-        ]
-        for setting in (WATERSHED_MARKERS_SETTING, WATERSHED_MASK_SETTING):
-            artifact_name = self.normalized_setting_symbol(module, setting)
-            if artifact_name is not None:
-                inputs.append(
-                    builder.require(
-                        artifact_name,
-                        CellProfilerSymbolKind.IMAGE,
-                        module,
-                    )
-                )
-
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        objects = builder.declare(
-            _setting(module, OUTPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        return self.assemble_contract(
-            module, builder, inputs=inputs, outputs=[measurements, objects]
-        )
-
-
-class CropContractBuilder(ModuleContractBuilder):
-    """Compile Crop's image output plus crop-mask sidecar semantics."""
-
-    module_name = "Crop"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            crop_input_image_name(module),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        output_name = crop_output_image_name(module)
-        cropped_image = builder.declare(
-            output_name,
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        crop_mask = builder.declare(
-            CROP_MASK_ARTIFACT_SIDECAR.name_for(output_name),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-            sidecar_role=CROP_MASK_ARTIFACT_SIDECAR.role,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        mask_request = CropMaskInputRequest(builder=builder, module=module)
-        mask_inputs = CropMaskInputStrategy.for_shape(crop_shape(module)).inputs(
-            mask_request
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[image, *mask_inputs],
-            outputs=[cropped_image, crop_mask, measurements],
-        )
-
-
-class FilterObjectsContractBuilder(ModuleContractBuilder):
-    """Compile FilterObjects inputs, retained outputs, and relationship sidecars."""
-
-    module_name = "FilterObjects"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        plan = filter_objects_plan(module)
-        inputs = [
-            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in plan.input_object_names
-        ]
-        if plan.enclosing_object_name is not None:
-            relationship = builder.optional(
-                _relationship_name(plan.enclosing_object_name, plan.input_object_name),
-                CellProfilerSymbolKind.RELATIONSHIPS,
-            )
-            if relationship is not None:
-                inputs.append(relationship)
-        for child_object_name in filter_objects_child_count_object_names(module):
-            relationship = builder.optional(
-                _relationship_name(plan.input_object_name, child_object_name),
-                CellProfilerSymbolKind.RELATIONSHIPS,
-            )
-            if relationship is not None:
-                inputs.append(relationship)
-        outputs: list[CellProfilerSymbol] = []
-        for output in plan.outputs:
-            if output.role is FilterObjectsOutputRole.MEASUREMENTS:
-                outputs.append(
-                    builder.declare(
-                        ModuleArtifactNamePolicy(module).measurement_name,
-                        CellProfilerSymbolKind.MEASUREMENTS,
-                        module,
-                    )
-                )
-                continue
-            outputs.append(
-                builder.declare(
-                    output.name,
-                    FilterObjectsOutputSymbolKindStrategy.for_role(
-                        output.role
-                    ).symbol_kind(),
-                    module,
-                )
-            )
-        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
-
-
-class DefineGridManualContractBuilder(ModuleContractBuilder):
-    """Compile manual grid definitions and optional retained grid images."""
-
-    module_name = "DefineGridManual"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        images = [
-            builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in (
-                self.normalized_setting_symbol(
-                    module,
-                    "Select the image on which to display the grid",
-                ),
-                self.normalized_setting_symbol(
-                    module,
-                    "Select the image to display when drawing",
-                ),
-            )
-            if name is not None
-        ]
-        objects = [
-            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in (
-                self.normalized_setting_symbol(
-                    module,
-                    "Select the previously identified objects",
-                ),
-            )
-            if name is not None
-        ]
-        retained_images = self.retained_output_image(
-            builder,
-            module,
-            retain_setting="Retain an image of the grid?",
-            output_setting=OUTPUT_IMAGE_SETTING,
-        )
-        grid = builder.declare(
-            _setting(module, "Name the grid"),
-            CellProfilerSymbolKind.SPATIAL_GRID,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[*images, *objects],
-            outputs=[*retained_images, grid],
-        )
-
-
-class ColorToGrayContractBuilder(ModuleContractBuilder):
-    """Compile ColorToGray channel extraction artifacts."""
-
-    module_name = "ColorToGray"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            color_to_gray_input_name(module),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        outputs = [
-            builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module)
-            for output_name in color_to_gray_output_names(module)
-        ]
-        return self.assemble_contract(module, builder, inputs=[image], outputs=outputs)
-
-
-class UnmixColorsContractBuilder(ModuleContractBuilder):
-    """Compile UnmixColors stain/channel output artifacts."""
-
-    module_name = "UnmixColors"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            unmix_colors_input_name(module),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        outputs = [
-            builder.declare(row.image_name, CellProfilerSymbolKind.IMAGE, module)
-            for row in unmix_colors_output_rows(module)
-        ]
-        return self.assemble_contract(module, builder, inputs=[image], outputs=outputs)
-
-
-class CorrectIlluminationCalculateContractBuilder(ModuleContractBuilder):
-    """Compile illumination-function image outputs without synthetic measurements."""
-
-    module_name = "CorrectIlluminationCalculate"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            _setting(module, INPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        output = builder.declare(
-            _setting(module, OUTPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        return self.assemble_contract(module, builder, inputs=[image], outputs=[output])
-
-
-class CorrectIlluminationApplyContractBuilder(ModuleContractBuilder):
-    """Compile paired image/illumination inputs and corrected image outputs."""
-
-    module_name = "CorrectIlluminationApply"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image_names = setting_values(module, INPUT_IMAGE_SETTING)
-        illumination_names = setting_values(module, "Select the illumination function")
-        output_names = setting_values(module, OUTPUT_IMAGE_SETTING)
-        if not image_names or not illumination_names or not output_names:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) requires image, "
-                "illumination-function, and output-image settings."
-            )
-        if len({len(image_names), len(illumination_names), len(output_names)}) != 1:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) has mismatched "
-                "CorrectIlluminationApply pair settings: "
-                f"{len(image_names)} images, {len(illumination_names)} functions, "
-                f"{len(output_names)} outputs."
-            )
-        inputs: list[CellProfilerSymbol] = []
-        outputs: list[CellProfilerSymbol] = []
-        for image_name, illumination_name, output_name in zip(
-            image_names,
-            illumination_names,
-            output_names,
-            strict=True,
-        ):
-            inputs.append(
-                builder.require(image_name, CellProfilerSymbolKind.IMAGE, module)
-            )
-            inputs.append(
-                builder.require(illumination_name, CellProfilerSymbolKind.IMAGE, module)
-            )
-            outputs.append(
-                builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module)
-            )
-        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
-
-
-class AlignContractBuilder(ModuleContractBuilder):
-    """Compile Align image renaming plus alignment measurements."""
-
-    module_name = "Align"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image_plan = align_image_plan(module)
-        inputs = [
-            builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in image_plan.input_names
-        ]
-        outputs = [
-            builder.declare(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in image_plan.output_names
-        ]
-        outputs.append(
-            builder.declare(
-                ModuleArtifactNamePolicy(module).measurement_name,
-                CellProfilerSymbolKind.MEASUREMENTS,
-                module,
-            )
-        )
-        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
-
-
-class OpeningContractBuilder(ModuleContractBuilder):
-    """Compile Opening image morphology artifacts."""
-
-    module_name = "Opening"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            _setting(module, "Select the input image"),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        output = builder.declare(
-            _setting(module, OUTPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        return self.assemble_contract(module, builder, inputs=[image], outputs=[output])
-
-
-class CalculateMathContractBuilder(ModuleContractBuilder):
-    """Compile object and measurement dependencies for CalculateMath rows."""
-
-    module_name = "CalculateMath"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        objects = [
-            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in calculate_math_object_dependencies(module)
-        ]
-        measurement_inputs = builder.measurement_outputs()
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[*objects, *measurement_inputs],
-            outputs=[measurements],
-        )
-
-
-class UntangleWormsContractBuilder(ModuleContractBuilder):
-    """Compile UntangleWorms source image, measurements, and object outputs."""
-
-    module_name = "UntangleWorms"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            _setting(module, UNTANGLE_WORMS_INPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        overlapping_objects = builder.declare(
-            _setting(module, UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        nonoverlapping_objects = builder.declare(
-            _setting(module, UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[image],
-            outputs=[measurements, overlapping_objects, nonoverlapping_objects],
-        )
-
-
-class StraightenWormsContractBuilder(ModuleContractBuilder):
-    """Compile StraightenWorms object lineage, image bindings, and measurements."""
-
-    module_name = "StraightenWorms"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        input_objects = builder.require(
-            straighten_worms_input_objects_name(module),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        image_bindings = straighten_worms_image_bindings(module)
-        image_inputs = [
-            builder.require(
-                binding.input_image_name, CellProfilerSymbolKind.IMAGE, module
-            )
-            for binding in image_bindings
-        ]
-        image_outputs = [
-            builder.declare(
-                binding.output_image_name, CellProfilerSymbolKind.IMAGE, module
-            )
-            for binding in image_bindings
-        ]
-        output_objects = builder.declare(
-            straighten_worms_output_objects_name(module),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        producer_measurements = builder.measurement_output_for_module_num(
-            input_objects.producer_module_num
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        side_inputs = [input_objects]
-        if producer_measurements is not None:
-            side_inputs.append(producer_measurements)
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[*side_inputs, *image_inputs],
-            outputs=[*image_outputs, output_objects, measurements],
-        )
-
-
-class IdentifyPrimaryObjectsContractBuilder(ModuleContractBuilder):
-    """Compile IdentifyPrimaryObjects image, object, and measurement artifacts."""
-
-    module_name = "IdentifyPrimaryObjects"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            _setting(module, INPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        objects = builder.declare(
-            _setting(module, IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[image],
-            outputs=[measurements, objects],
-        )
-
-
-class IdentifySecondaryObjectsContractBuilder(ModuleContractBuilder):
-    """Compile IdentifySecondaryObjects parent-child object artifacts."""
-
-    module_name = "IdentifySecondaryObjects"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        input_objects = builder.require(
-            _setting(module, IDENTIFY_SECONDARY_INPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        image = builder.require(
-            _setting(module, INPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        output_objects = builder.declare(
-            _setting(module, IDENTIFY_SECONDARY_OUTPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        relationship = builder.declare(
-            _relationship_name(input_objects.name, output_objects.name),
-            CellProfilerSymbolKind.RELATIONSHIPS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[input_objects, image],
-            outputs=[measurements, relationship, output_objects],
-        )
-
-
-class IdentifyTertiaryObjectsContractBuilder(ModuleContractBuilder):
-    """Compile IdentifyTertiaryObjects dual-parent relationship artifacts."""
-
-    module_name = "IdentifyTertiaryObjects"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        larger = builder.require(
-            _setting(module, IDENTIFY_TERTIARY_LARGER_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        smaller = builder.require(
-            _setting(module, IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        output = builder.declare(
-            _setting(module, IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        larger_relationship = builder.declare(
-            _relationship_name(larger.name, output.name),
-            CellProfilerSymbolKind.RELATIONSHIPS,
-            module,
-        )
-        smaller_relationship = builder.declare(
-            _relationship_name(smaller.name, output.name),
-            CellProfilerSymbolKind.RELATIONSHIPS,
-            module,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[larger, smaller],
-            outputs=[larger_relationship, smaller_relationship, measurements, output],
-        )
-
-
-class ClassifyObjectsContractBuilder(ModuleContractBuilder):
-    """Compile ClassifyObjects object measurements and optional retained image."""
-
-    module_name = "ClassifyObjectsSingleMeasurement"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        objects = [
-            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in self.setting_symbol_names(
-                module, CLASSIFY_OBJECTS_INPUT_SETTING
-            )
-        ]
-        retained_images = self.retained_output_image(
-            builder,
-            module,
-            retain_setting="Retain an image of the classified objects?",
-            output_setting=OUTPUT_IMAGE_SETTING,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=objects,
-            outputs=[*retained_images, measurements],
-        )
-
-
-class RelateObjectsContractBuilder(ModuleContractBuilder):
-    """Compile RelateObjects relationship, measurement, and optional child outputs."""
-
-    module_name = "RelateObjects"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        parent = builder.require(
-            _setting(module, PARENT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        child = builder.require(
-            _setting(module, CHILD_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        relationship = builder.declare(
-            _relationship_name(parent.name, child.name),
-            CellProfilerSymbolKind.RELATIONSHIPS,
-            module,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        outputs = [relationship, measurements]
-        if self.setting_bool(module, RELATE_OBJECTS_SAVE_CHILDREN_SETTING):
-            output_objects = builder.declare(
-                _setting(module, OUTPUT_OBJECTS_SETTING),
-                CellProfilerSymbolKind.OBJECTS,
-                module,
-            )
-            outputs.insert(0, output_objects)
-            outputs.insert(
-                2,
-                builder.declare(
-                    _relationship_name(child.name, output_objects.name),
-                    CellProfilerSymbolKind.RELATIONSHIPS,
-                    module,
-                ),
-            )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[parent, child],
-            outputs=outputs,
-        )
-
-
-class ConvertObjectsToImageContractBuilder(ModuleContractBuilder):
-    """Compile ConvertObjectsToImage object input and image output."""
-
-    module_name = "ConvertObjectsToImage"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        objects = builder.require(
-            _setting(module, INPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        output = builder.declare(
-            _setting(module, OUTPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        return self.assemble_contract(
-            module, builder, inputs=[objects], outputs=[output]
-        )
-
-
-class GrayToColorContractBuilder(ModuleContractBuilder):
-    """Compile GrayToColor image channel inputs and composite output."""
-
-    module_name = "GrayToColor"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        images = [
-            builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in _GrayToColorInputNameResolver.for_module(module).input_names(
-                module
-            )
-        ]
-        output = builder.declare(
-            _setting(module, OUTPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        return self.assemble_contract(module, builder, inputs=images, outputs=[output])
-
-
-class OverlayOutlinesContractBuilder(ModuleContractBuilder):
-    """Compile OverlayOutlines base image/object overlays and image output."""
-
-    module_name = "OverlayOutlines"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        inputs: list[CellProfilerSymbol] = []
-        base_image_name = overlay_outlines_base_image_name(module)
-        if base_image_name is not None:
-            inputs.append(
-                builder.require(
-                    base_image_name,
-                    CellProfilerSymbolKind.IMAGE,
-                    module,
-                )
-            )
-        for row in overlay_outline_rows(module):
-            inputs.append(
-                builder.require(
-                    row.input_name,
-                    _overlay_outline_symbol_kind(row.source_kind),
-                    module,
-                )
-            )
-        output = builder.declare(
-            overlay_outlines_output_image_name(module),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=inputs,
-            outputs=[output],
-        )
-
-
-class OverlayObjectsContractBuilder(ModuleContractBuilder):
-    """Compile OverlayObjects image/object inputs and image output."""
-
-    module_name = "OverlayObjects"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        image = builder.require(
-            _setting(module, INPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        objects = builder.require(
-            _setting(module, INPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        output = builder.declare(
-            _setting(module, OUTPUT_IMAGE_SETTING),
-            CellProfilerSymbolKind.IMAGE,
-            module,
-        )
-        return self.assemble_contract(
-            module, builder, inputs=[image, objects], outputs=[output]
-        )
-
-
-class MeasurementModuleContractBuilder(ModuleContractBuilder):
-    """Template for modules that produce one measurement table from image/object inputs."""
-
-    image_setting: ClassVar[str | SettingNameFamily | None] = None
-    object_setting: ClassVar[str | SettingNameFamily | None] = None
-    optional_object_setting: ClassVar[str | SettingNameFamily | None] = None
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        images = [
-            builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in self.image_names(module)
-        ]
-        objects = [
-            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in self.object_names(module)
-        ]
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[*images, *objects],
-            outputs=[measurements],
-        )
-
-    def image_names(self, module: ModuleBlock) -> tuple[str, ...]:
-        setting = type(self).image_setting
-        return () if setting is None else self.setting_symbol_names(module, setting)
-
-    def object_names(self, module: ModuleBlock) -> tuple[str, ...]:
-        object_setting = type(self).object_setting
-        optional_object_setting = type(self).optional_object_setting
-        required = (
-            ()
-            if object_setting is None
-            else self.setting_symbol_names(module, object_setting)
-        )
-        optional = (
-            ()
-            if optional_object_setting is None
-            else self.optional_setting_symbol_names(module, optional_object_setting)
-        )
-        return (*required, *optional)
-
-
-class ObjectMeasurementModuleContractBuilder(MeasurementModuleContractBuilder):
-    """Measurement contract for modules that consume object labels only."""
-
-    object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class ImageObjectMeasurementModuleContractBuilder(MeasurementModuleContractBuilder):
-    """Measurement contract for modules that consume images and object labels."""
-
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class ImageOptionalObjectMeasurementModuleContractBuilder(MeasurementModuleContractBuilder):
-    """Measurement contract for modules that consume images and optional objects."""
-
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureObjectSizeShapeContractBuilder(ObjectMeasurementModuleContractBuilder):
-    """Compile MeasureObjectSizeShape object inputs into measurement contracts."""
-
-    module_name = "MeasureObjectSizeShape"
-
-
-class MeasureObjectIntensityContractBuilder(ImageObjectMeasurementModuleContractBuilder):
-    """Compile MeasureObjectIntensity image/object inputs into measurements."""
-
-    module_name = "MeasureObjectIntensity"
-
-
-class MeasureObjectIntensityDistributionContractBuilder(
-    ImageObjectMeasurementModuleContractBuilder
-):
-    """Compile radial-distribution image/object inputs into measurements."""
-
-    module_name = "MeasureObjectIntensityDistribution"
-
-
-class MeasureTextureContractBuilder(ImageOptionalObjectMeasurementModuleContractBuilder):
-    """Compile MeasureTexture image inputs and optional object masks."""
-
-    module_name = "MeasureTexture"
-
-
-class MeasureColocalizationContractBuilder(
-    ImageOptionalObjectMeasurementModuleContractBuilder
-):
-    """Compile MeasureColocalization image inputs and optional object masks."""
-
-    module_name = "MeasureColocalization"
-
-
-class MeasureGranularityContractBuilder(ImageOptionalObjectMeasurementModuleContractBuilder):
-    """Compile MeasureGranularity image inputs and optional object masks."""
-
-    module_name = "MeasureGranularity"
-
-
-class MeasureImageIntensityContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureImageIntensity image inputs and optional object masks."""
-
-    module_name = "MeasureImageIntensity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = SettingNameFamily("Select input object sets")
-
-
-class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):
-    """Compile MeasureObjectNeighbors object inputs, retained images, and measurements."""
-
-    module_name = "MeasureObjectNeighbors"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        measured = builder.require(
-            _setting(module, OBJECT_MEASUREMENT_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        neighbors = builder.require(
-            _setting(module, "Select neighboring objects to measure"),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        image_outputs = [
-            builder.declare(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in self.output_image_names(module)
-        ]
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[measured, neighbors],
-            outputs=[*image_outputs, measurements],
-        )
-
-    def output_image_names(self, module: ModuleBlock) -> tuple[str, ...]:
-        output_names = module.get_setting_values("Name the output image")
-        name_policy = ModuleArtifactNamePolicy(module)
-        outputs: list[str] = []
-        if self.setting_bool(module, NEIGHBOR_COUNT_IMAGE_SETTING):
-            outputs.append(name_policy.indexed_output_image_name(output_names, 0))
-        if self.setting_bool(module, PERCENT_TOUCHING_IMAGE_SETTING):
-            outputs.append(name_policy.indexed_output_image_name(output_names, 1))
-        return tuple(outputs)
-
-
-class MeasureImageAreaOccupiedContractBuilder(ModuleContractBuilder):
-    """Compile MeasureImageAreaOccupied binary/object inputs and retained outputs."""
-
-    module_name = "MeasureImageAreaOccupiedBinary"
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        rows = area_occupied_rows(module)
-        if not rows:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) declares no "
-                "MeasureImageAreaOccupied measurement rows."
-            )
-        inputs = [
-            *(
-                builder.require(
-                    row.binary_image_name, CellProfilerSymbolKind.IMAGE, module
-                )
-                for row in rows
-                if row.operand is AreaOccupiedOperand.BINARY_IMAGE
-                and row.binary_image_name is not None
-            ),
-            *(
-                builder.require(
-                    row.objects_name, CellProfilerSymbolKind.OBJECTS, module
-                )
-                for row in rows
-                if row.operand is AreaOccupiedOperand.OBJECTS
-                and row.objects_name is not None
-            ),
-        ]
-        retained_images = [
-            builder.declare(
-                row.retained_image_name,
-                CellProfilerSymbolKind.IMAGE,
-                module,
-            )
-            for row in rows
-            if row.retained_image_name is not None
-        ]
-        measurements = builder.declare(
-            ModuleArtifactNamePolicy(module).measurement_name,
-            CellProfilerSymbolKind.MEASUREMENTS,
-            module,
-        )
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=inputs,
-            outputs=[*retained_images, measurements],
-        )
-
-
-class _SingleInputSingleOutputContractPattern(FallbackInferredModuleContractPattern):
-    """Base for single-symbol input/output contract inference."""
-
-    input_setting: ClassVar[str | SettingNameFamily]
-    input_kind: ClassVar[CellProfilerSymbolKind]
-    output_setting: ClassVar[str | SettingNameFamily]
-    output_kind: ClassVar[CellProfilerSymbolKind]
-    excluded_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
-
-    def matches_fallback(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> bool:
-        del builder
-        if any(
-            _optional_setting(module, setting) is not None
-            for setting in type(self).excluded_settings
-        ):
-            return False
-        return (
-            self.normalized_setting_symbol(module, type(self).input_setting)
-            is not None
-            and self.normalized_setting_symbol(module, type(self).output_setting)
-            is not None
-        )
-
-    def build(
-        self,
-        builder: _SymbolTableBuilder,
-        module: ModuleBlock,
-    ) -> ModuleArtifactContracts:
-        input_name = self.normalized_setting_symbol(module, type(self).input_setting)
-        output_name = self.normalized_setting_symbol(module, type(self).output_setting)
-        if input_name is None or output_name is None:
-            raise ValueError(
-                f"Single input/output pattern selected {module.name}({module.module_num}) "
-                "without both input and output setting symbols."
-            )
-        input_symbol = builder.require(input_name, type(self).input_kind, module)
-        output_symbol = builder.declare(output_name, type(self).output_kind, module)
-        return self.assemble_contract(
-            module,
-            builder,
-            inputs=[input_symbol],
-            outputs=[output_symbol],
-        )
-
-
-for _single_input_output_contract_pattern in (
-    GeneratedLeafClassSpec(
-        "SingleImageToImageContractPattern",
-        _SingleInputSingleOutputContractPattern,
-        attributes={
-            "pattern_name": "single_image_to_image",
-            "input_setting": INPUT_IMAGE_SETTING,
-            "input_kind": CellProfilerSymbolKind.IMAGE,
-            "output_setting": OUTPUT_IMAGE_SETTING,
-            "output_kind": CellProfilerSymbolKind.IMAGE,
-            "excluded_settings": (OUTPUT_OBJECTS_SETTING,),
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "SingleImageToObjectContractPattern",
-        _SingleInputSingleOutputContractPattern,
-        attributes={
-            "pattern_name": "single_image_to_object",
-            "input_setting": INPUT_IMAGE_SETTING,
-            "input_kind": CellProfilerSymbolKind.IMAGE,
-            "output_setting": OUTPUT_OBJECTS_SETTING,
-            "output_kind": CellProfilerSymbolKind.OBJECTS,
-            "excluded_settings": (OUTPUT_IMAGE_SETTING,),
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "SingleObjectToImageContractPattern",
-        _SingleInputSingleOutputContractPattern,
-        attributes={
-            "pattern_name": "single_object_to_image",
-            "input_setting": INPUT_OBJECTS_SETTING,
-            "input_kind": CellProfilerSymbolKind.OBJECTS,
-            "output_setting": OUTPUT_IMAGE_SETTING,
-            "output_kind": CellProfilerSymbolKind.IMAGE,
-            "excluded_settings": (OUTPUT_OBJECTS_SETTING,),
-        },
-    ),
-    GeneratedLeafClassSpec(
-        "SingleObjectToObjectContractPattern",
-        _SingleInputSingleOutputContractPattern,
-        attributes={
-            "pattern_name": "single_object_to_object",
-            "input_setting": INPUT_OBJECTS_SETTING,
-            "input_kind": CellProfilerSymbolKind.OBJECTS,
-            "output_setting": OUTPUT_OBJECTS_SETTING,
-            "output_kind": CellProfilerSymbolKind.OBJECTS,
-            "excluded_settings": (OUTPUT_IMAGE_SETTING,),
-        },
-    ),
-):
-    _single_input_output_contract_pattern.declare_in(globals())
-
-
-def _semantic_output_symbols(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-    inputs: tuple[CellProfilerSymbol, ...],
-    setting_outputs: tuple[ArtifactSettingSymbol, ...],
-    special_outputs: tuple[FunctionSpecialOutput, ...],
-) -> tuple[CellProfilerSymbol, ...]:
-    output_names = _setting_output_names_by_kind(setting_outputs)
-    outputs: list[CellProfilerSymbol] = []
-
-    if special_outputs and output_names.get(ArtifactKind.IMAGE):
-        outputs.extend(
-            _declare_outputs(
-                builder,
-                module,
-                output_names.pop(ArtifactKind.IMAGE),
-                ArtifactKind.IMAGE,
-            )
-        )
-
-    measurement_output_count = sum(
-        special.kind is ArtifactKind.MEASUREMENTS for special in special_outputs
-    )
-    for special in special_outputs:
-        if special.kind is ArtifactKind.IMAGE and any(
-            output.kind is CellProfilerSymbolKind.IMAGE for output in outputs
-        ):
-            continue
-        name = ModuleArtifactNamePolicy(module).special_output_name(
-            special,
-            output_names,
-            inputs,
-            setting_outputs,
-            measurement_output_count=measurement_output_count,
-        )
-        outputs.append(
-            builder.declare(
-                name,
-                CellProfilerSymbolKind.from_artifact_kind(special.kind),
-                module,
-            )
-        )
-
-    for kind, names in output_names.items():
-        outputs.extend(_declare_outputs(builder, module, names, kind))
-    return CellProfilerSymbol.unique_by_key(outputs)
-
-
-def _setting_output_names_by_kind(
-    setting_outputs: tuple[ArtifactSettingSymbol, ...],
-) -> dict[ArtifactKind, list[str]]:
-    names_by_kind: dict[ArtifactKind, list[str]] = {}
-    for symbol in setting_outputs:
-        names_by_kind.setdefault(symbol.role.artifact_kind, []).append(symbol.name)
-    return names_by_kind
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _any_truthy_setting_value(
@@ -2869,44 +1016,10 @@ def _any_truthy_setting_value(
     )
 
 
-def _declare_outputs(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-    names: Iterable[str],
-    kind: ArtifactKind,
-) -> tuple[CellProfilerSymbol, ...]:
-    symbol_kind = CellProfilerSymbolKind.from_artifact_kind(kind)
-    return tuple(builder.declare(name, symbol_kind, module) for name in names)
 
 
-def _relationship_output_name(
-    inputs: tuple[CellProfilerSymbol, ...],
-    setting_outputs: tuple[ArtifactSettingSymbol, ...],
-) -> str | None:
-    object_inputs = tuple(
-        symbol for symbol in inputs if symbol.kind is CellProfilerSymbolKind.OBJECTS
-    )
-    object_outputs = tuple(
-        symbol.name
-        for symbol in setting_outputs
-        if symbol.role.artifact_kind is ArtifactKind.OBJECT_LABELS
-    )
-    if object_inputs and len(object_outputs) == 1:
-        return _relationship_name(object_inputs[0].name, object_outputs[0])
-    if len(object_inputs) == 2 and not object_outputs:
-        return _relationship_name(object_inputs[0].name, object_inputs[1].name)
-    return None
 
 
-def _setting(module: ModuleBlock, name: str | SettingNameFamily) -> str:
-    return required_setting_value(module, name)
-
-
-def _optional_setting(
-    module: ModuleBlock,
-    name: str | SettingNameFamily,
-) -> str | None:
-    return optional_setting_value(module, name)
 
 
 def _split_names(value: str) -> tuple[str, ...]:
@@ -2918,7 +1031,3 @@ def _normalize_symbol_name(name: str) -> str:
     if not normalized:
         raise ValueError("CellProfiler symbol names cannot be empty.")
     return normalized
-
-
-def _relationship_name(parent: str, child: str) -> str:
-    return parent_child_relationship_artifact_name(parent, child)

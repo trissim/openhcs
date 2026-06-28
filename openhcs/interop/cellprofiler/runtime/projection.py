@@ -168,7 +168,9 @@ class RuntimePlaneImagePayloadProjection:
         if self.context.adapter.runtime_slice_plane_index() is None:
             return payload
         plane_stack = RuntimePlaneImagePayloadStack(payload)
-        if not plane_stack.is_projectable:
+        if not plane_stack.is_projectable and not plane_stack.is_projectable_for_current_image(
+            self.context.current_image_context,
+        ):
             return payload
         selection = RuntimePlaneImagePayloadPlaneSelection(
             context=self.context,
@@ -209,7 +211,31 @@ class RuntimePlaneImagePayloadStack:
 
     @property
     def is_projectable(self) -> bool:
-        return is_image_stack(self.array) and self.plane_count > 1
+        if self.plane_count <= 1:
+            return False
+        if is_image_stack(self.array):
+            return True
+        metadata_plane_count = (
+            image_payload_metadata(self.payload).source_image_provenance_planes.count
+        )
+        return metadata_plane_count == self.plane_count
+
+    def is_projectable_for_current_image(
+        self,
+        current_image_context: RuntimePlaneCurrentImageContext,
+    ) -> bool:
+        """Return whether current planar image context proves a stack axis."""
+        if self.plane_count <= 1 or not current_image_context.has_image:
+            return False
+        if not current_image_context.current_image_is_planar():
+            return False
+        current_shape = tuple(
+            int(size)
+            for size in np.asarray(
+                image_payload_data(current_image_context.require_image())
+            ).shape
+        )
+        return current_shape == self.shape[1:]
 
     @property
     def plane_count(self) -> int:

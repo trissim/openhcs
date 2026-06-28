@@ -2,10 +2,10 @@
 
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerRuntimeAdapter,
-    cellprofiler_runtime_adapter_factory,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerModuleExecutor,
+    cellprofiler_runtime_adapter_factory,
 )
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload as CellProfilerRelationshipPayload,

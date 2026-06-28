@@ -5,9 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import time
-from typing import ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from metaclass_registry import AutoRegisterMeta, RegistryFamily
 import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
@@ -17,7 +16,6 @@ from openhcs.core.measurement_row_materialization import (
 )
 from openhcs.core.registry_strategies import GeneratedEnumClassSpec
 from openhcs.core.runtime_semantics import (
-    DenseObjectLabelPairAligner,
     MeasurementRowAxisField,
     ObjectLabelDomainMetadataStrategy,
     ObjectLabelDomainScope,
@@ -43,15 +41,9 @@ from openhcs.interop.cellprofiler.runtime.measurement_rows import (
     LABEL_PAYLOAD_FINAL,
     ObjectLabelCountAuthority,
 )
-from openhcs.interop.cellprofiler.runtime.module_names import (
-    CELLPROFILER_RELATE_OBJECTS_MODULE,
-)
 from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValue,
     CellProfilerRuntimeValueSequence,
-)
-from openhcs.interop.cellprofiler.runtime.policy_registry import (
-    MODULE_NAME_REGISTRY_KEY,
 )
 from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
     RelationshipEndpointResolver,
@@ -59,18 +51,11 @@ from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
 from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
-from openhcs.processing.backends.cellprofiler.library import canonical_module_name
-from openhcs.processing.backends.cellprofiler.relationships import (
-    ObjectRelationshipBackendStrategy,
-)
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.module_execution import (
         CellProfilerOutputRecordRequest,
     )
-
-
-_RELATE_OBJECTS_MODULE = CELLPROFILER_RELATE_OBJECTS_MODULE
 
 RelationshipMeasurementValue = int | str | float
 
@@ -109,9 +94,6 @@ for _measurement_feature_template_spec in (
         base_type=FormattingMeasurementFeatureTemplate,
         members={
             "PARENT": "Parent_{parent_object_name}",
-            "DISTANCE_CENTROID": "Distance_Centroid_{parent_object_name}",
-            "DISTANCE_MINIMUM": "Distance_Minimum_{parent_object_name}",
-            "MEAN_CHILD": "Mean_{child_object_name}_{child_feature_name}",
         },
     ),
 ):
@@ -121,16 +103,9 @@ for _measurement_feature_template_spec in (
 @dataclass(frozen=True, slots=True)
 class RelationshipMeasurementRows(
     CellProfilerMeasurementRowProjection,
-    metaclass=AutoRegisterMeta,
 ):
     """Project parent-child relationship payloads into CP object measurement rows."""
 
-    __registry_family__ = RegistryFamily(MODULE_NAME_REGISTRY_KEY)
-    __registry_key__ = MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-
-    stable_key_axis: ClassVar[str] = MODULE_NAME_REGISTRY_KEY
-    module_name: ClassVar[str | None] = None
     request: CellProfilerOutputRecordRequest
     _object_number_cache: dict[
         tuple[str, int | None, int | None],
@@ -147,17 +122,25 @@ class RelationshipMeasurementRows(
         cls,
         request: CellProfilerOutputRecordRequest,
     ) -> "RelationshipMeasurementRows":
-        row_type = cls.__registry__.get(
-            canonical_module_name(request.module_name)
+        from openhcs.processing.backends.cellprofiler.module_classes import (
+            CellProfilerModule,
         )
-        if row_type is None:
+
+        module_type = CellProfilerModule.for_module(request.module_name)
+        if module_type is None:
             return GenericRelationshipMeasurementRows(request)
-        return row_type(request)
+        rows = module_type.relationship_measurement_rows(request)
+        if not isinstance(rows, RelationshipMeasurementRows):
+            raise TypeError(
+                f"{module_type.__name__}.relationship_measurement_rows must return "
+                "RelationshipMeasurementRows."
+            )
+        return rows
 
     def rows(self) -> RelationshipMeasurementRowList:
         rows_started_at = time.perf_counter()
         rows: RelationshipMeasurementRowList = []
-        endpoint_resolver = RelationshipEndpointResolver(self.request)
+        endpoint_resolver = RelationshipEndpointResolver.for_request(self.request)
         for relationship_spec, payload in self.output_entries():
             parent_spec, child_spec = endpoint_resolver.endpoint_specs(
                 relationship_spec
@@ -669,234 +652,3 @@ class CellProfilerRelationshipMeasurementPayloads:
     def declares_distance_measurements(self) -> bool:
         """Return whether any payload declares distance measurements."""
         return any(value.declares_distance_measurements for value in self.values)
-
-
-class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
-    """RelateObjects additionally projects configured child-parent distances."""
-
-    module_name = _RELATE_OBJECTS_MODULE
-
-    def rows(self) -> RelationshipMeasurementRowList:
-        rows: RelationshipMeasurementRowList = list(super().rows())
-        endpoint_resolver = RelationshipEndpointResolver(self.request)
-        for relationship_spec, payload in self.output_entries():
-            parent_spec, child_spec = endpoint_resolver.endpoint_specs(
-                relationship_spec
-            )
-            if not self.distance_contract_applies(parent_spec, child_spec):
-                continue
-            rows.extend(
-                self.distance_rows(
-                    parent_object_name=parent_spec.name,
-                    child_object_name=child_spec.name,
-                    payload=payload,
-                )
-            )
-        return rows
-
-    def distance_contract_applies(
-        self,
-        parent_spec: ArtifactSpec,
-        child_spec: ArtifactSpec,
-    ) -> bool:
-        object_inputs = RelationshipEndpointResolver(self.request).object_inputs
-        if len(object_inputs) < 2:
-            return False
-        return parent_spec == object_inputs[0] and child_spec == object_inputs[1]
-
-    def distance_rows(
-        self,
-        *,
-        parent_object_name: str,
-        child_object_name: str,
-        payload: ParentChildRelationshipPayload,
-    ) -> RelationshipDistanceRowTuple:
-        if not self.distance_measurements_declared():
-            return ()
-        sliced_pairs = self.payload_pairs_by_slice(
-            payload,
-            child_object_name=child_object_name,
-        )
-        if sliced_pairs is not None:
-            slice_count = len(sliced_pairs)
-            rows: RelationshipMeasurementRowList = []
-            for slice_index, pairs in sliced_pairs:
-                rows.extend(
-                    self.distance_rows_for_pairs(
-                        parent_object_name=parent_object_name,
-                        child_object_name=child_object_name,
-                        pairs=pairs,
-                        slice_index=slice_index,
-                        slice_count=slice_count,
-                    )
-                )
-            return tuple(rows)
-        return self.distance_rows_for_pairs(
-            parent_object_name=parent_object_name,
-            child_object_name=child_object_name,
-            pairs=tuple(
-                (int(parent_id), int(child_id))
-                for parent_id, child_id in zip(
-                    payload.parent_ids,
-                    payload.child_ids,
-                    strict=True,
-                )
-            ),
-            slice_index=None,
-        )
-
-    def distance_measurements_declared(self) -> bool:
-        return (
-            CellProfilerRelationshipMeasurementPayloads
-            .from_value(self.request.output_value)
-            .declares_distance_measurements
-        )
-
-    def per_parent_distance_means_enabled(self) -> bool:
-        value = MappingValueLookup(
-            self.request.call_kwargs,
-            "calculate_per_parent_means",
-        ).value_or(False)
-        return bool(value)
-
-    def distance_rows_for_pairs(
-        self,
-        *,
-        parent_object_name: str,
-        child_object_name: str,
-        pairs: tuple[tuple[int, int], ...],
-        slice_index: int | None,
-        slice_count: int | None = None,
-    ) -> RelationshipDistanceRowTuple:
-        if not pairs:
-            return ()
-        parent_labels = self.object_labels(
-            parent_object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
-        )
-        child_labels = self.object_labels(
-            child_object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
-        )
-        if parent_labels is None or child_labels is None:
-            return ()
-        parent_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
-            parent_labels,
-            dtype=np.int32,
-        )
-        child_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
-            child_labels,
-            dtype=np.int32,
-        )
-        parent_array, child_array = DenseObjectLabelPairAligner(
-            parent_array,
-            child_array,
-        ).aligned()
-        parent_count = 0
-        if child_array.size:
-            parent_count = int(child_array.max())
-        parents_of = np.zeros(parent_count, dtype=np.int32)
-        for parent_id, child_id in pairs:
-            if 0 < child_id <= len(parents_of):
-                parents_of[child_id - 1] = parent_id
-        backend = ObjectRelationshipBackendStrategy.for_memory_type()
-        centroid_distances = backend.centroid_distances(
-            parent_array,
-            child_array,
-            parents_of,
-        )
-        minimum_distances = backend.minimum_distances(
-            parent_array,
-            child_array,
-            parents_of,
-        )
-        centroid_feature = (
-            CellProfilerRelationshipMeasurementFeature.DISTANCE_CENTROID.feature_name(
-                parent_object_name=parent_object_name
-            )
-        )
-        minimum_feature = (
-            CellProfilerRelationshipMeasurementFeature.DISTANCE_MINIMUM.feature_name(
-                parent_object_name=parent_object_name
-            )
-        )
-        child_distance_rows = tuple(
-            self.axis_qualified_row(
-                {
-                    MEASUREMENT_OBJECT_NAME_FIELD: child_object_name,
-                    MEASUREMENT_OBJECT_LABEL_FIELD: child_id,
-                    centroid_feature: float(centroid_distances[child_id - 1]),
-                    minimum_feature: float(minimum_distances[child_id - 1]),
-                },
-                slice_index=slice_index,
-            )
-            for _parent_id, child_id in pairs
-            if 0 < child_id <= len(parents_of)
-        )
-        if not self.per_parent_distance_means_enabled():
-            return child_distance_rows
-        return (
-            *child_distance_rows,
-            *self.parent_mean_distance_rows(
-                parent_object_name=parent_object_name,
-                child_object_name=child_object_name,
-                pairs=pairs,
-                centroid_distances=centroid_distances,
-                minimum_distances=minimum_distances,
-                slice_index=slice_index,
-            ),
-        )
-
-    def parent_mean_distance_rows(
-        self,
-        *,
-        parent_object_name: str,
-        child_object_name: str,
-        pairs: tuple[tuple[int, int], ...],
-        centroid_distances: np.ndarray,
-        minimum_distances: np.ndarray,
-        slice_index: int | None,
-    ) -> RelationshipDistanceRowTuple:
-        distances_by_parent: dict[int, list[tuple[float, float]]] = {}
-        for parent_id, child_id in pairs:
-            if child_id <= 0 or child_id > len(centroid_distances):
-                continue
-            if parent_id not in distances_by_parent:
-                distances_by_parent[parent_id] = []
-            distances_by_parent[parent_id].append(
-                (
-                    float(centroid_distances[child_id - 1]),
-                    float(minimum_distances[child_id - 1]),
-                )
-            )
-        centroid_feature = (
-            CellProfilerRelationshipMeasurementFeature.MEAN_CHILD.feature_name(
-                child_object_name=child_object_name,
-                child_feature_name="Distance_Centroid",
-            )
-        )
-        minimum_feature = (
-            CellProfilerRelationshipMeasurementFeature.MEAN_CHILD.feature_name(
-                child_object_name=child_object_name,
-                child_feature_name="Distance_Minimum",
-            )
-        )
-        return tuple(
-            self.axis_qualified_row(
-                {
-                    MEASUREMENT_OBJECT_NAME_FIELD: parent_object_name,
-                    MEASUREMENT_OBJECT_LABEL_FIELD: parent_id,
-                    centroid_feature: float(
-                        np.mean([value[0] for value in distances])
-                    ),
-                    minimum_feature: float(
-                        np.mean([value[1] for value in distances])
-                    ),
-                },
-                slice_index=slice_index,
-            )
-            for parent_id, distances in sorted(distances_by_parent.items())
-            if distances
-        )

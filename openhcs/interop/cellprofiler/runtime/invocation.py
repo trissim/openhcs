@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import lru_cache
@@ -27,11 +26,11 @@ from openhcs.core.measurement_image_alignment import (
     MeasurementImageAlignmentSource,
     MeasurementImageLabelAlignmentStrategy,
     MeasurementLabelSourceAlignmentStrategy,
+    PreparedMeasurementObjectLabels,
 )
 from openhcs.core.measurement_row_materialization import (
     MeasurementProjectedColumnarRows,
 )
-from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
 from openhcs.core.runtime_semantics import (
@@ -44,7 +43,6 @@ from openhcs.core.runtime_invocation import (
     RuntimeFunctionInvocationRequest,
     RuntimeImageExecutionContext,
     RuntimeImageRequest,
-    RuntimeInvocationOptions,
     RuntimeSliceAlignedValues,
     requested_image_execution_mode,
 )
@@ -66,32 +64,6 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValue,
     MeasurementRowMapping,
 )
-
-
-CELLPROFILER_GRID_CYCLE_SCOPE_KWARG = "_cellprofiler_grid_cycle_scope"
-CellProfilerRuntimeSettingValue = CellProfilerRuntimeValue | Enum
-
-
-class CellProfilerGridCycleScope(str, Enum):
-    """Closed DefineGrid execution scopes from CellProfiler."""
-
-    EACH_CYCLE = "each_cycle"
-    ONCE = "once"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerInvocationOptions(RuntimeInvocationOptions):
-    """Typed CellProfiler controls that are not absorbed function arguments."""
-
-    grid_cycle_scope: CellProfilerGridCycleScope = CellProfilerGridCycleScope.EACH_CYCLE
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.grid_cycle_scope, CellProfilerGridCycleScope):
-            raise TypeError(
-                "CellProfilerInvocationOptions.grid_cycle_scope must be "
-                "CellProfilerGridCycleScope, got "
-                f"{type(self.grid_cycle_scope).__name__}."
-            )
 
 
 CellProfilerImageExecutionContext = RuntimeImageExecutionContext
@@ -645,7 +617,12 @@ class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
             if column is None:
                 continue
             projected[runtime_feature_name] = rows.column_values(column)
-        return MeasurementProjectedColumnarRows(MappingProxyType(projected))
+        return MeasurementProjectedColumnarRows(
+            MappingProxyType(projected),
+            declared_object_measurement_domain_covered=(
+                rows.covers_declared_object_measurement_domain
+            ),
+        )
 
     @property
     def source_field_name(self) -> str:
@@ -698,72 +675,64 @@ class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
         return source_pair.second.name, source_pair.first.name
 
 
-for _source_pair_feature_spec in (
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerCorrelationFeature",
-        base_type=SecondFirstCellProfilerSourcePairFeature,
-        attributes={
-            "source_field": "correlation",
-            "feature_family": "Correlation",
-        },
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerSlopeFeature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
-        attributes={"source_field": "slope", "feature_family": "Slope"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerReverseSlopeFeature",
-        base_type=SecondFirstCellProfilerSourcePairFeature,
-        attributes={"source_field": "slope_reverse", "feature_family": "Slope"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerOverlapFeature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
-        attributes={"source_field": "overlap", "feature_family": "Overlap"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerK1Feature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
-        attributes={"source_field": "k1", "feature_family": "K"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerK2Feature",
-        base_type=SecondFirstCellProfilerSourcePairFeature,
-        attributes={"source_field": "k2", "feature_family": "K"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerMandersM1Feature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
-        attributes={"source_field": "manders_m1", "feature_family": "Manders"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerMandersM2Feature",
-        base_type=SecondFirstCellProfilerSourcePairFeature,
-        attributes={"source_field": "manders_m2", "feature_family": "Manders"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerRWC1Feature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
-        attributes={"source_field": "rwc1", "feature_family": "RWC"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerRWC2Feature",
-        base_type=SecondFirstCellProfilerSourcePairFeature,
-        attributes={"source_field": "rwc2", "feature_family": "RWC"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerCostesM1Feature",
-        base_type=FirstSecondCellProfilerSourcePairFeature,
-        attributes={"source_field": "costes_m1", "feature_family": "Costes"},
-    ),
-    GeneratedLeafClassSpec(
-        class_name="CellProfilerCostesM2Feature",
-        base_type=SecondFirstCellProfilerSourcePairFeature,
-        attributes={"source_field": "costes_m2", "feature_family": "Costes"},
-    ),
-):
-    _source_pair_feature_spec.declare_in(globals())
+class CellProfilerCorrelationFeature(SecondFirstCellProfilerSourcePairFeature):
+    source_field = "correlation"
+    feature_family = "Correlation"
+
+
+class CellProfilerSlopeFeature(FirstSecondCellProfilerSourcePairFeature):
+    source_field = "slope"
+    feature_family = "Slope"
+
+
+class CellProfilerReverseSlopeFeature(SecondFirstCellProfilerSourcePairFeature):
+    source_field = "slope_reverse"
+    feature_family = "Slope"
+
+
+class CellProfilerOverlapFeature(FirstSecondCellProfilerSourcePairFeature):
+    source_field = "overlap"
+    feature_family = "Overlap"
+
+
+class CellProfilerK1Feature(FirstSecondCellProfilerSourcePairFeature):
+    source_field = "k1"
+    feature_family = "K"
+
+
+class CellProfilerK2Feature(SecondFirstCellProfilerSourcePairFeature):
+    source_field = "k2"
+    feature_family = "K"
+
+
+class CellProfilerMandersM1Feature(FirstSecondCellProfilerSourcePairFeature):
+    source_field = "manders_m1"
+    feature_family = "Manders"
+
+
+class CellProfilerMandersM2Feature(SecondFirstCellProfilerSourcePairFeature):
+    source_field = "manders_m2"
+    feature_family = "Manders"
+
+
+class CellProfilerRWC1Feature(FirstSecondCellProfilerSourcePairFeature):
+    source_field = "rwc1"
+    feature_family = "RWC"
+
+
+class CellProfilerRWC2Feature(SecondFirstCellProfilerSourcePairFeature):
+    source_field = "rwc2"
+    feature_family = "RWC"
+
+
+class CellProfilerCostesM1Feature(FirstSecondCellProfilerSourcePairFeature):
+    source_field = "costes_m1"
+    feature_family = "Costes"
+
+
+class CellProfilerCostesM2Feature(SecondFirstCellProfilerSourcePairFeature):
+    source_field = "costes_m2"
+    feature_family = "Costes"
 
 
 CellProfilerInvocationRequest = RuntimeFunctionInvocationRequest
@@ -890,6 +859,21 @@ class CellProfilerMeasurementImage(
         """Return this source with projected image data and identical provenance."""
         return replace(self, payload=image)
 
+    def prepare_object_labels(
+        self,
+        label_payload: ObjectLabelValue,
+        *,
+        plane_projector: RuntimePlaneAxisProjector | None = None,
+    ) -> PreparedMeasurementObjectLabels:
+        """Prepare object labels according to this measurement image contract."""
+        return PreparedMeasurementObjectLabels.from_request(
+            self.object_label_alignment_request(
+                label_payload,
+                plane_projector=plane_projector,
+                align_image_to_labels=self.align_to_labels,
+            ),
+        )
+
     def align_labels_to_source(
         self,
         label_payload: ObjectLabelValue,
@@ -948,31 +932,3 @@ class CellProfilerSliceAlignedValues(RuntimeSliceAlignedValues[np.ndarray]):
                 "CellProfilerSliceAlignedValues.slices must contain ndarray values, "
                 f"got {invalid!r}."
             )
-
-
-def illumination_scope_uses_all_images(value: CellProfilerRuntimeSettingValue) -> bool:
-    """Return whether a CellProfiler illumination scope means all images."""
-    if value is None:
-        return False
-    if isinstance(value, Enum):
-        value = value.value
-    normalized = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
-    return normalized.startswith("all")
-
-
-def coerce_cellprofiler_grid_cycle_scope(
-    value: CellProfilerRuntimeSettingValue,
-    *,
-    default: CellProfilerGridCycleScope = CellProfilerGridCycleScope.EACH_CYCLE,
-) -> CellProfilerGridCycleScope:
-    """Coerce CellProfiler's grid scope setting into a closed runtime enum."""
-    if value is None:
-        return default
-    if isinstance(value, CellProfilerGridCycleScope):
-        return value
-    normalized = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
-    if normalized in {"each", "each_cycle"}:
-        return CellProfilerGridCycleScope.EACH_CYCLE
-    if normalized == "once":
-        return CellProfilerGridCycleScope.ONCE
-    return CellProfilerGridCycleScope(normalized)
