@@ -19,6 +19,35 @@ Current checkpoint:
 
 The easy cleanup is done. The remaining high-value work is risky because it touches runtime execution, measurement materialization, CellProfiler parity, and registry/metaclass policy families. That risk is acceptable only if each sequence is isolated, benchmarked, and pushed as a revertible checkpoint.
 
+The broad direction for these risky boundaries is still simple:
+
+```text
+Module-specific CellProfiler rules and quirks belong in existing nominal module policy declarations.
+Runtime execution infrastructure should stay generic and consume selected policies.
+```
+
+Splitting `CellProfilerModuleExecutor` should not create a new place for module
+name checks. The split is only successful if request builders, runners,
+materializers, and profilers are generic collaborators over a prepared runtime
+plan, while per-module behavior is selected by existing policy ABCs such as
+`CellProfilerSpecialInputPolicy`, `CellProfilerObjectInputPolicy`,
+`CellProfilerInvocationExecutionModePolicy`,
+`CellProfilerObjectMeasurementRowPolicy`, `CellProfilerMeasurementRecordBuilder`,
+and related contract/settings/function-resolution families.
+
+Do not add a delegating facade or duplicated registry just to make lookup look
+centralized. First run the advisor, search existing abstractions, strengthen the
+ABC contract that already owns the behavior, and factor shared logic upward into
+parents or mixins. Multiple inheritance/MRO is preferred when it composes real
+orthogonal traits and keeps module leaves small.
+
+Module-local semantics stay module-local. `RelateObjects` relationship
+endpoints, parent/child count rows, relationship measurement fields, special
+inputs, and export/runtime projection facts must live on `RelateObjects` policy
+leaves or shared parents those leaves inherit from. Any other runtime,
+generator, adapter, or exporter path that needs those facts must query the
+`RelateObjects` policies rather than re-encoding them.
+
 ## Current Finding Profile
 
 Advisor counts at the checkpoint:
@@ -68,22 +97,25 @@ Problem:
 
 The prior cleanup removed loose private helpers, but the executor is still a broad orchestration hub. The next step is not more helper renaming. It should be a staged split into cohesive collaborators.
 
+Those collaborators should receive already-selected policy objects, request
+records, or runtime plans. They should not rediscover module semantics through
+`*.for_module(...)` lookups or concrete module-name branches. Compiler/runtime
+validation should be generic: resolve the existing policy families for the
+module, ask their ABC hooks whether the `FunctionStep` and runtime plan are
+valid, then execute the validated plan through generic infrastructure.
+
 Target shape:
 
-- `CellProfilerInvocationRequestBuilder`
-  - Owns `_image_request(...)`, `_invocation_request(...)`, primary image input resolution, source-image naming, runtime input kwargs, and special execution-mode options.
-- `CellProfilerMeasurementImageResolver`
-  - Owns independent/composed/label-aligned measurement image construction.
-- `CellProfilerPerObjectMeasurementRunner`
-  - Owns per-object measurement execution, row completion, measurement target scope, and per-object timing labels.
-- `CellProfilerPerImageMeasurementRunner`
-  - Owns per-image measurement execution, image-owned measurement rows, and per-image timing labels.
-- `CellProfilerMeasurementProjectionMaterializer`
-  - Extends the existing `CellProfilerMeasurementMaterializer` so global image-number projection and field projection are not constructed in multiple execution paths.
-- `CellProfilerRuntimeProfiler`
-  - Owns repeated `_log_module_profile(...)` builder calls and standard payload fields.
-- `CellProfilerModuleExecutor`
-  - Becomes a thin facade that composes those collaborators and preserves public `run(...)`, `prepare(...)`, and contract accessors.
+- one generic module execution coordinator consumes a prepared runtime plan and
+  already-selected policies;
+- request-building helpers may exist only as mechanics over request records and
+  selected policies, not as new module-rule owners;
+- measurement image resolution, per-object/per-image execution, materialization,
+  and profiling are factored only where an existing policy or core authority
+  owns the semantic decision;
+- `CellProfilerModuleExecutor` remains a small public entry point preserving
+  `run(...)`, `prepare(...)`, and contract accessors, but it must not become a
+  delegating facade that hides another module-rule catalog.
 
 Migration strategy:
 
@@ -120,14 +152,14 @@ Problem:
 - per-image measurement execution
 - per-object/image-owned measurement paths
 
-Earlier attempts to hide this behind a trivial executor forwarding method made advisor results worse. The right fix is not a wrapper; it is to make measurement materialization own projection setup completely.
+Earlier attempts to hide this behind a trivial executor forwarding method made advisor results worse. The right fix is not a wrapper and not a new materializer-owned rule catalog. Measurement materialization should consume selected row/materialization policy facts and call the core projection authority.
 
 Target shape:
 
 - `CellProfilerMeasurementMaterializer.record(...)` receives a typed `CellProfilerMeasurementMaterializationRequest`.
-- That request includes adapter, measurement name, rows, fields, object/source ownership, source payload, and a projection policy.
-- All call sites construct request records, not projection builders.
-- `CellProfilerGlobalImageNumberProjection` becomes an internal implementation detail of the materializer/projection policy.
+- That request includes adapter, measurement name, rows, fields, object/source ownership, source payload, and the selected existing projection/materialization policy.
+- All call sites construct request records and pass selected policies, not projection builders or duplicated ImageNumber rules.
+- `CellProfilerGlobalImageNumberProjection` becomes an internal implementation detail behind the selected policy and core projection call.
 
 Migration strategy:
 
@@ -147,7 +179,7 @@ Verification gate:
 - generated-pipeline execution tests
 - official30 parity before claiming complete.
 
-## Sequence 3: Normalize Policy Families with a Generated Leaf Registry Substrate
+## Sequence 3: Normalize Existing Policy Families Without New Registries
 
 Primary files:
 
@@ -163,7 +195,7 @@ Advisor signal:
 
 Problem:
 
-Many policy families are already nominal and metaclass-registered, but advisor still sees repeated registry-key strings and metadata-only leaves. The issue is not that the families are invalid. The issue is that the repository lacks a consistent generated-leaf declaration substrate for all simple registered policy leaves.
+Many policy families are already nominal and metaclass-registered, but advisor still sees repeated registry-key strings and metadata-only leaves. The issue is not that the families are invalid. The issue is that simple registered leaves do not consistently share parent logic or generated-leaf helpers inside their existing families.
 
 Existing partial substrate:
 
@@ -173,10 +205,11 @@ Existing partial substrate:
 
 Target shape:
 
-- One reusable generated leaf spec for registry-keyed CellProfiler module policies.
-- One reusable generated leaf spec for enum-keyed runtime strategies.
-- One declarative table per policy family.
-- Hand-written leaf classes only when they contain behavior.
+- Existing nominal ABC/metaclass families remain the only registries.
+- Generated leaf helpers, if used, create leaves inside those existing families
+  only; they do not introduce a parallel catalog or lookup service.
+- Shared behavior moves into parent classes or mixins.
+- Hand-written leaf classes remain when they contain behavior.
 - Registry key literals remain in root classes unless metaclass support changes; do not extract them into constants if that breaks registry behavior.
 
 Candidate families:
@@ -195,10 +228,12 @@ Candidate families:
 
 Migration strategy:
 
-1. Pick one CellProfiler module policy family and convert metadata-only leaves to generated specs.
+1. Pick one CellProfiler module policy family and convert metadata-only leaves to generated specs within that existing family.
 2. Run advisor and tests. If the count improves without hurting readability, repeat for the next family.
 3. For enum/stat-field families such as `ClassifyObjectsMeasurementStatField`, `AlignMeasurementStatField`, and measurement feature enums, treat advisor findings skeptically. These are typed closed vocabularies, not boilerplate unless a real repeated behavior emerges.
 4. Do not collapse behaviorful classes into data tables.
+5. Do not add a reusable generated-leaf registry substrate that becomes a
+   second source of truth beside the ABC families.
 
 Risk:
 
@@ -601,12 +636,16 @@ Current intentionally deferred/noise findings:
 
 - `strategy_key` and `strategy_label` literal reports are deliberate `AutoRegisterMeta` key-axis declarations. A constants experiment made advisor rent detection worse, so do not hide these literals unless `metaclass_registry` itself learns a first-class key-axis declaration API.
 - `ShapeObjectZernikeDescriptorStabilityContract.is_stable` is a forwarding leaf because the enum-keyed registry requires one leaf for `ObjectZernikeDescriptorFeature.SHAPE`. Proper cleanup should make the stability policy itself the registered strategy leaf, not delete the leaf.
-- `RelationshipAggregateShapeDescriptorFeatureSemantics` forwarding methods represent child-descriptor adaptation. Proper cleanup needs a resolved-child descriptor view that owns `child_context + child_semantics`; deleting the methods would lose aggregate descriptor behavior.
+- `RelationshipAggregateShapeDescriptorFeatureSemantics` forwarding methods represent child-descriptor adaptation. Proper cleanup needs the existing relationship/module policy leaf to return a typed child-context/child-semantics result; deleting the methods would lose aggregate descriptor behavior.
 
 Next runtime-equivalence sequence:
 
-1. Add a `ResolvedRelationshipShapeDescriptorSemantics` record that owns child context resolution and child semantics lookup.
-2. Change `RelationshipAggregateShapeDescriptorFeatureSemantics` methods to use the resolved child object. If advisor still sees forwarding, move the aggregate strategy out of the child-delegating family or make the resolved child object the load-bearing collaborator at the caller.
+1. Add or extend an existing relationship/module policy method that resolves
+   child context and child semantics as a typed result.
+2. Change `RelationshipAggregateShapeDescriptorFeatureSemantics` methods to use
+   that policy result. If advisor still sees forwarding, move the aggregate
+   strategy out of the child-delegating family or make the policy result the
+   load-bearing collaborator at the caller.
 3. Introduce a required-measurement projection authority for:
    - `_required_measurement_input_keys`
    - `_required_measurement_subjects`
@@ -649,7 +688,7 @@ Start with Sequence 2, not Sequence 1.
 
 Reason:
 
-`CellProfilerGlobalImageNumberProjection` construction is a narrow, high-value behavior boundary. It is risky enough to matter but smaller than the full `CellProfilerModuleExecutor` split. A typed materialization request will also make the later executor split easier because per-image/per-object runners can call the same materializer API.
+`CellProfilerGlobalImageNumberProjection` construction is a narrow, high-value behavior boundary. It is risky enough to matter but smaller than the full `CellProfilerModuleExecutor` split. A typed materialization request will also make the later executor split easier because per-image/per-object runners can pass the same selected policy facts into the materializer API.
 
 Expected first commit:
 

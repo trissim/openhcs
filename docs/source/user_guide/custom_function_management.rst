@@ -24,7 +24,11 @@ Quick Reference
     
     # Add custom function
     function_code = '''
-    @numpy_memory
+    from openhcs.core.memory import numpy
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    @numpy
     def my_custom_filter(image: np.ndarray, sigma: float = 1.0) -> np.ndarray:
         """Apply custom Gaussian filter."""
         return gaussian_filter(image, sigma=sigma)
@@ -33,7 +37,13 @@ Quick Reference
     manager.add_function('my_custom_filter', function_code)
     
     # Function is now available in pipelines
-    step = FunctionStep(function='my_custom_filter', parameters={'sigma': 2.0})
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.processing.custom_functions import my_custom_filter
+
+    step = FunctionStep(
+        func=(my_custom_filter, {'sigma': 2.0}),
+        name='my_custom_filter',
+    )
 
 End-to-End Flow
 ===============
@@ -52,7 +62,7 @@ The custom function lifecycle involves four stages:
     dialog.show()
     
     # Stage 2: Validation on save
-    # - Check for required decorators (@numpy_memory, @cupy_memory, etc.)
+    # - Check for required decorators (@numpy, @cupy, etc.)
     # - Validate function signature (first arg must be image array)
     # - Verify return type annotation
     
@@ -194,10 +204,10 @@ Required Decorators
 
 .. code-block:: python
 
-    from openhcs.core.memory.decorators import numpy_memory, cupy_memory
+    from openhcs.core.memory import numpy, cupy
     
     # Valid: Has memory type decorator
-    @numpy_memory
+    @numpy
     def valid_function(image: np.ndarray) -> np.ndarray:
         return image
     
@@ -283,16 +293,14 @@ Custom functions integrate with the global function registry:
 
 .. code-block:: python
 
-    from openhcs.processing.func_registry import register_function, get_function
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.processing.func_registry import register_function
     
     # Register custom function
     register_function(func, backend='openhcs')
     
-    # Retrieve in pipeline
-    func = get_function('my_custom_filter', backend='openhcs')
-    
     # Use in step
-    step = FunctionStep(function='my_custom_filter')
+    step = FunctionStep(func=func, name=func.__name__)
 
 **Backend organization**: Custom functions use ``backend='openhcs'`` to distinguish from library functions.
 
@@ -309,7 +317,9 @@ Adding Function from GUI
     
     # User writes code in editor
     code = '''
-    @numpy_memory
+    from openhcs.core.memory import numpy
+
+    @numpy
     def my_filter(image: np.ndarray, threshold: float = 0.5) -> np.ndarray:
         return image > threshold
     '''
@@ -384,7 +394,7 @@ Signals decouple manager from UI, enabling multiple components to stay synchroni
 Common Gotchas
 ==============
 
-- **Don't forget memory type decorator**: Functions without ``@numpy_memory`` or similar will fail validation
+- **Don't forget memory type decorator**: Functions without ``@numpy`` or similar will fail validation
 - **First parameter must be image**: Function signature must start with image array parameter
 - **Return type annotation required**: Functions without return type annotation will fail validation
 - **Function names must be unique**: Adding function with existing name replaces the old function
@@ -420,7 +430,7 @@ Symptom: Function Execution Fails
 .. code-block:: python
 
     # Function code missing imports
-    @numpy_memory
+    @numpy
     def my_filter(image: np.ndarray) -> np.ndarray:
         return gaussian_filter(image, sigma=1.0)  # NameError: gaussian_filter not defined
 
@@ -429,8 +439,8 @@ Symptom: Function Execution Fails
 .. code-block:: python
 
     from scipy.ndimage import gaussian_filter
+    from openhcs.core.memory import numpy
     
-    @numpy_memory
+    @numpy
     def my_filter(image: np.ndarray) -> np.ndarray:
         return gaussian_filter(image, sigma=1.0)
-

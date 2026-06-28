@@ -28,7 +28,7 @@ CellProfiler Test Mode is not just verbose logging. It is an interactive executi
 The OpenHCS equivalent should map this onto existing OpenHCS concepts:
 
 - CellProfiler module -> OpenHCS function invocation inside a `FunctionStep`.
-- CellProfiler image set/group -> OpenHCS well/axis, source-binding group, pattern group.
+- CellProfiler image set/group -> OpenHCS well/axis, source-binding axis, pattern group.
 - CellProfiler module outputs -> OpenHCS artifacts and source-bound runtime values.
 - CellProfiler display window -> OpenHCS debug view backed by napari/Qt/table widgets.
 

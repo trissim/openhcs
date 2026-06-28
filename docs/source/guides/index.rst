@@ -10,10 +10,12 @@ Complete Examples
    :maxdepth: 2
 
    complete_examples
+   example_corpus_map
 
 **Working Examples**: Comprehensive scripts demonstrating major OpenHCS functionality and practical usage patterns.
 
 :doc:`complete_examples`
+:doc:`example_corpus_map`
 
 System Integration Guides
 --------------------------

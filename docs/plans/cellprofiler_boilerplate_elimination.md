@@ -25,6 +25,41 @@ The generated file should not contain:
 
 The semantic rule is simple: a generated `.cppipe` pipeline declares the resolved OpenHCS callable and the module settings. OpenHCS derives the artifact contract, runtime wrapper, runtime adapter, prepare hook, and materialization behavior from that invocation.
 
+## Module Declaration Audit Gate
+
+Before deleting more CellProfiler binding/runtime boilerplate, audit every module against the AutoRegisterMeta-backed `CellProfilerModule` declaration catalog. The deletion rule is:
+
+- module-specific facts must be declared on the module class or an inherited nominal parent;
+- generic lowering/binding/compiler/runtime code may query the declaration, but must not mirror module facts;
+- mass deletion is allowed only after the declaration is self-contained and focused tests use `CellProfilerModule.bind_settings(...)`.
+
+Current AST audit:
+
+- `CellProfilerModule` declarations found: 89
+- remaining module-specific settings strategy leaves: 5
+- remaining strategy bases: `_ModuleSettingsBindingStrategy`, `GenericModuleSettingsBindingStrategy`, `DeclarativeModuleSettingsBindingStrategy`
+- focused verification after the current cleanup slice: `81 passed` for `tests/unit/test_cellprofiler_module_function_resolution.py tests/unit/test_settings_binder.py`
+
+Remaining blockers before mass deletion:
+
+| Strategy mirror | Module declaration | Declaration gap |
+|---|---|---|
+| `EnhanceOrSuppressFeaturesModuleSettingsBindingStrategy` | `EnhanceOrSuppressFeaturesModule` | Move explicit setting bindings, input/output ignores, hole-size range split, and feature-size radius derivation onto the module declaration. |
+| `IdentifyPrimaryObjectsModuleSettingsBindingStrategy` | `IdentifyPrimaryObjectsModule` | Move primary-object setting bindings, input/output aliases, diameter range split, and advanced threshold binding opt-in onto the module declaration. |
+| `IdentifySecondaryObjectsModuleSettingsBindingStrategy` | `IdentifySecondaryObjectsModule` | Move method/dilation/fill/discard bindings, input/output/associated-primary ignores, and threshold binding opt-in onto the module declaration. |
+| `MeasureObjectNeighborsModuleSettingsBindingStrategy` | `MeasureObjectNeighborsModule` | Move neighbor distance bindings, retained neighbor-image flags, colormap selection, and routing ignores onto the module declaration. |
+| `ThresholdModuleSettingsBindingStrategy` | `ThresholdModule` | Move standalone threshold binding opt-in, smoothing/window aliases, manual-threshold remap, and input/output ignores onto the module declaration. |
+
+Batch migration order:
+
+1. Fill all five declarations in `openhcs/processing/backends/cellprofiler/module_classes.py`.
+2. Switch the matching tests from `_ModuleSettingsBindingStrategy.for_module(...)` to the declaration helper.
+3. Use the NRA DSL with `delete_selected_targets` and `selection_count.exact = 5` to delete the five strategy leaves in one batch.
+4. Re-run the source-index audit. If no module-specific leaves remain, remove or collapse the strategy bases so `module_settings_binding.py` only contains generic binder primitives used by declarations.
+5. Run focused tests, then the CellProfiler strategy/registry tests that are expected to shrink or disappear.
+
+The important sequencing point is that mass deletion should follow a complete declaration audit, not drive the audit. Any module that still needs a strategy leaf is not self-contained yet.
+
 ## Target Generated Shape
 
 The preferred generated form is step-only:

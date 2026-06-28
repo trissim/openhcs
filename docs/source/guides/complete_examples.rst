@@ -41,22 +41,25 @@ Key Code Patterns
 
 .. code-block:: python
 
-    from openhcs.core.config import (GlobalPipelineConfig, PathPlanningConfig, 
-                                     VFSConfig, ZarrConfig, MaterializationBackend, 
+    from pathlib import Path
+
+    from openhcs.constants.constants import Backend, Microscope
+    from openhcs.core.config import (GlobalPipelineConfig, PathPlanningConfig,
+                                     VFSConfig, ZarrConfig, MaterializationBackend,
                                      ZarrCompressor, ZarrChunkStrategy)
     
     global_config = GlobalPipelineConfig(
         num_workers=5,
-        path_planning=PathPlanningConfig(
+        materialization_results_path=Path("results"),
+        path_planning_config=PathPlanningConfig(
             output_dir_suffix="_stitched",
-            global_output_folder="/data/output/",
-            materialization_results_path="results"
+            global_output_folder=Path("/data/output/"),
         ),
-        vfs=VFSConfig(
+        vfs_config=VFSConfig(
             intermediate_backend=Backend.MEMORY,
             materialization_backend=MaterializationBackend.ZARR
         ),
-        zarr=ZarrConfig(
+        zarr_config=ZarrConfig(
             compressor=ZarrCompressor.ZSTD,
             compression_level=1,
             chunk_strategy=ZarrChunkStrategy.WELL
@@ -69,6 +72,8 @@ Key Code Patterns
 .. code-block:: python
 
     from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.config import LazyProcessingConfig
+    from openhcs.constants.constants import VariableComponents
     from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
     from openhcs.processing.backends.processors.cupy_processor import tophat
     
@@ -86,14 +91,18 @@ Key Code Patterns
             })
         ],
         name="preprocess",
-        variable_components=[VariableComponents.SITE],
-        force_disk_output=False
+        processing_config=LazyProcessingConfig(
+            variable_components=[VariableComponents.SITE],
+        ),
     )
 
 **Dictionary Pattern for Channel-Specific Analysis**:
 
 .. code-block:: python
 
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.config import LazyProcessingConfig
+    from openhcs.constants.constants import VariableComponents
     from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel, DetectionMethod
     from openhcs.processing.backends.analysis.skan_axon_analysis import skan_axon_skeletonize_and_analyze, AnalysisDimension
     
@@ -116,13 +125,18 @@ Key Code Patterns
             ]
         },
         name="analysis",
-        variable_components=[VariableComponents.SITE]
+        processing_config=LazyProcessingConfig(
+            variable_components=[VariableComponents.SITE],
+        ),
     )
 
 **GPU Stitching Workflow**:
 
 .. code-block:: python
 
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.config import LazyProcessingConfig, LazyStepMaterializationConfig
+    from openhcs.constants.constants import VariableComponents
     from openhcs.processing.backends.pos_gen.ashlar_main_gpu import ashlar_compute_tile_positions_gpu
     from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
     
@@ -134,8 +148,9 @@ Key Code Patterns
             'stitch_alpha': 0.2
         })],
         name="find_positions",
-        variable_components=[VariableComponents.SITE],
-        force_disk_output=False
+        processing_config=LazyProcessingConfig(
+            variable_components=[VariableComponents.SITE],
+        ),
     )
     
     # GPU image assembly
@@ -145,8 +160,10 @@ Key Code Patterns
             'fixed_margin_ratio': 0.1
         })],
         name="assemble",
-        variable_components=[VariableComponents.SITE],
-        force_disk_output=True
+        processing_config=LazyProcessingConfig(
+            variable_components=[VariableComponents.SITE],
+        ),
+        step_materialization_config=LazyStepMaterializationConfig(enabled=True),
     )
 
 **Complete Orchestrator Execution**:

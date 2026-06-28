@@ -35,6 +35,34 @@ mathematically coherent:
   external numbering vocabulary,
 - fail-loud behavior instead of broad fallback paths.
 
+Keep the rule simple:
+
+```text
+Module-specific CellProfiler rules belong in existing nominal module policy declarations.
+The runtime adapter is generic boundary coordination.
+```
+
+If an adapter/runtime path needs to know a concrete CellProfiler module quirk,
+that quirk should be exposed through an existing ABC family such as object-input,
+special-input, execution-mode, measurement-row, function-resolution,
+settings-binding, or contract-builder policy. The adapter may choose the correct
+generic projector, resolver, or recorder, but it should not branch on concrete
+module names, create a delegating facade, or grow its own parallel module-rule
+catalog.
+
+Before adding any class, search the existing nominal families and make those
+classes pay rent. Strengthen ABC contracts, factor common behavior into parent
+classes or mixins, and use multiple inheritance/MRO when independent semantic
+traits compose cleanly. The runtime target is one thin generic execution path
+that consumes selected policy objects.
+
+Module-local semantics stay module-local. `RelateObjects` relationship
+endpoints, parent/child count rows, relationship measurement fields, special
+inputs, and export/runtime projection facts must live on `RelateObjects` policy
+leaves or shared parents those leaves inherit from. Adapter, exporter,
+generator, and runtime helpers query those policies; they must not duplicate the
+relationship rules.
+
 ## Architectural Diagnosis
 
 The recent branch is directionally correct. Measurement scope, row-axis state,
@@ -113,10 +141,15 @@ rules:
   - how source binding metadata resolves external image-set identity,
   - how CP row names are rendered.
 
-- CellProfiler module parser/settings details:
+- CellProfiler dialect/parser compatibility:
   - legacy threshold version parsing,
-  - module-specific setting names,
-  - raw generated function variant selection.
+  - external setting vocabulary.
+
+Module-specific setting names, raw generated function variant selection, and
+validation hooks should live on the existing module policy leaves such as
+settings-binding, function-resolution, and contract-builder policies. Runtime
+code queries those policies; CellProfiler interop should not grow a second
+module-rule catalog.
 
 ### Adapter Responsibilities
 
@@ -133,6 +166,13 @@ generic semantics:
 It should not own scalar parsing, row-axis projection, table-union schema
 semantics, or image/object-label projection differences beyond choosing the
 correct nominal projector.
+
+It also should not own module-specific validation. A compiler/runtime validator
+should check a CellProfiler-backed step by asking the resolved existing policy
+families for contracts, required inputs, retained artifacts, special input
+policies, and any setting-derived validation hooks. The adapter should consume
+the already-validated runtime plan and fail loudly if the plan or runtime
+payloads violate those declared contracts.
 
 ## Refactor Sequence
 
@@ -312,8 +352,10 @@ Candidate core shape:
 Migration:
 
 1. Move pure row/column projection code into core with no CP imports.
-2. Define a CP ImageNumber policy that supplies source-order numbering.
-3. Make `CellProfilerMeasurementMaterializer` call the core projector.
+2. Attach CP ImageNumber/source-order vocabulary to existing row/materialization
+   policy leaves rather than creating a separate CP projection owner.
+3. Make `CellProfilerMeasurementMaterializer` consume the selected policy and
+   call the core projector.
 4. Remove or shrink `CellProfilerMeasurementAxisStateStrategy`.
 5. Keep public CP names only as compatibility vocabulary if needed.
 
@@ -327,7 +369,8 @@ Verification:
 Completion criteria:
 
 - Runtime row-axis projection is testable without CellProfiler.
-- CP materialization does not own generic slice/image-number row semantics.
+- CP materialization does not own generic slice/ImageNumber row semantics; it
+  consumes selected policy facts and delegates projection to core.
 
 ### Stage 5: Unify Current Source Plane Projection
 
@@ -584,8 +627,9 @@ After this plan, the CellProfiler runtime boundary should read as:
 
 - OpenHCS core owns rows, scalar literals, measurement table shape, source-plane
   identity, and object-label measurement alignment.
-- CellProfiler interop owns parser vocabulary, external ImageNumber dialect,
-  generated function selection, and module-specific settings.
+- CellProfiler interop owns parser vocabulary and external ImageNumber dialect.
+- Existing module policy leaves own generated function selection and
+  module-specific settings.
 - The adapter coordinates runtime stores and source bindings without embedding
   generic semantics.
 - The module executor/materializer records measurements through core row/table
