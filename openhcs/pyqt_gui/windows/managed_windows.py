@@ -123,11 +123,20 @@ class ImageBrowserWindow(QDialog):
     def _setup_connections(self):
         from pyqt_reactive.services.window_manager import WindowManager
 
+        plate_widgets = []
+        embedded_plate_widget = self.main_window.embedded_widgets.plate_manager
+        if embedded_plate_widget is not None:
+            plate_widgets.append(embedded_plate_widget)
+
         plate_window = WindowManager._scoped_windows.get("plate_manager")
-        if plate_window:
-            plate_widget = plate_window.widget
+        if plate_window is not None and plate_window.widget not in plate_widgets:
+            plate_widgets.append(plate_window.widget)
+
+        for plate_widget in plate_widgets:
             plate_widget.plate_selected.connect(
-                lambda: self._update_orchestrator(plate_widget)
+                lambda _plate_path=None, plate_widget=plate_widget: self._update_orchestrator(
+                    plate_widget
+                )
             )
             self._update_orchestrator(plate_widget)
 

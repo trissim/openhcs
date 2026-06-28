@@ -336,7 +336,6 @@ class PlateViewerWindow(BaseFormDialog):
                 )
                 return
 
-            # Get resolved configs from orchestrator's pipeline_config using ObjectState
             if not self.orchestrator.pipeline_config:
                 QMessageBox.warning(
                     self,
@@ -345,18 +344,11 @@ class PlateViewerWindow(BaseFormDialog):
                 )
                 return
 
-            # Create ObjectState from pipeline_config and resolve configs
-            from openhcs.config_framework.object_state import ObjectState
-
-            pipeline_config_state = ObjectState(self.orchestrator.pipeline_config)
+            effective_config = self.orchestrator.get_effective_config()
             analysis_consolidation_config = (
-                pipeline_config_state.get_saved_resolved_value(
-                    "analysis_consolidation_config"
-                )
+                effective_config.analysis_consolidation_config
             )
-            plate_metadata_config = pipeline_config_state.get_saved_resolved_value(
-                "plate_metadata_config"
-            )
+            plate_metadata_config = effective_config.plate_metadata_config
 
             # Use consolidated function that handles both per-directory and global consolidation
             from openhcs.processing.backends.analysis.consolidate_analysis_results import (

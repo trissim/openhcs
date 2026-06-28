@@ -85,6 +85,10 @@ class PlateManagerWorkflowSurface(ConfigChangeSurface):
     ) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def notify_pipeline_definition_changed(self, plate_path: str) -> None:
+        raise NotImplementedError
+
 
 class QtShortcutSequenceAuthority:
     """Convert Qt key events into configured shortcut strings."""

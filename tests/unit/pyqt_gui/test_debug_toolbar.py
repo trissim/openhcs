@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtWidgets import QApplication
 
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.config import NapariStreamingConfig
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugCommand,
@@ -32,11 +34,7 @@ from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
-from openhcs.pyqt_gui.widgets.pipeline_editor import (
-    PipelineEditorWidget,
-    StepPreviewConfigDetailFormatter,
-    StepPreviewConfigField,
-)
+from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorDebugWorkflow,
     PipelineEditorFunctionPresentation,
@@ -224,6 +222,9 @@ class PipelineEditorDirtyHarness(PipelineEditorHarnessBase):
 
     def save_pipeline_for_plate(self, plate, steps) -> None:
         self.saved.append((plate, steps))
+
+    def notify_pipeline_definition_changed(self, plate) -> None:
+        return None
 
 
 class DebugInspectorRecorder:
@@ -416,14 +417,8 @@ def test_pipeline_editor_has_route_for_every_debug_command() -> None:
     assert set(PipelineEditorWidget.DEBUG_COMMAND_ROUTES) == set(DebugCommandType)
 
 
-def test_step_preview_config_detail_uses_nominal_formatter_family() -> None:
-    formatter = StepPreviewConfigDetailFormatter.for_config_field(
-        StepPreviewConfigField.NAPARI_STREAMING
-    )
-
-    assert formatter.format_detail(SimpleNamespace(port=5941)) == (
-        "• Napari Streaming: Port 5941"
-    )
+def test_streaming_preview_label_is_declared_on_config_class() -> None:
+    assert PREVIEW_LABEL_REGISTRY[NapariStreamingConfig] == "NAP"
 
 
 def test_pipeline_editor_dispatches_pause_step_indices(monkeypatch) -> None:
