@@ -38,6 +38,7 @@ Practical guides for specific development tasks.
    window_manager_usage
    compact_window_patterns
    mcp_development
+   runtime_system_assembly_rules
 
 Testing and CI
 ==============
