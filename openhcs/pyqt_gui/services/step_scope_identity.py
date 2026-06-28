@@ -6,6 +6,11 @@ import re
 from dataclasses import dataclass
 
 from openhcs.core.steps.function_step import FunctionStep
+from pyqt_reactive.services.function_navigation import (
+    FUNCTION_FIELD_ROOT,
+    build_function_token_field_path,
+    is_function_field_path,
+)
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 
 SCOPE_SEGMENT_SEPARATOR = "::"
@@ -51,6 +56,24 @@ class StepEditorScope:
     def is_function_scope(self) -> bool:
         return self.child_scope_id is not None
 
+    @property
+    def window_scope_id(self) -> str:
+        """Return the WindowManager scope that owns this editor scope."""
+        return self.step_scope_id
+
+    def window_field_path(self, field_path: str | None) -> str | None:
+        """Map this ObjectState scope field to the parent editor field path."""
+        if self.child_scope_id is None or field_path is None:
+            return field_path
+        if is_function_field_path(field_path):
+            target_path = field_path
+        else:
+            target_path = f"{FUNCTION_FIELD_ROOT}.{field_path}"
+        return build_function_token_field_path(
+            self.child_scope_id,
+            fallback_base_field_path=target_path,
+        )
+
     @classmethod
     def parse(cls, scope_id: str) -> "StepEditorScope":
         segments = tuple(scope_id.split(SCOPE_SEGMENT_SEPARATOR))
@@ -78,6 +101,20 @@ class StepEditorScope:
     def handler_pattern(cls) -> str:
         """Return the WindowFactory pattern for all step editor scopes."""
         return _STEP_EDITOR_SCOPE_PATTERN.pattern
+
+    @classmethod
+    def window_scope_id_for_scope(cls, scope_id: str) -> str:
+        """Resolve any step editor ObjectState scope to its window scope."""
+        return cls.parse(scope_id).window_scope_id
+
+    @classmethod
+    def window_field_path_for_scope(
+        cls,
+        scope_id: str,
+        field_path: str | None,
+    ) -> str | None:
+        """Resolve a scope field path to the editor window navigation path."""
+        return cls.parse(scope_id).window_field_path(field_path)
 
     @staticmethod
     def _step_token_ref(

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from openhcs.config_framework.object_state import ObjectStateRegistry
@@ -13,6 +12,7 @@ from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerGeneratedRuntimeBindingState,
     CellProfilerGeneratedStepFunctionSpec,
     CellProfilerPipelineRuntimeRebinder,
 )
@@ -218,6 +218,11 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         self.apply_pipeline_data(payload.pipeline_data)
         return True
 
+    def validate_namespace(self, namespace) -> bool:
+        return PlateManagerOrchestratorCodePayload.from_namespace(
+            PlateManagerCodeNamespace.from_mapping(namespace)
+        ) is not None
+
     def sync_plate_entries(self, plate_paths: tuple[str, ...]) -> None:
         """Make visible plate rows match the code document's plate path list."""
         requested_paths = tuple(dict.fromkeys(str(path) for path in plate_paths))
@@ -260,8 +265,13 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             plate_str = str(plate_path)
             if plate_str in existing_paths:
                 continue
-            self.manager._create_orchestrator_for_plate(plate_str)
-            plate_name = Path(plate_str).name or plate_str
+            identity = PlateScopeIdentity.from_scope_id(plate_str)
+            self.manager._create_orchestrator_for_plate(
+                plate_str,
+                plate_root=identity.plate_root,
+                cppipe_path=identity.cppipe_path,
+            )
+            plate_name = identity.display_name
             new_paths.append(plate_str)
             existing_paths.add(plate_str)
             added_count += 1
@@ -378,6 +388,9 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             GuiEventBusBroadcaster(self.manager.event_bus).pipeline_changed(
                 pipeline_steps
             )
+            plate_pipeline_editor.status_message.emit(
+                f"Loaded {len(pipeline_steps)} steps from plate-manager code document"
+            )
             logger.debug(
                 "Triggered UI cascade refresh for current plate: %s",
                 plate_path,
@@ -392,6 +405,10 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
     ) -> list[FunctionStep]:
         """Preserve generated CellProfiler artifact bindings through code mode."""
         if not self.pipeline_contains_cellprofiler_steps(pipeline_steps):
+            return pipeline_steps
+        if not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+            pipeline_steps
+        ):
             return pipeline_steps
 
         plate_pipeline_editor = self.manager.plate_pipeline_editor
@@ -446,9 +463,15 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         if plate_path in self.manager.plate_compiled_data:
             del self.manager.plate_compiled_data[plate_path]
             logger.debug("Cleared compiled data for %s", plate_path)
+        self.manager.clear_plate_execution_tracking(plate_path)
 
         orchestrator = ObjectStateRegistry.get_object(plate_path)
-        if orchestrator and orchestrator.state == OrchestratorState.COMPILED:
+        if orchestrator and orchestrator.state in (
+            OrchestratorState.COMPILED,
+            OrchestratorState.COMPLETED,
+            OrchestratorState.COMPILE_FAILED,
+            OrchestratorState.EXEC_FAILED,
+        ):
             orchestrator._state = OrchestratorState.READY
             self.manager.orchestrator_state_changed.emit(plate_path, "READY")
 

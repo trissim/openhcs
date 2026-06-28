@@ -123,9 +123,10 @@ class PipelineEditorFunctionPresentation:
         if isinstance(func, dict):
             orchestrator = self.editor._get_current_orchestrator()
             metadata_cache = orchestrator.metadata_cache if orchestrator else None
+            step = state.to_object(update_delegate=False) if state else None
             group_by = (
-                state.get_resolved_value("processing_config.group_by")
-                if state
+                step.processing_config.group_by
+                if isinstance(step, AbstractStep)
                 else None
             )
             entries = []
@@ -215,13 +216,6 @@ class PipelineEditorFunctionPresentation:
         if callable(func_entry):
             return CallableContract.from_callable(func_entry).function_name
         return str(func_entry)
-
-    def format_input_source_preview(self, input_source) -> str | None:
-        source_name = input_source.name
-        if source_name != "PREVIOUS_STEP":
-            return f"input={source_name}"
-        return None
-
 
 @dataclass(frozen=True, slots=True, weakref_slot=True)
 class PipelineEditorDebugWorkflow:
@@ -412,7 +406,7 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
         return namespace
 
     def apply_namespace(self, namespace: dict) -> bool:
-        if "pipeline_steps" not in namespace:
+        if not self.validate_namespace(namespace):
             return False
 
         pipeline_steps = namespace["pipeline_steps"]
@@ -429,6 +423,7 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
                 self.editor.current_plate,
                 self.editor.pipeline_steps,
             )
+            self.editor.notify_pipeline_definition_changed(self.editor.current_plate)
             logger.debug(
                 "Updated Pipeline ObjectState (%d steps) for plate: %s",
                 len(self.editor.pipeline_steps),
@@ -446,6 +441,9 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
         )
         GuiEventBusBroadcaster(self.editor.event_bus).pipeline_changed(pipeline_steps)
         return True
+
+    def validate_namespace(self, namespace: dict) -> bool:
+        return "pipeline_steps" in namespace
 
 
 @dataclass(frozen=True, slots=True)

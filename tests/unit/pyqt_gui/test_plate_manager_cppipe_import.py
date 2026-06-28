@@ -13,6 +13,7 @@ from openhcs.pyqt_gui.widgets.plate_manager import (
     ROOT_SCOPE_ID,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerCodeWorkflow,
     PlateManagerDeletionWorkflow,
 )
 from tests.unit.pyqt_gui.test_plate_manager_widget import (
@@ -382,6 +383,45 @@ def test_plate_manager_scoped_cppipe_orchestrator_uses_physical_plate_root(
     assert orchestrator is not None
     assert orchestrator.plate_path == plate_root
     close_widget(widget)
+
+
+def test_plate_manager_code_mode_cppipe_scope_preserves_import_request(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+    service_adapter = PlateManagerServiceStub()
+    ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
+    widget = PlateManagerWidget(service_adapter)
+    plate_root = tmp_path / "BeginnerSegmentation"
+    plate_root.mkdir()
+    cppipe_path = plate_root / "segmentation_final.cppipe"
+    cppipe_path.write_text("Version:5", encoding="utf-8")
+    scope_id = PlateScopeIdentity.from_cellprofiler_pipeline(
+        plate_root,
+        cppipe_path,
+    ).scope_id
+
+    try:
+        PlateManagerCodeWorkflow(widget).sync_plate_entries((scope_id,))
+
+        orchestrator = ObjectStateRegistry.get_object(scope_id)
+        assert orchestrator is not None
+        assert orchestrator.plate_path == plate_root
+        assert orchestrator.input_workspace_preparation is not None
+        assert orchestrator.input_workspace_preparation.selected_path == plate_root
+        assert (
+            orchestrator.input_workspace_preparation.selected_pipeline_path
+            == cppipe_path
+        )
+    finally:
+        close_widget(widget)
+        ObjectStateRegistry.clear()
 
 
 def test_plate_manager_opens_cppipe_config_with_logical_scope(

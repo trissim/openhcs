@@ -10,7 +10,13 @@ from pyqt_reactive.theming import ColorScheme
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyNapariStreamingConfig,
+    PipelineConfig,
+    WellFilterConfig,
+)
+from openhcs.constants.constants import OrchestratorState
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
@@ -20,11 +26,24 @@ from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+from openhcs.pyqt_gui.widgets.plate_manager import (
+    PlateManagerAction,
+    PlateManagerWidget,
+    PlateOperation,
+    PlateOperationValidator,
+)
+from openhcs.interop.cellprofiler.runtime.module_execution import (
+    cellprofiler_module_callable,
+)
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
     PlateManagerCodeWorkflow,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
+    TerminalExecutionStatus,
 )
 
 
@@ -72,6 +91,9 @@ class PlateManagerServiceStub:
 
     def get_global_config(self) -> GlobalPipelineConfig:
         return self.global_config
+
+    def set_global_config(self, global_config: GlobalPipelineConfig) -> None:
+        self.global_config = global_config
 
     def get_current_color_scheme(self) -> ColorScheme:
         return self.color_scheme
@@ -134,6 +156,103 @@ class TestPlateManagerWidget:
             "/execution"
         )
         close_widget(widget)
+
+    def test_compile_validator_requires_initialized_orchestrator(self) -> None:
+        plate_scope = "/plate"
+        ObjectStateRegistry.register(
+            ObjectState(
+                SimpleNamespace(state=OrchestratorState.CREATED),
+                scope_id=plate_scope,
+            ),
+            _skip_snapshot=True,
+        )
+        manager = SimpleNamespace(
+            _get_current_pipeline_definition=lambda scope_id: [
+                FunctionStep(func=lambda image: image, name="Defined")
+            ],
+        )
+        row = PlateManagerRow.from_scope(plate_scope)
+
+        result = PlateOperationValidator.for_operation(PlateOperation.COMPILE).validate(
+            manager,
+            row,
+        )
+
+        assert not result.valid
+        assert result.reason == "orchestrator_not_initialized"
+        assert result.recovery_action is PlateManagerAction.INIT_PLATE
+
+    def test_live_results_prefers_output_plate_orchestrator(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        source_root = tmp_path / "source_plate"
+        output_root = tmp_path / "source_plate_openhcs"
+        source_root.mkdir()
+        output_root.mkdir()
+        source_row = PlateManagerRow.from_scope(str(source_root))
+        output_row = PlateManagerRow.from_scope(str(output_root))
+        widget._ensure_root_state().update_parameter(
+            "orchestrator_scope_ids",
+            [source_row.scope_id, output_row.scope_id],
+        )
+        source_orchestrator = SimpleNamespace(state=OrchestratorState.COMPLETED)
+        output_orchestrator = SimpleNamespace(state=OrchestratorState.CREATED)
+        ObjectStateRegistry.register(
+            ObjectState(source_orchestrator, scope_id=source_row.scope_id),
+            _skip_snapshot=True,
+        )
+        ObjectStateRegistry.register(
+            ObjectState(output_orchestrator, scope_id=output_row.scope_id),
+            _skip_snapshot=True,
+        )
+
+        try:
+            result = widget._live_results_viewer_orchestrator_for_row(source_row)
+
+            assert result is output_orchestrator
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_live_results_allows_selected_output_plate_created_state(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        source_root = tmp_path / "source_plate"
+        output_root = tmp_path / "source_plate_openhcs"
+        source_root.mkdir()
+        output_root.mkdir()
+        source_row = PlateManagerRow.from_scope(str(source_root))
+        output_row = PlateManagerRow.from_scope(str(output_root))
+        widget._ensure_root_state().update_parameter(
+            "orchestrator_scope_ids",
+            [source_row.scope_id, output_row.scope_id],
+        )
+        source_orchestrator = SimpleNamespace(state=OrchestratorState.COMPLETED)
+        output_orchestrator = SimpleNamespace(state=OrchestratorState.CREATED)
+        ObjectStateRegistry.register(
+            ObjectState(source_orchestrator, scope_id=source_row.scope_id),
+            _skip_snapshot=True,
+        )
+        ObjectStateRegistry.register(
+            ObjectState(output_orchestrator, scope_id=output_row.scope_id),
+            _skip_snapshot=True,
+        )
+
+        try:
+            result = widget._live_results_viewer_orchestrator_for_row(output_row)
+
+            assert result is output_orchestrator
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_refreshes_existing_pipeline_for_cellprofiler_plate(
         self,
@@ -203,6 +322,157 @@ class TestPlateManagerWidget:
         assert pipeline_editor.pipeline_steps == []
         close_widget(widget)
         ObjectStateRegistry.clear()
+
+    def test_code_mode_per_plate_config_refreshes_delegate_saved_baseline(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        config = PipelineConfig(
+            napari_streaming_config=LazyNapariStreamingConfig(
+                enabled=True,
+                port=5557,
+            ),
+        )
+
+        try:
+            applied = PlateManagerCodeWorkflow(widget).apply_namespace(
+                {
+                    "plate_paths": [plate_scope],
+                    "global_config": widget.global_config,
+                    "per_plate_configs": {plate_scope: config},
+                    "pipeline_data": {plate_scope: []},
+                }
+            )
+
+            state = ObjectStateRegistry.get_by_scope(plate_scope)
+            assert applied is True
+            assert state is not None
+            assert state.get_resolved_value("napari_streaming_config.port") == 5557
+            assert state.get_saved_resolved_value("napari_streaming_config.port") == 5557
+            assert state.dirty_fields == set()
+            assert {
+                "napari_streaming_config.enabled",
+                "napari_streaming_config.port",
+            } <= state.signature_diff_fields
+
+            state.update_parameter("napari_streaming_config.port", 5558)
+            assert state.dirty_fields == {"napari_streaming_config.port"}
+
+            state.update_parameter("napari_streaming_config.port", 5557)
+            assert state.dirty_fields == set()
+            assert {
+                "napari_streaming_config.enabled",
+                "napari_streaming_config.port",
+            } <= state.signature_diff_fields
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_code_mode_omits_default_orchestrator_per_plate_config(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        orchestrator = PipelineOrchestrator(plate_path=plate_root)
+        ObjectStateRegistry.register(
+            ObjectState(orchestrator, scope_id=plate_scope),
+            _skip_snapshot=True,
+        )
+
+        try:
+            context = widget.orchestrator_code_document_context_for_rows(
+                [PlateManagerRow.from_scope(plate_scope)]
+            )
+
+            assert "per_plate_configs = {}" in context.source
+            assert "per_plate_configs = {}\n\npipeline_data" in context.source
+            assert context.payload.per_plate_configs == {}
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_code_mode_keeps_authored_orchestrator_per_plate_config(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        orchestrator = PipelineOrchestrator(plate_path=plate_root)
+        state = ObjectState(orchestrator, scope_id=plate_scope)
+        ObjectStateRegistry.register(state, _skip_snapshot=True)
+        state.update_parameter("napari_streaming_config.port", 5557)
+
+        try:
+            context = widget.orchestrator_code_document_context_for_rows(
+                [PlateManagerRow.from_scope(plate_scope)]
+            )
+
+            assert "per_plate_configs = {" in context.source
+            assert "PipelineConfig(" in context.source
+            assert "port=5557" in context.source
+            assert context.payload.per_plate_configs == {
+                plate_scope: state.to_object(update_delegate=False)
+            }
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_code_mode_reads_global_config_from_object_state(
+        self,
+        monkeypatch,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        widget.global_config = GlobalPipelineConfig(
+            well_filter_config=WellFilterConfig(well_filter="A01")
+        )
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        global_state = ObjectState(widget.global_config, scope_id="")
+        ObjectStateRegistry.register(global_state, _skip_snapshot=True)
+
+        try:
+            global_state.update_parameter("well_filter_config.well_filter", "A02")
+
+            context = widget.orchestrator_code_document_context_for_rows([])
+
+            assert "well_filter='A02'" in context.source
+            assert "well_filter='A01'" not in context.source
+            assert (
+                object.__getattribute__(
+                    context.payload.global_pipeline_config.well_filter_config,
+                    "well_filter",
+                )
+                == "A02"
+            )
+            assert (
+                object.__getattribute__(
+                    widget.global_config.well_filter_config,
+                    "well_filter",
+                )
+                == "A01"
+            )
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_cellprofiler_import_does_not_write_into_stale_current_plate(
         self,
@@ -300,6 +570,98 @@ class TestPlateManagerWidget:
         assert rebound_func.__name__ == "crop"
         assert rebound_contract == contract
 
+    def test_plate_manager_code_mode_keeps_bound_cellprofiler_steps_without_import_context(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        plate_root = tmp_path / "BeginnerSegmentation"
+        plate_root.mkdir()
+        cppipe_path = plate_root / "segmentation_final.cppipe"
+        cppipe_path.write_text("Version:5", encoding="utf-8")
+        plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            cppipe_path,
+        ).scope_id
+        crop_metadata = cellprofiler_backend.cellprofiler_function_runtime_metadata(
+            cellprofiler_backend.crop,
+        )
+        contract = ModuleArtifactContract(
+            module_name=crop_metadata.module_name,
+            outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+        )
+        bound_step = FunctionStep(
+            func=(
+                cellprofiler_module_callable(
+                    cellprofiler_backend.crop,
+                    contract,
+                    processing_contract=crop_metadata.processing_contract,
+                    declared_processing_contract=(
+                        crop_metadata.declared_processing_contract
+                    ),
+                ),
+                {"crop_shape": "Rectangle"},
+            ),
+            name="Crop",
+        )
+        editor = PlatePipelineEditorRecorder()
+        manager = PlateManagerCodeWorkflowHarness(editor)
+
+        PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [bound_step]})
+
+        updated_scope, updated_steps = editor.updated_pipeline
+        updated_func = updated_steps[0].func[0]
+        updated_contract = CallableContract.from_callable(
+            updated_func,
+        ).module_artifact_contract
+        assert updated_scope == plate_scope
+        assert updated_contract == contract
+
+    def test_code_mode_pipeline_change_clears_stale_execution_state(self) -> None:
+        ObjectStateRegistry.clear()
+        plate_scope = "/plate"
+        editor = PlatePipelineEditorRecorder()
+        editor.current_plate = plate_scope
+        manager = PlateManagerCodeWorkflowHarness(editor)
+        manager.plate_compiled_data[plate_scope] = ("compiled",)
+        manager.plate_execution_ids[plate_scope] = "execution-1"
+        manager.plate_terminal_activity_status.mark_terminal(
+            plate_scope,
+            TerminalExecutionStatus.COMPLETE,
+        )
+        orchestrator = OrchestratorStateHolder(OrchestratorState.COMPLETED)
+        ObjectStateRegistry.register(
+            ObjectState(object_instance=orchestrator, scope_id=plate_scope),
+            _skip_snapshot=True,
+        )
+
+        try:
+            PlateManagerCodeWorkflow(manager).apply_pipeline_data(
+                {
+                    plate_scope: [
+                        FunctionStep(
+                            func=lambda image: image,
+                            name="Replacement",
+                        )
+                    ],
+                }
+            )
+
+            assert plate_scope not in manager.plate_compiled_data
+            assert plate_scope not in manager.plate_execution_ids
+            assert (
+                manager.plate_terminal_activity_status.terminal_status(plate_scope)
+                is None
+            )
+            assert orchestrator.state is OrchestratorState.READY
+            assert manager.orchestrator_state_changed.emissions == [
+                (plate_scope, "READY")
+            ]
+            assert editor.status_message.messages == [
+                "Loaded 1 steps from plate-manager code document"
+            ]
+        finally:
+            ObjectStateRegistry.clear()
+
 
 class PlatePipelineChangedSignalRecorder:
     """Signal-like recorder for pipeline_changed emissions."""
@@ -309,6 +671,27 @@ class PlatePipelineChangedSignalRecorder:
 
     def emit(self, steps) -> None:
         self.steps = steps
+
+
+class PlatePipelineStatusSignalRecorder:
+    """Signal-like recorder for pipeline editor status messages."""
+
+    def __init__(self) -> None:
+        self.messages = []
+
+    def emit(self, message: str) -> None:
+        self.messages.append(message)
+
+
+class OrchestratorStateHolder:
+    """Small state alias matching PipelineOrchestrator's _state storage."""
+
+    def __init__(self, state: OrchestratorState) -> None:
+        self._state = state
+
+    @property
+    def state(self) -> OrchestratorState:
+        return self._state
 
 
 class PlatePipelineEditorRecorder:
@@ -323,6 +706,7 @@ class PlatePipelineEditorRecorder:
         self.cellprofiler_import_results_by_plate = {}
         self.source_binding_context = None
         self.current_plate = None
+        self.status_message = PlatePipelineStatusSignalRecorder()
 
     @property
     def changed_steps(self):
@@ -364,8 +748,23 @@ class PlateManagerCodeWorkflowHarness:
     def __init__(self, editor: PlatePipelineEditorRecorder) -> None:
         self.plate_pipeline_editor = editor
         self.pipeline_data_changed = PlatePipelineDataChangedSignalRecorder()
+        self.orchestrator_state_changed = PlateOrchestratorStateChangedSignalRecorder()
         self.event_bus = PlateManagerEventBusRecorder()
         self.plate_compiled_data = {}
+        self.plate_execution_ids = {}
+        self.plate_terminal_activity_status = ExecutionBatchRuntime()
+
+    def clear_plate_execution_tracking(
+        self,
+        plate_path: str,
+        *,
+        clear_terminal: bool = True,
+    ) -> None:
+        self.plate_execution_ids.pop(plate_path, None)
+        self.plate_terminal_activity_status.clear_plate(
+            plate_path,
+            clear_terminal=clear_terminal,
+        )
 
 
 class PlatePipelineDataChangedSignalRecorder:
@@ -376,6 +775,16 @@ class PlatePipelineDataChangedSignalRecorder:
 
     def emit(self) -> None:
         self.count += 1
+
+
+class PlateOrchestratorStateChangedSignalRecorder:
+    """Signal-like recorder for orchestrator state changes."""
+
+    def __init__(self) -> None:
+        self.emissions = []
+
+    def emit(self, plate_path: str, state: str) -> None:
+        self.emissions.append((plate_path, state))
 
 
 class PlateManagerEventBusRecorder:

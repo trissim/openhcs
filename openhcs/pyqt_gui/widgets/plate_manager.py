@@ -52,8 +52,7 @@ from openhcs.config_framework.context_manager import config_context
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from objectstate import DataclassFieldAccess
 from openhcs.config_framework.collection_containers import RootState
-from openhcs.core.config_cache import _sync_save_config
-from openhcs.core.xdg_paths import get_config_file_path
+from openhcs.core.config_cache import save_global_config_sync
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from pycodify import Assignment, BlankLine, CodeBlock, generate_python_source
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
@@ -292,13 +291,25 @@ class PlateValidationResult:
 
     valid: bool
     reason: str
+    message: str
+    recovery_action: PlateManagerAction | None = None
 
 
-PLATE_VALIDATION_OK = PlateValidationResult(valid=True, reason="ok")
+PLATE_VALIDATION_OK = PlateValidationResult(valid=True, reason="ok", message="ok")
 
 
-def rejected_plate_validation(reason: str) -> PlateValidationResult:
-    return PlateValidationResult(valid=False, reason=reason)
+def rejected_plate_validation(
+    reason: str,
+    message: str,
+    *,
+    recovery_action: PlateManagerAction | None = None,
+) -> PlateValidationResult:
+    return PlateValidationResult(
+        valid=False,
+        reason=reason,
+        message=message,
+        recovery_action=recovery_action,
+    )
 
 
 class ExecutionCompletionField(str, Enum):
@@ -490,10 +501,23 @@ class CompilePlateOperationValidator(PlateOperationValidator):
     ) -> PlateValidationResult:
         orch = ObjectStateRegistry.get_object(row.scope_id)
         if not orch:
-            return rejected_plate_validation("no_orchestrator_initialized")
+            return rejected_plate_validation(
+                "no_orchestrator_initialized",
+                "Selected plate has no orchestrator; run init_plate before compile_plate.",
+                recovery_action=PlateManagerAction.INIT_PLATE,
+            )
+        if not orch.state.has_completed_initialization:
+            return rejected_plate_validation(
+                "orchestrator_not_initialized",
+                "Selected plate is not initialized; run init_plate before compile_plate.",
+                recovery_action=PlateManagerAction.INIT_PLATE,
+            )
         pipeline_steps = manager._get_current_pipeline_definition(row.scope_id)
         if not pipeline_steps:
-            return rejected_plate_validation("empty_pipeline_definition")
+            return rejected_plate_validation(
+                "empty_pipeline_definition",
+                "Selected plate has no pipeline definition to compile.",
+            )
         return PLATE_VALIDATION_OK
 
 
@@ -507,10 +531,25 @@ class RunPlateOperationValidator(PlateOperationValidator):
     ) -> PlateValidationResult:
         orch = ObjectStateRegistry.get_object(row.scope_id)
         if not orch:
-            return rejected_plate_validation("no_orchestrator_initialized")
+            return rejected_plate_validation(
+                "no_orchestrator_initialized",
+                "Selected plate has no orchestrator; run init_plate before run_plate.",
+                recovery_action=PlateManagerAction.INIT_PLATE,
+            )
+        if not orch.state.has_completed_initialization:
+            return rejected_plate_validation(
+                "orchestrator_not_initialized",
+                "Selected plate is not initialized; run init_plate before run_plate.",
+                recovery_action=PlateManagerAction.INIT_PLATE,
+            )
         if orch.state not in RUNNABLE_ORCHESTRATOR_STATES:
             return rejected_plate_validation(
-                f"orchestrator_state_not_runnable:{orch.state}"
+                "orchestrator_state_not_runnable",
+                (
+                    "Selected plate is not in a runnable orchestrator state "
+                    f"({orch.state.value}); run compile_plate before run_plate."
+                ),
+                recovery_action=PlateManagerAction.COMPILE_PLATE,
             )
         return PLATE_VALIDATION_OK
 
@@ -1006,13 +1045,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     # Config indicators (NAP, FIJI, MAT) are auto-discovered via always_viewable_fields
     LIST_ITEM_FORMAT = ListItemFormat(
         first_line=(),  # No fields on first line (just name)
-        preview_line=(
-            "num_workers",
-            "vfs_config.materialization_backend",
-            "path_planning_config.well_filter",
-            "path_planning_config.output_dir_suffix",
-            "path_planning_config.global_output_folder",
-        ),
+        preview_line=("num_workers",),
         detail_line_field="path",  # Show plate path as detail line
     )
 
@@ -1042,6 +1075,10 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             self,
             row,
             selected_scope_ids=set(),
+            output_relation=self._state_projection_service.output_relation_for(
+                self,
+                row,
+            ),
         )
 
         # Preview resolution is keyed by the visible row scope. For CellProfiler
@@ -1522,8 +1559,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     def _save_global_config_to_cache(self, config: GlobalPipelineConfig):
         """Save global config to cache for persistence between sessions."""
         try:
-            cache_file = get_config_file_path("global_config.config")
-            success = _sync_save_config(config, cache_file)
+            success = save_global_config_sync(config)
 
             if success:
                 logger.info("Global config saved to cache for session persistence")
@@ -1899,6 +1935,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         plate_paths: list[str] = []
         pipeline_data: dict[str, list] = {}
         per_plate_configs: dict[str, PipelineConfig] = {}
+        global_config = self._current_global_config_for_code_document()
 
         for row in selected_items:
             plate_path = row.scope_id
@@ -1911,18 +1948,16 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
             pipeline_data[plate_path] = definition_pipeline
 
-            orchestrator = ObjectStateRegistry.get_object(plate_path)
-            if orchestrator and orchestrator.pipeline_config is not None:
-                per_plate_configs[plate_path] = orchestrator.pipeline_config
-            elif plate_path in self.plate_configs:
-                per_plate_configs[plate_path] = self.plate_configs[plate_path]
-            else:
-                per_plate_configs[plate_path] = PipelineConfig()
+            pipeline_config = self._authored_pipeline_config_for_code_document(
+                plate_path
+            )
+            if pipeline_config is not None:
+                per_plate_configs[plate_path] = pipeline_config
 
         code_items = [
             Assignment("plate_paths", plate_paths),
             BlankLine(),
-            Assignment("global_config", self.global_config),
+            Assignment("global_config", global_config),
             BlankLine(),
             Assignment("per_plate_configs", per_plate_configs),
             BlankLine(),
@@ -1932,7 +1967,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         payload = PlateManagerOrchestratorCodePayload(
             plate_paths=tuple(str(path) for path in plate_paths),
             pipeline_data=pipeline_data,
-            global_pipeline_config=self.global_config,
+            global_pipeline_config=global_config,
             per_plate_configs=per_plate_configs,
         )
 
@@ -1942,6 +1977,42 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             payload=payload,
             selected_scope_ids=tuple(str(row.scope_id) for row in selected_items),
         )
+
+    def _authored_pipeline_config_for_code_document(
+        self,
+        plate_path: str,
+    ) -> PipelineConfig | None:
+        """Return the per-plate config only when it carries authored state."""
+        state = ObjectStateRegistry.get_by_scope(plate_path)
+        orchestrator = ObjectStateRegistry.get_object(plate_path)
+        if (
+            state is not None
+            and orchestrator is not None
+            and orchestrator.pipeline_config is not None
+        ):
+            if state.dirty_fields or state.signature_diff_fields:
+                pipeline_config = state.to_object(update_delegate=False)
+                if not isinstance(pipeline_config, PipelineConfig):
+                    raise TypeError(
+                        "Plate ObjectState must reconstruct a PipelineConfig for "
+                        "code document serialization."
+                    )
+                return pipeline_config
+            return None
+
+        pipeline_config = self.plate_configs.get(plate_path)
+        if pipeline_config is None:
+            return None
+        if pipeline_config == PipelineConfig():
+            return None
+        return pipeline_config
+
+    def _current_global_config_for_code_document(self) -> GlobalPipelineConfig:
+        """Return the canonical live global config for code-mode rendering."""
+        global_state = ObjectStateRegistry.get_by_scope("")
+        if global_state is None:
+            return self.global_config
+        return global_state.to_object(update_delegate=False)
 
     def _fallback_code_document_items(self) -> list[PlateManagerRow]:
         if self.plates:
@@ -2057,16 +2128,35 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             self.live_measurements_window.refresh()
 
     def _live_results_viewer_orchestrator_for_selection(self):
-        orchestrator = self.get_selected_orchestrator()
-        if orchestrator is not None and orchestrator.state is OrchestratorState.CREATED:
+        selected_items = self.get_selected_items()
+        if not selected_items:
             return None
-        return orchestrator
+        return self._live_results_viewer_orchestrator_for_row(selected_items[0])
 
     def _live_results_viewer_orchestrator_for_plate(self, plate_id: str):
-        orchestrator = ObjectStateRegistry.get_object(plate_id)
+        for row in self.plates:
+            if row.scope_id == plate_id:
+                orchestrator = self._live_results_viewer_orchestrator_for_row(row)
+                if orchestrator is not None:
+                    return orchestrator
+                break
+        return self._live_results_viewer_orchestrator_for_selection()
+
+    def _live_results_viewer_orchestrator_for_row(self, row: PlateManagerRow):
+        relation = self._state_projection_service.output_relation_for(self, row)
+        if relation.output_plate_scope_id is not None:
+            output_orchestrator = ObjectStateRegistry.get_object(
+                relation.output_plate_scope_id
+            )
+            if output_orchestrator is not None:
+                return output_orchestrator
+
+        orchestrator = ObjectStateRegistry.get_object(row.scope_id)
+        if relation.source_plate_scope_id is not None:
+            return orchestrator
         if orchestrator is not None and orchestrator.state is not OrchestratorState.CREATED:
             return orchestrator
-        return self._live_results_viewer_orchestrator_for_selection()
+        return None
 
     # ========== UI Helper Methods ==========
 
@@ -2252,6 +2342,14 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         logger.debug("Pipeline editor reference set in plate manager")
         for row in self.plates:
             self._load_cellprofiler_pipeline_from_orchestrator(row.scope_id)
+
+    def notify_pipeline_definition_changed(self, plate_path: str) -> None:
+        """Invalidate compiled/run state after the Pipeline ObjectState changes."""
+        PlateManagerCodeWorkflow(self).invalidate_orchestrator_compilation_state(
+            plate_path
+        )
+        self.pipeline_data_changed.emit()
+        self.update_item_list()
 
     # _find_main_window() moved to AbstractManagerWidget
 

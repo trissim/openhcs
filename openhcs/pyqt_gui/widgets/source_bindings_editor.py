@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum
+from enum import Enum
 from types import MappingProxyType
 from typing import Callable, Generic, Mapping, TypeVar
 
@@ -39,7 +39,7 @@ from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
-    GroupedSourceBindings,
+    LazyStepSourceBindingsConfig,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -66,33 +66,58 @@ EMPTY_PIPELINE_IMAGE_SCHEMA = PipelineImageSchema.empty()
 EditableRowT = TypeVar("EditableRowT")
 
 
-class SourceBindingColumn(IntEnum):
+class EditableTableColumn(Enum):
+    """Qt table column declaration with optional enum-editor authority."""
+
+    def __new__(
+        cls,
+        index: int,
+        enum_type: type[Enum] | None = None,
+    ) -> "EditableTableColumn":
+        member = object.__new__(cls)
+        member._value_ = index
+        member.index = index
+        member.enum_type = enum_type
+        return member
+
+    def __int__(self) -> int:
+        return self.index
+
+    def __index__(self) -> int:
+        return self.index
+
+    def enum_cell_spec(self) -> "EnumCellSpec | None":
+        if self.enum_type is None:
+            return None
+        return EnumCellSpec(self.enum_type)
+
+
+class SourceBindingColumn(EditableTableColumn):
     """Editable table columns for one named source binding."""
 
-    GROUP = 0
-    ALIAS = 1
-    KIND = 2
-    ORIGIN = 3
-    REQUIRED = 4
-    COMPONENTS = 5
-    METADATA = 6
-    FILTERS = 7
-    INHERIT = 8
+    ALIAS = (0, None)
+    KIND = (1, ArtifactKind)
+    ORIGIN = (2, SourceBindingOrigin)
+    REQUIRED = (3, None)
+    COMPONENTS = (4, None)
+    METADATA = (5, None)
+    FILTERS = (6, None)
+    INHERIT = (7, None)
 
 
-class MetadataRuleColumn(IntEnum):
+class MetadataRuleColumn(EditableTableColumn):
     """Editable table columns for one metadata extraction rule."""
 
-    SOURCE = 0
-    PATTERN = 1
-    FILTERS = 2
+    SOURCE = (0, MetadataSource)
+    PATTERN = (1, None)
+    FILTERS = (2, None)
 
 
-class MatchPlanColumn(IntEnum):
+class MatchPlanColumn(EditableTableColumn):
     """Editable table columns for one match-plan dimension."""
 
-    METHOD = 0
-    FIELDS = 1
+    METHOD = (0, SourceBindingMatchMethod)
+    FIELDS = (1, None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +175,7 @@ class StructuredSelectorEditorSpec:
     """Authoritative behavior for one structured source-binding cell editor."""
 
     editor_kind: FreeFormCellEditorKind
+    title: str
     columns: tuple[str, ...]
     hint: str
     row_parser: SelectorDialogRowParser
@@ -159,55 +185,64 @@ class StructuredSelectorEditorSpec:
     )
 
 
+STRUCTURED_SELECTOR_EDITOR_SPEC_ITEMS: tuple[StructuredSelectorEditorSpec, ...] = (
+    StructuredSelectorEditorSpec(
+        editor_kind=FreeFormCellEditorKind.SELECTOR_LIST,
+        title="Edit selector list",
+        columns=("Key", "Value"),
+        hint="Use key=value entries separated by semicolons.",
+        row_parser=parse_key_value_dialog_row,
+        row_formatter=format_key_value_dialog_row,
+    ),
+    StructuredSelectorEditorSpec(
+        editor_kind=FreeFormCellEditorKind.COMPONENT_SELECTORS,
+        title="Edit component selectors",
+        columns=("Component", "Value"),
+        hint="Use key=value entries separated by semicolons.",
+        row_parser=parse_key_value_dialog_row,
+        row_formatter=format_key_value_dialog_row,
+        column_options=MappingProxyType(
+            {0: tuple(component.value for component in AllComponents)}
+        ),
+    ),
+    StructuredSelectorEditorSpec(
+        editor_kind=FreeFormCellEditorKind.METADATA_SELECTORS,
+        title="Edit metadata selectors",
+        columns=("Metadata field", "Value"),
+        hint="Use key=value entries separated by semicolons.",
+        row_parser=parse_key_value_dialog_row,
+        row_formatter=format_key_value_dialog_row,
+    ),
+    StructuredSelectorEditorSpec(
+        editor_kind=FreeFormCellEditorKind.FILTER_CLAUSES,
+        title="Edit source filters",
+        columns=("Subject", "Match type", "Value"),
+        hint="Use subject:match_type:value entries separated by semicolons.",
+        row_parser=parse_filter_dialog_row,
+        row_formatter=format_filter_dialog_row,
+        column_options=MappingProxyType(
+            {
+                0: tuple(subject.value for subject in SourceFilterSubject),
+                1: tuple(match_type.value for match_type in SourceFilterMatchType),
+            }
+        ),
+    ),
+    StructuredSelectorEditorSpec(
+        editor_kind=FreeFormCellEditorKind.MATCH_DIMENSIONS,
+        title="Edit match dimensions",
+        columns=("Alias", "Metadata field"),
+        hint="Use alias=metadata_field entries separated by semicolons.",
+        row_parser=parse_key_value_dialog_row,
+        row_formatter=format_key_value_dialog_row,
+    ),
+)
 STRUCTURED_SELECTOR_EDITOR_SPECS: Mapping[
     FreeFormCellEditorKind,
     StructuredSelectorEditorSpec,
 ] = MappingProxyType(
     {
-        FreeFormCellEditorKind.SELECTOR_LIST: StructuredSelectorEditorSpec(
-            editor_kind=FreeFormCellEditorKind.SELECTOR_LIST,
-            columns=("Key", "Value"),
-            hint="Use key=value entries separated by semicolons.",
-            row_parser=parse_key_value_dialog_row,
-            row_formatter=format_key_value_dialog_row,
-        ),
-        FreeFormCellEditorKind.COMPONENT_SELECTORS: StructuredSelectorEditorSpec(
-            editor_kind=FreeFormCellEditorKind.COMPONENT_SELECTORS,
-            columns=("Component", "Value"),
-            hint="Use key=value entries separated by semicolons.",
-            row_parser=parse_key_value_dialog_row,
-            row_formatter=format_key_value_dialog_row,
-            column_options=MappingProxyType(
-                {0: tuple(component.value for component in AllComponents)}
-            ),
-        ),
-        FreeFormCellEditorKind.METADATA_SELECTORS: StructuredSelectorEditorSpec(
-            editor_kind=FreeFormCellEditorKind.METADATA_SELECTORS,
-            columns=("Metadata field", "Value"),
-            hint="Use key=value entries separated by semicolons.",
-            row_parser=parse_key_value_dialog_row,
-            row_formatter=format_key_value_dialog_row,
-        ),
-        FreeFormCellEditorKind.FILTER_CLAUSES: StructuredSelectorEditorSpec(
-            editor_kind=FreeFormCellEditorKind.FILTER_CLAUSES,
-            columns=("Subject", "Match type", "Value"),
-            hint="Use subject:match_type:value entries separated by semicolons.",
-            row_parser=parse_filter_dialog_row,
-            row_formatter=format_filter_dialog_row,
-            column_options=MappingProxyType(
-                {
-                    0: tuple(subject.value for subject in SourceFilterSubject),
-                    1: tuple(match_type.value for match_type in SourceFilterMatchType),
-                }
-            ),
-        ),
-        FreeFormCellEditorKind.MATCH_DIMENSIONS: StructuredSelectorEditorSpec(
-            editor_kind=FreeFormCellEditorKind.MATCH_DIMENSIONS,
-            columns=("Alias", "Metadata field"),
-            hint="Use alias=metadata_field entries separated by semicolons.",
-            row_parser=parse_key_value_dialog_row,
-            row_formatter=format_key_value_dialog_row,
-        ),
+        spec.editor_kind: spec
+        for spec in STRUCTURED_SELECTOR_EDITOR_SPEC_ITEMS
     }
 )
 
@@ -220,8 +255,10 @@ class FreeFormCellSpec:
     editor_kind: FreeFormCellEditorKind = FreeFormCellEditorKind.SELECTOR_LIST
 
 
-EnumCellSpecMap = Mapping[tuple[type[IntEnum], IntEnum], EnumCellSpec]
-FreeFormCellSpecMap = Mapping[tuple[type[IntEnum], IntEnum], FreeFormCellSpec]
+FreeFormCellSpecMap = Mapping[
+    tuple[type[EditableTableColumn], EditableTableColumn],
+    FreeFormCellSpec,
+]
 
 
 class StructuredSelectorCellWidget(QWidget):
@@ -275,14 +312,6 @@ class StructuredSelectorCellWidget(QWidget):
 class StructuredSelectorDialog(QDialog):
     """Semantic source-binding picker for selector/filter/match list cells."""
 
-    TITLES = {
-        FreeFormCellEditorKind.SELECTOR_LIST: "Edit selector list",
-        FreeFormCellEditorKind.COMPONENT_SELECTORS: "Edit component selectors",
-        FreeFormCellEditorKind.METADATA_SELECTORS: "Edit metadata selectors",
-        FreeFormCellEditorKind.FILTER_CLAUSES: "Edit source filters",
-        FreeFormCellEditorKind.MATCH_DIMENSIONS: "Edit match dimensions",
-    }
-
     def __init__(
         self,
         *,
@@ -292,8 +321,8 @@ class StructuredSelectorDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(self.TITLES[editor_kind])
         self.editor_spec = STRUCTURED_SELECTOR_EDITOR_SPECS[editor_kind]
+        self.setWindowTitle(self.editor_spec.title)
         self.table = QTableWidget(self)
         self.table.setColumnCount(len(self.editor_spec.columns))
         self.table.setHorizontalHeaderLabels(self.editor_spec.columns)
@@ -469,8 +498,7 @@ class EditableTableController(Generic[EditableRowT]):
     """Own editable Qt table mechanics for one typed row model."""
 
     table: QTableWidget
-    columns: tuple[IntEnum, ...]
-    enum_cell_specs: EnumCellSpecMap
+    columns: tuple[EditableTableColumn, ...]
     free_form_cell_specs: FreeFormCellSpecMap
     row_cells: Callable[[EditableRowT], tuple[str, ...]]
     row_from_cells: Callable[[tuple[str, ...]], EditableRowT | None]
@@ -504,7 +532,7 @@ class EditableTableController(Generic[EditableRowT]):
             self.table.removeRow(row_index)
         return True
 
-    def _cell_text(self, row_index: int, column: IntEnum) -> str:
+    def _cell_text(self, row_index: int, column: EditableTableColumn) -> str:
         widget = self.table.cellWidget(row_index, int(column))
         if isinstance(widget, StructuredSelectorCellWidget):
             return widget.text()
@@ -524,10 +552,10 @@ class EditableTableController(Generic[EditableRowT]):
     def _set_cell(
         self,
         row_index: int,
-        column: IntEnum,
+        column: EditableTableColumn,
         value: str,
     ) -> None:
-        spec = self.enum_cell_specs.get((type(column), column))
+        spec = column.enum_cell_spec()
         free_form_spec = self.free_form_cell_specs.get((type(column), column))
         if spec is None and free_form_spec is None:
             self.table.setItem(row_index, int(column), QTableWidgetItem(value))
@@ -593,8 +621,7 @@ class StepBindingsTableEditor(QWidget):
     def __init__(
         self,
         *,
-        groups: tuple[GroupedSourceBindings, ...],
-        enum_cell_specs: EnumCellSpecMap,
+        bindings: tuple[NamedSourceBinding, ...],
         free_form_cell_specs: FreeFormCellSpecMap,
         scope_color_scheme: object | None = None,
         parent: QWidget | None = None,
@@ -609,20 +636,13 @@ class StepBindingsTableEditor(QWidget):
         self.controller = EditableTableController(
             table=self.table,
             columns=tuple(SourceBindingColumn),
-            enum_cell_specs=enum_cell_specs,
             free_form_cell_specs=free_form_cell_specs,
             row_cells=EditableSourceBindingRow.cells,
             row_from_cells=EditableSourceBindingRow.from_cells,
             apply_changes=self._emit_changed,
         )
-        for binding_group in groups:
-            for binding in binding_group.bindings:
-                self.controller.append(
-                    EditableSourceBindingRow.from_binding(
-                        group_key=binding_group.group_key,
-                        binding=binding,
-                    )
-                )
+        for binding in bindings:
+            self.controller.append(EditableSourceBindingRow.from_binding(binding))
         self.table.itemChanged.connect(lambda _: self._emit_changed())
         EditableTableLayout.configure(self.table)
         EditableTableLayout.fit_to_rows(self.table)
@@ -642,8 +662,7 @@ class StepBindingsTableEditor(QWidget):
 
     def add_binding_row(self, binding: NamedSourceBinding | None = None) -> None:
         row_model = EditableSourceBindingRow.from_binding(
-            group_key=None,
-            binding=binding or NamedSourceBinding(alias="NewSource"),
+            binding or NamedSourceBinding(alias="NewSource"),
         )
         self._updating_ui = True
         try:
@@ -659,17 +678,8 @@ class StepBindingsTableEditor(QWidget):
         EditableTableLayout.fit_to_rows(self.table)
         self.changed.emit()
 
-    def groups(self) -> tuple[GroupedSourceBindings, ...]:
-        grouped_bindings: dict[str | None, list[NamedSourceBinding]] = {}
-        for row in self.controller.rows():
-            grouped_bindings.setdefault(row.group_key, []).append(row.binding)
-        return tuple(
-            GroupedSourceBindings(
-                group_key=group_key,
-                bindings=tuple(bindings),
-            )
-            for group_key, bindings in grouped_bindings.items()
-        )
+    def bindings(self) -> tuple[NamedSourceBinding, ...]:
+        return tuple(row.binding for row in self.controller.rows())
 
     def _emit_changed(self) -> None:
         if self._updating_ui:
@@ -683,8 +693,7 @@ class StepBindingsDialog(QDialog):
     def __init__(
         self,
         *,
-        groups: tuple[GroupedSourceBindings, ...],
-        enum_cell_specs: EnumCellSpecMap,
+        bindings: tuple[NamedSourceBinding, ...],
         free_form_cell_specs: FreeFormCellSpecMap,
         scope_color_scheme: object | None = None,
         parent: QWidget | None = None,
@@ -692,8 +701,7 @@ class StepBindingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit step source bindings")
         self.editor = StepBindingsTableEditor(
-            groups=groups,
-            enum_cell_specs=enum_cell_specs,
+            bindings=bindings,
             free_form_cell_specs=free_form_cell_specs,
             scope_color_scheme=scope_color_scheme,
             parent=self,
@@ -711,8 +719,8 @@ class StepBindingsDialog(QDialog):
         layout.addWidget(buttons)
         self.resize(1100, 520)
 
-    def groups(self) -> tuple[GroupedSourceBindings, ...]:
-        return self.editor.groups()
+    def bindings(self) -> tuple[NamedSourceBinding, ...]:
+        return self.editor.bindings()
 
 
 class SelectorListCodec:
@@ -834,13 +842,11 @@ class SelectorListCodec:
 class EditableSourceBindingRow:
     """Nominal row model for editing one source-binding declaration."""
 
-    group_key: str | None
     binding: NamedSourceBinding
 
     @classmethod
     def from_cells(cls, values: tuple[str, ...]) -> "EditableSourceBindingRow | None":
         (
-            group_key,
             alias,
             artifact_kind,
             origin,
@@ -862,7 +868,6 @@ class EditableSourceBindingRow:
             not in {"false", "0", "no", "n"},
         )
         return cls(
-            group_key=group_key or None,
             binding=NamedSourceBinding(
                 alias=alias,
                 artifact_kind=ArtifactKind(artifact_kind or ArtifactKind.IMAGE.value),
@@ -875,15 +880,12 @@ class EditableSourceBindingRow:
     @classmethod
     def from_binding(
         cls,
-        *,
-        group_key: str | None,
         binding: NamedSourceBinding,
     ) -> "EditableSourceBindingRow":
-        return cls(group_key=group_key, binding=binding)
+        return cls(binding=binding)
 
     def cells(self) -> tuple[str, ...]:
         return (
-            self.group_key or "",
             self.binding.alias,
             self.binding.artifact_kind.value,
             self.binding.origin.value,
@@ -1009,12 +1011,6 @@ class SourceBindingsEditorWidget(
             EditableTableController[EditableMatchPlanRow] | None
         ) = None
         self._scope_color_scheme = None
-        self._enum_cell_specs = {
-            (SourceBindingColumn, SourceBindingColumn.KIND): EnumCellSpec(ArtifactKind),
-            (SourceBindingColumn, SourceBindingColumn.ORIGIN): EnumCellSpec(SourceBindingOrigin),
-            (MetadataRuleColumn, MetadataRuleColumn.SOURCE): EnumCellSpec(MetadataSource),
-            (MatchPlanColumn, MatchPlanColumn.METHOD): EnumCellSpec(SourceBindingMatchMethod),
-        }
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(8)
         self.empty_label = QLabel("No source bindings loaded")
@@ -1233,7 +1229,7 @@ class SourceBindingsEditorWidget(
             self._append_step_binding(binding or NamedSourceBinding(alias="NewSource"))
             return
         self.step_bindings_editor.add_binding_row(binding)
-        self._apply_step_binding_groups(self.step_bindings_editor.groups())
+        self._apply_step_bindings(self.step_bindings_editor.bindings())
 
     def remove_selected_binding_rows(self) -> None:
         """Remove selected source binding rows from the open dialog editor."""
@@ -1241,7 +1237,7 @@ class SourceBindingsEditorWidget(
         if self.step_bindings_editor is None:
             return
         self.step_bindings_editor.remove_selected_binding_rows()
-        self._apply_step_binding_groups(self.step_bindings_editor.groups())
+        self._apply_step_bindings(self.step_bindings_editor.bindings())
 
     def add_metadata_rule_row(
         self,
@@ -1360,8 +1356,8 @@ class SourceBindingsEditorWidget(
     def _step_bindings_group(self, view_model: SourceBindingsViewModel) -> QGroupBox:
         group = self._section_group("Step Bindings")
         layout = QVBoxLayout(group)
-        summary_table = self._create_table(0, 4)
-        summary_table.setHorizontalHeaderLabels(("Group", "Bindings", "Aliases", "Origins"))
+        summary_table = self._create_table(0, 3)
+        summary_table.setHorizontalHeaderLabels(("Bindings", "Aliases", "Origins"))
         for row_index, row in enumerate(self._binding_summary_rows(view_model)):
             summary_table.insertRow(row_index)
             for column_index, value in enumerate(row):
@@ -1384,8 +1380,7 @@ class SourceBindingsEditorWidget(
 
     def _create_step_bindings_dialog(self) -> StepBindingsDialog:
         return StepBindingsDialog(
-            groups=self._bindings.groups,
-            enum_cell_specs=self._enum_cell_specs,
+            bindings=self._bindings.bindings,
             free_form_cell_specs=self._free_form_cell_specs(),
             scope_color_scheme=self._scope_color_scheme,
             parent=self,
@@ -1397,39 +1392,25 @@ class SourceBindingsEditorWidget(
         self.step_bindings_table = dialog.editor.table
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         if accepted:
-            self._apply_step_binding_groups(dialog.groups())
+            self._apply_step_bindings(dialog.bindings())
         self.step_bindings_editor = None
         self.step_bindings_table = None
 
     def _append_step_binding(self, binding: NamedSourceBinding) -> None:
-        groups = list(self._bindings.groups)
-        if groups:
-            first_group = groups[0]
-            groups[0] = GroupedSourceBindings(
-                group_key=first_group.group_key,
-                bindings=first_group.bindings + (binding,),
-            )
-        else:
-            groups.append(
-                GroupedSourceBindings(
-                    group_key=None,
-                    bindings=(binding,),
-                )
-            )
-        self._apply_step_binding_groups(tuple(groups))
+        self._apply_step_bindings(self._bindings.bindings + (binding,))
 
     def _binding_summary_rows(
         self,
         view_model: SourceBindingsViewModel,
-    ) -> tuple[tuple[str, str, str, str], ...]:
-        return tuple(
+    ) -> tuple[tuple[str, str, str], ...]:
+        if not view_model.step_bindings:
+            return ()
+        return (
             (
-                group.group_key or "default",
-                str(len(group.bindings)),
-                ", ".join(binding.alias for binding in group.bindings),
-                ", ".join(sorted({binding.origin for binding in group.bindings})),
-            )
-            for group in view_model.step_binding_groups
+                str(len(view_model.step_bindings)),
+                ", ".join(binding.alias for binding in view_model.step_bindings),
+                ", ".join(sorted({binding.origin for binding in view_model.step_bindings})),
+            ),
         )
 
     def _metadata_rules_group(self) -> QGroupBox:
@@ -1443,7 +1424,6 @@ class SourceBindingsEditorWidget(
         self.metadata_rules_controller = EditableTableController(
             table=table,
             columns=tuple(MetadataRuleColumn),
-            enum_cell_specs=self._enum_cell_specs,
             free_form_cell_specs=self._free_form_cell_specs(),
             row_cells=EditableMetadataRuleRow.cells,
             row_from_cells=EditableMetadataRuleRow.from_cells,
@@ -1479,7 +1459,6 @@ class SourceBindingsEditorWidget(
         self.match_plan_controller = EditableTableController(
             table=table,
             columns=tuple(MatchPlanColumn),
-            enum_cell_specs=self._enum_cell_specs,
             free_form_cell_specs=self._free_form_cell_specs(),
             row_cells=EditableMatchPlanRow.cells,
             row_from_cells=EditableMatchPlanRow.from_cells,
@@ -1504,14 +1483,14 @@ class SourceBindingsEditorWidget(
         layout.addLayout(buttons)
         return group
 
-    def _apply_step_binding_groups(
+    def _apply_step_bindings(
         self,
-        groups: tuple[GroupedSourceBindings, ...],
+        bindings: tuple[NamedSourceBinding, ...],
     ) -> None:
         if self._updating_ui:
             return
         self._bindings = StepSourceBindingsConfig(
-            groups=groups,
+            bindings=bindings,
             metadata_rules=self._bindings.metadata_rules,
             match_plan=self._bindings.match_plan,
         )
@@ -1524,7 +1503,7 @@ class SourceBindingsEditorWidget(
         if self.metadata_rules_controller is None:
             raise RuntimeError("Metadata rules table controller is not initialized.")
         self._bindings = StepSourceBindingsConfig(
-            groups=self._bindings.groups,
+            bindings=self._bindings.bindings,
             metadata_rules=tuple(
                 row.rule for row in self.metadata_rules_controller.rows()
             ),
@@ -1539,7 +1518,7 @@ class SourceBindingsEditorWidget(
             raise RuntimeError("Match plan table controller is not initialized.")
         rows = self.match_plan_controller.rows()
         self._bindings = StepSourceBindingsConfig(
-            groups=self._bindings.groups,
+            bindings=self._bindings.bindings,
             metadata_rules=self._bindings.metadata_rules,
             match_plan=self._match_plan_from_rows(rows),
         )
@@ -1631,6 +1610,10 @@ def register_source_bindings_editor_widget() -> None:
 
     register_inline_dataclass_widget(
         StepSourceBindingsConfig,
+        create_source_bindings_editor_widget,
+    )
+    register_inline_dataclass_widget(
+        LazyStepSourceBindingsConfig,
         create_source_bindings_editor_widget,
     )
 
