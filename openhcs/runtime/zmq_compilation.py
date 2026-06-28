@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import MutableMapping, Sequence
+from dataclasses import dataclass, field
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, TYPE_CHECKING
 
-from zmqruntime.messages import MessageFields
-
+from openhcs.core.compiled_execution import CompiledExecutionBundle
+from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.runtime.zmq_progress import ZMQProgressEmitter
+
+if TYPE_CHECKING:
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
 
 logger = logging.getLogger(__name__)
 
 
-def extract_compiled_axis_ids(compiled_contexts: dict[str, Any]) -> list[str]:
+def extract_compiled_axis_ids(
+    compiled_contexts: Mapping[str, ProcessingContext],
+) -> list[str]:
     """Extract unique multiprocessing axis ids from compiled context keys."""
 
     axis_ids: list[str] = []
@@ -32,17 +39,47 @@ def extract_compiled_axis_ids(compiled_contexts: dict[str, Any]) -> list[str]:
     return sorted(axis_ids)
 
 
+def extract_compiled_step_names(
+    compiled_contexts: Mapping[str, ProcessingContext],
+) -> list[str]:
+    """Extract ordered step names from compiled step plans."""
+
+    if not compiled_contexts:
+        raise ValueError("Compile artifact missing compiled_contexts")
+
+    ordered_names: list[str] | None = None
+    for context_key, context in compiled_contexts.items():
+        step_names = [
+            plan.step_name
+            for _step_index, plan in sorted(context.step_plans.items())
+        ]
+        if ordered_names is None:
+            ordered_names = step_names
+            continue
+        if step_names != ordered_names:
+            raise ValueError(
+                "Compiled contexts disagree on step names: "
+                f"{context_key} has {step_names}, expected {ordered_names}"
+            )
+
+    return [] if ordered_names is None else ordered_names
+
+
 @dataclass(frozen=True, slots=True)
 class ZMQCompilationResult:
     """Compiled execution artifacts needed by worker execution."""
 
-    execution_bundle: Any
-    compiled_contexts: dict[str, Any]
-    compiled_pipeline_definition: Any
-    worker_assignments: dict[str, list[str]]
+    execution_bundle: CompiledExecutionBundle
     compiled_axis_ids: list[str]
     output_plate_root: str | None = None
     auto_add_output_plate: bool | None = None
+
+    @property
+    def worker_assignments(self) -> dict[str, list[str]]:
+        return {
+            worker_slot: list(axis_ids)
+            for worker_slot, axis_ids in self.execution_bundle.worker_assignments.items()
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,17 +88,18 @@ class ZMQCompilationRequest:
 
     execution_id: str
     plate_id: str
-    pipeline_steps: list[Any]
-    orchestrator: Any
+    pipeline_steps: Sequence[AbstractStep]
+    orchestrator: "PipelineOrchestrator"
     wells: list[str]
     compile_artifact_id: str | None
     request_signature: str
     debug_replay_signature: str
     retain_compile_artifact: bool
-    compiled_artifacts: dict[str, dict[str, Any]]
+    compiled_artifacts: MutableMapping[str, "ZMQCompileArtifactRecord"]
     progress_emitter: ZMQProgressEmitter
     flush_progress: Callable[[], None]
     immediate_progress_queue: Any
+    debug_execution_policy: Any
 
     def resolve(self) -> ZMQCompilationResult:
         if self.compile_artifact_id is not None:
@@ -77,43 +115,45 @@ class ZMQCompilationRequest:
                 f"Missing compile artifact '{self.compile_artifact_id}'. "
                 "Re-run compilation before execution."
             )
-        signature_key = (
-            "debug_replay_signature"
-            if self.retain_compile_artifact
-            else "request_signature"
-        )
         expected_signature = (
             self.debug_replay_signature
             if self.retain_compile_artifact
             else self.request_signature
         )
-        if artifact[signature_key] != expected_signature:
+        artifact_signature = artifact.signature_for_retain_policy(
+            self.retain_compile_artifact
+        )
+        if artifact_signature != expected_signature:
             logger.error(
                 "[%s] Compile artifact signature mismatch: artifact_id=%s artifact_sig=%s request_sig=%s",
                 self.execution_id,
                 self.compile_artifact_id,
-                str(artifact[signature_key])[:12],
+                artifact_signature[:12],
                 expected_signature[:12],
             )
             raise ValueError(
                 f"Compile artifact '{self.compile_artifact_id}' does not match execution request"
             )
-        if artifact[MessageFields.PLATE_ID] != str(self.plate_id):
+        if artifact.plate_id != str(self.plate_id):
             raise ValueError(
                 f"Compile artifact '{self.compile_artifact_id}' is for plate "
-                f"{artifact[MessageFields.PLATE_ID]}, not {self.plate_id}"
+                f"{artifact.plate_id}, not {self.plate_id}"
             )
 
-        execution_bundle = artifact["execution_bundle"]
+        execution_bundle = artifact.compilation.execution_bundle
         compiled_contexts = execution_bundle.runtime_contexts
-        if compiled_contexts is None:
+        if not compiled_contexts:
             raise ValueError("Compile artifact missing compiled_contexts")
-        worker_assignments = dict(execution_bundle.worker_assignments)
+        worker_assignments = {
+            worker_slot: list(axis_ids)
+            for worker_slot, axis_ids in execution_bundle.worker_assignments.items()
+        }
         compiled_axis_ids = extract_compiled_axis_ids(compiled_contexts)
+        compiled_step_names = extract_compiled_step_names(compiled_contexts)
         self.progress_emitter.artifact_init_started(
             compiled_axis_ids=compiled_axis_ids,
             worker_assignments=worker_assignments,
-            step_names=[step.name for step in self.pipeline_steps],
+            step_names=compiled_step_names,
         )
         logger.info(
             "[%s] Reused compile artifact %s for plate %s (sig=%s)",
@@ -124,20 +164,9 @@ class ZMQCompilationRequest:
         )
         return ZMQCompilationResult(
             execution_bundle=execution_bundle,
-            compiled_contexts=compiled_contexts,
-            compiled_pipeline_definition=artifact.get("compiled_pipeline_definition"),
-            worker_assignments=worker_assignments,
             compiled_axis_ids=compiled_axis_ids,
-            output_plate_root=(
-                None
-                if artifact.get("output_plate_root") is None
-                else str(artifact["output_plate_root"])
-            ),
-            auto_add_output_plate=(
-                None
-                if artifact.get("auto_add_output_plate") is None
-                else bool(artifact["auto_add_output_plate"])
-            ),
+            output_plate_root=artifact.compilation.output_plate_root,
+            auto_add_output_plate=artifact.compilation.auto_add_output_plate,
         )
 
     def compile_fresh(self) -> ZMQCompilationResult:
@@ -149,6 +178,7 @@ class ZMQCompilationRequest:
                 pipeline_definition=self.pipeline_steps,
                 well_filter=self.wells,
                 is_zmq_execution=True,
+                debug_execution_policy=self.debug_execution_policy,
             )
         finally:
             set_progress_queue(None)
@@ -157,20 +187,21 @@ class ZMQCompilationRequest:
             raise ValueError("Compilation did not return execution_bundle")
         execution_bundle = compilation["execution_bundle"]
         compiled_contexts = execution_bundle.runtime_contexts
-        compiled_pipeline_definition = compilation.get(
-            "pipeline_definition", self.pipeline_steps
-        )
         if not compiled_contexts:
             raise ValueError("Compilation produced no compiled contexts")
 
-        worker_assignments = compilation["worker_assignments"]
+        worker_assignments = {
+            worker_slot: list(axis_ids)
+            for worker_slot, axis_ids in execution_bundle.worker_assignments.items()
+        }
         compiled_axis_ids = extract_compiled_axis_ids(compiled_contexts)
+        compiled_step_names = extract_compiled_step_names(compiled_contexts)
         self.progress_emitter.compiled_init_started(
             compiled_axis_ids=compiled_axis_ids,
             worker_assignments=worker_assignments,
         )
         self.progress_emitter.compile_succeeded(
-            step_count=len(self.pipeline_steps),
+            step_count=len(compiled_step_names),
             compiled_axis_ids=compiled_axis_ids,
             worker_assignments=worker_assignments,
         )
@@ -190,9 +221,6 @@ class ZMQCompilationRequest:
         )
         return ZMQCompilationResult(
             execution_bundle=execution_bundle,
-            compiled_contexts=compiled_contexts,
-            compiled_pipeline_definition=compiled_pipeline_definition,
-            worker_assignments=worker_assignments,
             compiled_axis_ids=compiled_axis_ids,
             output_plate_root=None if output_plate_root is None else str(output_plate_root),
             auto_add_output_plate=auto_add_output_plate,
@@ -208,16 +236,9 @@ class ZMQCompileArtifactRecord:
     request_signature: str
     debug_replay_signature: str
     compilation: ZMQCompilationResult
+    created_at: float = field(default_factory=time.time)
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "created_at": time.time(),
-            "request_signature": self.request_signature,
-            "debug_replay_signature": self.debug_replay_signature,
-            MessageFields.PLATE_ID: str(self.plate_id),
-            "execution_bundle": self.compilation.execution_bundle,
-            "compiled_pipeline_definition": self.compilation.compiled_pipeline_definition,
-            "output_plate_root": self.compilation.output_plate_root,
-            "auto_add_output_plate": self.compilation.auto_add_output_plate,
-        }
-
+    def signature_for_retain_policy(self, retain_compile_artifact: bool) -> str:
+        if retain_compile_artifact:
+            return self.debug_replay_signature
+        return self.request_signature

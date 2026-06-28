@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING
 
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
 if TYPE_CHECKING:
-    from openhcs.core.config import GlobalPipelineConfig
     from openhcs.core.debug import DebugExecutionConfig, DebugExecutionPolicy
 
 
@@ -20,7 +19,6 @@ logger = logging.getLogger(__name__)
 class ZMQOrchestratorEnvironment:
     """Prepared execution environment for one ZMQ orchestrator run."""
 
-    global_config: GlobalPipelineConfig
     debug_execution_policy: DebugExecutionPolicy
     debug_execution_config: DebugExecutionConfig | None
     plate_path_str: str
@@ -31,52 +29,22 @@ class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
     """Inputs needed to prepare the worker execution environment."""
 
     execution_id: str
-    global_config: GlobalPipelineConfig
-    config_params: dict | None
+    debug_execution_config: DebugExecutionConfig | None
 
     def prepare(self) -> ZMQOrchestratorEnvironment:
-        from openhcs.config_framework.lazy_factory import ensure_global_config_context
-        from openhcs.core.config import GlobalPipelineConfig
-        from openhcs.core.debug import (
-            DebugExecutionPolicy,
-            DebugReplayMode,
-            ProgressDebugExecutionPolicy,
-        )
-        from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
+        from openhcs.core.debug import DebugExecutionPolicy
         from polystore.base import reset_memory_backend, storage_registry
 
         reset_memory_backend()
         self.cleanup_gpu_frameworks()
 
-        if not isinstance(self.global_config, GlobalPipelineConfig):
-            raise TypeError(
-                "Expected GlobalPipelineConfig, got "
-                f"{type(self.global_config).__name__}"
-            )
-
-        debug_execution_policy = DebugExecutionPolicy.from_config_params(
-            self.config_params
+        debug_execution_policy = DebugExecutionPolicy.from_config(
+            self.debug_execution_config
         )
-        debug_execution_config = (
-            debug_execution_policy.config
-            if isinstance(debug_execution_policy, ProgressDebugExecutionPolicy)
-            else None
-        )
-        global_config = self.global_config
-        if (
-            debug_execution_config is not None
-            and debug_execution_config.replay_mode
-            is DebugReplayMode.PERSISTENT_PAUSED_WORKER
-        ):
-            global_config = replace(global_config, use_threading=True, num_workers=1)
-
-        setup_global_gpu_registry(global_config=global_config)
-        ensure_global_config_context(GlobalPipelineConfig, global_config)
 
         return ZMQOrchestratorEnvironment(
-            global_config=global_config,
             debug_execution_policy=debug_execution_policy,
-            debug_execution_config=debug_execution_config,
+            debug_execution_config=self.debug_execution_config,
             plate_path_str=self.prepared_plate_path(storage_registry),
         )
 

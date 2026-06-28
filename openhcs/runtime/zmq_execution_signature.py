@@ -34,15 +34,6 @@ class OpenHCSExecutionConfigBundle:
     global_pipeline: GlobalPipelineConfig
     plate_pipeline: PipelineConfig | None = None
 
-    def with_global_pipeline(
-        self,
-        global_pipeline: GlobalPipelineConfig,
-    ) -> "OpenHCSExecutionConfigBundle":
-        return OpenHCSExecutionConfigBundle(
-            global_pipeline=global_pipeline,
-            plate_pipeline=self.plate_pipeline,
-        )
-
 
 class OpenHCSExecutionConfigCarrier(ABC, metaclass=AutoRegisterMeta):
     """Mixin for records carrying OpenHCS execution config bundles."""
@@ -57,7 +48,7 @@ class OpenHCSExecutionConfigCarrier(ABC, metaclass=AutoRegisterMeta):
         raise NotImplementedError
 
     @property
-    def global_config(self) -> GlobalPipelineConfig:
+    def global_pipeline_config(self) -> GlobalPipelineConfig:
         return self.execution_config_bundle.global_pipeline
 
     @property
@@ -131,7 +122,7 @@ class ZMQExecutionCompileControl:
 
 @dataclass(frozen=True, slots=True)
 class ZMQExecutionConfigTransport:
-    """Config transport authority for execution request signatures."""
+    """Config source fields plus auxiliary transport params for request signatures."""
 
     config_params: dict | None = None
     config_code: str | None = None

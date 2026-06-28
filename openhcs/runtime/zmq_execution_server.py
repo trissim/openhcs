@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 import logging
 import sys
 import time
 import json
 from types import ModuleType
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from metaclass_registry import AutoRegisterMeta
 from zmqruntime.execution import ExecutionServer
 from zmqruntime.messages import (
     ExecuteRequest,
@@ -57,6 +56,9 @@ from openhcs.runtime.zmq_pipeline_transport import (
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from openhcs.core.debug import DebugExecutionConfig
+
 
 CONFIG_CODE_OBJECT_NAME = "config"
 
@@ -74,44 +76,57 @@ class ConfigCodeNamespace:
 
 
 @dataclass(frozen=True, slots=True)
-class ZMQConfigParamsPayload:
-    """Formal defaults for the legacy config_params transport payload."""
+class ZMQAuxiliaryExecutionParams:
+    """Typed OpenHCS auxiliary fields carried by zmqruntime config_params."""
 
-    num_workers: int
-    output_dir_suffix: str
-    materialization_backend: str
-    axis_filter: list[str] | tuple[str, ...] | str | int | None
-    use_threading: bool
+    axis_filter: tuple[str, ...] | None = None
+    debug_execution_config: "DebugExecutionConfig | None" = None
 
     @classmethod
-    def from_mapping(cls, params) -> "ZMQConfigParamsPayload":
+    def from_transport(
+        cls,
+        config_params: Mapping[str, Any] | None,
+    ) -> "ZMQAuxiliaryExecutionParams":
+        if not config_params:
+            return cls()
         return cls(
-            num_workers=int(cls._value(params, "num_workers", 4)),
-            output_dir_suffix=str(cls._value(params, "output_dir_suffix", "_output")),
-            materialization_backend=str(
-                cls._value(params, "materialization_backend", "disk")
+            axis_filter=cls._axis_filter_from_transport(
+                config_params.get(ZMQAuxiliaryParamField.WELL_FILTER.value)
             ),
-            axis_filter=cls._value(params, "well_filter", None),
-            use_threading=bool(cls._value(params, "use_threading", False)),
+            debug_execution_config=cls._debug_config_from_transport(config_params),
         )
 
     @staticmethod
-    def _value(params, field_name: str, formal_default):
-        if field_name in params:
-            return params[field_name]
-        return formal_default
-
-    def concrete_axis_filter(self) -> list[str] | None:
-        if self.axis_filter is None:
+    def _axis_filter_from_transport(
+        axis_filter: list[str] | tuple[str, ...] | str | int | None,
+    ) -> tuple[str, ...] | None:
+        if axis_filter is None:
             return None
-        if isinstance(self.axis_filter, list):
-            return [str(axis_id) for axis_id in self.axis_filter]
-        if isinstance(self.axis_filter, tuple):
-            return [str(axis_id) for axis_id in self.axis_filter]
+        if isinstance(axis_filter, list):
+            return tuple(str(axis_id) for axis_id in axis_filter)
+        if isinstance(axis_filter, tuple):
+            return tuple(str(axis_id) for axis_id in axis_filter)
         raise TypeError(
             "ZMQ config_params well_filter must be a concrete axis-id sequence, "
-            f"got {type(self.axis_filter).__name__}."
+            f"got {type(axis_filter).__name__}."
         )
+
+    @staticmethod
+    def _debug_config_from_transport(
+        config_params: Mapping[str, Any],
+    ) -> "DebugExecutionConfig | None":
+        from openhcs.core.debug import DebugExecutionConfig
+
+        payload = config_params.get(DebugExecutionConfig.CONFIG_PARAMS_KEY)
+        if payload is None:
+            return None
+        return DebugExecutionConfig.from_payload(payload)
+
+
+class ZMQAuxiliaryParamField(Enum):
+    """Transport keys consumed as typed auxiliary execution inputs."""
+
+    WELL_FILTER = "well_filter"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,56 +141,6 @@ class ZMQResolvedConfig(OpenHCSExecutionConfigCarrier):
     def execution_config_bundle(self) -> OpenHCSExecutionConfigBundle:
         return self.configs
 
-    def with_global_config(
-        self,
-        global_config: GlobalPipelineConfig,
-    ) -> "ZMQResolvedConfig":
-        return ZMQResolvedConfig(
-            configs=self.configs.with_global_pipeline(global_config),
-        )
-
-
-class ZMQPipelineConfigCodePolicy(ABC, metaclass=AutoRegisterMeta):
-    """Policy for resolving the optional pipeline config code payload."""
-
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key = None
-
-    @abstractmethod
-    def resolve(self) -> PipelineConfig:
-        raise NotImplementedError
-
-    @classmethod
-    def from_transport_code(cls, pipeline_config_code) -> "ZMQPipelineConfigCodePolicy":
-        if pipeline_config_code is None:
-            return cls.__registry__["default"]()
-        return cls.__registry__["provided"](pipeline_config_code)
-
-
-@dataclass(frozen=True, slots=True)
-class DefaultZMQPipelineConfigCodePolicy(ZMQPipelineConfigCodePolicy):
-    """Default pipeline config policy for requests without config code."""
-
-    registry_key = "default"
-
-    def resolve(self) -> PipelineConfig:
-        return PipelineConfig()
-
-
-@dataclass(frozen=True, slots=True)
-class ProvidedZMQPipelineConfigCodePolicy(ZMQPipelineConfigCodePolicy):
-    """Pipeline config policy backed by provided config code."""
-
-    registry_key = "provided"
-    pipeline_config_code: str
-
-    def resolve(self) -> PipelineConfig:
-        return ZMQExecutionServer._config_from_code(
-            self.pipeline_config_code,
-            "pipeline_config_code must define 'config'",
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class ZMQExecutionContext(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
@@ -186,7 +151,7 @@ class ZMQExecutionContext(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
     execution_id: str
     request_payload: ZMQExecutionRequestPayload
     execution_pipeline: PipelineStepsBoundary
-    config_carrier: ZMQResolvedConfig
+    config_carrier: ZMQResolvedConfig | None
 
     @property
     def pipeline_steps_boundary(self) -> PipelineStepsBoundary:
@@ -194,7 +159,15 @@ class ZMQExecutionContext(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
 
     @property
     def execution_config_bundle(self) -> OpenHCSExecutionConfigBundle:
+        if self.config_carrier is None:
+            raise RuntimeError("Execution config is only available during compilation.")
         return self.config_carrier.execution_config_bundle
+
+    @property
+    def pipeline_config(self) -> PipelineConfig | None:
+        if self.config_carrier is None:
+            return None
+        return self.config_carrier.pipeline_config
 
     @property
     def plate_id(self) -> str:
@@ -207,6 +180,12 @@ class ZMQExecutionContext(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
     @property
     def config_params(self) -> dict | None:
         return self.request_payload.config_params
+
+    @property
+    def auxiliary_params(self) -> ZMQAuxiliaryExecutionParams:
+        return ZMQAuxiliaryExecutionParams.from_transport(
+            self.request_payload.config_params
+        )
 
     @property
     def compile_only(self) -> bool:
@@ -231,17 +210,6 @@ class ZMQExecutionContext(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
     def validate_compile_request(self) -> None:
         if self.compile_only and self.compile_artifact_id:
             raise ValueError("compile_only and compile_artifact_id cannot both be set")
-
-    def with_global_config(
-        self,
-        global_config: GlobalPipelineConfig,
-    ) -> "ZMQExecutionContext":
-        return ZMQExecutionContext(
-            execution_id=self.execution_id,
-            request_payload=self.request_payload,
-            execution_pipeline=self.execution_pipeline,
-            config_carrier=self.config_carrier.with_global_config(global_config),
-        )
 
     def progress_context(self) -> dict:
         return {
@@ -274,7 +242,7 @@ class ZMQExecutionServer(ExecutionServer):
         self._compile_message: str | None = None
         self._compile_status_expires_at: float | None = None
         self._worker_assignments_by_execution: dict[str, dict[str, list[str]]] = {}
-        self._compiled_artifacts: dict[str, dict[str, Any]] = {}
+        self._compiled_artifacts: dict[str, ZMQCompileArtifactRecord] = {}
         self._compiled_artifact_ttl_seconds: float = 30.0 * 60.0
 
     def handle_control_message(self, message):
@@ -355,7 +323,7 @@ class ZMQExecutionServer(ExecutionServer):
         expired_ids = [
             artifact_id
             for artifact_id, artifact in self._compiled_artifacts.items()
-            if now - artifact["created_at"] > self._compiled_artifact_ttl_seconds
+            if now - artifact.created_at > self._compiled_artifact_ttl_seconds
         ]
         for artifact_id in expired_ids:
             del self._compiled_artifacts[artifact_id]
@@ -522,7 +490,11 @@ class ZMQExecutionServer(ExecutionServer):
 
         self._cleanup_compiled_artifacts()
 
-        resolved_config = self._resolve_request_config(request_payload)
+        resolved_config = (
+            None
+            if request_payload.compile_artifact_id is not None
+            else self._resolve_request_config(request_payload)
+        )
 
         module_name = f"openhcs_zmq_pipeline_{request_payload.pipeline_sha}"
         module = ModuleType(module_name)
@@ -576,19 +548,12 @@ class ZMQExecutionServer(ExecutionServer):
         request_payload: ZMQExecutionRequestPayload,
     ) -> ZMQResolvedConfig:
         if request_payload.config_code is not None:
-            global_config = self._global_config_from_code(request_payload.config_code)
-            pipeline_config = ZMQPipelineConfigCodePolicy.from_transport_code(
+            global_config = self._config_from_code(
+                request_payload.config_code,
+                "config_code must define 'config'",
+            )
+            pipeline_config = self._pipeline_config_from_code(
                 request_payload.pipeline_config_code
-            ).resolve()
-            return ZMQResolvedConfig(
-                configs=OpenHCSExecutionConfigBundle(
-                    global_pipeline=global_config,
-                    plate_pipeline=pipeline_config,
-                ),
-            )
-        if request_payload.config_params is not None:
-            global_config, pipeline_config = self._build_config_from_params(
-                ZMQConfigParamsPayload.from_mapping(request_payload.config_params)
             )
             return ZMQResolvedConfig(
                 configs=OpenHCSExecutionConfigBundle(
@@ -596,21 +561,7 @@ class ZMQExecutionServer(ExecutionServer):
                     plate_pipeline=pipeline_config,
                 ),
             )
-        raise ValueError("Either config_params or config_code required")
-
-    @staticmethod
-    def _global_config_from_code(config_code: str):
-        from openhcs.core.config import GlobalPipelineConfig
-
-        if (
-            "GlobalPipelineConfig(\n\n)" in config_code
-            or "GlobalPipelineConfig()" in config_code
-        ):
-            return GlobalPipelineConfig()
-        return ZMQExecutionServer._config_from_code(
-            config_code,
-            "config_code must define 'config'",
-        )
+        raise ValueError("config_code is required for execution config resolution")
 
     @staticmethod
     def _config_from_code(config_code: str, missing_message: str):
@@ -618,31 +569,13 @@ class ZMQExecutionServer(ExecutionServer):
         exec(config_code, namespace)
         return ConfigCodeNamespace(namespace).require_config(missing_message)
 
-    def _build_config_from_params(self, p: ZMQConfigParamsPayload):
-        from openhcs.core.config import (
-            GlobalPipelineConfig,
-            MaterializationBackend,
-            PathPlanningConfig,
-            StepWellFilterConfig,
-            VFSConfig,
-            PipelineConfig,
-        )
-
-        return (
-            GlobalPipelineConfig(
-                num_workers=p.num_workers,
-                path_planning_config=PathPlanningConfig(
-                    output_dir_suffix=p.output_dir_suffix
-                ),
-                vfs_config=VFSConfig(
-                    materialization_backend=MaterializationBackend(p.materialization_backend)
-                ),
-                step_well_filter_config=StepWellFilterConfig(
-                    well_filter=p.axis_filter
-                ),
-                use_threading=p.use_threading,
-            ),
-            PipelineConfig(),
+    @staticmethod
+    def _pipeline_config_from_code(pipeline_config_code: str | None) -> PipelineConfig:
+        if pipeline_config_code is None:
+            raise ValueError("pipeline_config_code is required for execution config resolution")
+        return ZMQExecutionServer._config_from_code(
+            pipeline_config_code,
+            "pipeline_config_code must define 'config'",
         )
 
     def _execute_with_orchestrator(
@@ -654,15 +587,14 @@ class ZMQExecutionServer(ExecutionServer):
             DebugReplayMode,
         )
 
+        auxiliary_params = request_context.auxiliary_params
         environment = ZMQOrchestratorEnvironmentRequest(
             execution_id=request_context.execution_id,
             plate_id=request_context.plate_id,
             execution_plate_id=request_context.execution_plate_id,
             selected_pipeline_path=request_context.request_payload.selected_pipeline_path,
-            global_config=request_context.global_config,
-            config_params=request_context.config_params,
+            debug_execution_config=auxiliary_params.debug_execution_config,
         ).prepare()
-        request_context = request_context.with_global_config(environment.global_config)
         debug_execution_policy = environment.debug_execution_policy
         debug_execution_config = environment.debug_execution_config
         plate_path_str = environment.plate_path_str
@@ -682,6 +614,7 @@ class ZMQExecutionServer(ExecutionServer):
                 request_context.pipeline_steps,
                 request_context.compile_artifact_id,
             )
+            self._ensure_request_global_config_context(request_context)
             orchestrator = self._initialize_orchestrator(
                 request_context.execution_id,
                 plate_path_str,
@@ -689,7 +622,7 @@ class ZMQExecutionServer(ExecutionServer):
             )
             self._raise_if_cancelled(request_context.execution_id, "initialization")
             wells = self._wells_for_execution(
-                request_context.config_params,
+                auxiliary_params.axis_filter,
                 orchestrator,
                 debug_execution_policy,
             )
@@ -704,6 +637,7 @@ class ZMQExecutionServer(ExecutionServer):
                 orchestrator=orchestrator,
                 wells=wells,
                 debug_execution_config=debug_execution_config,
+                debug_execution_policy=debug_execution_policy,
                 progress_emitter=progress_emitter,
             )
             compilation_resolved = True
@@ -782,18 +716,14 @@ class ZMQExecutionServer(ExecutionServer):
 
     @staticmethod
     def _wells_for_execution(
-        config_params,
+        axis_filter: tuple[str, ...] | None,
         orchestrator,
         debug_execution_policy,
     ) -> list[str]:
         from openhcs.constants import MULTIPROCESSING_AXIS
 
-        if config_params is not None:
-            configured_wells = ZMQConfigParamsPayload.from_mapping(
-                config_params
-            ).concrete_axis_filter()
-            if configured_wells is not None:
-                return configured_wells
+        if axis_filter is not None:
+            return list(axis_filter)
         available_axis_ids = tuple(orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
         return debug_execution_policy.axis_filter_for_available(available_axis_ids)
 
@@ -817,6 +747,7 @@ class ZMQExecutionServer(ExecutionServer):
         orchestrator,
         wells: list[str],
         debug_execution_config,
+        debug_execution_policy,
         progress_emitter: ZMQProgressEmitter,
     ):
         if request_context.compile_artifact_id is not None:
@@ -841,6 +772,7 @@ class ZMQExecutionServer(ExecutionServer):
                 flush=self._flush_progress_only,
                 plate_id=request_context.plate_id,
             ),
+            debug_execution_policy=debug_execution_policy,
         ).resolve()
 
     @staticmethod
@@ -880,14 +812,9 @@ class ZMQExecutionServer(ExecutionServer):
             )
         return ZMQWorkerExecutionRequest(
             execution_id=request_context.execution_id,
-            global_config=request_context.global_config,
             orchestrator=orchestrator,
-            pipeline_steps=request_context.pipeline_steps,
-            compiled_pipeline_definition=compilation.compiled_pipeline_definition,
-            compiled_contexts=compilation.compiled_contexts,
             execution_bundle=compilation.execution_bundle,
             progress_context=progress_context,
-            worker_assignments=compilation.worker_assignments,
             debug_execution_policy=debug_execution_policy,
             active_execution_record=self.active_executions[
                 request_context.execution_id
@@ -908,7 +835,7 @@ class ZMQExecutionServer(ExecutionServer):
                 request_signature=request_context.request_signature,
                 debug_replay_signature=request_context.debug_replay_signature,
                 compilation=compilation,
-            ).as_dict()
+            )
         )
         logger.info(
             "[%s] Compilation-only request completed and artifact stored (artifact_id=%s sig=%s)",
@@ -917,7 +844,7 @@ class ZMQExecutionServer(ExecutionServer):
             request_context.request_signature[:12],
         )
         self._set_compile_status("compiled success")
-        return compilation.compiled_contexts
+        return compilation.execution_bundle.runtime_contexts
 
     def _emit_compile_failure(
         self,
@@ -937,6 +864,22 @@ class ZMQExecutionServer(ExecutionServer):
             error=str(error),
         )
         self._flush_progress_only()
+
+    @staticmethod
+    def _ensure_request_global_config_context(
+        request_context: ZMQExecutionContext,
+    ) -> None:
+        if request_context.config_carrier is None:
+            return
+
+        from openhcs.config_framework.lazy_factory import (
+            ensure_global_config_context,
+        )
+
+        ensure_global_config_context(
+            GlobalPipelineConfig,
+            request_context.global_pipeline_config,
+        )
 
     @staticmethod
     def _compile_failure_axis_ids(wells: list[str] | None) -> list[str]:

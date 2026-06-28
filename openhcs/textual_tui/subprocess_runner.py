@@ -72,8 +72,12 @@ def setup_subprocess_logging(log_file_path: str):
 
 # Status and result files removed - log file is single source of truth
 
-def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contexts: Dict,
-                    global_config, logger, log_file_base: str = None, effective_config=None):
+def run_single_plate(
+    plate_path: str,
+    execution_bundle,
+    logger,
+    log_file_base: str = None,
+):
     """
     Run a single plate using pre-compiled contexts from UI.
 
@@ -117,29 +121,6 @@ def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contex
 
         log_thread_count("after status write")
         
-        # Step 1: Validate global config (GPU registry will be initialized by workers)
-        death_marker("STEP1_START", "Global config validation")
-        logger.info("SUBPROCESS: Validating global config (GPU registry initialization deferred to workers)")
-
-        death_marker("BEFORE_CONFIG_IMPORT")
-        # NUCLEAR WRAP: Config import
-        def import_config():
-            from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig, VFSConfig
-            from openhcs.constants import Microscope
-            return GlobalPipelineConfig, PathPlanningConfig, VFSConfig, Microscope
-        GlobalPipelineConfig, PathPlanningConfig, VFSConfig, Microscope = force_error_detection("import_config", import_config)
-        death_marker("AFTER_CONFIG_IMPORT")
-
-        log_thread_count("after config import")
-
-        # Global config is already a proper object from pickle - no reconstruction needed!
-        log_thread_count("using pickled global config")
-        log_thread_count("after global config validation")
-
-        logger.info("Global config validated - GPU registry and CUDA streams will be initialized by workers")
-
-        # Step 2: Create orchestrator and initialize (like test_main.py)
-
         log_thread_count("before orchestrator import")
 
         # NUCLEAR WRAP: Orchestrator import
@@ -166,13 +147,6 @@ def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contex
 
         log_thread_count("before orchestrator creation")
 
-        # NUCLEAR WRAP: Set up global config context (required before orchestrator creation)
-        def setup_global_context():
-            from openhcs.config_framework.lazy_factory import ensure_global_config_context
-            from openhcs.core.config import GlobalPipelineConfig
-            ensure_global_config_context(GlobalPipelineConfig, global_config)
-        force_error_detection("setup_global_context", setup_global_context)
-
         # NUCLEAR WRAP: Orchestrator creation
         orchestrator = force_error_detection("PipelineOrchestrator_creation", PipelineOrchestrator,
             plate_path=plate_path,
@@ -184,7 +158,10 @@ def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contex
         force_error_detection("orchestrator_initialize", orchestrator.initialize)
         log_thread_count("after orchestrator initialization")
 
-        # Step 3: Use wells from pre-compiled contexts (not rediscovery)
+        pipeline_definition = list(execution_bundle.pipeline_definition)
+        compiled_contexts = dict(execution_bundle.runtime_contexts)
+
+        # Step 3: Use wells from compiled bundle contexts (not rediscovery)
         # The UI already compiled contexts for the specific wells in this plate
         wells = list(compiled_contexts.keys())
 
@@ -197,11 +174,6 @@ def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contex
             error_msg = f"Wells is not a list: {type(wells)} = {wells}"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
-
-        # Step 5: Execution phase with multiprocessing (like test_main.py but with processes)
-        # Use effective config passed from UI (includes pipeline config) instead of global config
-        config_to_use = effective_config if effective_config is not None else global_config
-        max_workers = config_to_use.num_workers
 
         # Create a custom progress callback to see exactly where it hangs
         def progress_callback(well_id, step_name, status):
@@ -282,12 +254,6 @@ def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contex
             logger.info("🔥 SUBPROCESS: PRE-EXECUTION VALIDATION...")
             print("🔥 SUBPROCESS STDOUT: PRE-EXECUTION VALIDATION...")
 
-            if not hasattr(orchestrator, 'execute_compiled_plate'):
-                error_msg = "🔥 CRITICAL: orchestrator missing execute_compiled_plate method!"
-                logger.error(error_msg)
-                print(f"🔥 SUBPROCESS STDOUT CRITICAL: {error_msg}")
-                raise RuntimeError(error_msg)
-
             if pipeline_definition is None:
                 error_msg = "🔥 CRITICAL: pipeline_definition is None!"
                 logger.error(error_msg)
@@ -309,12 +275,17 @@ def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contex
             print("🔥 SUBPROCESS STDOUT: CALLING NUCLEAR EXECUTION WRAPPER...")
 
             death_marker("ENTERING_FORCE_ERROR_DETECTION")
+            progress_context = {
+                "execution_id": f"subprocess::{os.getpid()}::{plate_path}",
+                "plate_id": plate_path,
+                "axis_id": "",
+            }
             results = force_error_detection("execute_compiled_plate", orchestrator.execute_compiled_plate,
-                pipeline_definition=pipeline_definition,
-                compiled_contexts=compiled_contexts,
-                max_workers=max_workers,  # Use global config num_workers setting
+                execution_bundle=execution_bundle,
                 visualizer=None,    # Let orchestrator auto-create visualizers based on compiled contexts
-                log_file_base=log_file_base  # Pass log base for worker process logging
+                log_file_base=log_file_base,  # Pass log base for worker process logging
+                progress_queue=execution_bundle.runtime_environment.worker_start.multiprocessing_context().Queue(),
+                progress_context=progress_context,
             )
             death_marker("AFTER_FORCE_ERROR_DETECTION", f"results_type={type(results)}")
 
@@ -588,7 +559,6 @@ def main():
         plate_paths = data['plate_paths']
         pipeline_data = data['pipeline_data']  # Dict[plate_path, List[FunctionStep]]
         global_config = data['global_config']
-        effective_configs = data.get('effective_configs', {})  # Per-plate effective configs
 
         logger.info(f"🔥 SUBPROCESS: Loaded data for {len(plate_paths)} plates")
         logger.info(f"🔥 SUBPROCESS: Plates: {plate_paths}")
@@ -596,19 +566,14 @@ def main():
         # Process each plate (like test_main.py but for multiple plates)
         for plate_path in plate_paths:
             plate_data = pipeline_data[plate_path]
-            pipeline_definition = plate_data['pipeline_definition']
-            compiled_contexts = plate_data['compiled_contexts']
-            effective_config = effective_configs.get(plate_path)  # Get effective config for this plate
-            logger.info(f"🔥 SUBPROCESS: Processing plate {plate_path} with {len(pipeline_definition)} steps")
+            execution_bundle = plate_data['execution_bundle']
+            logger.info(f"🔥 SUBPROCESS: Processing plate {plate_path} with {len(execution_bundle.pipeline_definition)} steps")
 
             run_single_plate(
                 plate_path=plate_path,
-                pipeline_definition=pipeline_definition,
-                compiled_contexts=compiled_contexts,
-                global_config=global_config,
+                execution_bundle=execution_bundle,
                 logger=logger,
                 log_file_base=log_file_base,
-                effective_config=effective_config
             )
 
         logger.info("🔥 SUBPROCESS: All plates completed successfully")

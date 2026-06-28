@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import pickle
 import subprocess
 import sys
 import time
@@ -13,9 +14,11 @@ from pathlib import Path
 from typing import TypeAlias
 
 from typing_extensions import override
+import zmq
 from zmqruntime.execution import ExecutionClient
+from zmqruntime.messages import ControlMessageType, MessageFields
 
-from zmqruntime.transport import coerce_transport_mode
+from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.debug import DebugExecutionConfig
 from openhcs.core.steps.abstract import AbstractStep
@@ -35,6 +38,7 @@ from openhcs.runtime.zmq_pipeline_transport import (
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_ZMQ_CONTROL_TIMEOUT_MS = 5000
 ZMQScalar: TypeAlias = str | int | float | bool | None
 ZMQValue: TypeAlias = (
     ZMQScalar
@@ -321,6 +325,8 @@ class ZMQRequest:
 
 @dataclass(frozen=True, slots=True)
 class ZMQConfigParamsBoundary:
+    """Boundary for zmqruntime's auxiliary params field, not config authority."""
+
     params: ZMQParams | None
 
     @classmethod
@@ -344,7 +350,7 @@ class ZMQConfigParamsBoundary:
         return ZMQConfigParamsBoundary(params=merged_params)
 
     def request_items(self) -> tuple[tuple[str, ZMQValue], ...]:
-        return (("config_params", self.params),)
+        return ((MessageFields.CONFIG_PARAMS, self.params),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,9 +361,11 @@ class ZMQConfigSourceFields:
     def request_items(self) -> tuple[tuple[str, ZMQValue], ...]:
         items: list[tuple[str, ZMQValue]] = []
         if self.config_code is not None:
-            items.append(("config_code", self.config_code))
+            items.append((MessageFields.CONFIG_CODE, self.config_code))
         if self.pipeline_config_code is not None:
-            items.append(("pipeline_config_code", self.pipeline_config_code))
+            items.append(
+                (MessageFields.PIPELINE_CONFIG_CODE, self.pipeline_config_code)
+            )
         return tuple(items)
 
 
@@ -373,26 +381,23 @@ class ZMQConfigProjection:
         cls,
         task: OpenHCSExecutionSubmission,
     ) -> "ZMQConfigProjection":
-        if task.config_boundary.params is not None:
-            return cls(
-                params_boundary=task.config_boundary,
-                source_fields=None,
-                config_sha="params",
-                pipeline_config_sha="params",
-            )
-
-        config_source = PycodifiedConfigSource.from_config(task.global_config)
+        config_source = PycodifiedConfigSource.from_config(task.global_pipeline_config)
         if task.pipeline_config is None:
-            pipeline_config_code = None
-            pipeline_config_sha = "-"
+            pipeline_config_source = PycodifiedConfigSource.from_config(
+                PipelineConfig()
+            )
         else:
             pipeline_config_source = PycodifiedConfigSource.from_config(
                 task.pipeline_config
             )
-            pipeline_config_code = pipeline_config_source.source
-            pipeline_config_sha = pipeline_config_source.sha_label()
+        pipeline_config_code = pipeline_config_source.source
+        pipeline_config_sha = pipeline_config_source.sha_label()
         return cls(
-            params_boundary=None,
+            params_boundary=(
+                task.config_boundary
+                if task.config_boundary.params is not None
+                else None
+            ),
             source_fields=ZMQConfigSourceFields(
                 config_source.source,
                 pipeline_config_code,
@@ -474,27 +479,36 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
     def submit_pipeline(
         self,
         submission: OpenHCSExecutionSubmission,
+        *,
+        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
     ):
-        return self.submit_execution(submission.to_task())
+        return self._submit_submission(submission.to_task(), timeout_ms=timeout_ms)
 
     def submit_debug_pipeline(
         self,
         submission: OpenHCSExecutionSubmission,
         *,
         debug_config: DebugExecutionConfig,
+        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
     ):
         config_params_boundary = ZMQConfigParamsBoundary.from_optional(
             submission.config_params
         ).with_updates(debug_config.to_config_params())
-        return self.submit_execution(
-            submission.with_config_params(config_params_boundary.params).to_task()
+        return self._submit_submission(
+            submission.with_config_params(config_params_boundary.params).to_task(),
+            timeout_ms=timeout_ms,
         )
 
     def submit_compile(
         self,
         submission: OpenHCSExecutionSubmission,
+        *,
+        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
     ):
-        return self.submit_execution(submission.compile_request().to_task())
+        return self._submit_submission(
+            submission.compile_request().to_task(),
+            timeout_ms=timeout_ms,
+        )
 
     def execute_pipeline(
         self,
@@ -506,8 +520,78 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             return self.wait_for_completion(response_view.execution_id())
         return response
 
-    def get_status(self, execution_id=None):
-        return self.poll_status(execution_id)
+    def get_status(
+        self,
+        execution_id=None,
+        *,
+        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
+    ):
+        request = {MessageFields.TYPE: ControlMessageType.STATUS.value}
+        if execution_id:
+            request[MessageFields.EXECUTION_ID] = execution_id
+        return self._send_control_request_bounded(request, timeout_ms=timeout_ms)
+
+    def _submit_submission(
+        self,
+        submission: OpenHCSExecutionSubmission,
+        *,
+        timeout_ms: int,
+    ):
+        connect_timeout_seconds = max(timeout_ms / 1000, 0.001)
+        if not self._connected and not self.connect(timeout=connect_timeout_seconds):
+            raise RuntimeError("Failed to connect to execution server")
+        self._ensure_progress_subscription()
+        request = self.serialize_task(submission, None)
+        if MessageFields.TYPE not in request:
+            request[MessageFields.TYPE] = ControlMessageType.EXECUTE.value
+        return self._send_control_request_bounded(request, timeout_ms=timeout_ms)
+
+    def _send_control_request_bounded(self, request, *, timeout_ms: int):
+        owns_context = self.zmq_context is None
+        ctx = zmq.Context() if owns_context else self.zmq_context
+        sock = ctx.socket(zmq.REQ)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.SNDTIMEO, timeout_ms)
+        sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
+        control_url = get_zmq_transport_url(
+            self.control_port,
+            host=self.host,
+            mode=self.transport_mode,
+            config=self.config,
+        )
+        request_type = request.get(MessageFields.TYPE, "control")
+        sock.connect(control_url)
+        poller = zmq.Poller()
+        try:
+            poller.register(sock, zmq.POLLOUT)
+            writable = dict(poller.poll(timeout_ms))
+            if not writable.get(sock):
+                raise TimeoutError(
+                    f"Server was not writable for {request_type} request within "
+                    f"{timeout_ms}ms"
+                )
+            sock.send(pickle.dumps(request), flags=zmq.NOBLOCK)
+            poller.unregister(sock)
+            poller.register(sock, zmq.POLLIN)
+            readable = dict(poller.poll(timeout_ms))
+            if not readable.get(sock):
+                raise TimeoutError(
+                    f"Server did not respond to {request_type} request within "
+                    f"{timeout_ms}ms"
+                )
+            return pickle.loads(sock.recv(flags=zmq.NOBLOCK))
+        except zmq.Again as exc:
+            raise TimeoutError(
+                f"Server did not complete {request_type} request within {timeout_ms}ms"
+            ) from exc
+        finally:
+            try:
+                poller.unregister(sock)
+            except Exception:
+                pass
+            sock.close(linger=0)
+            if owns_context:
+                ctx.term()
 
     def get_debug_snapshot(
         self,
