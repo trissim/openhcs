@@ -11,7 +11,6 @@ import re
 import subprocess
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, make_dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional, List, Dict, Set
 
@@ -49,6 +48,12 @@ from pyqt_reactive.widgets.shared.image_table_browser import (
 from pyqt_reactive.widgets.shared import TabbedFormWidget, TabConfig, TabbedFormConfig
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import StreamingConfig
+from openhcs.core.plate_image_inventory import (
+    PlateFileKind,
+    PlateFileInventory,
+    PlateFileRecord,
+    PlateResultFileInventory,
+)
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 
 logger = logging.getLogger(__name__)
@@ -62,28 +67,10 @@ def _streaming_config_field_names() -> tuple[str, ...]:
     return StreamingConfig.supported_config_keys()
 
 
-class ResultFileType(str, Enum):
-    """Result-file types shown by the image browser."""
-    ROI = "ROI"
-    CSV = "CSV"
-    JSON = "JSON"
-
-    @classmethod
-    def from_path(cls, file_path: Path) -> Optional["ResultFileType"]:
-        suffix = file_path.suffix.lower()
-        if file_path.name.endswith(".roi.zip"):
-            return cls.ROI
-        if suffix in FileFormat.CSV.value:
-            return cls.CSV
-        if suffix in FileFormat.JSON.value:
-            return cls.JSON
-        return None
-
-
 @dataclass(frozen=True)
 class ResultFileAction:
     """Double-click behavior for one result-file type."""
-    file_type: ResultFileType
+    file_type: FileFormat
     display_name: str
     handle: Callable[["ImageBrowserWidget", Path], None]
 
@@ -97,7 +84,7 @@ class ImageBrowserItem(Mapping[str, ImageTableValue]):
 
     key: str
     metadata: dict[str, ImageTableValue]
-    result_file_type: ResultFileType | None = None
+    result_file_type: FileFormat | None = None
     full_path: Path | None = None
 
     @property
@@ -132,19 +119,24 @@ def _open_result_in_default_app(browser: "ImageBrowserWidget", file_path: Path) 
 
 
 RESULT_FILE_ACTIONS = {
-    ResultFileType.ROI: ResultFileAction(
-        file_type=ResultFileType.ROI,
+    FileFormat.ROI: ResultFileAction(
+        file_type=FileFormat.ROI,
         display_name="ROI",
         handle=_stream_roi_result,
     ),
-    ResultFileType.CSV: ResultFileAction(
-        file_type=ResultFileType.CSV,
+    FileFormat.CSV: ResultFileAction(
+        file_type=FileFormat.CSV,
         display_name="CSV",
         handle=_open_result_in_default_app,
     ),
-    ResultFileType.JSON: ResultFileAction(
-        file_type=ResultFileType.JSON,
+    FileFormat.JSON: ResultFileAction(
+        file_type=FileFormat.JSON,
         display_name="JSON",
+        handle=_open_result_in_default_app,
+    ),
+    FileFormat.TEXT: ResultFileAction(
+        file_type=FileFormat.TEXT,
+        display_name="TEXT",
         handle=_open_result_in_default_app,
     ),
 }
@@ -199,6 +191,7 @@ class ImageBrowserViewerControls:
         self.buttons: Dict[str, QPushButton] = {}
 
     def create_header_buttons(self) -> list[QPushButton]:
+        self.buttons.clear()
         buttons = []
         for field in streaming_viewer_fields():
             button = QPushButton(f"View in {field.display_name}")
@@ -520,27 +513,11 @@ class ImageBrowserWidget(QWidget):
         # FileManager from the orchestrator property below.
         self._fallback_filemanager = FileManager(storage_registry)
 
-        # Scope ID for cross-window live context filtering (make distinct from PipelineConfig window)
-        # Append a suffix so image browser uses a separate scope per plate
-        self.scope_id: Optional[str] = (
-            f"{orchestrator.plate_path}::image_browser" if orchestrator else None
-        )
-
         # Create root ObjectState from dynamically generated config container
         # This gives us a single registered state with nested configs via dotted paths
         self.config = ImageBrowserConfig()
-        parent_state = (
-            ObjectStateRegistry.get_by_scope(self.scope_id) if self.scope_id else None
-        )
-        self.state = ObjectState(
-            object_instance=self.config,
-            scope_id=self.scope_id,
-            parent_state=parent_state,
-        )
-        # Register in ObjectStateRegistry for cross-window inheritance
-        # Use _skip_snapshot=True since this is hidden machinery, not user-facing state
-        if self.scope_id:
-            ObjectStateRegistry.register(self.state, _skip_snapshot=True)
+        self.scope_id: Optional[str] = None
+        self.state = self._create_state_for_orchestrator(orchestrator)
 
         # TabbedFormWidget will be created lazily in _create_right_panel
         # to avoid heavy initialization during widget construction.
@@ -574,6 +551,8 @@ class ImageBrowserWidget(QWidget):
 
         # ZMQ manager widget (may be created in init_ui)
         self.zmq_manager = None
+        self.main_splitter = None
+        self.right_panel = None
 
         # Streaming service for unified Napari/Fiji streaming.
         self._streaming_service_cache = None
@@ -601,7 +580,7 @@ class ImageBrowserWidget(QWidget):
         if not self.orchestrator:
             return None
         if self._streaming_service_orchestrator is not self.orchestrator:
-            from openhcs.ui.shared.streaming_service import StreamingService
+            from openhcs.core.viewer_streaming_service import StreamingService
 
             self._streaming_service_cache = StreamingService(
                 filemanager=self.filemanager,
@@ -663,6 +642,7 @@ class ImageBrowserWidget(QWidget):
 
         # Create main splitter (tree+filters | table | config)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter = main_splitter
 
         # Left panel: Vertical splitter for Folder tree + Column filters
         left_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -713,6 +693,7 @@ class ImageBrowserWidget(QWidget):
 
         # Right: Napari config panel + instance manager
         right_panel = self._create_right_panel()
+        self.right_panel = right_panel
         main_splitter.addWidget(right_panel)
 
         # Set initial splitter sizes (100px left, flexible middle, 400px right)
@@ -837,23 +818,53 @@ class ImageBrowserWidget(QWidget):
 
         return zmq_manager
 
-    def set_orchestrator(self, orchestrator):
-        """Set the orchestrator and load images."""
-        self.orchestrator = orchestrator
-        # CRITICAL: Preserve ::image_browser suffix to avoid scope conflicts with ConfigWindow
+    def _create_state_for_orchestrator(self, orchestrator):
+        """Create browser config state under the selected plate hierarchy."""
         self.scope_id = (
             f"{orchestrator.plate_path}::image_browser" if orchestrator else None
         )
+        parent_state = (
+            ObjectStateRegistry.get_by_scope(str(orchestrator.plate_path))
+            if orchestrator
+            else None
+        )
+        state = ObjectState(
+            object_instance=self.config,
+            scope_id=self.scope_id,
+            parent_state=parent_state,
+        )
+        if self.scope_id:
+            ObjectStateRegistry.register(state, _skip_snapshot=True)
+        return state
 
-        # Update state context and scope_id to use new pipeline_config
-        if self.state and orchestrator:
-            self.state.context_obj = orchestrator.pipeline_config
-            self.state.scope_id = self.scope_id
-            # Refresh form placeholders for all PFMs in tabs
-            if self.tabbed_form:
-                for form in self.tabbed_form.get_all_forms():
-                    form._refresh_all_placeholders()
+    def _replace_state_for_orchestrator(self, orchestrator) -> None:
+        if self.scope_id:
+            ObjectStateRegistry.unregister(self.state, _skip_snapshot=True)
+        self.config = ImageBrowserConfig()
+        self.state = self._create_state_for_orchestrator(orchestrator)
+        self.viewer_controls.state = self.state
 
+    def _rebuild_right_panel(self) -> None:
+        if self.main_splitter is None or self.right_panel is None:
+            return
+        old_panel = self.right_panel
+        panel_index = self.main_splitter.indexOf(old_panel)
+        if panel_index < 0:
+            return
+
+        self.tabbed_form = None
+        self.zmq_manager = None
+        new_panel = self._create_right_panel()
+        self.right_panel = new_panel
+        replaced_panel = self.main_splitter.replaceWidget(panel_index, new_panel)
+        if replaced_panel is not None:
+            replaced_panel.deleteLater()
+
+    def set_orchestrator(self, orchestrator):
+        """Set the orchestrator and load images."""
+        self.orchestrator = orchestrator
+        self._replace_state_for_orchestrator(orchestrator)
+        self._rebuild_right_panel()
         self.load_images()
 
     def focus_file_by_path(self, file_path: str | Path) -> bool:
@@ -887,53 +898,37 @@ class ImageBrowserWidget(QWidget):
             return
 
         image_items: dict[str, ImageBrowserItem] = {}
+        result_items: dict[str, ImageBrowserItem] = {}
         try:
             self.metadata_display_resolver.clear()
             logger.info("IMAGE BROWSER: Starting load_images()")
-            # Get metadata handler from orchestrator
-            handler = self.orchestrator.microscope_handler
-            metadata_handler = handler.metadata_handler
+            inventory = PlateFileInventory.from_orchestrator(
+                self.orchestrator,
+                all_subdirs=True,
+            )
             logger.info(
-                f"IMAGE BROWSER: Got metadata handler: {type(metadata_handler).__name__}"
+                "IMAGE BROWSER: plate file inventory returned %s images and %s results",
+                len(inventory.image_records),
+                len(inventory.result_records),
             )
 
-            # Get image files from metadata (all subdirectories for browsing)
-            plate_path = self.orchestrator.plate_path
-            logger.info(
-                f"IMAGE BROWSER: Calling get_image_files for plate: {plate_path}"
-            )
-            image_files = metadata_handler.get_image_files(plate_path, all_subdirs=True)
-            logger.info(
-                f"IMAGE BROWSER: get_image_files returned {len(image_files)} files"
+            image_items, result_items = self._items_from_file_records(
+                inventory.file_records()
             )
 
-            for filename in image_files:
-                parsed = handler.parser.parse_filename(filename)
-
-                file_path = plate_path / filename
-                metadata = {
-                    "filename": filename,
-                    "type": "Image",
-                    "size": self._file_size_label(file_path),
-                }
-                if parsed:
-                    metadata.update(parsed)
-                image_items[filename] = ImageBrowserItem(
-                    key=filename,
-                    metadata=metadata,
-                )
-
             logger.info(
-                f"IMAGE BROWSER: Built image item set with {len(image_items)} entries"
+                "IMAGE BROWSER: Built file item set with %s images and %s results",
+                len(image_items),
+                len(result_items),
             )
 
         except Exception as e:
-            logger.error(f"Failed to load images: {e}", exc_info=True)
-            QMessageBox.warning(self, "Error", f"Failed to load images: {e}")
-            self.info_label.setText("Error loading images")
+            logger.error(f"Failed to load plate files: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Failed to load plate files: {e}")
+            self.info_label.setText("Error loading plate files")
             image_items.clear()
+            result_items.clear()
 
-        result_items = self.load_results()
         self.file_items = {**image_items, **result_items}
 
         all_keys = set()
@@ -982,112 +977,93 @@ class ImageBrowserWidget(QWidget):
         if self.plate_view_widget and self.plate_view_widget.isVisible():
             self._update_plate_view()
 
-    @staticmethod
-    def _file_size_label(file_path: Path) -> str:
-        if not file_path.exists():
-            return "N/A"
-        size_bytes = file_path.stat().st_size
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        if size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
-
     def load_results(self) -> dict[str, ImageBrowserItem]:
         """Load result files (ROI JSON, CSV) from the results directory."""
         if not self.orchestrator:
             logger.warning("IMAGE BROWSER RESULTS: No orchestrator available")
             return {}
 
-        result_items: dict[str, ImageBrowserItem] = {}
         try:
-            handler = self.orchestrator.microscope_handler
-            metadata_handler = handler.metadata_handler
-            plate_path = self.orchestrator.plate_path
-            result_directories = metadata_handler.analysis_result_directories(plate_path)
-
-            if not result_directories:
-                logger.warning(
-                    "IMAGE BROWSER RESULTS: No declared analysis result directories"
-                )
-                return {}
-
-            logger.info(
-                "IMAGE BROWSER RESULTS: Scanning "
-                f"{len(result_directories)} results directories"
-            )
-
-            # Scan all results directories
-            file_count = 0
-            for result_directory in result_directories:
-                results_dir = result_directory.path
-
-                logger.info(
-                    "IMAGE BROWSER RESULTS: Scanning results directory for "
-                    f"'{result_directory.subdirectory_name}': {results_dir}"
-                )
-
-                # Scan for ROI JSON files and CSV files
-                for file_path in results_dir.rglob("*"):
-                    if file_path.is_file():
-                        file_count += 1
-                        suffix = file_path.suffix.lower()
-                        logger.debug(
-                            f"IMAGE BROWSER RESULTS: Found file: {file_path.name} (suffix={suffix})"
-                        )
-
-                        result_file_type = ResultFileType.from_path(file_path)
-                        if result_file_type is not None:
-                            action = RESULT_FILE_ACTIONS[result_file_type]
-                            logger.info(
-                                f"IMAGE BROWSER RESULTS: ✓ Matched as {action.display_name}: {file_path.name}"
-                            )
-                        if result_file_type is None:
-                            logger.debug(
-                                f"IMAGE BROWSER RESULTS: ✗ Filtered out: {file_path.name} (suffix={suffix})"
-                            )
-
-                        if result_file_type:
-                            # Get relative path from plate_path (not results_dir) to include subdirectory
-                            rel_path = file_path.relative_to(plate_path)
-
-                            parsed = handler.parser.parse_filename(file_path.name)
-
-                            file_info = {
-                                "filename": str(rel_path),
-                                "type": result_file_type.value,
-                                "size": self._file_size_label(file_path),
-                            }
-
-                            if parsed:
-                                file_info.update(parsed)
-                                logger.info(
-                                    f"IMAGE BROWSER RESULTS: ✓ Parsed result: {file_path.name} -> {parsed}"
-                                )
-                                logger.info(
-                                    f"IMAGE BROWSER RESULTS:   Full file_info: {file_info}"
-                                )
-                            else:
-                                logger.warning(
-                                    f"IMAGE BROWSER RESULTS: ✗ Could not parse filename: {file_path.name}"
-                                )
-
-                            key = str(rel_path)
-                            result_items[key] = ImageBrowserItem(
-                                key=key,
-                                metadata=file_info,
-                                result_file_type=result_file_type,
-                                full_path=file_path,
-                            )
-
-            logger.info(
-                f"IMAGE BROWSER RESULTS: Scanned {file_count} total files, matched {len(result_items)} result files"
-            )
+            inventory = PlateResultFileInventory.from_orchestrator(self.orchestrator)
+            return self._result_items_from_inventory(inventory)
 
         except Exception as e:
             logger.error(
                 f"IMAGE BROWSER RESULTS: Failed to load results: {e}", exc_info=True
             )
+        return {}
+
+    @staticmethod
+    def _items_from_file_records(
+        file_records: tuple[PlateFileRecord, ...],
+    ) -> tuple[dict[str, ImageBrowserItem], dict[str, ImageBrowserItem]]:
+        """Project shared file inventory records into browser rows."""
+        image_items: dict[str, ImageBrowserItem] = {}
+        result_items: dict[str, ImageBrowserItem] = {}
+        for record in file_records:
+            if record.kind is PlateFileKind.IMAGE:
+                image_items[record.key] = ImageBrowserItem(
+                    key=record.key,
+                    metadata=dict(record.metadata),
+                )
+            elif (
+                record.kind is PlateFileKind.RESULT
+                and record.file_format is not None
+                and record.full_path is not None
+            ):
+                action = RESULT_FILE_ACTIONS[record.file_format]
+                logger.info(
+                    "IMAGE BROWSER RESULTS: matched as %s: %s",
+                    action.display_name,
+                    record.key,
+                )
+                result_items[record.key] = ImageBrowserItem(
+                    key=record.key,
+                    metadata=dict(record.metadata),
+                    result_file_type=record.file_format,
+                    full_path=Path(record.full_path),
+                )
+        return image_items, result_items
+
+    @staticmethod
+    def _result_items_from_inventory(
+        inventory: PlateFileInventory | PlateResultFileInventory,
+    ) -> dict[str, ImageBrowserItem]:
+        """Project shared result-file inventory records into browser rows."""
+        result_records = (
+            inventory.result_records
+            if isinstance(inventory, PlateFileInventory)
+            else inventory.records
+        )
+        scanned_file_count = (
+            inventory.scanned_result_file_count
+            if isinstance(inventory, PlateFileInventory)
+            else inventory.scanned_file_count
+        )
+        if not result_records:
+            logger.warning("IMAGE BROWSER RESULTS: No declared analysis result files")
+            return {}
+
+        result_items: dict[str, ImageBrowserItem] = {}
+        for record in result_records:
+            action = RESULT_FILE_ACTIONS[record.file_format]
+            logger.info(
+                "IMAGE BROWSER RESULTS: matched as %s: %s",
+                action.display_name,
+                record.relative_path,
+            )
+            result_items[record.relative_path] = ImageBrowserItem(
+                key=record.relative_path,
+                metadata=dict(record.metadata),
+                result_file_type=record.file_format,
+                full_path=record.full_path_obj,
+            )
+
+        logger.info(
+            "IMAGE BROWSER RESULTS: Scanned %s total files, matched %s result files",
+            scanned_file_count,
+            len(result_items),
+        )
         return result_items
 
     # Removed _populate_results_table - now using unified file table
@@ -1288,7 +1264,7 @@ class ImageBrowserWidget(QWidget):
         ]
         roi_filenames = [
             item.key for item in selected_items
-            if item.result_file_type is ResultFileType.ROI
+            if item.result_file_type is FileFormat.ROI
         ]
 
         logger.info(
@@ -1339,7 +1315,7 @@ class ImageBrowserWidget(QWidget):
     def _stream_images_to_viewer(self, filenames: list, config_key: str):
         """Load and stream images to specified viewer type."""
         viewer, read_backend, config = self._prepare_streaming(config_key)
-        from openhcs.ui.shared.streaming_service import (
+        from openhcs.core.viewer_streaming_service import (
             ImageStreamingRequest,
         )
 
@@ -1373,7 +1349,7 @@ class ImageBrowserWidget(QWidget):
     def _stream_rois_to_viewer(self, roi_filenames: list, config_key: str):
         """Stream ROI files to specified viewer type."""
         viewer, _, config = self._prepare_streaming(config_key)
-        from openhcs.ui.shared.streaming_service import (
+        from openhcs.core.viewer_streaming_service import (
             RoiStreamingRequest,
         )
 
@@ -1400,6 +1376,9 @@ class ImageBrowserWidget(QWidget):
         # Cleanup ZMQ server manager widget (always initialized to None in __init__)
         if self.zmq_manager is not None:
             self.zmq_manager.cleanup()
+        if self.scope_id:
+            ObjectStateRegistry.unregister(self.state, _skip_snapshot=True)
+            self.scope_id = None
 
     # ========== Plate View Methods ==========
 

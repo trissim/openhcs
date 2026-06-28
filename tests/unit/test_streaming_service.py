@@ -12,11 +12,13 @@ from openhcs.core.config import (
     NapariStreamingConfig,
     StreamingConfig,
 )
-from openhcs.ui.shared.streaming_service import (
+from openhcs.core.viewer_streaming_service import (
     ImageStreamingRequest,
     RoiStreamingRequest,
     StreamingService,
+    StreamingViewerLifecycle,
 )
+from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
 from zmqruntime.viewer_protocol import ViewerBatchWireField
 
@@ -98,7 +100,7 @@ def test_streaming_config_component_modes_apply_display_defaults() -> None:
 
 def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch) -> None:
     monkeypatch.setattr(
-        "openhcs.ui.shared.streaming_service.spawn_thread_with_context",
+        "openhcs.core.viewer_streaming_service.spawn_thread_with_context",
         lambda worker, name: worker(),
     )
     filemanager = FakeFileManager()
@@ -114,6 +116,8 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
                     "well": "A01",
                     "site": 1,
                     "channel": 1,
+                    "z_index": 1,
+                    "timepoint": 1,
                 }
                 if filename == "img.tif"
                 else None
@@ -146,13 +150,17 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
             "well": "A01",
             "site": 1,
             "channel": 1,
+            "z_index": 1,
+            "timepoint": 1,
         }
     }
     assert stream_request.message_extra[
         ViewerBatchWireField.COMPONENT_VALUE_DOMAIN.value
     ] == {
         "site": [1],
+        "timepoint": [1],
         "channel": [1],
+        "z_index": [1],
         "well": ["A01"],
     }
     assert stream_request.producer.identity.to_payload() == {
@@ -171,7 +179,7 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "openhcs.ui.shared.streaming_service.spawn_thread_with_context",
+        "openhcs.core.viewer_streaming_service.spawn_thread_with_context",
         lambda worker, name: worker(),
     )
     monkeypatch.setattr(
@@ -232,6 +240,58 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
     }
 
 
+def test_stream_rois_uses_explicit_component_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "polystore.roi.load_rois_from_zip",
+        lambda _path: [object()],
+    )
+    filemanager = FakeFileManager()
+    config = FijiStreamingConfig(enabled=True)
+    roi_path = "/output/images_results/A01_w2_rois.roi.zip"
+    service = StreamingService(
+        filemanager=filemanager,
+        microscope_handler=SimpleNamespace(
+            parser=SimpleNamespace(
+                parse_filename=lambda _filename: (_ for _ in ()).throw(
+                    AssertionError("parser fallback used")
+                )
+            ),
+            metadata_handler=FakeMetadataHandler(),
+        ),
+        plate_path=Path("/plate"),
+    )
+
+    service.stream_rois(
+        RoiStreamingRequest(
+            viewer=FakeViewer(),
+            config=config,
+            status_callback=lambda _status: None,
+            error_callback=lambda error: (_ for _ in ()).throw(AssertionError(error)),
+            roi_filenames=(roi_path,),
+            component_metadata_by_path={
+                roi_path: {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 2,
+                    "z_index": 1,
+                    "timepoint": 1,
+                }
+            },
+        )
+    )
+
+    assert filemanager.saved_batches
+    _data, _paths, _backend, metadata = filemanager.saved_batches[0]
+    stream_request = metadata[ViewerStreamKwarg.STREAM_REQUEST.value]
+    assert stream_request.source.metadata.metadata_by_path[roi_path] == {
+        "well": "A01",
+        "site": 1,
+        "channel": 2,
+        "z_index": 1,
+        "timepoint": 1,
+    }
+
+
 def test_stream_rois_rejects_unresolved_source_plane_metadata() -> None:
     service = StreamingService(
         filemanager=FakeFileManager(),
@@ -245,3 +305,73 @@ def test_stream_rois_rejects_unresolved_source_plane_metadata() -> None:
         service.source.roi_component_metadata_by_path(
             ["nuclei1_out_c00_dr90_image_Watershed_step3_rois.roi.zip"],
         )
+
+
+def test_streaming_viewer_lifecycle_attaches_existing_viewer_without_restart(
+    monkeypatch,
+) -> None:
+    class FakeManager:
+        def get_viewer(self, viewer_type: str, port: int):
+            del viewer_type, port
+            return None
+
+        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+            raise AssertionError("fresh release should not run for non-fresh attach")
+
+    monkeypatch.setattr(
+        "zmqruntime.ViewerStateManager.get_instance",
+        lambda: FakeManager(),
+    )
+    monkeypatch.setattr(
+        "zmqruntime.get_or_create_viewer",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("viewer restart path used")
+        ),
+    )
+    monkeypatch.setattr(
+        NapariStreamVisualizer,
+        "existing_viewer_is_ready",
+        lambda self: True,
+    )
+
+    viewer = StreamingViewerLifecycle.get_or_create_visualizer(
+        filemanager=FakeFileManager(),
+        config=NapariStreamingConfig(enabled=True, port=5563, persistent=True),
+        fresh=False,
+    )
+
+    assert isinstance(viewer, NapariStreamVisualizer)
+    assert viewer.lifecycle_state.is_connected_external
+
+
+def test_streaming_viewer_lifecycle_reuses_manager_owned_viewer(monkeypatch) -> None:
+    existing_viewer = FakeViewer()
+
+    class FakeManager:
+        def get_viewer(self, viewer_type: str, port: int):
+            assert viewer_type == "napari"
+            assert port == 5563
+            return existing_viewer
+
+        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+            raise AssertionError("fresh release should not run for non-fresh reuse")
+
+    monkeypatch.setattr(
+        "zmqruntime.ViewerStateManager.get_instance",
+        lambda: FakeManager(),
+    )
+    monkeypatch.setattr(
+        NapariStreamingConfig,
+        "create_visualizer",
+        lambda self, filemanager, visualizer_config=None: (_ for _ in ()).throw(
+            AssertionError("external viewer probe should not run")
+        ),
+    )
+
+    viewer = StreamingViewerLifecycle.get_or_create_visualizer(
+        filemanager=FakeFileManager(),
+        config=NapariStreamingConfig(enabled=True, port=5563, persistent=True),
+        fresh=False,
+    )
+
+    assert viewer is existing_viewer

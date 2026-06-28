@@ -352,19 +352,24 @@ class ViewerComponentValueDomainPayload:
         *,
         context: str,
     ) -> "ViewerComponentValueDomainPayload":
+        normalizer = ViewerComponentMetadataNormalizer()
         entries = []
         for component, raw_values in payload.items():
             if isinstance(raw_values, str) or not isinstance(raw_values, Sequence):
                 raise TypeError(
                     f"{context} component domain for {component!r} must be a sequence."
                 )
+            component_name = str(component)
             entries.append(
                 ViewerComponentValueDomainEntry.from_values(
-                    str(component),
+                    component_name,
                     tuple(
-                        ViewerComponentValueParser.parse(
-                            value,
-                            context=f"{context} component {component!r}",
+                        normalizer.normalize_value(
+                            component_name,
+                            ViewerComponentValueParser.parse(
+                                value,
+                                context=f"{context} component {component!r}",
+                            ),
                         )
                         for value in raw_values
                     ),
@@ -966,7 +971,8 @@ class ViewerComponentValueDomainView:
         component_values = self.values[component]
         if len(component_values) == 0:
             raise ValueError(
-                f"{self.domain_name} component domain for '{component}' is empty."
+                f"{self.domain_name} component domain for '{component}' is empty; "
+                f"domain={self.values!r}."
             )
         return component_values
 
@@ -1254,6 +1260,13 @@ class ViewerLayerAxisProjectionStep:
         )
 
     def route_domain_values(self) -> list[ComponentValue]:
+        if not self.request.route_domain.values.get(self.component, []):
+            raise ValueError(
+                f"route component domain for '{self.component}' is empty; "
+                f"route_domain={self.request.route_domain.values!r}; "
+                f"declared_domain={self.request.declared_domain.values!r}; "
+                f"viewer_domain={self.request.viewer_domain.values!r}."
+            )
         route_values = self.request.route_domain.required_values(self.component)
         self.request.declared_domain.require_contains(
             self.component,

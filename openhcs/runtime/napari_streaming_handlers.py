@@ -1104,7 +1104,7 @@ class NapariShapeLabelRasterizer:
         self,
         layer_items: Sequence[NapariStreamLayerItem],
     ) -> tuple[int, int]:
-        resolved_shape: tuple[int, int] | None = None
+        source_shapes: set[tuple[int, int]] = set()
         missing_paths: set[str] = set()
         for item in layer_items:
             for shape_dict in item.data:
@@ -1123,27 +1123,29 @@ class NapariShapeLabelRasterizer:
                 if source_domain.source_shape_yx is None:
                     missing_paths.add(item.address.path)
                     continue
-                candidate = source_domain.source_shape_yx
-                if resolved_shape is None:
-                    resolved_shape = candidate
-                    continue
-                if candidate != resolved_shape:
-                    raise ValueError(
-                        "Napari ROI label rasterization requires one source "
-                        "spatial shape per layer; got "
-                        f"{resolved_shape!r} and {candidate!r}."
-                    )
+                source_shapes.add(source_domain.source_shape_yx)
         if missing_paths:
             raise ValueError(
                 "Napari ROI label rasterization requires source_spatial_shape_yx "
                 f"metadata for every shape payload; missing for {sorted(missing_paths)!r}."
             )
-        if resolved_shape is None:
+        if not source_shapes:
             raise ValueError(
                 "Napari ROI label rasterization requires source_spatial_shape_yx "
                 "metadata, but no shapes were provided."
             )
-        return resolved_shape
+        max_shape = (
+            max(shape[0] for shape in source_shapes),
+            max(shape[1] for shape in source_shapes),
+        )
+        if len(source_shapes) > 1:
+            logger.info(
+                "🔬 NAPARI PROCESS: ROI label source shapes differ; "
+                "padding labels canvas to %s from %s",
+                max_shape,
+                sorted(source_shapes),
+            )
+        return max_shape
 
     def _paint_polygon(
         self,
