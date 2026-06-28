@@ -27,7 +27,10 @@ from openhcs.core.pipeline.function_contracts import (
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
 )
-from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_invocation import (
+    RuntimeBatchInvocationRequest,
+    SliceIndexRuntimeParameter,
+)
 from openhcs.core.runtime_semantics import RuntimePlaneAxis
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
@@ -47,7 +50,6 @@ from openhcs.core.runtime_values import (
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
-from openhcs.interop.cellprofiler.runtime.artifact_binding import _callable_parameters
 from openhcs.interop.cellprofiler.runtime.image_execution_strategies import (
     CellProfilerImageExecutionStrategy,
 )
@@ -62,7 +64,6 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValue,
 )
 from openhcs.interop.cellprofiler.runtime.processing_contracts import (
-    OBJECT_ROW_SEQUENCE_KWARGS,
     Pure2DSliceCountPolicy,
     RuntimeShapeInspection,
 )
@@ -81,7 +82,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 
 
-_SLICE_INDEX_PARAMETER = "slice_index"
 _CELLPROFILER_RUNTIME_CALLABLE_POLICY = RuntimeCallablePolicy(
     callable_view=RuntimeCallableView.RAW,
     kwarg_policy=RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED,
@@ -194,8 +194,15 @@ class CellProfilerFunctionContractExecutor:
         output_aggregation_contract: CellProfilerFunctionOutputAggregationContract = (
             DEFAULT_CELLPROFILER_OUTPUT_AGGREGATION_CONTRACT
         ),
+        *,
+        runtime_slice_sequence_parameter_names: frozenset[str] = frozenset(),
+        measurement_table_parameter_names: frozenset[str] = frozenset(),
     ) -> None:
         self.output_aggregation_contract = output_aggregation_contract
+        self.runtime_slice_sequence_parameter_names = (
+            runtime_slice_sequence_parameter_names
+        )
+        self.measurement_table_parameter_names = measurement_table_parameter_names
 
     def execute(
         self,
@@ -208,8 +215,17 @@ class CellProfilerFunctionContractExecutor:
         output_aggregation_contract: CellProfilerFunctionOutputAggregationContract = (
             DEFAULT_CELLPROFILER_OUTPUT_AGGREGATION_CONTRACT
         ),
+        runtime_slice_sequence_parameter_names: frozenset[str] = frozenset(),
+        measurement_table_parameter_names: frozenset[str] = frozenset(),
     ) -> CellProfilerRuntimeValue:
-        executor = self.with_output_aggregation_contract(output_aggregation_contract)
+        executor = self.with_output_aggregation_contract(
+            output_aggregation_contract
+        ).with_runtime_projection_parameters(
+            runtime_slice_sequence_parameter_names=(
+                runtime_slice_sequence_parameter_names
+            ),
+            measurement_table_parameter_names=measurement_table_parameter_names,
+        )
         function_name = CallableContract.from_callable(func).function_name
         mode_started_at = time.perf_counter()
         mode = requested_image_execution_mode(
@@ -254,7 +270,33 @@ class CellProfilerFunctionContractExecutor:
     ) -> "CellProfilerFunctionContractExecutor":
         if output_aggregation_contract == self.output_aggregation_contract:
             return self
-        return type(self)(output_aggregation_contract)
+        return type(self)(
+            output_aggregation_contract,
+            runtime_slice_sequence_parameter_names=(
+                self.runtime_slice_sequence_parameter_names
+            ),
+            measurement_table_parameter_names=self.measurement_table_parameter_names,
+        )
+
+    def with_runtime_projection_parameters(
+        self,
+        *,
+        runtime_slice_sequence_parameter_names: frozenset[str],
+        measurement_table_parameter_names: frozenset[str],
+    ) -> "CellProfilerFunctionContractExecutor":
+        if (
+            runtime_slice_sequence_parameter_names
+            == self.runtime_slice_sequence_parameter_names
+            and measurement_table_parameter_names == self.measurement_table_parameter_names
+        ):
+            return self
+        return type(self)(
+            self.output_aggregation_contract,
+            runtime_slice_sequence_parameter_names=(
+                runtime_slice_sequence_parameter_names
+            ),
+            measurement_table_parameter_names=measurement_table_parameter_names,
+        )
 
     def execute_pure_2d_slice_batch(
         self,
@@ -432,7 +474,12 @@ class CellProfilerFunctionContractExecutor:
                 RuntimeSliceProjection.first_axis_slice_count_from_values(
                     kwargs.values()
                 )
-                or Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
+                or Pure2DSliceCountPolicy.slice_count_from_kwargs(
+                    kwargs,
+                    measurement_table_parameter_names=(
+                        self.measurement_table_parameter_names
+                    ),
+                )
             )
             if slice_count is None:
                 return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
@@ -442,7 +489,10 @@ class CellProfilerFunctionContractExecutor:
                 ).call()
             slices_2d = tuple(image for _ in range(slice_count))
         elif is_color_image_slice(image_data):
-            slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
+            slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(
+                kwargs,
+                measurement_table_parameter_names=self.measurement_table_parameter_names,
+            )
             if slice_count is None:
                 slice_count = 1
             slices_2d = tuple(image for _ in range(slice_count))
@@ -460,7 +510,7 @@ class CellProfilerFunctionContractExecutor:
             func,
             tuple(slices_2d),
             kwargs,
-            _execute_pure_2d_slice,
+            self.execute_pure_2d_slice,
         )
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_pure_2d_slice_execute",
@@ -512,8 +562,43 @@ class CellProfilerFunctionContractExecutor:
         stacked = stack_slices([result_data], memory_type, 0)
         return result_metadata.payload_with(stacked, mask=result_mask)
 
-    @staticmethod
+    def execute_pure_2d_slice(
+        self,
+        func: CellProfilerFunction,
+        slice_2d: CellProfilerRuntimeValue,
+        kwargs: CellProfilerKwargs,
+        slice_index: int,
+        slice_count: int,
+    ) -> CellProfilerRuntimeValue:
+        """Execute one projected pure-2D slice."""
+        sliced_kwargs = self.slice_pure_2d_kwargs(
+            kwargs,
+            slice_index,
+            slice_count,
+        )
+        if _callable_declares_slice_index(func):
+            sliced_kwargs = dict(sliced_kwargs)
+            slice_index_name = SliceIndexRuntimeParameter.require_parameter_name()
+            if slice_index_name not in sliced_kwargs:
+                sliced_kwargs[slice_index_name] = slice_index
+        trace_path = os.environ.get("OPENHCS_PURE2D_SLICE_TRACE_PATH")
+        if trace_path:
+            _trace_pure_2d_slice(
+                trace_path,
+                func,
+                slice_2d,
+                sliced_kwargs,
+                slice_index,
+                slice_count,
+            )
+        return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
+            func,
+            (slice_2d,),
+            sliced_kwargs,
+        ).call()
+
     def slice_pure_2d_kwargs(
+        self,
         kwargs: CellProfilerKwargs,
         slice_index: int,
         slice_count: int,
@@ -525,40 +610,16 @@ class CellProfilerFunctionContractExecutor:
                 slice_index=slice_index,
                 extent=slice_count,
             ),
-            sequence_kwargs=OBJECT_ROW_SEQUENCE_KWARGS,
+            sequence_kwargs=self.runtime_slice_sequence_parameter_names,
         )
 
-def _execute_pure_2d_slice(
-    func: CellProfilerFunction,
-    slice_2d: CellProfilerRuntimeValue,
-    kwargs: CellProfilerKwargs,
-    slice_index: int,
-    slice_count: int,
-) -> CellProfilerRuntimeValue:
-    sliced_kwargs = CellProfilerFunctionContractExecutor.slice_pure_2d_kwargs(
-        kwargs,
-        slice_index,
-        slice_count,
+
+def _callable_declares_slice_index(func: CellProfilerFunction) -> bool:
+    """Return whether this callable declares runtime-supplied slice_index."""
+    return (
+        SliceIndexRuntimeParameter
+        in CallableContract.from_callable(func).runtime_bound_parameter_types
     )
-    if _SLICE_INDEX_PARAMETER in _callable_parameters(func):
-        sliced_kwargs = dict(sliced_kwargs)
-        if _SLICE_INDEX_PARAMETER not in sliced_kwargs:
-            sliced_kwargs[_SLICE_INDEX_PARAMETER] = slice_index
-    trace_path = os.environ.get("OPENHCS_PURE2D_SLICE_TRACE_PATH")
-    if trace_path:
-        _trace_pure_2d_slice(
-            trace_path,
-            func,
-            slice_2d,
-            sliced_kwargs,
-            slice_index,
-            slice_count,
-        )
-    return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
-        func,
-        (slice_2d,),
-        sliced_kwargs,
-    ).call()
 
 
 def _trace_pure_2d_slice(
@@ -570,11 +631,6 @@ def _trace_pure_2d_slice(
     slice_count: int,
 ) -> None:
     function_name = CallableContract.from_callable(func).function_name
-    if function_name not in {
-        "filter_objects",
-        "identify_objects_in_grid_with_guides",
-    }:
-        return
     record: CellProfilerKwargDict = {
         "function": function_name,
         "slice_index": slice_index,

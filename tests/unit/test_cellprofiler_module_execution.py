@@ -22,6 +22,8 @@ from openhcs.core.callable_contract import (
     reset_processing_callable_preparation_cache,
     runtime_image_execution_mode,
 )
+from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
+from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
@@ -128,7 +130,6 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     SpecialInputBindingRequest,
     measurement_table_rows,
     OBJECT_ONLY_REFERENCE_IMAGE,
-    _execute_pure_2d_slice,
     _unstack_cellprofiler_image_slices,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_rows import (
@@ -3444,14 +3445,15 @@ def test_measure_object_size_shape_direct_slice_uses_matching_label_plane() -> N
     assert [(row["object_label"], row["Area"]) for row in rows] == [(2, 4.0)]
 
 
-def test_execute_pure_2d_slice_injects_slice_index_for_declared_callables() -> None:
+def test_pure_2d_slice_execution_injects_slice_index_for_declared_callables() -> None:
     seen: list[int] = []
 
+    @runtime_bound_parameters(SliceIndexRuntimeParameter)
     def records_slice_index(image, *, slice_index: int = 0):
         seen.append(slice_index)
         return image
 
-    _execute_pure_2d_slice(
+    CellProfilerFunctionContractExecutor().execute_pure_2d_slice(
         records_slice_index,
         np.zeros((2, 2), dtype=np.float32),
         {},

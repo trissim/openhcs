@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from openhcs.constants.constants import (
     AllComponents,
@@ -39,9 +39,6 @@ from openhcs.core.variable_component_stack_requirement import (
 )
 
 from openhcs.core.components.validation import GenericValidator
-
-# Import ObjectState - it's always available
-from objectstate import ObjectState
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
@@ -597,7 +594,6 @@ class FuncStepContractValidator:
     def validate_pipeline(
         steps: List[Any],
         pipeline_context: ProcessingContext | None = None,
-        step_state_map: Optional[Dict[int, ObjectState]] = None,
         orchestrator=None,
     ) -> None:
         """
@@ -611,7 +607,6 @@ class FuncStepContractValidator:
         Args:
             steps: The steps in the pipeline
             pipeline_context: Optional context object with planner execution flags
-            step_state_map: Map of step index to ObjectState for accessing config values
             orchestrator: Optional orchestrator for dict pattern key validation
 
         Raises:
@@ -763,7 +758,6 @@ class FuncStepContractValidator:
     def validate_funcstep(
         step: FunctionStep,
         orchestrator=None,
-        step_objectstate: Optional[ObjectState] = None,
     ) -> None:
         """
         Validate memory type contracts, func_pattern structure, and dict pattern keys for a FunctionStep instance.
@@ -771,18 +765,12 @@ class FuncStepContractValidator:
         Args:
             step: The FunctionStep to validate
             orchestrator: Optional orchestrator for dict pattern key validation
-            step_objectstate: ObjectState for accessing config values
-
         Raises:
             ValueError: If FunctionStep violates memory type contracts, structural rules,
                         or dict pattern key validation.
         """
-        # Extracting config values via ObjectState get_saved_resolved_value()
-        if step_objectstate is None:
-            raise ValueError(f"Step '{step.name}': ObjectState is required for config access")
-
-        variable_components = step_objectstate.get_saved_resolved_value('processing_config.variable_components')
-        group_by = step_objectstate.get_saved_resolved_value('processing_config.group_by')
+        variable_components = step.processing_config.variable_components
+        group_by = step.processing_config.group_by
 
         # Extracting function pattern and name from step
         func_pattern = step.func

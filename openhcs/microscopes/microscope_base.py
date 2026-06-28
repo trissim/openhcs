@@ -634,6 +634,21 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """Delegate to metadata handler."""
         return self.metadata_handler.get_grid_dimensions(plate_path)
 
+    def can_resolve_metadata_artifact(self, artifact_name: str) -> bool:
+        """Return whether this microscope can provide a metadata artifact."""
+        return self.metadata_handler.can_resolve_metadata_artifact(artifact_name)
+
+    def resolve_metadata_artifact(
+        self,
+        artifact_name: str,
+        plate_path: Union[str, Path],
+    ) -> object:
+        """Resolve a metadata artifact through this microscope's metadata handler."""
+        return self.metadata_handler.resolve_metadata_artifact(
+            artifact_name,
+            plate_path,
+        )
+
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
         """Delegate to metadata handler."""
         return self.metadata_handler.get_pixel_size(plate_path)

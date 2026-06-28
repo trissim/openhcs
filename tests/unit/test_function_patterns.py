@@ -2,7 +2,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from arraybridge.decorators import DtypeConversionConfig
 
+from openhcs.constants import DtypeConversion
+from openhcs.core.config import DtypeConfig
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
@@ -28,12 +31,16 @@ from openhcs.core.module_artifact_contract import (
 from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
     artifact_outputs,
+    runtime_bound_parameters,
 )
 from openhcs.core.pipeline.artifact_planning import (
     extract_artifact_declarations,
     normalize_pattern,
 )
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from openhcs.core.runtime_invocation import (
+    RuntimeInvocationOptions,
+    RuntimeParameterBinding,
+)
 from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.processing.materialization import csv_only
 
@@ -486,6 +493,66 @@ def test_inject_kwargs_into_pattern_preserves_user_kwargs_precedence():
     ]
 
 
+def test_compile_function_pattern_moves_runtime_config_kwargs_to_bindings():
+    @runtime_bound_parameters(DtypeConversionConfig)
+    def accepts_dtype_config(image, *, dtype_config=None):
+        return image
+
+    inherited_config = DtypeConfig(
+        default_dtype_conversion=DtypeConversion.NATIVE_OUTPUT,
+    )
+    explicit_config = DtypeConfig(
+        default_dtype_conversion=DtypeConversion.UINT8,
+    )
+
+    compiled = compile_function_pattern(
+        (accepts_dtype_config, {"dtype_config": explicit_config, "sigma": 2}),
+        {},
+        {},
+        runtime_parameter_bindings=(
+            RuntimeParameterBinding(
+                parameter_type=DtypeConversionConfig,
+                value=inherited_config,
+            ),
+        ),
+    )
+    invocation = compiled.default_group.invocations[0]
+
+    assert invocation.kwargs_dict == {"sigma": 2}
+    assert len(invocation.runtime_parameter_bindings) == 1
+    binding = invocation.runtime_parameter_bindings[0]
+    assert binding.parameter_type is DtypeConversionConfig
+    assert binding.value is explicit_config
+
+
+def test_compile_function_pattern_keeps_undeclared_runtime_config_kwargs_user_owned():
+    inherited_config = DtypeConfig(
+        default_dtype_conversion=DtypeConversion.NATIVE_OUTPUT,
+    )
+    explicit_config = DtypeConfig(
+        default_dtype_conversion=DtypeConversion.UINT8,
+    )
+
+    compiled = compile_function_pattern(
+        (second, {"dtype_config": explicit_config, "sigma": 2}),
+        {},
+        {},
+        runtime_parameter_bindings=(
+            RuntimeParameterBinding(
+                parameter_type=DtypeConversionConfig,
+                value=inherited_config,
+            ),
+        ),
+    )
+    invocation = compiled.default_group.invocations[0]
+
+    assert invocation.kwargs_dict == {
+        "dtype_config": explicit_config,
+        "sigma": 2,
+    }
+    assert invocation.runtime_parameter_bindings == ()
+
+
 def test_inject_artifact_input_values_only_targets_declared_inputs():
     @artifact_inputs("grid_dimensions")
     def needs_grid(image, grid_dimensions):
@@ -500,3 +567,16 @@ def test_inject_artifact_input_values_only_targets_declared_inputs():
         first,
         (needs_grid, {"grid_dimensions": (3, 4), "sigma": 2}),
     ]
+
+
+def test_inject_artifact_input_values_replaces_serialized_placeholders():
+    @artifact_inputs("grid_dimensions")
+    def needs_grid(image, grid_dimensions):
+        return image
+
+    pattern = (needs_grid, {"grid_dimensions": None, "sigma": 2})
+
+    assert inject_artifact_input_values(
+        pattern,
+        {"grid_dimensions": (3, 4)},
+    ) == (needs_grid, {"grid_dimensions": (3, 4), "sigma": 2})

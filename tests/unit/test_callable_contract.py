@@ -23,6 +23,7 @@ from openhcs.core.pipeline.function_contracts import (
     required_variable_components,
     runtime_bound_parameters,
 )
+from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
@@ -76,7 +77,7 @@ def test_callable_contract_reads_runtime_image_execution_mode() -> None:
 
 
 def test_callable_contract_reads_runtime_bound_parameters() -> None:
-    @runtime_bound_parameters("slice_index")
+    @runtime_bound_parameters(SliceIndexRuntimeParameter)
     def process(image, *, slice_index: int = 0):
         del slice_index
         return image
@@ -84,9 +85,10 @@ def test_callable_contract_reads_runtime_bound_parameters() -> None:
     contract = CallableContract.from_callable(process)
 
     assert contract.runtime_bound_parameters == ("slice_index",)
+    assert contract.runtime_bound_parameter_types == (SliceIndexRuntimeParameter,)
     assert CallableMetadata.from_callable(process).as_namespace()[
         FunctionContractAttribute.runtime_bound_parameters
-    ] == ("slice_index",)
+    ] == (SliceIndexRuntimeParameter,)
 
 
 def test_callable_contract_reads_required_variable_components() -> None:

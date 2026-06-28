@@ -13,6 +13,14 @@ class RuntimeBoundParameterName(str):
         return str.__new__(cls, normalized)
 
 
+class RuntimeSliceSequenceParameterName(RuntimeBoundParameterName):
+    """Runtime-bound tuple parameter projected item-wise per pure-2D slice."""
+
+
+class MeasurementTableCollectionParameterName(RuntimeBoundParameterName):
+    """Runtime-bound parameter carrying a measurement-table collection."""
+
+
 class RuntimeBoundParameterNames(tuple[RuntimeBoundParameterName, ...]):
     """Ordered marker tuple for a closed group of runtime-bound parameters."""
 
@@ -33,11 +41,44 @@ class RuntimeBoundParameterNames(tuple[RuntimeBoundParameterName, ...]):
 
 def declared_runtime_bound_parameter_names(policy_type: type) -> tuple[str, ...]:
     """Return runtime-bound parameter declarations from a policy MRO."""
+    return tuple(str(name) for name in declared_runtime_bound_parameters(policy_type))
+
+
+def declared_runtime_slice_sequence_parameter_names(
+    policy_type: type,
+) -> tuple[str, ...]:
+    """Return runtime-bound parameters that project tuple items per slice."""
+    return tuple(
+        str(name)
+        for name in declared_runtime_bound_parameters(policy_type)
+        if isinstance(name, RuntimeSliceSequenceParameterName)
+    )
+
+
+def declared_measurement_table_parameter_names(policy_type: type) -> tuple[str, ...]:
+    """Return runtime-bound parameters carrying measurement-table collections."""
+    return tuple(
+        str(name)
+        for name in declared_runtime_bound_parameters(policy_type)
+        if isinstance(name, MeasurementTableCollectionParameterName)
+    )
+
+
+def declared_runtime_bound_parameters(
+    policy_type: type,
+) -> tuple[RuntimeBoundParameterName, ...]:
+    """Return runtime-bound parameter declarations from a policy MRO."""
     names: list[str] = []
+    parameters: list[RuntimeBoundParameterName] = []
     for base_type in reversed(policy_type.__mro__):
         for value in vars(base_type).values():
             if isinstance(value, RuntimeBoundParameterName):
-                names.append(str(value))
+                if str(value) not in names:
+                    parameters.append(value)
+                    names.append(str(value))
             elif isinstance(value, RuntimeBoundParameterNames):
-                names.extend(str(name) for name in value)
-    return tuple(dict.fromkeys(names))
+                for name in value:
+                    if str(name) not in names:
+                        parameters.append(name)
+                        names.append(str(name))
+    return tuple(parameters)

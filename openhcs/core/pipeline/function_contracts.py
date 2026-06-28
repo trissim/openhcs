@@ -3,11 +3,13 @@
 from collections import OrderedDict
 from collections.abc import Mapping
 from enum import Enum
+import inspect
 from typing import Callable, TypeVar
 
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.core.runtime_invocation import RuntimeParameterDeclaration
 from openhcs.core.runtime_batch_contracts import (
     RUNTIME_BATCH_EXECUTORS_ATTR,
     Pure2DSliceBatchExecutor,
@@ -185,11 +187,13 @@ def special_outputs(*output_specs: SpecialOutputDeclaration) -> Callable[[F], F]
     return decorator
 
 
-def runtime_bound_parameters(*parameter_names: str) -> Callable[[F], F]:
+def runtime_bound_parameters(
+    *parameter_types: type[RuntimeParameterDeclaration],
+) -> Callable[[F], F]:
     """Declare callable parameters supplied by runtime execution infrastructure."""
 
-    normalized = _special_parameter_names(
-        parameter_names,
+    normalized = _runtime_parameter_declaration_types(
+        parameter_types,
         decorator_name="runtime_bound_parameters",
     )
 
@@ -198,6 +202,44 @@ def runtime_bound_parameters(*parameter_names: str) -> Callable[[F], F]:
         return func
 
     return decorator
+
+
+def _runtime_parameter_declaration_types(
+    parameter_types: tuple[type[RuntimeParameterDeclaration], ...],
+    *,
+    decorator_name: str,
+) -> tuple[type[RuntimeParameterDeclaration], ...]:
+    normalized: list[type[RuntimeParameterDeclaration]] = []
+    seen: set[str] = set()
+    for parameter_type in parameter_types:
+        if not isinstance(parameter_type, type):
+            raise TypeError(
+                f"{decorator_name} values must be parameter declaration types."
+            )
+        parameter = parameter_type.parameter()
+        if not isinstance(parameter, inspect.Parameter):
+            raise TypeError(
+                f"{parameter_type.__name__}.parameter() must return inspect.Parameter."
+            )
+        parameter_name = parameter_type.require_parameter_name()
+        if not isinstance(parameter_name, str) or not parameter_name.strip():
+            raise TypeError(
+                f"{parameter_type.__name__}.require_parameter_name() must return "
+                "a non-empty string."
+            )
+        if parameter.name != parameter_name:
+            raise TypeError(
+                f"{parameter_type.__name__}.parameter() name {parameter.name!r} "
+                f"does not match require_parameter_name() {parameter_name!r}."
+            )
+        if parameter_name in seen:
+            raise ValueError(
+                f"{decorator_name} declares duplicate runtime parameter "
+                f"{parameter_name!r}."
+            )
+        normalized.append(parameter_type)
+        seen.add(parameter_name)
+    return tuple(normalized)
 
 
 def required_variable_components(
@@ -373,12 +415,11 @@ def runtime_bound_parameter_names_from_callable(func: Callable) -> tuple[str, ..
             f"{func}.{FunctionContractAttribute.runtime_bound_parameters} "
             "must be a tuple."
         )
-    if not all(isinstance(name, str) for name in declared):
-        raise TypeError(
-            f"{func}.{FunctionContractAttribute.runtime_bound_parameters} "
-            "must contain only strings."
-        )
-    return _special_parameter_names(
+    parameter_types = _runtime_parameter_declaration_types(
         declared,
         decorator_name="runtime_bound_parameters",
+    )
+    return tuple(
+        parameter_type.require_parameter_name()
+        for parameter_type in parameter_types
     )

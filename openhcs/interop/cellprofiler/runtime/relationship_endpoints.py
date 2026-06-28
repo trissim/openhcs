@@ -10,7 +10,6 @@ from openhcs.core.runtime_semantics import (
     parent_child_relationship_artifact_endpoints,
     parent_child_relationship_artifact_name,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.output_record_request import (
@@ -175,7 +174,7 @@ class RelationshipEndpointResolver:
         relationship_spec: ArtifactSpec,
     ) -> bool:
         """Return whether relationship-distance rows belong to this artifact."""
-        module_type = CellProfilerModule.for_module(self.request.module_name)
+        module_type = self.request.runtime_plan.module_type
         if module_type is None:
             return False
         return module_type.relationship_distance_measurements_apply(
@@ -187,7 +186,7 @@ class RelationshipEndpointResolver:
         self,
         relationship_spec: ArtifactSpec,
     ) -> RelationshipEndpointContract | None:
-        module_type = CellProfilerModule.for_module(self.request.module_name)
+        module_type = self.request.runtime_plan.module_type
         if module_type is None:
             return None
         return module_type.relationship_endpoint_contract(

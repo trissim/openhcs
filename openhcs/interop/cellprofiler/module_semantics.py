@@ -41,6 +41,17 @@ class CellProfilerModuleDimensionality(Enum):
 
     processing_contract = AliasProperty[ProcessingContract]("value")
 
+    @classmethod
+    def from_processing_contract(
+        cls,
+        contract: ProcessingContract,
+    ) -> "CellProfilerModuleDimensionality":
+        """Return manual-facing dimensionality for an execution contract."""
+        for dimensionality in cls:
+            if dimensionality.processing_contract is contract:
+                return dimensionality
+        return cls.PLANAR_AND_VOLUMETRIC
+
     @property
     def supports_2d(self) -> bool:
         return self is not CellProfilerModuleDimensionality.VOLUMETRIC
@@ -125,7 +136,8 @@ def cellprofiler_module_semantics_family(
     )
     return CellProfilerModuleSemanticFamily(
         family_name=(
-            f"{semantics.category.value} / {semantics.dimensionality.processing_contract.value}"
+            f"{semantics.category.value} / "
+            f"{semantics.dimensionality.processing_contract.declared_name}"
         ),
         category=semantics.category,
         dimensionality=semantics.dimensionality,
@@ -136,11 +148,9 @@ def cellprofiler_module_semantics_family(
 
 def _declared_dimensionality(contract_name: str) -> CellProfilerModuleDimensionality:
     contract = ProcessingContract.from_declared_name(contract_name)
-    if contract is ProcessingContract.PURE_2D:
-        return CellProfilerModuleDimensionality.PLANAR
-    if contract is ProcessingContract.PURE_3D:
-        return CellProfilerModuleDimensionality.VOLUMETRIC
-    return CellProfilerModuleDimensionality.PLANAR_AND_VOLUMETRIC
+    if contract is None:
+        return CellProfilerModuleDimensionality.PLANAR_AND_VOLUMETRIC
+    return CellProfilerModuleDimensionality.from_processing_contract(contract)
 
 
 def _declared_category(module_type: type[object]) -> CellProfilerModuleCategory:

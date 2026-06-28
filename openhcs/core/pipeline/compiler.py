@@ -6,34 +6,34 @@ The PipelineCompiler is responsible for preparing step_plans within a Processing
 
 CONFIGURATION ACCESS PATTERN:
 ============================
-The compiler uses ObjectState pattern for all configuration access:
+The compiler resolves ObjectState once into typed compiler snapshots:
 
 ✅ CORRECT (SAVED VALUES FOR COMPILATION):
     # Steps are registered in ObjectState with parent hierarchy: step → orchestrator → global
     step_state = ObjectState(object_instance=step, scope_id=scope_id, parent_state=orch_state)
     ObjectStateRegistry.register(step_state)
 
-    # For compilation: use get_saved_resolved_value() to get saved values with inheritance
-    # This ensures unsaved UI edits don't affect the compiled pipeline
-    enabled = step_state.get_saved_resolved_value('streaming_defaults.enabled')
-    var_comps = step_state.get_saved_resolved_value('processing_config.variable_components')
+    # For compilation: use StepSnapshot to capture saved values with inheritance.
+    # This ensures unsaved UI edits don't affect the compiled pipeline.
+    snapshot = StepSnapshot.from_resolved_step(index=0, step=step, step_state=step_state)
+    var_comps = snapshot.variable_components
 
 ✅ CORRECT (LIVE VALUES FOR UI):
     # For UI: use get_resolved_value() to get current values with unsaved edits
-    enabled = step_state.get_resolved_value('streaming_defaults.enabled')
+    current_value = step_state.get_resolved_value(field_path)
 
 ❌ INCORRECT (LEGACY - REMOVED):
     with config_context(orchestrator.pipeline_config):  # REMOVED
         resolved_step = resolve_lazy_configurations_for_serialization(step)  # REMOVED
 
     # Using .parameters.get() doesn't get inheritance
-    enabled = step_state.parameters.get('streaming_defaults.enabled')  # WRONG - no inheritance
+    current_value = step_state.parameters.get(field_path)  # WRONG - no inheritance
 
     Legacy direct attribute probing was removed; compiler state must come from
-    ObjectState saved-resolution APIs.
+    ObjectState saved-resolution APIs through typed compiler snapshots.
 
 WHY:
-- get_saved_resolved_value() provides saved baseline with inheritance (for compilation)
+- StepSnapshot provides saved baseline with inheritance (for compilation)
 - get_resolved_value() provides live state with unsaved edits (for UI)
 - parameters.get() returns raw local value only, NO inheritance
 - No cross-step pollution - each step only sees its own config hierarchy
@@ -43,12 +43,10 @@ WHY:
 from __future__ import annotations
 
 import logging
-import dataclasses
 import time
 from pathlib import Path
 from urllib.parse import quote
 from typing import (
-    Annotated,
     Any,
     Callable,
     Dict,
@@ -58,8 +56,6 @@ from typing import (
     Sequence,
     TYPE_CHECKING,
     Union,
-    get_args,
-    get_origin,
 )
 
 from openhcs.constants.constants import (
@@ -79,16 +75,18 @@ from openhcs.core.compiled_execution import (
 )
 from openhcs.core.context.processing_context import ProcessingContext, RequiredVisualizer
 from openhcs.core.config import (
-    AnalysisConsolidationConfig,
     MaterializationBackend,
-    PlateMetadataConfig,
+    PipelineConfig,
     StreamingConfig,
+    StreamingDefaults,
     VFSConfig,
+    WellFilterConfig,
 )
 from openhcs.core.debug import DebugExecutionPolicy, NoOpDebugExecutionPolicy
 from openhcs.core.axis_filter import (
     StepAxisFilterMap,
     StepAxisFilterResolution,
+    StepAxisFilterSet,
 )
 from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
 from openhcs.core.pipeline.compilation_session import (
@@ -125,7 +123,6 @@ from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.utils import WellFilterProcessor
 from objectstate import ObjectState, ObjectStateRegistry
-from objectstate.lazy_factory import get_base_type_for_lazy
 from openhcs.core.steps.function_step import FunctionStep  # Used for isinstance check
 from openhcs.core.progress import emit, ProgressPhase, ProgressStatus
 from dataclasses import dataclass
@@ -184,10 +181,8 @@ class AxisCompilationRequest:
 
     orchestrator: "PipelineOrchestrator"
     global_config: "GlobalPipelineConfig"
+    pipeline_config: PipelineConfig
     pipeline: ResolvedPipelineDefinition
-    analysis_consolidation_config: AnalysisConsolidationConfig
-    plate_metadata_config: PlateMetadataConfig
-    auto_add_output_plate: bool
     global_step_axis_filters: StepAxisFilterMap
     enable_visualizer_override: bool
     is_zmq_execution: bool
@@ -196,11 +191,11 @@ class AxisCompilationRequest:
         context = self.orchestrator.create_context(axis_id)
         context.step_axis_filters = self.global_step_axis_filters
         context.analysis_consolidation_config = (
-            self.analysis_consolidation_config
+            self.pipeline_config.analysis_consolidation_config
         )
-        context.plate_metadata_config = self.plate_metadata_config
+        context.plate_metadata_config = self.pipeline_config.plate_metadata_config
         context.auto_add_output_plate_to_plate_manager = (
-            self.auto_add_output_plate
+            self.pipeline_config.auto_add_output_plate_to_plate_manager
         )
         return context
 
@@ -209,48 +204,6 @@ def _refresh_function_objects_in_steps(pipeline_definition: List[AbstractStep]) 
     FunctionReferenceTransportAuthority.reference_pipeline_in_place(
         pipeline_definition
     )
-
-
-def _dataclass_field_candidate(field_type: Any) -> Any:
-    origin = get_origin(field_type)
-    if origin is Annotated:
-        return get_args(field_type)[0]
-    if origin is Union:
-        for arg in get_args(field_type):
-            if arg is type(None):
-                continue
-            if dataclasses.is_dataclass(arg):
-                return arg
-        return None
-    return field_type
-
-
-def _rebuild_dataclass_from_objectstate(
-    config_cls,
-    step_state,
-    root_field_name,
-):
-    """Reconstruct a dataclass from saved ObjectState dotted-path values only."""
-    kwargs = {}
-    for field in dataclasses.fields(config_cls):
-        dotted = f"{root_field_name}.{field.name}"
-        value = step_state.get_saved_resolved_value(dotted)
-        candidate = _dataclass_field_candidate(field.type)
-
-        if (
-            value is None
-            and candidate is not None
-            and dataclasses.is_dataclass(candidate)
-        ):
-            value = _rebuild_dataclass_from_objectstate(
-                candidate,
-                step_state,
-                dotted,
-            )
-
-        kwargs[field.name] = value
-
-    return config_cls(**kwargs)
 
 
 class PipelineCompiler:
@@ -679,38 +632,39 @@ class PipelineCompiler:
     def _collect_streaming_configs(
         session: CompilationSession,
     ) -> None:
-        registry_keys = list(StreamingConfig.__registry__.keys())
-        for step_index, step_state in session.step_state_map.items():
+        streaming_config_types = tuple(StreamingConfig.__registry__.values())
+        for step_index, snapshot in enumerate(session.snapshots):
             step_plan = session.plans[step_index]
-            for field_name in registry_keys:
+            for config_type in streaming_config_types:
                 PipelineCompiler._collect_streaming_config(
                     session,
                     step_index,
-                    step_state,
+                    snapshot,
                     step_plan,
-                    field_name,
+                    config_type,
                 )
 
     @staticmethod
     def _collect_streaming_config(
         session: CompilationSession,
         step_index: int,
-        step_state: "ObjectState",
+        snapshot: StepSnapshot,
         step_plan: CompiledStepPlan,
-        field_name: str,
+        config_type: type[StreamingConfig],
     ) -> None:
-        defaults_enabled = step_state.get_saved_resolved_value(
-            "streaming_defaults.enabled"
-        )
-        per_stream_enabled = step_state.get_saved_resolved_value(
-            f"{field_name}.enabled"
-        )
+        defaults = snapshot.configs.find(StreamingDefaults)
+        config_obj = snapshot.configs.find(config_type)
+        if config_obj is None:
+            return
+        defaults_enabled = None if defaults is None else defaults.enabled
+        per_stream_enabled = config_obj.enabled
         enabled = True if defaults_enabled is True else per_stream_enabled
+        config_key = config_obj.streaming_config_key
         if session.is_zmq_execution:
             logger.info(
                 "Streaming resolution: step=%s field=%s defaults_enabled=%r per_stream_enabled=%r effective_enabled=%r",
                 step_index,
-                field_name,
+                config_key,
                 defaults_enabled,
                 per_stream_enabled,
                 enabled,
@@ -718,13 +672,7 @@ class PipelineCompiler:
         if enabled is not True:
             return
 
-        base_cls = get_base_type_for_lazy(StreamingConfig.__registry__[field_name])
-        config_obj = _rebuild_dataclass_from_objectstate(
-            base_cls,
-            step_state,
-            field_name,
-        )
-        backend_name = step_state.get_saved_resolved_value(f"{field_name}.backend")
+        backend_name = config_obj.backend.name
         required_visualizer = RequiredVisualizer(
             backend_name=backend_name,
             config=config_obj,
@@ -734,11 +682,11 @@ class PipelineCompiler:
             logger.info(
                 "Streaming enabled for step %s, field %s (backend=%s)",
                 step_index,
-                field_name,
+                config_key,
                 backend_name,
             )
 
-        step_plan.streaming_configs[field_name] = config_obj
+        step_plan.streaming_configs[config_key] = config_obj
 
     # _prepare_materialization_flags is removed as MaterializationFlagPlanner.prepare_pipeline_flags
     # now modifies context.step_plans in-place and takes context directly.
@@ -855,17 +803,15 @@ class PipelineCompiler:
 
     @staticmethod
     def validate_sequential_components_compatibility(
-        steps_definition: List[AbstractStep],
+        step_snapshots: Sequence[StepSnapshot],
         sequential_components: List,
-        step_state_map: Dict[int, "ObjectState"],
     ) -> None:
         """
         Validate that no step's variable_components overlap with pipeline's sequential_components.
 
         Args:
-            steps_definition: List of AbstractStep objects
+            step_snapshots: ObjectState-resolved compiler snapshots
             sequential_components: List of SequentialComponents from pipeline config
-            step_state_map: Map of step index to ObjectState for accessing config values
 
         Raises:
             ValueError: If any step has variable_components that overlap with sequential_components
@@ -875,29 +821,23 @@ class PipelineCompiler:
 
         seq_comp_values = {sc.value for sc in sequential_components}
 
-        for step_index, step in enumerate(steps_definition):
-            if isinstance(step, FunctionStep):
-                step_objectstate = step_state_map.get(step_index)
-                if step_objectstate is None:
-                    raise ValueError(
-                        f"Step {step_index} ('{step.name}') not found in step_state_map"
-                    )
+        for snapshot in step_snapshots:
+            if not snapshot.is_function_step:
+                continue
+            var_comps = snapshot.variable_components
+            if not var_comps:
+                continue
+            var_comp_values = {vc.value for vc in var_comps}
+            overlap = seq_comp_values & var_comp_values
 
-                var_comps = step_objectstate.get_saved_resolved_value(
-                    "processing_config.variable_components"
+            if overlap:
+                raise ValueError(
+                    f"Step '{snapshot.name}' has variable_components {sorted(overlap)} that conflict with "
+                    f"pipeline's sequential_components {sorted(seq_comp_values)}. "
+                    f"A component cannot be both sequential (pipeline-level) and variable (step-level). "
+                    f"Either remove {sorted(overlap)} from step's variable_components or from "
+                    f"pipeline's sequential_components."
                 )
-                if var_comps:
-                    var_comp_values = {vc.value for vc in var_comps}
-                    overlap = seq_comp_values & var_comp_values
-
-                    if overlap:
-                        raise ValueError(
-                            f"Step '{step.name}' has variable_components {sorted(overlap)} that conflict with "
-                            f"pipeline's sequential_components {sorted(seq_comp_values)}. "
-                            f"A component cannot be both sequential (pipeline-level) and variable (step-level). "
-                            f"Either remove {sorted(overlap)} from step's variable_components or from "
-                            f"pipeline's sequential_components."
-                        )
 
     @staticmethod
     def analyze_pipeline_sequential_mode(
@@ -990,7 +930,6 @@ class PipelineCompiler:
         Args:
             context: ProcessingContext to validate
             steps_definition: List of AbstractStep objects
-            step_state_map: Map of step index to ObjectState for accessing config values
             orchestrator: Optional orchestrator for dict pattern key validation
         """
         context = session.context
@@ -1002,7 +941,6 @@ class PipelineCompiler:
         FuncStepContractValidator.validate_pipeline(
             steps=session.steps,
             pipeline_context=context,  # Pass context so validator can access step plans for memory type overrides
-            step_state_map=session.step_state_map,  # Pass step_state_map for accessing config via ObjectState
             orchestrator=session.orchestrator,  # Pass orchestrator for dict pattern key validation
         )
 
@@ -1110,7 +1048,7 @@ class PipelineCompiler:
     @staticmethod
     def validate_backend_compatibility(
         orchestrator,
-        pipeline_config_state: "ObjectState" | None = None,
+        vfs_config: VFSConfig,
     ) -> None:
         """
         Validate configured read backend against microscope support.
@@ -1125,15 +1063,7 @@ class PipelineCompiler:
 
         microscope_handler = orchestrator.microscope_handler
 
-        if pipeline_config_state is not None:
-            configured_read_backend = pipeline_config_state.get_saved_resolved_value(
-                "vfs_config.read_backend"
-            )
-        else:
-            # Fallback: if no ObjectState exists (unexpected in compiler path),
-            # use the effective merged config.
-            vfs_config = orchestrator.get_effective_config().vfs_config or VFSConfig()
-            configured_read_backend = vfs_config.read_backend
+        configured_read_backend = vfs_config.read_backend
 
         # AUTO/None means "let the microscope handler decide".
         if configured_read_backend in (None, Backend.AUTO):
@@ -1390,27 +1320,14 @@ class PipelineCompiler:
     @staticmethod
     def _capture_pipeline_config(
         pipeline_config_state: "ObjectState",
-    ) -> tuple[AnalysisConsolidationConfig, PlateMetadataConfig, bool, int]:
-        from objectstate.lazy_factory import LazyDataclass
-
-        lazy_analysis_config = pipeline_config_state.get_saved_resolved_value(
-            "analysis_consolidation_config"
-        )
-        analysis_consolidation_config = (
-            lazy_analysis_config.to_base_config()
-            if isinstance(lazy_analysis_config, LazyDataclass)
-            else lazy_analysis_config
-        )
-        return (
-            analysis_consolidation_config,
-            pipeline_config_state.get_saved_resolved_value(
-                "plate_metadata_config",
-            ),
-            pipeline_config_state.get_saved_resolved_value(
-                "auto_add_output_plate_to_plate_manager",
-            ),
-            pipeline_config_state.get_saved_resolved_value("num_workers"),
-        )
+    ) -> PipelineConfig:
+        pipeline_config = pipeline_config_state.to_object(update_delegate=False)
+        if not isinstance(pipeline_config, PipelineConfig):
+            raise TypeError(
+                "Compiler pipeline ObjectState must reconstruct PipelineConfig; "
+                f"got {type(pipeline_config).__name__}."
+            )
+        return pipeline_config
 
     @staticmethod
     def _resolve_global_step_axis_filters(
@@ -1580,9 +1497,8 @@ class PipelineCompiler:
         seq_config = session.global_config.sequential_processing_config
         if seq_config and seq_config.sequential_components:
             PipelineCompiler.validate_sequential_components_compatibility(
-                session.steps,
+                session.snapshots,
                 seq_config.sequential_components,
-                session.step_state_map,
             )
 
     @staticmethod
@@ -1766,12 +1682,10 @@ class PipelineCompiler:
                         server_mode=is_zmq_execution,
                     ),
                 ).as_compilation_result()
-            (
-                analysis_config,
-                plate_metadata_config,
-                auto_add_output_plate,
-                num_workers,
-            ) = PipelineCompiler._capture_pipeline_config(pipeline_config_state)
+            pipeline_config = PipelineCompiler._capture_pipeline_config(
+                pipeline_config_state
+            )
+            num_workers = pipeline_config.num_workers
             num_workers = debug_execution_policy.compile_worker_count(num_workers)
             effective_config = orchestrator.get_effective_config()
             CompiledGpuRegistryPlan(
@@ -1779,7 +1693,7 @@ class PipelineCompiler:
             ).setup_global_registry()
             PipelineCompiler.validate_backend_compatibility(
                 orchestrator,
-                pipeline_config_state,
+                pipeline_config.vfs_config,
             )
             global_step_axis_filters = PipelineCompiler._resolve_global_step_axis_filters(
                 orchestrator,
@@ -1788,10 +1702,8 @@ class PipelineCompiler:
             axis_request = AxisCompilationRequest(
                 orchestrator=orchestrator,
                 global_config=effective_config,
+                pipeline_config=pipeline_config,
                 pipeline=pipeline_inputs,
-                analysis_consolidation_config=analysis_config,
-                plate_metadata_config=plate_metadata_config,
-                auto_add_output_plate=auto_add_output_plate,
                 global_step_axis_filters=global_step_axis_filters,
                 enable_visualizer_override=enable_visualizer_override,
                 is_zmq_execution=is_zmq_execution,
@@ -1864,21 +1776,22 @@ def _resolve_step_axis_filters(
         return
 
     for snapshot in step_snapshots:
-        step_filters: dict[str, StepAxisFilterResolution] = {}
+        step_filters: dict[type[WellFilterConfig], StepAxisFilterResolution] = {}
         for well_filter in snapshot.well_filters:
+            config = well_filter.config
             resolved_axis_values = WellFilterProcessor.resolve_filter_with_mode(
-                well_filter.well_filter,
-                well_filter.well_filter_mode,
+                config.well_filter,
+                config.well_filter_mode,
                 available_axis_values,
             )
-            step_filters[well_filter.root] = StepAxisFilterResolution(
+            step_filters[type(config)] = StepAxisFilterResolution(
                 resolved_axis_values=frozenset(str(value) for value in resolved_axis_values),
-                filter_mode=well_filter.well_filter_mode,
-                original_filter=well_filter.well_filter,
+                filter_mode=config.well_filter_mode,
+                original_filter=config.well_filter,
             )
 
         if step_filters:
-            context.step_axis_filters[snapshot.index] = step_filters
+            context.step_axis_filters[snapshot.index] = StepAxisFilterSet(step_filters)
 
     total_filters = sum(len(filters) for filters in context.step_axis_filters.values())
     logger.debug(

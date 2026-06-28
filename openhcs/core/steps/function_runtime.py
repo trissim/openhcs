@@ -1081,11 +1081,12 @@ class FunctionCoreExecutor:
             gpu_id=self.runtime_scope.execution_plan.device_id,
         ).converted_payload()
         final_kwargs = dict(self.base_kwargs)
+        parameter_names = _callable_parameter_names(self.func_callable)
+        self.bind_compiled_runtime_parameters(final_kwargs)
         loads_artifact_inputs = self.should_load_artifact_inputs()
         loaded_artifact_payloads: dict[str, RuntimePayload] = {}
         if loads_artifact_inputs:
             loaded_artifact_payloads = self.load_artifact_inputs(final_kwargs)
-        parameter_names = _callable_parameter_names(self.func_callable)
         self.bind_runtime_owned_parameters(final_kwargs, parameter_names)
         self.bind_runtime_adapter(final_kwargs, parameter_names)
         raw_output = self.invoke(main_data_arg, final_kwargs)
@@ -1231,6 +1232,13 @@ class FunctionCoreExecutor:
             final_kwargs[RUNTIME_INVOCATION_OPTIONS_PARAMETER_NAME] = (
                 self.invocation.invocation_options
             )
+
+    def bind_compiled_runtime_parameters(
+        self,
+        final_kwargs: dict[str, RuntimeCallableArgument],
+    ) -> None:
+        for binding in self.invocation.runtime_parameter_bindings:
+            final_kwargs[binding.parameter_name] = binding.value
 
     def bind_runtime_adapter(
         self,

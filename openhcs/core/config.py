@@ -14,6 +14,7 @@ from typing import Optional, Union, List, Annotated, ClassVar
 from enum import Enum
 from abc import ABC, abstractmethod
 from numcodecs.abc import Codec
+from arraybridge.decorators import DtypeConversionConfig
 from openhcs.constants import (
     AllComponents,
     Microscope,
@@ -32,6 +33,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.input_source import InputSource
 from python_introspect import Enableable
 from python_introspect.enableable import EnableableMeta
+from openhcs.core.runtime_invocation import RuntimeParameterDeclaration
 
 # Import decorator for automatic decorator creation
 
@@ -41,6 +43,69 @@ class StreamingConfigMeta(EnableableMeta, AutoRegisterMeta):
     """Combined metaclass supporting Enableable semantics and AutoRegisterMeta registration."""
 
     pass
+
+
+class CallableRuntimeConfig(ABC, metaclass=AutoRegisterMeta):
+    """Step-resolved config that supplies a callable runtime parameter value."""
+
+    __registry_key__ = "runtime_parameter_type"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[type[RuntimeParameterDeclaration], type["CallableRuntimeConfig"]]
+    ] = {}
+
+    runtime_parameter_type: ClassVar[type[RuntimeParameterDeclaration] | None] = None
+
+    @classmethod
+    def registered_config_types(cls) -> tuple[type["CallableRuntimeConfig"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[CallableRuntimeConfig]] = []
+        seen: set[type[CallableRuntimeConfig]] = set()
+
+        def visit(owner: type[CallableRuntimeConfig]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
+
+    @classmethod
+    def runtime_parameter_declaration(cls) -> type[RuntimeParameterDeclaration]:
+        declaration = cls.runtime_parameter_type
+        if declaration is None:
+            raise ValueError(f"{cls.__name__} must declare runtime_parameter_type.")
+        return declaration
+
+    @classmethod
+    def runtime_parameter_types(cls) -> tuple[type[RuntimeParameterDeclaration], ...]:
+        return tuple(
+            config_type.runtime_parameter_declaration()
+            for config_type in cls.registered_config_types()
+        )
+
+    @classmethod
+    def execution_parameter_names(cls) -> frozenset[str]:
+        return frozenset(
+            config_type.runtime_parameter_declaration().require_parameter_name()
+            for config_type in cls.registered_config_types()
+        )
+
+    @classmethod
+    def provider_for_owner_type(
+        cls,
+        owner_type: type,
+    ) -> type["CallableRuntimeConfig"] | None:
+        from objectstate import get_base_type_for_lazy
+
+        owner_base_type = get_base_type_for_lazy(owner_type) or owner_type
+        for config_type in cls.registered_config_types():
+            config_base_type = get_base_type_for_lazy(config_type) or config_type
+            if issubclass(owner_base_type, config_base_type):
+                return config_type
+        return None
 
 
 from objectstate import auto_create_decorator, abbreviation
@@ -423,7 +488,7 @@ class ZarrConfig:
 
 
 @abbreviation("vfs")
-@global_pipeline_config
+@global_pipeline_config(always_viewable_fields=["materialization_backend"])
 @dataclass(frozen=True)
 class VFSConfig:
     """Configuration for Virtual File System (VFS) related operations."""
@@ -445,8 +510,10 @@ class VFSConfig:
 @abbreviation("dtype")
 @global_pipeline_config
 @dataclass(frozen=True)
-class DtypeConfig:
+class DtypeConfig(CallableRuntimeConfig, DtypeConversionConfig):
     """Configuration for dtype conversion behavior in memory type decorators."""
+
+    runtime_parameter_type = DtypeConversionConfig
 
     default_dtype_conversion: Annotated[DtypeConversion, abbreviation("conv")] = (
         DtypeConversion.NATIVE_OUTPUT
@@ -456,7 +523,9 @@ class DtypeConfig:
 
 
 @abbreviation("proc")
-@global_pipeline_config
+@global_pipeline_config(
+    always_viewable_fields=["variable_components", "group_by", "input_source"],
+)
 @dataclass(frozen=True)
 class ProcessingConfig:
     """Configuration for step processing behavior including variable components, grouping, and input source."""
@@ -613,7 +682,13 @@ class ExperimentalAnalysisConfig:
 
 
 @abbreviation("pp")
-@global_pipeline_config
+@global_pipeline_config(
+    always_viewable_fields=[
+        "well_filter",
+        "output_dir_suffix",
+        "global_output_folder",
+    ],
+)
 @dataclass(frozen=True)
 class PathPlanningConfig(WellFilterConfig):
     """

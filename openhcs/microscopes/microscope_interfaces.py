@@ -47,6 +47,85 @@ class AnalysisResultDirectory:
     subdirectory_name: str
     path: Path
 
+
+class MetadataArtifactProvider(ABC, metaclass=AutoRegisterMeta):
+    """Nominal metadata artifact resolver owned by microscope metadata."""
+
+    __registry_key__ = "artifact_name"
+    __skip_if_no_key__ = True
+
+    artifact_name: ClassVar[str | None] = None
+    description: ClassVar[str] = ""
+
+    @classmethod
+    def require_artifact_name(cls) -> str:
+        artifact_name = cls.artifact_name
+        if artifact_name is None:
+            raise ValueError(f"{cls.__name__} must declare artifact_name.")
+        return artifact_name
+
+    @classmethod
+    def registered_provider_types(cls) -> tuple[type["MetadataArtifactProvider"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[MetadataArtifactProvider]] = []
+        seen: set[type[MetadataArtifactProvider]] = set()
+
+        def visit(owner: type[MetadataArtifactProvider]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
+
+    @classmethod
+    def provider_type_for_handler(
+        cls,
+        artifact_name: str,
+        handler: "MetadataHandler",
+    ) -> type["MetadataArtifactProvider"] | None:
+        for provider_type in cls.registered_provider_types():
+            if (
+                provider_type.require_artifact_name() == artifact_name
+                and provider_type.supports_handler(handler)
+            ):
+                return provider_type
+        return None
+
+    @classmethod
+    @abstractmethod
+    def supports_handler(cls, handler: "MetadataHandler") -> bool:
+        """Return whether this provider can resolve artifacts for a handler."""
+
+    @abstractmethod
+    def resolve(
+        self,
+        handler: "MetadataHandler",
+        plate_path: Union[str, Path],
+    ) -> object:
+        """Return this metadata artifact for a plate."""
+
+
+class GridDimensionsMetadataArtifactProvider(MetadataArtifactProvider):
+    """Provide stitching grid dimensions from microscope metadata."""
+
+    artifact_name = "grid_dimensions"
+    description = "Grid dimensions (num_rows, num_cols) for position generation."
+
+    @classmethod
+    def supports_handler(cls, handler: "MetadataHandler") -> bool:
+        return isinstance(handler, MetadataHandler)
+
+    def resolve(
+        self,
+        handler: "MetadataHandler",
+        plate_path: Union[str, Path],
+    ) -> tuple[int, int]:
+        return handler.get_grid_dimensions(plate_path)
+
+
 @dataclass(frozen=True)
 class MetadataViewEntry:
     """One metadata object projected for UI/document consumers."""
@@ -219,6 +298,30 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         """Return source-workspace metadata for handlers that own virtual mappings."""
 
         return None
+
+    def can_resolve_metadata_artifact(self, artifact_name: str) -> bool:
+        """Return whether this handler can provide a declared metadata artifact."""
+        return (
+            MetadataArtifactProvider.provider_type_for_handler(
+                artifact_name,
+                self,
+            )
+            is not None
+        )
+
+    def resolve_metadata_artifact(
+        self,
+        artifact_name: str,
+        plate_path: Union[str, Path],
+    ) -> object:
+        """Resolve a declared metadata artifact for this plate."""
+        provider_type = MetadataArtifactProvider.provider_type_for_handler(
+            artifact_name,
+            self,
+        )
+        if provider_type is None:
+            raise ValueError(f"No metadata artifact provider for {artifact_name!r}.")
+        return provider_type().resolve(self, plate_path)
 
     @abstractmethod
     def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:

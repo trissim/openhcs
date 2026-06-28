@@ -25,6 +25,7 @@ from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     setting_names,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 if TYPE_CHECKING:
     from openhcs.core.module_artifact_contract import ModuleArtifactContract
@@ -252,7 +253,7 @@ class CellProfilerModule(ABC, metaclass=AutoRegisterMeta):
         Mapping[str | "SettingNameFamily", str | list[str] | None]
     ] = {}
     ignored_settings: ClassVar[tuple[str | "SettingNameFamily", ...]] = ()
-    contract: ClassVar[str] = "pure_2d"
+    contract: ClassVar[str] = ProcessingContract.PURE_2D.declared_name
     category: ClassVar[str] = "image_operation"
     confidence: ClassVar[float] = 0.5
     validated: ClassVar[bool] = False
@@ -392,12 +393,12 @@ class CellProfilerModule(ABC, metaclass=AutoRegisterMeta):
         mapped_settings = {
             _normalize_setting_name(setting_name)
             for binding in setting_bindings
-            for setting_name in _setting_names(binding.setting_name)
+            for setting_name in setting_names(binding.setting_name)
         }
         mapped_settings.update(
             _normalize_setting_name(concrete_setting_name)
             for setting_name in ignored_settings
-            for concrete_setting_name in _setting_names(setting_name)
+            for concrete_setting_name in setting_names(setting_name)
         )
         unmapped_kwargs = {
             detail.name: detail.original_value
@@ -440,12 +441,12 @@ class CellProfilerModule(ABC, metaclass=AutoRegisterMeta):
                 )
             )
             for setting_name, parameter_name in cls.setting_parameter_aliases.items():
-                for concrete_setting_name in _setting_names(setting_name):
+                for concrete_setting_name in setting_names(setting_name):
                     setting_parameter_mapping[
                         _normalize_setting_name(concrete_setting_name)
                     ] = parameter_name
             for setting_name in cls.ignored_settings_for(module):
-                for concrete_setting_name in _setting_names(setting_name):
+                for concrete_setting_name in setting_names(setting_name):
                     setting_parameter_mapping[
                         _normalize_setting_name(concrete_setting_name)
                     ] = None
@@ -524,7 +525,7 @@ class CellProfilerModule(ABC, metaclass=AutoRegisterMeta):
         typed_ignore_setting_names = frozenset(
             _normalize_setting_name(concrete_name)
             for setting_name in cls.ignored_settings_for(module)
-            for concrete_name in _setting_names(setting_name)
+            for concrete_name in setting_names(setting_name)
         )
         unmapped_kwargs = {
             setting_name: value

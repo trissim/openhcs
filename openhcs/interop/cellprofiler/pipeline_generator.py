@@ -132,7 +132,7 @@ class LegacyAbsorbedModuleRecord:
     """Explicit-library-root compatibility record for generated pipelines."""
 
     function_name: str
-    contract: str = "pure_2d"
+    contract: str = CellProfilerModule.contract
     category: str = "image_operation"
     confidence: float = 0.5
 
@@ -144,7 +144,10 @@ class LegacyAbsorbedModuleRecord:
         record = AbsorbedRegistryRecordView(info)
         return cls(
             function_name=record.required_string("function_name"),
-            contract=record.optional_string("contract", "pure_2d"),
+            contract=record.optional_string(
+                "contract",
+                CellProfilerModule.contract,
+            ),
             category=record.optional_string("category", "image_operation"),
             confidence=record.optional_float("confidence", 0.5),
         )

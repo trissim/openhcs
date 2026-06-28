@@ -82,6 +82,9 @@ from openhcs.core.runtime_values import (
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     ObjectRowsWithMeasurementsInputPolicy,
 )
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeBoundParameterName,
+)
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     CellProfilerObjectMeasurementVectorBinding,
     ObjectInputBindingRequest,
@@ -93,10 +96,6 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerKwargDict,
     CellProfilerKwargs,
     CellProfilerRuntimeValue,
-)
-from openhcs.interop.cellprofiler.runtime.processing_contracts import (
-    MEASUREMENT_TABLES_BOUND_KEY,
-    MEASUREMENT_VALUES_BOUND_KEY,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
@@ -143,6 +142,13 @@ class FilterObjectsKwargSettings:
 @dataclass(frozen=True, slots=True)
 class FilterObjectsRuntimeInputPlan:
     """Runtime object-label partition for one FilterObjects invocation."""
+
+    measurement_tables_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        ObjectRowsWithMeasurementsInputPolicy.measurement_tables_kwarg
+    )
+    measurement_values_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("measurement_values")
+    )
 
     object_specs: tuple[ArtifactSpec, ...]
     enclosing_spec: ArtifactSpec | None
@@ -224,11 +230,11 @@ class FilterObjectsRuntimeInputPlan:
         scoped_request = request.with_object_inputs(self.object_specs)
         measurement_values = self.measurement_vector(scoped_request)
         if measurement_values is not None:
-            return {MEASUREMENT_VALUES_BOUND_KEY: measurement_values}
+            return {self.measurement_values_kwarg: measurement_values}
         measurement_tables = self.measurement_tables(scoped_request)
         if measurement_tables is None:
             return {}
-        return {MEASUREMENT_TABLES_BOUND_KEY: measurement_tables}
+        return {self.measurement_tables_kwarg: measurement_tables}
 
     def measurement_vector(
         self,
@@ -293,14 +299,14 @@ class FilterObjectsBoundMeasurementInputs:
 
     @property
     def measurement_tables(self) -> tuple[MeasurementTable, ...]:
-        value = self.bound.get(MEASUREMENT_TABLES_BOUND_KEY)
+        value = self.bound.get(FilterObjectsRuntimeInputPlan.measurement_tables_kwarg)
         if value is None:
             return ()
         return tuple(value)
 
     @property
     def measurement_values(self) -> CellProfilerRuntimeValue | None:
-        return self.bound.get(MEASUREMENT_VALUES_BOUND_KEY)
+        return self.bound.get(FilterObjectsRuntimeInputPlan.measurement_values_kwarg)
 
     @property
     def measurement_values_type(self) -> str:

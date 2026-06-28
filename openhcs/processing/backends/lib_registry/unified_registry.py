@@ -255,6 +255,36 @@ def _runtime_callable_parameters(
     return inspect.signature(func).parameters
 
 
+def _registry_runtime_parameter_exclusions(
+    signature: inspect.Signature,
+    parameter_types: tuple[type, ...],
+) -> tuple[str, ...]:
+    """Return registry-owned injected parameter names present in a signature."""
+    parameter_names = signature.parameters
+    return tuple(
+        parameter_type.require_parameter_name()
+        for parameter_type in parameter_types
+        if parameter_type.require_parameter_name() in parameter_names
+    )
+
+
+def _set_registry_runtime_parameter_exclusions(
+    target: object,
+    signature: inspect.Signature,
+    parameter_types: tuple[type, ...],
+) -> None:
+    """Merge registry-owned injected parameter names into analysis exclusions."""
+    from python_introspect import parameter_exclusions, set_parameter_exclusions
+
+    set_parameter_exclusions(
+        target,
+        (
+            *parameter_exclusions(target),
+            *_registry_runtime_parameter_exclusions(signature, parameter_types),
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Pure2DSliceResultBatch:
     """Typed decomposition of per-slice PURE_2D outputs."""
@@ -992,6 +1022,11 @@ class ProcessingContract(Enum):
         return self._declaration_type()
 
     @property
+    def declared_name(self) -> str:
+        """Return the lowercase metadata name used in declarations."""
+        return self.name.lower()
+
+    @property
     def variable_component_stack_requirement(
         self,
     ) -> VariableComponentStackRequirement | None:
@@ -1141,6 +1176,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         'show', 'imshow', 'plot', 'display', 'view', 'visualize',
         'info', 'help', 'version', 'test', 'benchmark'
     }
+    EXCLUSIONS = COMMON_EXCLUSIONS
 
     # Abstract class attributes - each implementation must define these
     MODULES_TO_SCAN: List[str]
@@ -1185,14 +1221,19 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         from functools import wraps
         import inspect
         from python_introspect import Enableable
+        from openhcs.core.config import CallableRuntimeConfig
 
         declaration = contract.declaration
         original_sig = inspect.signature(func)
         param_names = {p.name for p in original_sig.parameters.values()}
 
+        runtime_parameter_types = (
+            *CallableRuntimeConfig.runtime_parameter_types(),
+            *declaration.runtime_parameter_types(),
+        )
         signature_parameter_types = (
             Enableable,
-            *declaration.runtime_parameter_types(),
+            *runtime_parameter_types,
         )
 
         # Filter out already-existing parameters and declaration-name collisions.
@@ -1209,7 +1250,17 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         if not params_to_add:
             # Still brand the callable as Enableable metadata.
             from python_introspect import mark_enableable
+            from openhcs.core.callable_contract import attach_callable_contract_metadata
             mark_enableable(func, enabled_default=True)
+            attach_callable_contract_metadata(
+                func,
+                runtime_bound_parameters=runtime_parameter_types,
+            )
+            _set_registry_runtime_parameter_exclusions(
+                func,
+                inspect.signature(func),
+                signature_parameter_types,
+            )
             return func
 
         # Build new parameter list (insert before **kwargs)
@@ -1243,7 +1294,10 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                         kwargs[param_name] = default_value
 
             # Keep only declared controls that participate in execution.
-            execution_parameter_names = declaration.execution_parameter_names()
+            execution_parameter_names = (
+                CallableRuntimeConfig.execution_parameter_names()
+                | declaration.execution_parameter_names()
+            )
             params_to_filter = {
                 parameter_type.require_parameter_name()
                 for parameter_type in signature_parameter_types
@@ -1261,6 +1315,11 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         for parameter_type in signature_parameter_types:
             parameter = parameter_type.parameter()
             wrapper.__annotations__[parameter.name] = parameter.annotation
+        _set_registry_runtime_parameter_exclusions(
+            wrapper,
+            wrapper.__signature__,
+            signature_parameter_types,
+        )
 
         # Explicitly copy nominal processing metadata when the wrapped callable owns it.
         from openhcs.core.callable_contract import attach_callable_contract_metadata
@@ -1272,7 +1331,11 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             vars(wrapper)[processing_contract_key] = source_namespace[
                 processing_contract_key
             ]
-        attach_callable_contract_metadata(wrapper, raw_processing_function=func)
+        attach_callable_contract_metadata(
+            wrapper,
+            raw_processing_function=func,
+            runtime_bound_parameters=runtime_parameter_types,
+        )
 
         # Nominal enable semantics: decorated callables are Enableable.
         # (Enableable is metadata only; enabled remains owned by python_introspect.)
@@ -1281,96 +1344,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         return wrapper
 
-    def _inject_optional_dataclass_params(self, func: Callable) -> Callable:
-        """Inject optional lazy dataclass parameters into function signature.
-
-        Can be disabled by setting ENABLE_CONFIG_INJECTION = False.
-        """
-        # Configuration flag to enable/disable config injection
-        ENABLE_CONFIG_INJECTION = False  # Set to True to re-enable config injection
-
-        if not ENABLE_CONFIG_INJECTION:
-            return func  # Return function unchanged when disabled
-
-        # Original injection logic (commented out for now but preserved)
-        import inspect
-        from functools import wraps
-        from typing import Optional
-
-        # Get original signature
-        original_sig = inspect.signature(func)
-        original_params = list(original_sig.parameters.values())
-
-        # Import existing lazy config types
-        from openhcs.core.config import LazyNapariStreamingConfig, LazyFijiStreamingConfig, LazyStepMaterializationConfig
-
-        # Define common lazy dataclass parameters to inject
-        dataclass_params = [
-            ('napari_streaming_config', 'Optional[LazyNapariStreamingConfig]', LazyNapariStreamingConfig),
-            ('fiji_streaming_config', 'Optional[LazyFijiStreamingConfig]', LazyFijiStreamingConfig),
-            ('step_materialization_config', 'Optional[LazyStepMaterializationConfig]', LazyStepMaterializationConfig),
-        ]
-
-        # Check if any parameters need to be added
-        existing_param_names = {p.name for p in original_params}
-        params_to_add = [(name, type_hint, lazy_class) for name, type_hint, lazy_class in dataclass_params
-                        if name not in existing_param_names]
-
-        if not params_to_add:
-            return func  # No parameters to add
-
-        # Create new parameters
-        new_params = original_params.copy()
-
-        # Find insertion point (before **kwargs if it exists)
-        insert_index = len(new_params)
-        for i, param in enumerate(new_params):
-            if param.kind == inspect.Parameter.VAR_KEYWORD:
-                insert_index = i
-                break
-
-        # Add dataclass parameters
-        for param_name, type_hint, lazy_class in params_to_add:
-            new_param = inspect.Parameter(
-                param_name,
-                inspect.Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=Optional[lazy_class]  # Use actual type object, not string
-            )
-            new_params.insert(insert_index, new_param)
-            insert_index += 1
-
-        # Create enhanced wrapper function
-        @wraps(func)
-        def enhanced_wrapper(*args, **kwargs):
-            # Extract dataclass parameters from kwargs (they're just ignored for now)
-            regular_kwargs = {k: v for k, v in kwargs.items()
-                            if k not in [name for name, _, _ in dataclass_params]}
-
-            # Call original function with regular parameters only
-            return func(*args, **regular_kwargs)
-
-        # Apply the modified signature
-        new_sig = original_sig.replace(parameters=new_params)
-        enhanced_wrapper.__signature__ = new_sig
-
-        # Enhance annotations
-        if hasattr(func, '__annotations__'):
-            enhanced_wrapper.__annotations__ = func.__annotations__.copy()
-        else:
-            enhanced_wrapper.__annotations__ = {}
-
-        # Add type annotations for injected parameters
-        from typing import Optional
-        for param_name, type_hint, lazy_class in params_to_add:
-            enhanced_wrapper.__annotations__[param_name] = Optional[lazy_class]
-
-        return enhanced_wrapper
-
     def _get_function_by_name(self, module_path: str, func_name: str):
         """Get function object by module path and name."""
         module = importlib.import_module(module_path)
-        return getattr(module, func_name)
+        try:
+            return vars(module)[func_name]
+        except KeyError as exc:
+            raise AttributeError(func_name) from exc
 
     def create_library_adapter(
         self,
@@ -1418,7 +1398,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             )
             if len(args) > len(positional_parameters):
                 raise TypeError(
-                    f"{getattr(func, '__name__', type(func).__name__)} expected at "
+                    f"{func.__name__} expected at "
                     f"most {len(positional_parameters)} positional argument(s) after "
                     f"image, got {len(args)}."
                 )
@@ -1659,8 +1639,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             contract = ProcessingContract[cached_data['contract']]
 
             adapted_func = self.create_library_adapter(func, contract)
-            contract_wrapped_func = self.apply_contract_wrapper(adapted_func, contract)
-            final_func = self._inject_optional_dataclass_params(contract_wrapped_func)
+            final_func = self.apply_contract_wrapper(adapted_func, contract)
 
             metadata = FunctionMetadata(
                 name=func_name,
@@ -1785,7 +1764,10 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 module = library
                 modules.append(("main", module))
             else:
-                module = getattr(library, module_name)
+                try:
+                    module = vars(library)[module_name]
+                except KeyError as exc:
+                    raise AttributeError(module_name) from exc
                 modules.append((module_name, module))
         return modules
 
@@ -1887,9 +1869,13 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
     def create_library_adapter(self, original_func: Callable, contract: ProcessingContract) -> Callable:
         """Create adapter with library-specific processing only."""
         import inspect
-        func_name = getattr(original_func, '__name__', 'unknown')
+        func_name = original_func.__name__
 
-        logger.debug(f"🔧 CREATE LIBRARY ADAPTER: {func_name} from {getattr(original_func, '__module__', 'unknown')}")
+        logger.debug(
+            "CREATE LIBRARY ADAPTER: %s from %s",
+            func_name,
+            original_func.__module__,
+        )
 
         # Get original signature to preserve it
         original_sig = inspect.signature(original_func)
@@ -1913,10 +1899,10 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         wrapped_adapter.__signature__ = original_sig
 
         # Preserve and enhance annotations
-        if hasattr(original_func, '__annotations__'):
-            wrapped_adapter.__annotations__ = original_func.__annotations__.copy()
-        else:
-            wrapped_adapter.__annotations__ = {}
+        wrapped_adapter.__annotations__ = inspect.get_annotations(
+            original_func,
+            eval_str=False,
+        ).copy()
 
         # Extract type hints from docstring if annotations are missing
         self._enhance_annotations_from_docstring(wrapped_adapter, original_func)
@@ -1997,8 +1983,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             return False
 
         # Skip exclusions (check both common and library-specific)
-        exclusions = getattr(self.__class__, 'EXCLUSIONS', self.COMMON_EXCLUSIONS)
-        if func_name.lower() in exclusions:
+        if func_name.lower() in self.EXCLUSIONS:
             return False
 
         # Skip classes and types
@@ -2099,10 +2084,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                 adapted_func = self.create_library_adapter(func, contract)
 
                 # Apply nominal contract wrapper.
-                contract_wrapped_func = self.apply_contract_wrapper(adapted_func, contract)
-
-                # Inject optional dataclass parameters
-                final_func = self._inject_optional_dataclass_params(contract_wrapped_func)
+                final_func = self.apply_contract_wrapper(adapted_func, contract)
 
                 metadata = FunctionMetadata(
                     name=func_name,
@@ -2145,8 +2127,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         if func_name.startswith('_'):
             return "private"
 
-        exclusions = getattr(self.__class__, 'EXCLUSIONS', self.COMMON_EXCLUSIONS)
-        if func_name.lower() in exclusions:
+        if func_name.lower() in self.EXCLUSIONS:
             return "blacklisted"
 
         if inspect.isclass(func) or isinstance(func, type):

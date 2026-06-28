@@ -9,7 +9,9 @@ from typing import ClassVar
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-from openhcs.interop.cellprofiler.runtime.artifact_binding import _callable_parameters
+from openhcs.core.callable_contract import CallableContract
+from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
+from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
 from openhcs.interop.cellprofiler.runtime.bound_parameters import RuntimeBoundParameterName
 from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
 from openhcs.interop.cellprofiler.runtime.special_input_policies import (
@@ -114,8 +116,11 @@ class PrimaryObjectInputRelationshipDistanceModule(
 class RelateObjectsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
     """Bind parent/child object labels in the current runtime plane."""
 
-    slice_index_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("slice_index")
+    slice_index_parameter_type: ClassVar[type[SliceIndexRuntimeParameter]] = (
+        SliceIndexRuntimeParameter
+    )
+    slice_index_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
+        SliceIndexRuntimeParameter.require_parameter_name()
     )
 
     def extra_bound_parameter_names(
@@ -123,7 +128,7 @@ class RelateObjectsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
         plan: CellProfilerModuleRuntimePlan,
     ) -> tuple[str, ...]:
         """Return the optional runtime slice index kwarg."""
-        if self.slice_index_kwarg in _callable_parameters(plan.func):
+        if self.slice_index_parameter_type in plan.callable_contract.runtime_bound_parameter_types:
             return (self.slice_index_kwarg,)
         return ()
 
@@ -153,7 +158,8 @@ class RelateObjectsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
         if (
             plane_index is not None
             and request.func is not None
-            and self.slice_index_kwarg in _callable_parameters(request.func)
+            and self.slice_index_parameter_type
+            in CallableContract.from_callable(request.func).runtime_bound_parameter_types
         ):
             if self.slice_index_kwarg not in bound:
                 bound[self.slice_index_kwarg] = plane_index
@@ -175,7 +181,6 @@ class RelateObjectsModule(
     module_name = 'RelateObjects'
     function_name = 'relate_objects'
     validated = True
-    contract = 'pure_2d'
     confidence = 1.0
     distance_setting = SettingNameFamily("Calculate child-parent distances?")
     parent_objects_setting = SettingNameFamily(
@@ -821,6 +826,7 @@ def _aggregate_relate_objects_slice_results(
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_bound_parameters(SliceIndexRuntimeParameter)
 @special_inputs("parent_labels", "child_labels")
 @special_outputs(
     (

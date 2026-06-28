@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from openhcs.core.config import WellFilterConfig
+from openhcs.core.config import (
+    ProcessingConfig,
+    StepMaterializationConfig,
+    WellFilterConfig,
+)
+from openhcs.core.pipeline.step_config_universe import StepConfigUniverse
+from openhcs.core.runtime_invocation import RuntimeParameterBinding
 from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
     StepSourceBindingsConfig,
@@ -13,24 +19,15 @@ from openhcs.core.source_bindings import (
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
-
-@dataclass(frozen=True, slots=True)
-class StepProcessingSnapshot:
-    """ObjectState-resolved processing config facts used by the compiler."""
-
-    variable_components: Sequence[Any]
-    group_by: Any
-    input_source: Any
-    config: Any
+if TYPE_CHECKING:
+    from objectstate import ObjectState
 
 
 @dataclass(frozen=True, slots=True)
 class StepWellFilterSnapshot:
     """ObjectState-resolved well filter attached to one step config root."""
 
-    root: str
-    well_filter: Any
-    well_filter_mode: Any
+    config: WellFilterConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,10 +46,7 @@ class StepSnapshot:
     enabled: bool
     is_function_step: bool
     func: Any
-    source_bindings: StepSourceBindingsConfig
-    processing: StepProcessingSnapshot
-    materialization_config: Any
-    well_filters: tuple[StepWellFilterSnapshot, ...] = ()
+    configs: StepConfigUniverse
 
     @classmethod
     def from_resolved_step(
@@ -60,65 +54,60 @@ class StepSnapshot:
         *,
         index: int,
         step: AbstractStep,
-        step_state: Any,
+        step_state: "ObjectState",
     ) -> "StepSnapshot":
         """Build a snapshot from a resolved step plus its saved ObjectState."""
-        processing = StepProcessingSnapshot(
-            variable_components=_saved_value(
-                step_state,
-                "processing_config.variable_components",
-                index,
-            ),
-            group_by=_saved_value(
-                step_state,
-                "processing_config.group_by",
-                index,
-            ),
-            input_source=_saved_value(
-                step_state,
-                "processing_config.input_source",
-                index,
-            ),
-            config=_saved_value(step_state, "processing_config", index),
-        )
+        configs = StepConfigUniverse.from_object_state(step_state)
 
         return cls(
             index=index,
             scope_id=step_state.scope_id,
             name=step.name,
             step_type=step.__class__.__name__,
-            enabled=bool(_saved_value(step_state, "enabled", index)),
+            enabled=bool(step.enabled),
             is_function_step=isinstance(step, FunctionStep),
             func=step.func if isinstance(step, FunctionStep) else None,
-            source_bindings=(
-                _saved_value(step_state, "source_bindings", index)
-                if isinstance(step, FunctionStep)
-                else EMPTY_SOURCE_BINDINGS
-            ),
-            processing=processing,
-            materialization_config=_saved_value(
-                step_state,
-                "step_materialization_config",
-                index,
-            ),
-            well_filters=_build_well_filter_snapshots(step_state, index),
+            configs=configs,
         )
 
     @property
     def variable_components(self) -> Sequence[Any]:
-        return self.processing.variable_components
+        return self.processing_config.variable_components
 
     @property
     def group_by(self) -> Any:
-        return self.processing.group_by
+        return self.processing_config.group_by
 
     @property
     def input_source(self) -> Any:
-        return self.processing.input_source
+        return self.processing_config.input_source
 
     @property
-    def processing_config(self) -> Any:
-        return self.processing.config
+    def processing_config(self) -> ProcessingConfig:
+        return self.configs.require(ProcessingConfig, step_index=self.index)
+
+    @property
+    def source_bindings(self) -> StepSourceBindingsConfig:
+        if not self.is_function_step:
+            return EMPTY_SOURCE_BINDINGS
+        return self.configs.require(StepSourceBindingsConfig, step_index=self.index)
+
+    @property
+    def materialization_config(self) -> StepMaterializationConfig:
+        return self.configs.require(StepMaterializationConfig, step_index=self.index)
+
+    @property
+    def callable_runtime_config_bindings(self) -> tuple[RuntimeParameterBinding, ...]:
+        return self.configs.runtime_parameter_bindings()
+
+    @property
+    def well_filters(self) -> tuple[StepWellFilterSnapshot, ...]:
+        return tuple(
+            StepWellFilterSnapshot(config=config)
+            for config in self.configs.instances_of(WellFilterConfig)
+            if config.well_filter is not None
+        )
+
 
 def build_step_snapshots(
     steps: Sequence[AbstractStep],
@@ -142,57 +131,3 @@ def build_step_snapshots(
             )
         )
     return tuple(snapshots)
-
-
-def _build_well_filter_snapshots(
-    step_state: Any,
-    step_index: int,
-) -> tuple[StepWellFilterSnapshot, ...]:
-    roots: list[str] = []
-    for path, value_type in _path_to_type_map(step_state, step_index).items():
-        if "." in path:
-            continue
-        if isinstance(value_type, type) and issubclass(value_type, WellFilterConfig):
-            roots.append(path)
-
-    snapshots: list[StepWellFilterSnapshot] = []
-    for root in sorted(roots):
-        well_filter = _saved_value(
-            step_state,
-            f"{root}.well_filter",
-            step_index,
-        )
-        if well_filter is None:
-            continue
-        snapshots.append(
-            StepWellFilterSnapshot(
-                root=root,
-                well_filter=well_filter,
-                well_filter_mode=_saved_value(
-                    step_state,
-                    f"{root}.well_filter_mode",
-                    step_index,
-                ),
-            )
-        )
-    return tuple(snapshots)
-
-
-def _path_to_type_map(step_state: Any, step_index: int) -> Mapping[str, Any]:
-    path_to_type = step_state._path_to_type
-    if not isinstance(path_to_type, Mapping):
-        raise TypeError(
-            f"Step {step_index} ObjectState _path_to_type must be a mapping, "
-            f"got {type(path_to_type).__name__}."
-        )
-    return path_to_type
-
-
-def _saved_value(step_state: Any, path: str, step_index: int) -> Any:
-    try:
-        return step_state.get_saved_resolved_value(path)
-    except Exception as exc:
-        raise ValueError(
-            f"Step {step_index} snapshot requires saved ObjectState value "
-            f"'{path}'."
-        ) from exc

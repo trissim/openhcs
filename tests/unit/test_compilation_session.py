@@ -6,12 +6,15 @@ from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.config_framework.object_state_registry import ObjectStateRegistry
 from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyStepSourceBindingsConfig,
     PipelineConfig,
+    ProcessingConfig,
+    StepMaterializationConfig,
 )
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.module_artifact_contract import (
@@ -21,7 +24,12 @@ from openhcs.core.module_artifact_contract import (
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.compilation_session import CompilationSession
 from openhcs.core.pipeline.compiler import PipelineCompiler
-from openhcs.core.pipeline.step_snapshot import StepProcessingSnapshot, StepSnapshot
+from openhcs.core.pipeline.step_config_universe import (
+    StepConfigRoot,
+    StepConfigUniverse,
+    step_config_declarations,
+)
+from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
     ComponentSelector,
@@ -51,6 +59,19 @@ def _external_source_consumer(image):
     return image
 
 
+def _config_universe(*configs) -> StepConfigUniverse:
+    roots = []
+    declarations = step_config_declarations()
+    for config in configs:
+        declaration = next(
+            declaration
+            for declaration in declarations
+            if type(config) is declaration.config_type
+        )
+        roots.append(StepConfigRoot(declaration=declaration, value=config))
+    return StepConfigUniverse(tuple(roots))
+
+
 def _snapshot(
     index: int,
     name: str = "step",
@@ -65,14 +86,15 @@ def _snapshot(
         enabled=True,
         is_function_step=True,
         func=_identity,
-        source_bindings=source_bindings,
-        processing=StepProcessingSnapshot(
-            variable_components=variable_components,
-            group_by=None,
-            input_source=None,
-            config=SimpleNamespace(),
+        configs=_config_universe(
+            source_bindings,
+            ProcessingConfig(
+                variable_components=list(variable_components),
+                group_by=None,
+                input_source=InputSource.PREVIOUS_STEP,
+            ),
+            StepMaterializationConfig(enabled=False),
         ),
-        materialization_config=SimpleNamespace(enabled=False),
     )
 
 
@@ -157,7 +179,7 @@ def test_compiler_keeps_variable_components_as_stack_source():
 
     PipelineCompiler._supplement_step_plans(session)
 
-    assert session.plan(0).variable_components == (VariableComponents.CHANNEL,)
+    assert session.plan(0).variable_components == [VariableComponents.CHANNEL]
 
 
 def test_compiler_enabled_source_binding_plan_comes_from_objectstate_snapshot():

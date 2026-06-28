@@ -12,10 +12,11 @@ from collections import defaultdict, OrderedDict
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Set, TypeAlias
+from typing import Callable, Dict, List, Mapping, Optional, Set
 
 from openhcs.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
+from openhcs.core.axis_filter import StepAxisFilterSet
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import (
@@ -23,7 +24,6 @@ from openhcs.core.function_patterns import (
     FunctionPatternSyntax,
     compile_function_pattern,
     inject_artifact_input_values,
-    inject_kwargs_into_pattern,
     strip_disabled_functions,
 )
 from openhcs.core.invocation_artifacts import (
@@ -57,8 +57,6 @@ logger = logging.getLogger(__name__)
 
 PlannerGroupKey = str | None
 PathPlannerStepDisplayName = str | int
-MetadataResolverValue: TypeAlias = tuple[int, int]
-MetadataResolver: TypeAlias = Callable[[ProcessingContext], MetadataResolverValue]
 
 
 class MissingArtifactInputError(ValueError):
@@ -449,6 +447,7 @@ class PathPlannerArtifactStage:
             artifact_outputs,
             declaration_provider=self.planner.declaration_provider,
             step_context=self.artifact_declaration_context(snapshot),
+            runtime_parameter_bindings=snapshot.callable_runtime_config_bindings,
         )
 
     @staticmethod
@@ -551,7 +550,9 @@ class PathPlannerArtifactStage:
                     source_step_id=sid,
                     source_step_scope_id=self.planner.plans[sid].step_scope_id,
                 )
-            elif key not in METADATA_RESOLVERS:
+            elif not self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
+                key
+            ):
                 raise MissingArtifactInputError(
                     step_id=sid,
                     artifact_key=key,
@@ -673,8 +674,16 @@ class PathPlannerArtifactStage:
     ) -> FunctionPatternSyntax:
         """Inject metadata for artifact inputs."""
         for key in inputs:
-            if key in METADATA_RESOLVERS and key not in self.planner.declared:
-                value = METADATA_RESOLVERS[key].resolver(self.planner.ctx)
+            if (
+                key not in self.planner.declared
+                and self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
+                    key
+                )
+            ):
+                value = self.planner.ctx.microscope_handler.resolve_metadata_artifact(
+                    key,
+                    self.planner.ctx.plate_path,
+                )
                 pattern = inject_artifact_input_values(pattern, {key: value})
         return pattern
 
@@ -693,23 +702,17 @@ class PathPlannerMaterializationStage:
         if not materialization_config or not materialization_config.enabled:
             return None
 
-        if snapshot.index in self.planner.ctx.step_axis_filters:
-            step_axis_filters = self.planner.ctx.step_axis_filters[snapshot.index]
-        else:
-            step_axis_filters = {}
-        if "step_materialization_config" in step_axis_filters:
-            materialization_filter = step_axis_filters["step_materialization_config"]
-            should_materialize = (
-                self.planner.ctx.axis_id
-                in materialization_filter.resolved_axis_values
+        step_axis_filters = self.planner.ctx.step_axis_filters.get(
+            snapshot.index,
+            StepAxisFilterSet.empty(),
+        )
+        if not step_axis_filters.allows(materialization_config, self.planner.ctx.axis_id):
+            logger.debug(
+                "Skipping materialization for step %s, axis %s (filtered out)",
+                snapshot.name,
+                self.planner.ctx.axis_id,
             )
-            if not should_materialize:
-                logger.debug(
-                    "Skipping materialization for step %s, axis %s (filtered out)",
-                    snapshot.name,
-                    self.planner.ctx.axis_id,
-                )
-                return None
+            return None
 
         return self.planner.paths.build_output_path(materialization_config)
 
@@ -1044,7 +1047,8 @@ class PathPlannerStepAssemblyStage:
         )
 
         if snapshot.is_function_step and any(
-            k in METADATA_RESOLVERS for k in declarations.inputs
+            self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(k)
+            for k in declarations.inputs
         ):
             func_pattern = self.planner.artifacts.inject_metadata(
                 func_pattern,
@@ -1320,53 +1324,3 @@ class PipelinePathPlanner:
         filename = path.name
         well_id, rest = filename.split('_', 1)
         return str(dir_part / f"{well_id}_w{dict_key}_{rest}")
-
-
-
-
-# ===== METADATA =====
-
-@dataclass(frozen=True)
-class MetadataResolverSpec:
-    """Typed side-channel metadata resolver declared for artifact injection."""
-
-    resolver: MetadataResolver
-    description: str
-
-
-def _resolve_grid_dimensions(context: ProcessingContext) -> MetadataResolverValue:
-    return context.microscope_handler.get_grid_dimensions(context.plate_path)
-
-
-METADATA_RESOLVERS: dict[str, MetadataResolverSpec] = {
-    "grid_dimensions": MetadataResolverSpec(
-        resolver=_resolve_grid_dimensions,
-        description=(
-            "Grid dimensions (num_rows, num_cols) for position generation functions"
-        ),
-    ),
-}
-
-
-def resolve_metadata(
-    key: str,
-    context: ProcessingContext,
-) -> MetadataResolverValue:
-    """Resolve metadata value."""
-    if key not in METADATA_RESOLVERS:
-        raise ValueError(f"No resolver for '{key}'")
-    return METADATA_RESOLVERS[key].resolver(context)
-
-
-
-
-def register_metadata_resolver(
-    key: str,
-    resolver: MetadataResolver,
-    description: str,
-) -> None:
-    """Register metadata resolver."""
-    METADATA_RESOLVERS[key] = MetadataResolverSpec(
-        resolver=resolver,
-        description=description,
-    )

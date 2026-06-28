@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import inspect
 from types import MappingProxyType
-from typing import ClassVar, Generic, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -16,6 +16,47 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 
 PayloadT = TypeVar("PayloadT")
+
+
+class RuntimeParameterDeclaration(Protocol):
+    """Nominal callable parameter declaration exposed by compiled bindings."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        """Return the public callable parameter name."""
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        """Return the injected callable signature parameter."""
+
+
+class SliceIndexRuntimeParameter:
+    """Runtime-supplied pure-2D plane index parameter."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return "slice_index"
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=int | None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeParameterBinding:
+    """Compile-resolved runtime parameter value for one callable invocation."""
+
+    parameter_type: type[RuntimeParameterDeclaration]
+    value: object
+
+    @property
+    def parameter_name(self) -> str:
+        return self.parameter_type.require_parameter_name()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

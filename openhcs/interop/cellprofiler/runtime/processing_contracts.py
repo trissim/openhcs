@@ -45,9 +45,6 @@ from openhcs.processing.backends.cellprofiler.library import (
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
-MEASUREMENT_TABLES_BOUND_KEY = "measurement_tables"
-MEASUREMENT_VALUES_BOUND_KEY = "measurement_values"
-OBJECT_ROW_SEQUENCE_KWARGS = frozenset({"object_labels"})
 PROCESSING_CONTRACT_CACHE: dict[CellProfilerFunction, ProcessingContract] = {}
 
 
@@ -101,27 +98,37 @@ class Pure2DSliceCountPolicy:
     """Resolve runtime slice counts for PURE_2D CellProfiler execution."""
 
     @staticmethod
-    def slice_count_from_kwargs(kwargs: CellProfilerKwargs) -> int | None:
+    def slice_count_from_kwargs(
+        kwargs: CellProfilerKwargs,
+        *,
+        measurement_table_parameter_names: frozenset[str] = frozenset(),
+    ) -> int | None:
         if RuntimeProfileLogger.enabled():
             Pure2DSliceCountDiagnostics.log_kwargs(kwargs)
         return RuntimeSliceProjection.slice_count_from_kwargs(
-            Pure2DSliceCountPolicy.slice_count_kwargs(kwargs),
-            sequence_kwargs=OBJECT_ROW_SEQUENCE_KWARGS,
+            Pure2DSliceCountPolicy.slice_count_kwargs(
+                kwargs,
+                measurement_table_parameter_names=measurement_table_parameter_names,
+            ),
         )
 
     @staticmethod
-    def slice_count_kwargs(kwargs: CellProfilerKwargs) -> CellProfilerKwargs:
+    def slice_count_kwargs(
+        kwargs: CellProfilerKwargs,
+        *,
+        measurement_table_parameter_names: frozenset[str] = frozenset(),
+    ) -> CellProfilerKwargs:
         """Return kwargs that should participate in execution slice-count choice."""
-        if MEASUREMENT_TABLES_BOUND_KEY not in kwargs:
+        if not measurement_table_parameter_names:
             return kwargs
-        tables = kwargs[MEASUREMENT_TABLES_BOUND_KEY]
-        if not MeasurementTableFeatureRowsAuthority(tables).contains_features():
-            return {
-                key: value
-                for key, value in kwargs.items()
-                if key != MEASUREMENT_TABLES_BOUND_KEY
-            }
-        return kwargs
+        slice_kwargs = dict(kwargs)
+        for parameter_name in measurement_table_parameter_names:
+            if parameter_name not in slice_kwargs:
+                continue
+            tables = slice_kwargs[parameter_name]
+            if not MeasurementTableFeatureRowsAuthority(tables).contains_features():
+                slice_kwargs.pop(parameter_name)
+        return slice_kwargs
 
 
 @dataclass(frozen=True, slots=True)

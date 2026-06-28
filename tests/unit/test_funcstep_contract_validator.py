@@ -22,6 +22,7 @@ from openhcs.core.pipeline.function_contracts import (
     require_variable_component_stack,
     required_variable_components,
 )
+from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -279,17 +280,6 @@ def test_validate_required_variable_components_reads_module_contract_axis():
         )
 
 
-class _StepStateStub:
-    def __init__(self, *, variable_components, group_by):
-        self._values = {
-            "processing_config.variable_components": variable_components,
-            "processing_config.group_by": group_by,
-        }
-
-    def get_saved_resolved_value(self, key):
-        return self._values[key]
-
-
 def test_validate_funcstep_enforces_required_variable_components():
     @required_variable_components(VariableComponents.TIMEPOINT)
     def process(image):
@@ -297,16 +287,17 @@ def test_validate_funcstep_enforces_required_variable_components():
 
     process.input_memory_type = "numpy"
     process.output_memory_type = "numpy"
-    step = FunctionStep(func=process, name="TrackObjects")
+    step = FunctionStep(
+        func=process,
+        name="TrackObjects",
+        processing_config=LazyProcessingConfig(
+            variable_components=(),
+            group_by=GroupBy.NONE,
+        ),
+    )
 
     with pytest.raises(ValueError, match="requires variable_components TIMEPOINT"):
-        FuncStepContractValidator.validate_funcstep(
-            step,
-            step_objectstate=_StepStateStub(
-                variable_components=(),
-                group_by=GroupBy.NONE,
-            ),
-        )
+        FuncStepContractValidator.validate_funcstep(step)
 
 
 def _runtime_artifact_step_plan(

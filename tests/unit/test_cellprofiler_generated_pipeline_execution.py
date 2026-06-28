@@ -39,6 +39,7 @@ from openhcs.core.artifacts import (
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.steps.function_output_identity import FunctionOutputIdentityCache
 from openhcs.core.runtime_semantics import (
     RuntimePlaneProjection,
     parent_child_relationship_artifact_name,
@@ -293,6 +294,7 @@ class ContextStub:
         self.axis_id = AXIS_ID
         self.filemanager = FileManagerStub()
         self.runtime_value_store = RuntimeValueStore()
+        self.runtime_function_output_identity_cache = FunctionOutputIdentityCache()
         self.input_dir = "/plate/Images"
         self.global_config = SimpleNamespace(zarr_config=None)
         self.microscope_handler = SimpleNamespace(

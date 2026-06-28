@@ -75,7 +75,9 @@ class AbsorbedFunctionMetadata:
                 module_name=module_name,
                 primary_function_name=function_name,
             ),
-            contract=str(payload.get("contract", "pure_2d")),
+            contract=str(
+                payload.get("contract", ProcessingContract.PURE_2D.declared_name)
+            ),
             category=str(payload.get("category", "image_operation")),
             confidence=float(payload.get("confidence", 0.5)),
             validated=bool(payload.get("validated", False)),
@@ -318,7 +320,7 @@ def coerce_absorbed_processing_contract(
     if metadata is None or function_name not in metadata.declared_function_names:
         return None
 
-    setattr(function, processing_contract_key, declared_contract)
+    vars(function)[processing_contract_key] = declared_contract
     return declared_contract
 
 

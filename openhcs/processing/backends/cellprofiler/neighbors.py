@@ -19,6 +19,7 @@ from openhcs.constants.constants import MemoryType
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
@@ -711,7 +712,7 @@ def neighbor_topology_backend(
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@runtime_bound_parameters("slice_index")
+@runtime_bound_parameters(SliceIndexRuntimeParameter)
 def measure_object_neighbors(
     image: np.ndarray,
     labels: np.ndarray,

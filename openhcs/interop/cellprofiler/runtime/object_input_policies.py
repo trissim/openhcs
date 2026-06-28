@@ -9,8 +9,12 @@ from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    MeasurementTableCollectionParameterName,
     RuntimeBoundParameterName,
+    RuntimeSliceSequenceParameterName,
+    declared_measurement_table_parameter_names,
     declared_runtime_bound_parameter_names,
+    declared_runtime_slice_sequence_parameter_names,
 )
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     ObjectInputBindingRequest,
@@ -21,10 +25,6 @@ from openhcs.interop.cellprofiler.runtime.policy_registry import (
     CellProfilerModulePolicyLookupMixin,
     CellProfilerModulePolicyRegistryKey,
 )
-from openhcs.interop.cellprofiler.runtime.processing_contracts import (
-    MEASUREMENT_TABLES_BOUND_KEY,
-)
-
 
 class CellProfilerObjectInputPolicyMixin(ABC):
     """Declaration-owned object-label input binding behavior."""
@@ -92,6 +92,24 @@ class CellProfilerObjectInputPolicyMixin(ABC):
     def declared_bound_parameter_names(self) -> tuple[str, ...]:
         """Return bound parameter names from policy role declarations."""
         return declared_runtime_bound_parameter_names(type(self))
+
+    def runtime_slice_sequence_parameter_names(
+        self,
+        plan: "CellProfilerModuleRuntimePlan",
+    ) -> tuple[str, ...]:
+        """Return bound tuple parameters that project item-wise per slice."""
+        if plan.object_inputs or type(self).binds_without_declared_inputs:
+            return declared_runtime_slice_sequence_parameter_names(type(self))
+        return ()
+
+    def measurement_table_parameter_names(
+        self,
+        plan: "CellProfilerModuleRuntimePlan",
+    ) -> tuple[str, ...]:
+        """Return bound parameters carrying measurement-table collections."""
+        if plan.object_inputs or type(self).binds_without_declared_inputs:
+            return declared_measurement_table_parameter_names(type(self))
+        return ()
 
 
 class CellProfilerObjectInputPolicy(
@@ -210,8 +228,8 @@ class LabelsObjectInputPolicy(SingleObjectLabelInputPolicy):
 class ObjectLabelsInputBindingMixin:
     """Bind object-label inputs under CellProfiler's object_labels kwarg."""
 
-    object_labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("object_labels")
+    object_labels_kwarg: ClassVar[RuntimeSliceSequenceParameterName] = (
+        RuntimeSliceSequenceParameterName("object_labels")
     )
 
     def bind(
@@ -238,8 +256,8 @@ class ObjectRowsInputPolicy(
 class ObjectRowsWithMeasurementsInputPolicy(ObjectRowsInputPolicy):
     """Bind ordered object rows plus prior measurements for the primary object."""
 
-    measurement_tables_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName(MEASUREMENT_TABLES_BOUND_KEY)
+    measurement_tables_kwarg: ClassVar[MeasurementTableCollectionParameterName] = (
+        MeasurementTableCollectionParameterName("measurement_tables")
     )
 
     def bind(

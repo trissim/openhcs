@@ -238,7 +238,6 @@ from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
     CellProfilerFunctionContractExecutor,
     CellProfilerFunctionOutputAggregationContract,
     _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR,
-    _execute_pure_2d_slice,
 )
 from openhcs.interop.cellprofiler.runtime.main_flow import (
     CELLPROFILER_MEASUREMENT_MAIN_FLOW,
@@ -375,9 +374,6 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     MissingObjectMeasurementCellValue,
 )
 from openhcs.interop.cellprofiler.runtime.processing_contracts import (
-    MEASUREMENT_TABLES_BOUND_KEY,
-    MEASUREMENT_VALUES_BOUND_KEY,
-    OBJECT_ROW_SEQUENCE_KWARGS,
     CellProfilerProcessingContractAuthority,
     RuntimeShapeInspection,
 )
@@ -776,6 +772,7 @@ class CellProfilerModuleRuntimePlan:
     """Static runtime decisions for one CellProfiler module callable."""
 
     contract: ModuleArtifactContract
+    module_type: type[CellProfilerModule] | None
     func: CellProfilerFunction
     function_name: str
     callable_contract: CallableContract
@@ -823,6 +820,20 @@ class CellProfilerModuleRuntimePlan:
                     *runtime_bound_parameter_names_from_callable(self.func),
                 )
             )
+        )
+
+    @property
+    def runtime_slice_sequence_parameter_names(self) -> frozenset[str]:
+        """Return bound tuple parameters projected item-wise during pure-2D slicing."""
+        return frozenset(
+            self.object_input_policy.runtime_slice_sequence_parameter_names(self)
+        )
+
+    @property
+    def measurement_table_parameter_names(self) -> frozenset[str]:
+        """Return bound parameters carrying measurement-table collections."""
+        return frozenset(
+            self.object_input_policy.measurement_table_parameter_names(self)
         )
 
     @classmethod
@@ -894,6 +905,7 @@ class CellProfilerModuleRuntimePlan:
         )
         return cls(
             contract=contract,
+            module_type=module_type,
             func=func,
             function_name=callable_contract.function_name,
             callable_contract=callable_contract,
@@ -1200,6 +1212,12 @@ class StandardImageExecutionPath(CellProfilerModuleExecutionPath):
             invocation.kwargs,
             execution_mode=invocation.execution_mode,
             output_aggregation_contract=request.plan.function_output_aggregation_contract(),
+            runtime_slice_sequence_parameter_names=(
+                request.plan.runtime_slice_sequence_parameter_names
+            ),
+            measurement_table_parameter_names=(
+                request.plan.measurement_table_parameter_names
+            ),
         )
         profile.checkpoint_deferred(
             "cp_contract_execute",
@@ -1665,6 +1683,12 @@ class CellProfilerModuleExecutor:
                 image_kwargs,
                 execution_mode=measurement_image.execution_mode,
                 output_aggregation_contract=plan.function_output_aggregation_contract(),
+                runtime_slice_sequence_parameter_names=(
+                    plan.runtime_slice_sequence_parameter_names
+                ),
+                measurement_table_parameter_names=(
+                    plan.measurement_table_parameter_names
+                ),
             )
             contract_execute_seconds += time.perf_counter() - contract_started_at
             split_rows_started_at = time.perf_counter()
@@ -1765,6 +1789,12 @@ class CellProfilerModuleExecutor:
                 coerced_kwargs,
                 execution_mode=measurement_image.execution_mode,
                 output_aggregation_contract=plan.function_output_aggregation_contract(),
+                runtime_slice_sequence_parameter_names=(
+                    plan.runtime_slice_sequence_parameter_names
+                ),
+                measurement_table_parameter_names=(
+                    plan.measurement_table_parameter_names
+                ),
             )
             contract_execute_seconds += time.perf_counter() - contract_started_at
             split_rows_started_at = time.perf_counter()

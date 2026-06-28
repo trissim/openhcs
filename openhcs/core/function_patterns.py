@@ -21,7 +21,10 @@ from openhcs.core.invocation_artifacts import (
     callable_contract_artifact_declarations,
 )
 from openhcs.core.function_reference import FunctionReference
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from openhcs.core.runtime_invocation import (
+    RuntimeInvocationOptions,
+    RuntimeParameterBinding,
+)
 from pyqt_reactive.pattern_metadata import PatternScopeToken
 from python_introspect import Enableable
 
@@ -215,6 +218,7 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
 
     artifact_input_keys: tuple[str, ...] = ()
     artifact_output_keys: tuple[str, ...] = ()
+    runtime_parameter_bindings: tuple[RuntimeParameterBinding, ...] = ()
 
     @property
     def input_memory_type(self) -> str | None:
@@ -228,7 +232,7 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
 
     @property
     def kwargs_dict(self) -> dict:
-        """Return invocation kwargs as a runtime dict."""
+        """Return user-authored callable kwargs as a runtime dict."""
         return dict(self.kwargs)
 
     def select_inputs(
@@ -419,6 +423,7 @@ def compile_function_pattern(
     step_context: ArtifactDeclarationStepContext = (
         ArtifactDeclarationStepContext.empty()
     ),
+    runtime_parameter_bindings: Sequence[RuntimeParameterBinding] = (),
 ) -> CompiledFunctionPattern:
     """Compile raw FunctionStep.func syntax into the runtime source of truth."""
     normalized = normalize_function_pattern(pattern)
@@ -427,6 +432,7 @@ def compile_function_pattern(
         output_plans=output_plans,
         declaration_provider=declaration_provider,
         step_context=step_context,
+        runtime_parameter_bindings=tuple(runtime_parameter_bindings),
     )
     return CompiledFunctionPattern(
         groups=tuple(
@@ -509,7 +515,7 @@ def inject_artifact_input_values(
         }
         if not matched_values:
             return pattern
-        return PatternItemKwargMerge(matched_values).merge(pattern)
+        return PatternItemKwargMerge(matched_values).merge_replacing_existing(pattern)
 
     if isinstance(pattern, list):
         return [
@@ -549,6 +555,21 @@ class PatternItemKwargMerge:
             return (func, {**self.kwargs, **existing_kwargs}, *invocation_options)
 
         return (pattern, dict(self.kwargs))
+
+    def merge_replacing_existing(
+        self,
+        pattern: FunctionPatternSyntax,
+    ) -> FunctionPatternSyntax:
+        """Return a callable pattern item with injected kwargs taking precedence."""
+        if isinstance(pattern, tuple) and len(pattern) in {2, 3}:
+            func, existing_kwargs, *invocation_options = pattern
+            if not isinstance(existing_kwargs, Mapping):
+                raise TypeError(
+                    f"Function kwargs must be a mapping, got {type(existing_kwargs)}"
+                )
+            return (func, {**existing_kwargs, **self.kwargs}, *invocation_options)
+
+        return self.merge(pattern)
 
 
 @dataclass(frozen=True, slots=True)
@@ -595,6 +616,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
     input_plans: Mapping[str, ArtifactInputPlan]
     output_plans: Mapping[str, ArtifactOutputPlan]
     declaration_provider: InvocationArtifactDeclarationProviderLike
+    runtime_parameter_bindings: tuple[RuntimeParameterBinding, ...] = ()
 
     @classmethod
     def from_step_context(
@@ -604,6 +626,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
         output_plans: Mapping[str, ArtifactOutputPlan],
         declaration_provider: InvocationArtifactDeclarationProviderLike,
         step_context: ArtifactDeclarationStepContext,
+        runtime_parameter_bindings: Sequence[RuntimeParameterBinding] = (),
     ) -> "CompileFunctionGroupAuthority":
         return cls(
             step_name=step_context.step_name,
@@ -614,6 +637,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
             input_plans=input_plans,
             output_plans=output_plans,
             declaration_provider=declaration_provider,
+            runtime_parameter_bindings=tuple(runtime_parameter_bindings),
         )
 
     def compile(self, normalized_group: NormalizedFunctionGroup) -> CompiledFunctionGroup:
@@ -624,6 +648,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
                 output_plans=self.output_plans,
                 declaration_provider=self.declaration_provider,
                 step_context=self,
+                runtime_parameter_bindings=self.runtime_parameter_bindings,
             )
             for item in normalized_group.items
         )
@@ -639,16 +664,51 @@ def _compile_invocation(
     output_plans: Mapping[str, ArtifactOutputPlan],
     declaration_provider: InvocationArtifactDeclarationProviderLike,
     step_context: ArtifactDeclarationStepContext,
+    runtime_parameter_bindings: Sequence[RuntimeParameterBinding],
 ) -> CompiledFunctionInvocation:
     declarations = declaration_provider(item, step_context)
+    user_kwargs, compiled_runtime_bindings = _compile_runtime_parameter_bindings(
+        item.kwargs,
+        runtime_parameter_bindings,
+        item.contract.runtime_bound_parameter_types,
+    )
     return CompiledFunctionInvocation(
         key=item.key,
         contract=item.contract,
-        kwargs=item.kwargs,
+        kwargs=user_kwargs,
         invocation_options=item.invocation_options,
         artifact_input_keys=declarations.select_input_plan_keys(input_plans),
         artifact_output_keys=declarations.select_output_plan_keys(output_plans),
+        runtime_parameter_bindings=compiled_runtime_bindings,
     )
+
+
+def _compile_runtime_parameter_bindings(
+    kwargs: RuntimeKwargItems,
+    runtime_parameter_bindings: Sequence[RuntimeParameterBinding],
+    accepted_parameter_types: Sequence[type],
+) -> tuple[RuntimeKwargItems, tuple[RuntimeParameterBinding, ...]]:
+    """Move config-owned runtime parameters out of callable kwargs."""
+    accepted_parameter_type_set = frozenset(accepted_parameter_types)
+    if not runtime_parameter_bindings or not accepted_parameter_type_set:
+        return kwargs, ()
+
+    remaining_kwargs = dict(kwargs)
+    compiled_bindings: list[RuntimeParameterBinding] = []
+    for binding in runtime_parameter_bindings:
+        if binding.parameter_type not in accepted_parameter_type_set:
+            continue
+        if binding.parameter_name in remaining_kwargs:
+            value = remaining_kwargs.pop(binding.parameter_name)
+        else:
+            value = binding.value
+        compiled_bindings.append(
+            RuntimeParameterBinding(
+                parameter_type=binding.parameter_type,
+                value=value,
+            )
+        )
+    return tuple(remaining_kwargs.items()), tuple(compiled_bindings)
 
 
 def _is_disabled_function_item(func_item: FunctionPatternSyntax) -> bool:
