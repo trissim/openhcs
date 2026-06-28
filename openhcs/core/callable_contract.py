@@ -33,7 +33,10 @@ from openhcs.core.runtime_adapters import (
     RuntimeAdapterSpec,
     runtime_adapter_spec_from_callable,
 )
-from openhcs.core.runtime_invocation import RuntimeParameterDeclaration
+from openhcs.core.runtime_invocation import (
+    RuntimeInvocationOptions,
+    RuntimeParameterDeclaration,
+)
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchCallableFamily,
     RuntimeBatchExecutionDomain,
@@ -74,6 +77,8 @@ class CallableMetadata:
     variable_component_stack_requirement: VariableComponentStackRequirement | None = None
     allowed_group_by: tuple[GroupBy, ...] = ()
     runtime_adapter: RuntimeAdapterSpec | None = None
+    runtime_context_parameter: str | None = None
+    runtime_invocation_options_parameter: str | None = None
     processing_contract: Enum | None = None
     declared_processing_contract: str | None = None
     module_artifact_contract: ModuleArtifactContract | None = None
@@ -95,6 +100,9 @@ class CallableMetadata:
         """Build metadata from an already resolved callable projection."""
         namespace = projection.namespace
         reader = CallableMetadataReader(namespace, projection.name)
+        runtime_adapter = runtime_adapter_spec_from_callable(projection.func)
+        if runtime_adapter is not None and callable(projection.func):
+            runtime_adapter.validate_callable_signature(projection.func)
         return cls(
             input_memory_type=reader.optional_string("input_memory_type"),
             output_memory_type=reader.optional_string("output_memory_type"),
@@ -122,7 +130,11 @@ class CallableMetadata:
             allowed_group_by=reader.optional_group_by_tuple(
                 FunctionContractAttribute.allowed_group_by,
             ),
-            runtime_adapter=runtime_adapter_spec_from_callable(projection.func),
+            runtime_adapter=runtime_adapter,
+            runtime_context_parameter=_runtime_context_parameter(projection, reader),
+            runtime_invocation_options_parameter=(
+                _runtime_invocation_options_parameter(projection, reader)
+            ),
             processing_contract=reader.optional_enum(
                 FunctionContractAttribute.processing_contract
             ),
@@ -191,7 +203,15 @@ class CallableMetadata:
         if self.allowed_group_by:
             namespace[FunctionContractAttribute.allowed_group_by] = self.allowed_group_by
         if self.runtime_adapter is not None:
-            namespace["__runtime_adapter__"] = self.runtime_adapter
+            namespace[FunctionContractAttribute.runtime_adapter] = self.runtime_adapter
+        if self.runtime_context_parameter is not None:
+            namespace[FunctionContractAttribute.runtime_context_parameter] = (
+                self.runtime_context_parameter
+            )
+        if self.runtime_invocation_options_parameter is not None:
+            namespace[
+                FunctionContractAttribute.runtime_invocation_options_parameter
+            ] = self.runtime_invocation_options_parameter
         if self.processing_contract is not None:
             namespace[FunctionContractAttribute.processing_contract] = (
                 self.processing_contract
@@ -296,6 +316,16 @@ class CallableContract(ArtifactPlanKeySelector):
     def runtime_adapter(self) -> RuntimeAdapterSpec | None:
         """Declared runtime adapter."""
         return self.metadata.runtime_adapter
+
+    @property
+    def runtime_context_parameter(self) -> str | None:
+        """Compiled ABI name for runtime context injection."""
+        return self.metadata.runtime_context_parameter
+
+    @property
+    def runtime_invocation_options_parameter(self) -> str | None:
+        """Compiled ABI name for invocation-options injection."""
+        return self.metadata.runtime_invocation_options_parameter
 
     @property
     def runtime_bound_parameters(self) -> tuple[str, ...]:
@@ -1001,6 +1031,47 @@ class CallableProjection:
             if callable(wrapped):
                 pending.append(wrapped)
         return tuple(targets)
+
+
+def _runtime_context_parameter(
+    projection: CallableProjection,
+    reader: "CallableMetadataReader",
+) -> str | None:
+    declared = reader.optional_string(
+        FunctionContractAttribute.runtime_context_parameter
+    )
+    if declared is not None:
+        return declared
+    from openhcs.core.context.processing_context import ProcessingContext
+
+    return _callable_signature_parameter(
+        projection.func,
+        ProcessingContext.require_parameter_name(),
+    )
+
+
+def _runtime_invocation_options_parameter(
+    projection: CallableProjection,
+    reader: "CallableMetadataReader",
+) -> str | None:
+    declared = reader.optional_string(
+        FunctionContractAttribute.runtime_invocation_options_parameter
+    )
+    if declared is not None:
+        return declared
+    return _callable_signature_parameter(
+        projection.func,
+        RuntimeInvocationOptions.require_parameter_name(),
+    )
+
+
+def _callable_signature_parameter(func: Any, parameter_name: str) -> str | None:
+    """Return a callable parameter name accepted by live signatures only."""
+    if not callable(func):
+        return None
+    if parameter_name not in inspect.signature(func).parameters:
+        return None
+    return parameter_name
 
 
 @dataclass(frozen=True, slots=True)

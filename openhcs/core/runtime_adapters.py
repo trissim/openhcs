@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
-from weakref import WeakKeyDictionary
 
 from python_introspect import set_parameter_exclusions
 
 from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.component_set import ComponentSet
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingRuntimeContext,
@@ -32,9 +33,6 @@ class RuntimeAdapterValue(Protocol):
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
-_RUNTIME_ADAPTER_SPECS: WeakKeyDictionary[
-    Callable[..., Any], "RuntimeAdapterSpec"
-] = WeakKeyDictionary()
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +261,20 @@ class RuntimeAdapterSpec:
         if self.prepare is not None and not callable(self.prepare):
             raise TypeError("RuntimeAdapterSpec.prepare must be callable or None.")
 
+    def require_parameter_name(self) -> str:
+        """Return the callable ABI name for this adapter injection."""
+        return self.parameter_name
+
+    def validate_callable_signature(self, func: Callable[..., Any]) -> None:
+        """Ensure the declared adapter parameter exists at declaration time."""
+        parameter_name = self.require_parameter_name()
+        if parameter_name in inspect.signature(func).parameters:
+            return
+        raise TypeError(
+            "Runtime adapter declaration requires callable signature parameter "
+            f"{parameter_name!r}."
+        )
+
     def prepare_request(self, request: RuntimeAdapterRequest) -> None:
         """Run the adapter's optional compile-time preparation hook."""
         if self.prepare is None:
@@ -286,11 +298,11 @@ def runtime_adapter(
     )
 
     def decorator(func: _F) -> _F:
-        _RUNTIME_ADAPTER_SPECS[func] = spec
+        spec.validate_callable_signature(func)
         namespace = vars(func)
         if not isinstance(namespace, MutableMapping):
             raise TypeError(f"{func!r} does not expose a mutable metadata namespace.")
-        namespace["__runtime_adapter__"] = spec
+        namespace[FunctionContractAttribute.runtime_adapter] = spec
         set_parameter_exclusions(func, (parameter_name,))
         return func
 
@@ -300,13 +312,32 @@ def runtime_adapter(
 def runtime_adapter_spec_from_callable(func: Any) -> RuntimeAdapterSpec | None:
     """Return the callable's declared runtime adapter contract, if any."""
     if callable(func):
-        spec = _RUNTIME_ADAPTER_SPECS.get(func)
+        spec = _callable_namespace_runtime_adapter(func)
         if spec is not None:
             return spec
     reference_spec = _function_reference_runtime_adapter(func)
     if reference_spec is None:
         return None
     return reference_spec
+
+
+def _callable_namespace_runtime_adapter(
+    func: Callable[..., Any],
+) -> RuntimeAdapterSpec | None:
+    """Return adapter metadata preserved on callable namespaces."""
+    try:
+        namespace = vars(func)
+    except TypeError:
+        return None
+    value = namespace.get(FunctionContractAttribute.runtime_adapter)
+    if value is None:
+        return None
+    if not isinstance(value, RuntimeAdapterSpec):
+        raise TypeError(
+            "Runtime adapter metadata must be a RuntimeAdapterSpec, "
+            f"got {type(value).__name__}."
+        )
+    return value
 
 
 def _function_reference_runtime_adapter(func: object) -> RuntimeAdapterSpec | None:

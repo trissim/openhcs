@@ -3,6 +3,7 @@ from pathlib import Path
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
+from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import DtypeConversion
 from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
@@ -91,7 +92,11 @@ def test_crop_analyze_spec_matches_expected_step_contract():
             "width": 5046,
             "height": 3694,
             "start_x": 5253,
-            "dtype_conversion": DtypeConversion.UINT16,
+            (
+                DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+            ): DtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT16
+            ),
         },
     )
     assert steps[1].func["4"] == [
@@ -106,7 +111,11 @@ def test_crop_analyze_spec_matches_expected_step_contract():
             "enable_preprocessing": False,
             "return_segmentation_mask": True,
             "detection_method": DetectionMethod.WATERSHED,
-            "dtype_conversion": DtypeConversion.UINT8,
+            (
+                DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+            ): DtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT8
+            ),
         },
     )
     assert steps[2].func["3"] == (
@@ -116,7 +125,11 @@ def test_crop_analyze_spec_matches_expected_step_contract():
             "return_skeleton_visualizations": True,
             "skeleton_visualization_mode": OutputMode.SKELETON,
             "min_branch_length": 20.0,
-            "dtype_conversion": DtypeConversion.UINT8,
+            (
+                DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+            ): DtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT8
+            ),
         },
     )
     assert steps[2].func["4"] == []
@@ -136,7 +149,11 @@ def test_crop_analyze_cy5_overlay_adds_channel_4_cell_count():
             "enable_preprocessing": False,
             "return_segmentation_mask": True,
             "detection_method": DetectionMethod.WATERSHED,
-            "dtype_conversion": DtypeConversion.UINT8,
+            (
+                DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+            ): DtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT8
+            ),
         },
     )
 

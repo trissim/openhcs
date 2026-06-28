@@ -12,7 +12,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import LazyProcessingConfig
+from openhcs.core.config import DtypeConfig, LazyProcessingConfig
 from openhcs.core.memory import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.analysis.cell_counting_cpu import (
@@ -160,7 +160,11 @@ def _compartment_crop(channel: str) -> tuple[Any, dict[str, Any]]:
     }
     if channel == "3":
         kwargs["start_x"] = MFD_AXON_START_X
-        kwargs["dtype_conversion"] = DtypeConversion.UINT16
+        kwargs[
+            DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+        ] = DtypeConfig(
+            default_dtype_conversion=DtypeConversion.UINT16
+        )
     return (crop, kwargs)
 
 
@@ -185,7 +189,11 @@ def _cell_count_func(
             "enable_preprocessing": False,
             "return_segmentation_mask": True,
             "detection_method": DetectionMethod.WATERSHED,
-            "dtype_conversion": DtypeConversion.UINT8,
+            (
+                DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+            ): DtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT8
+            ),
         },
     )
 
@@ -198,7 +206,11 @@ def _axon_analysis_func() -> tuple[Any, dict[str, Any]]:
             "return_skeleton_visualizations": True,
             "skeleton_visualization_mode": OutputMode.SKELETON,
             "min_branch_length": 20.0,
-            "dtype_conversion": DtypeConversion.UINT8,
+            (
+                DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+            ): DtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT8
+            ),
         },
     )
 

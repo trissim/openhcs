@@ -1057,7 +1057,7 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
     Find edges in an image using the Sobel filter (CuCIM backend).
 
     This function wraps CuCIM's sobel filter to provide a manual, pickleable
-    sobel function with full OpenHCS features (slice_by_slice, dtype_conversion, etc.).
+    sobel function with full OpenHCS features (slice_by_slice, dtype_config, etc.).
 
     The @cupy_func decorator automatically provides slice_by_slice processing,
     so this function can handle both 2D and 3D inputs depending on the setting.

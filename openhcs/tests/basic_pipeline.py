@@ -91,7 +91,7 @@ pipeline_steps.append(step_7)
 #            'max_cell_area': 200,
 #            'enable_preprocessing': False,
 #            'detection_method': DetectionMethod.WATERSHED,
-#            'dtype_conversion': DtypeConversion.UINT8,
+#            'dtype_config': DtypeConfig(default_dtype_conversion=DtypeConversion.UINT8),
 #            'return_segmentation_mask': True
 #        }),
 #        '2': (count_cells_single_channel, {
@@ -99,11 +99,10 @@ pipeline_steps.append(step_7)
 #            'max_cell_area': 200,
 #            'enable_preprocessing': False,
 #            'detection_method': DetectionMethod.WATERSHED,
-#            'dtype_conversion': DtypeConversion.UINT8,
+#            'dtype_config': DtypeConfig(default_dtype_conversion=DtypeConversion.UINT8),
 #            'return_segmentation_mask': True
 #        })
 #    },
 #    name="Cell Counting",
 #)
 #pipeline_steps.append(step_8)
-

@@ -319,7 +319,11 @@ def create_test_pipeline(
                                 "max_cell_area": 200,
                                 "enable_preprocessing": False,
                                 "detection_method": DetectionMethod.WATERSHED,
-                                "dtype_config": DtypeConfig(default_dtype_conversion=DtypeConversion.UINT8),
+                                (
+                                    DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+                                ): DtypeConfig(
+                                    default_dtype_conversion=DtypeConversion.UINT8
+                                ),
                                 "return_segmentation_mask": True,
                             },
                         ),
@@ -330,7 +334,11 @@ def create_test_pipeline(
                                 "max_cell_area": 200,
                                 "enable_preprocessing": False,
                                 "detection_method": DetectionMethod.WATERSHED,
-                                "dtype_config": DtypeConfig(default_dtype_conversion=DtypeConversion.UINT8),
+                                (
+                                    DtypeConfig.runtime_parameter_declaration().require_parameter_name()
+                                ): DtypeConfig(
+                                    default_dtype_conversion=DtypeConversion.UINT8
+                                ),
                                 "return_segmentation_mask": True,
                             },
                         ),
@@ -467,9 +475,8 @@ def _initialize_orchestrator(
     from polystore.base import reset_memory_backend
 
     reset_memory_backend()
-
-    setup_global_gpu_registry()
     global_config = _create_pipeline_config(test_config)
+    setup_global_gpu_registry(global_config=global_config)
 
     # Set up global context for orchestrator - legitimate test setup
     ensure_global_config_context(GlobalPipelineConfig, global_config)
@@ -635,8 +642,8 @@ def _execute_pipeline_phases(
             pipeline_definition=pipeline.steps, well_filter=wells
         )
 
-        # Extract compiled_contexts from the result dict
-        compiled_contexts = compilation_result["compiled_contexts"]
+        execution_bundle = compilation_result["execution_bundle"]
+        compiled_contexts = execution_bundle.runtime_contexts
 
         if len(compiled_contexts) != len(wells):
             raise RuntimeError(
@@ -665,8 +672,7 @@ def _execute_pipeline_phases(
         }
 
         results = orchestrator.execute_compiled_plate(
-            pipeline_definition=pipeline.steps,
-            compiled_contexts=compiled_contexts,
+            execution_bundle=execution_bundle,
             progress_queue=progress_queue,
             progress_context=progress_context,
         )
@@ -959,9 +965,9 @@ def _test_main_with_code_serialization(
     from polystore.base import reset_memory_backend
 
     reset_memory_backend()
-    setup_global_gpu_registry()
 
     global_config = _create_pipeline_config(test_config)
+    setup_global_gpu_registry(global_config=global_config)
 
     # Create PipelineConfig with lazy configs for proper hierarchical inheritance
     pipeline_config = PipelineConfig(

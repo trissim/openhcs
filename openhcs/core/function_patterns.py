@@ -9,7 +9,7 @@ gives that unit a named identity for compile-time planning and runtime lookup.
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypeAlias
 
@@ -213,12 +213,53 @@ class NormalizedFunctionPattern:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeCallableArgumentPlan:
+    """Compile-resolved callable argument ABI for runtime-owned injections."""
+
+    context_parameter_name: str | None = None
+    invocation_options_parameter_name: str | None = None
+    adapter_parameter_name: str | None = None
+
+    @classmethod
+    def from_contract(
+        cls,
+        contract: CallableContract,
+        invocation_options: RuntimeInvocationOptions | None,
+    ) -> "RuntimeCallableArgumentPlan":
+        runtime_adapter = contract.runtime_adapter
+        return cls(
+            context_parameter_name=contract.runtime_context_parameter,
+            invocation_options_parameter_name=(
+                contract.runtime_invocation_options_parameter
+                if invocation_options is not None
+                else None
+            ),
+            adapter_parameter_name=(
+                None
+                if runtime_adapter is None
+                else runtime_adapter.require_parameter_name()
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledFunctionInvocation(NormalizedFunctionItem):
     """Executable compiler output for one callable in a function pattern."""
 
     artifact_input_keys: tuple[str, ...] = ()
     artifact_output_keys: tuple[str, ...] = ()
     runtime_parameter_bindings: tuple[RuntimeParameterBinding, ...] = ()
+    runtime_argument_plan: RuntimeCallableArgumentPlan = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "runtime_argument_plan",
+            RuntimeCallableArgumentPlan.from_contract(
+                self.contract,
+                self.invocation_options,
+            ),
+        )
 
     @property
     def input_memory_type(self) -> str | None:

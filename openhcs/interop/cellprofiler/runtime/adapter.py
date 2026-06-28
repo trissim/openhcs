@@ -265,6 +265,11 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     FunctionStep runtime boundary.
     """
 
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        """Return the callable ABI name for CellProfiler adapter injection."""
+        return "cellprofiler_runtime"
+
     runtime_value_store: RuntimeValueStore
     axis_scope: RuntimeExecutionAxisScope
     artifact_inputs: Mapping[str, ArtifactInputPlan] = field(default_factory=dict)

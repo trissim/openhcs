@@ -5,7 +5,6 @@ execution. FunctionStep remains responsible for step-level orchestration.
 """
 
 from abc import ABC, abstractmethod
-import inspect
 import logging
 import os
 import time
@@ -15,7 +14,6 @@ from threading import Lock
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, ClassVar, Iterator, Mapping, Optional, Sequence
-from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
@@ -67,7 +65,6 @@ from openhcs.core.runtime_stores import (
 )
 from openhcs.core.runtime_adapters import (
     RuntimeAdapterRequest,
-    RuntimeAdapterSpec,
     RuntimeExecutionAxisScope,
 )
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
@@ -130,8 +127,6 @@ logger = logging.getLogger(__name__)
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 _PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
-RUNTIME_CONTEXT_PARAMETER_NAME = "context"
-RUNTIME_INVOCATION_OPTIONS_PARAMETER_NAME = "runtime_invocation_options"
 PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
 ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
@@ -150,9 +145,6 @@ RuntimeCallableArgument = (
 RuntimeCallableKwargs = Mapping[str, RuntimeCallableArgument]
 RuntimeProfileFieldValue = str | int | float | bool | None
 EMPTY_ARTIFACT_PLANS: ArtifactOutputPlans = MappingProxyType({})
-_CALLABLE_PARAMETER_NAMES: WeakKeyDictionary[Callable, frozenset[str]] = (
-    WeakKeyDictionary()
-)
 
 
 class FunctionInvocationCallableResolver:
@@ -227,15 +219,6 @@ class RuntimeProfileSink:
         if profile_path is not None:
             with open(profile_path, "a", encoding="utf-8") as handle:
                 handle.write(f"RUNTIME_PROFILE {label} {seconds:.6f}s {field_text}\n")
-
-
-def _callable_parameter_names(func: Callable) -> frozenset[str]:
-    """Return cached callable parameter names for runtime adapter injection."""
-    names = _CALLABLE_PARAMETER_NAMES.get(func)
-    if names is None:
-        names = frozenset(inspect.signature(func).parameters)
-        _CALLABLE_PARAMETER_NAMES[func] = names
-    return names
 
 
 @dataclass(frozen=True, slots=True)
@@ -1081,14 +1064,13 @@ class FunctionCoreExecutor:
             gpu_id=self.runtime_scope.execution_plan.device_id,
         ).converted_payload()
         final_kwargs = dict(self.base_kwargs)
-        parameter_names = _callable_parameter_names(self.func_callable)
         self.bind_compiled_runtime_parameters(final_kwargs)
         loads_artifact_inputs = self.should_load_artifact_inputs()
         loaded_artifact_payloads: dict[str, RuntimePayload] = {}
         if loads_artifact_inputs:
             loaded_artifact_payloads = self.load_artifact_inputs(final_kwargs)
-        self.bind_runtime_owned_parameters(final_kwargs, parameter_names)
-        self.bind_runtime_adapter(final_kwargs, parameter_names)
+        self.bind_runtime_owned_parameters(final_kwargs)
+        self.bind_runtime_adapter(final_kwargs)
         raw_output = self.invoke(main_data_arg, final_kwargs)
         main_output = self.save_artifact_outputs(
             raw_output,
@@ -1221,17 +1203,14 @@ class FunctionCoreExecutor:
     def bind_runtime_owned_parameters(
         self,
         final_kwargs: dict[str, RuntimeCallableArgument],
-        parameter_names: frozenset[str],
     ) -> None:
-        if RUNTIME_CONTEXT_PARAMETER_NAME in parameter_names:
-            final_kwargs[RUNTIME_CONTEXT_PARAMETER_NAME] = self.runtime_scope.context
-        if (
-            RUNTIME_INVOCATION_OPTIONS_PARAMETER_NAME in parameter_names
-            and self.invocation.invocation_options is not None
-        ):
-            final_kwargs[RUNTIME_INVOCATION_OPTIONS_PARAMETER_NAME] = (
-                self.invocation.invocation_options
-            )
+        argument_plan = self.invocation.runtime_argument_plan
+        context_parameter_name = argument_plan.context_parameter_name
+        if context_parameter_name is not None:
+            final_kwargs[context_parameter_name] = self.runtime_scope.context
+        options_parameter_name = argument_plan.invocation_options_parameter_name
+        if options_parameter_name is not None:
+            final_kwargs[options_parameter_name] = self.invocation.invocation_options
 
     def bind_compiled_runtime_parameters(
         self,
@@ -1243,17 +1222,14 @@ class FunctionCoreExecutor:
     def bind_runtime_adapter(
         self,
         final_kwargs: dict[str, RuntimeCallableArgument],
-        parameter_names: frozenset[str],
     ) -> None:
+        argument_plan = self.invocation.runtime_argument_plan
+        adapter_parameter = argument_plan.adapter_parameter_name
+        if adapter_parameter is None:
+            return
         runtime_adapter = self.invocation.contract.runtime_adapter
         if runtime_adapter is None:
             return
-        adapter_parameter = runtime_adapter.parameter_name
-        if adapter_parameter not in parameter_names:
-            raise TypeError(
-                f"{self.function_name} declares runtime adapter parameter "
-                f"'{adapter_parameter}', but its signature does not accept it."
-            )
         adapter_started_at = time.perf_counter()
         final_kwargs[adapter_parameter] = runtime_adapter.factory(
             self.runtime_adapter_request()

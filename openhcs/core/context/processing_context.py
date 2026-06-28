@@ -72,6 +72,11 @@ class ProcessingContext:
 
     _is_frozen: bool = False
 
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        """Return the callable ABI name for runtime context injection."""
+        return "context"
+
     def __init__(
         self,
         step_plans: dict[int, CompiledStepPlan] | None = None,

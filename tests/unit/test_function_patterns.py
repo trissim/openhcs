@@ -13,6 +13,8 @@ from openhcs.core.artifacts import (
     ArtifactSpec,
 )
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_patterns import (
     FunctionInvocationKey,
     RuntimeInvocationDomain,
@@ -420,6 +422,75 @@ def test_compile_function_pattern_preserves_typed_invocation_options():
     invocation = compiled.default_group.invocations[0]
     assert invocation.kwargs == (("sigma", 1),)
     assert invocation.invocation_options is options
+
+
+def test_compile_function_pattern_builds_runtime_argument_plan():
+    options = ExampleInvocationOptions(mode="once")
+
+    @runtime_adapter("runtime", lambda _request: object())
+    def configurable(
+        image,
+        *,
+        context=None,
+        runtime=None,
+        runtime_invocation_options=None,
+    ):
+        return image
+
+    compiled = compile_function_pattern(
+        (configurable, {"sigma": 1}, options),
+        {},
+        {},
+    )
+
+    invocation = compiled.default_group.invocations[0]
+    assert (
+        invocation.runtime_argument_plan.context_parameter_name
+        == ProcessingContext.require_parameter_name()
+    )
+    assert (
+        invocation.runtime_argument_plan.invocation_options_parameter_name
+        == RuntimeInvocationOptions.require_parameter_name()
+    )
+    assert invocation.runtime_argument_plan.adapter_parameter_name == "runtime"
+
+
+def test_runtime_argument_plan_only_injects_options_when_invocation_declares_value():
+    def accepts_options(image, *, runtime_invocation_options=None):
+        return image
+
+    compiled = compile_function_pattern(accepts_options, {}, {})
+
+    invocation = compiled.default_group.invocations[0]
+    assert invocation.contract.runtime_invocation_options_parameter == (
+        RuntimeInvocationOptions.require_parameter_name()
+    )
+    assert invocation.runtime_argument_plan.invocation_options_parameter_name is None
+
+
+def test_runtime_adapter_declaration_requires_signature_parameter():
+    with pytest.raises(TypeError, match="runtime"):
+        @runtime_adapter("runtime", lambda _request: object())
+        def missing_runtime_parameter(image):
+            return image
+
+
+def test_callable_contract_reads_runtime_adapter_from_metadata_namespace():
+    @runtime_adapter("runtime", lambda _request: object())
+    def source(image, *, runtime):
+        return image
+
+    def copied(image, *, runtime):
+        return image
+
+    adapter_spec = vars(source)[FunctionContractAttribute.runtime_adapter]
+    vars(copied)[FunctionContractAttribute.runtime_adapter] = adapter_spec
+
+    contract = CallableContract.from_callable(copied)
+
+    assert contract.runtime_adapter is adapter_spec
+    assert contract.runtime_adapter is not None
+    assert contract.runtime_adapter.require_parameter_name() == "runtime"
 
 
 def test_inject_kwargs_preserves_typed_invocation_options():

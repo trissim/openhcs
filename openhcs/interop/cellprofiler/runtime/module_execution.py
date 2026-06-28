@@ -566,7 +566,7 @@ class CellProfilerRuntimeCallable:
         mark_enableable(self)
         runtime_plan = self.executor.runtime_plan(raw_func)
         runtime_adapter(
-            "cellprofiler_runtime",
+            CellProfilerRuntimeAdapter.require_parameter_name(),
             cellprofiler_runtime_adapter_factory,
             manages_artifact_inputs=True,
             prepare=prepare_cellprofiler_runtime_adapter,
@@ -574,8 +574,8 @@ class CellProfilerRuntimeCallable:
         set_parameter_exclusions(
             self,
             (
-                "cellprofiler_runtime",
-                "runtime_invocation_options",
+                CellProfilerRuntimeAdapter.require_parameter_name(),
+                RuntimeInvocationOptions.require_parameter_name(),
                 *runtime_plan.bound_parameter_names,
             ),
         )
@@ -647,12 +647,12 @@ def _cellprofiler_runtime_callable_signature(raw_func: CellProfilerFunction):
     """Return raw callable signature plus OpenHCS runtime injection parameters."""
     runtime_parameters = (
         Parameter(
-            "cellprofiler_runtime",
+            CellProfilerRuntimeAdapter.require_parameter_name(),
             Parameter.KEYWORD_ONLY,
             annotation=CellProfilerRuntimeAdapter,
         ),
         Parameter(
-            "runtime_invocation_options",
+            RuntimeInvocationOptions.require_parameter_name(),
             Parameter.KEYWORD_ONLY,
             annotation=CellProfilerRuntimeValue | None,
             default=None,
@@ -745,7 +745,8 @@ class CellProfilerFunctionReferenceRehydrator(FunctionReferenceRehydrator):
             contract.module_artifact_contract is not None
             and callable(contract.raw_processing_function)
             and contract.runtime_adapter is not None
-            and contract.runtime_adapter.parameter_name == "cellprofiler_runtime"
+            and contract.runtime_adapter.require_parameter_name()
+            == CellProfilerRuntimeAdapter.require_parameter_name()
         )
 
     def rehydrate(

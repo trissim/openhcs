@@ -63,6 +63,11 @@ class RuntimeParameterBinding:
 class RuntimeInvocationOptions(ABC):
     """Typed, non-callable settings that control one runtime invocation."""
 
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        """Return the callable ABI name for invocation-options injection."""
+        return "runtime_invocation_options"
+
 
 class RuntimeOutputBundle(ABC):
     """Nominal multi-output bundle lowered by runtime execution contracts."""

@@ -16,6 +16,7 @@ class FunctionContractAttribute:
     )
     raw_processing_function: ClassVar[str] = "__openhcs_raw_processing_function__"
     processing_prepare: ClassVar[str] = "__openhcs_prepare__"
+    runtime_adapter: ClassVar[str] = "__runtime_adapter__"
     runtime_image_execution_mode: ClassVar[str] = (
         "__openhcs_runtime_image_execution_mode__"
     )
@@ -23,6 +24,10 @@ class FunctionContractAttribute:
     special_inputs: ClassVar[str] = "__special_inputs__"
     special_outputs: ClassVar[str] = "__special_outputs__"
     runtime_bound_parameters: ClassVar[str] = "__openhcs_runtime_bound_parameters__"
+    runtime_context_parameter: ClassVar[str] = "__openhcs_runtime_context_parameter__"
+    runtime_invocation_options_parameter: ClassVar[str] = (
+        "__openhcs_runtime_invocation_options_parameter__"
+    )
     required_variable_components: ClassVar[str] = (
         "__openhcs_required_variable_components__"
     )
