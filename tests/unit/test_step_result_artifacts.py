@@ -30,6 +30,7 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingRuntimeContext,
 )
+from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.source_metadata import (
     SOURCE_PLANE_COUNT_FIELD,
     SOURCE_PLANE_INDEX_FIELD,
@@ -139,6 +140,7 @@ def _execute_function_core(request: CoreExecutionRequest):
             input_memory_type=MEMORY_TYPE_NUMPY,
             device_id=0,
             source_binding_plan=CompiledSourceBindingPlan.empty(),
+            source_load_plan=SourceLoadPlan(),
             variable_components=(),
             group_by_value=None,
             group_projects_runtime_plane=False,
