@@ -12,9 +12,11 @@ import logging
 import inspect
 import requests
 from enum import Enum
-from typing import Optional, Dict, Any, Tuple, List, Set, Type, Callable
+from typing import Optional, Dict, Any, Tuple, List, Type, Callable
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
+
+from python_introspect import parameter_exclusions
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +45,6 @@ CORE_FUNCTIONS = {
     "ashlar_compute_tile_positions_cpu",
 }
 
-# Parameters to skip in signature display (internal/wrapper params)
-INTERNAL_PARAMS = {"enabled", "slice_by_slice", "dtype_config"}
-
 # Maximum functions to list per library (to keep prompt size manageable)
 MAX_FUNCTIONS_PER_LIBRARY = 30
 
@@ -53,27 +52,29 @@ MAX_FUNCTIONS_PER_LIBRARY = 30
 class LLMParameterDocumentationPolicy:
     """Rules for exposing callable parameters to LLM prompt documentation."""
 
-    def __init__(self, internal_params: Set[str]):
-        self._internal_params = frozenset(internal_params)
-        self._variadic_parameter_kinds = frozenset(
-            {
-                inspect.Parameter.VAR_POSITIONAL,
-                inspect.Parameter.VAR_KEYWORD,
-            }
-        )
+    variadic_parameter_kinds = frozenset(
+        {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }
+    )
+
+    def hidden_parameter_names(self, func: Callable) -> frozenset[str]:
+        return parameter_exclusions(func)
 
     def should_document(
         self,
         name: str,
         parameter: inspect.Parameter,
         *,
+        hidden_parameter_names: frozenset[str],
         skip_keyword_bag: bool = False,
     ) -> bool:
-        if name in self._internal_params:
+        if name in hidden_parameter_names:
             return False
         if skip_keyword_bag and name == "kwargs":
             return False
-        return parameter.kind not in self._variadic_parameter_kinds
+        return parameter.kind not in self.variadic_parameter_kinds
 
 
 class LLMParameterFormatter:
@@ -85,10 +86,14 @@ class LLMParameterFormatter:
     def signature(self, func: Callable, name: str) -> str:
         try:
             sig = inspect.signature(func)
+            hidden_parameter_names = self._policy.hidden_parameter_names(func)
             params = []
             for pname, param in sig.parameters.items():
                 if not self._policy.should_document(
-                    pname, param, skip_keyword_bag=True
+                    pname,
+                    param,
+                    hidden_parameter_names=hidden_parameter_names,
+                    skip_keyword_bag=True,
                 ):
                     continue
 
@@ -104,10 +109,15 @@ class LLMParameterFormatter:
     def parameter_block(self, func: Callable) -> str:
         try:
             sig = inspect.signature(func)
+            hidden_parameter_names = self._policy.hidden_parameter_names(func)
             lines = ["Parameters:"]
 
             for pname, param in sig.parameters.items():
-                if not self._policy.should_document(pname, param):
+                if not self._policy.should_document(
+                    pname,
+                    param,
+                    hidden_parameter_names=hidden_parameter_names,
+                ):
                     continue
 
                 lines.append(
@@ -544,7 +554,7 @@ FunctionStep(
 # Rules
 1. ONLY use functions listed in "Available Functions" section
 2. Import each function from its specified module path
-3. Use enums (not strings) for detection_method, dtype_conversion, etc.
+3. Use enums (not strings) for enum-typed function parameters shown by the registry.
 4. Start with imports, then `pipeline_steps = []`, then FunctionStep definitions
 5. Output ONLY Python code, no explanations"""
 
@@ -575,9 +585,9 @@ Generate COMPLETE, RUNNABLE Python code. Include ALL imports at the top.
 6. Do NOT manually convert between array backends inside the function
    (no cp.asnumpy(), no cle.pull(), etc.). OpenHCS handles cross-step
    conversions.
-7. The decorator adds keyword-only args like slice_by_slice and
-   dtype_conversion. dtype_conversion defaults to preserving the input dtype
-   for the main output.
+7. Do not invent infrastructure keyword arguments. Use registry-displayed
+   signatures for user parameters; OpenHCS supplies hidden runtime controls
+   from registered contracts and resolved configs.
 
 {imports_section}
 
@@ -877,7 +887,7 @@ class LLMPipelineService:
         self.base_url = self._derive_base_url(api_endpoint)
         self.model = model  # May be None, resolved on first test_connection
         self._parameter_formatter = LLMParameterFormatter(
-            LLMParameterDocumentationPolicy(INTERNAL_PARAMS)
+            LLMParameterDocumentationPolicy()
         )
         self._prompt_builder = LLMPromptBuilder(self._parameter_formatter)
         # Build system prompts for different contexts
