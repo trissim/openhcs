@@ -97,9 +97,6 @@ _RUNTIME_EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
 _RUNTIME_EXECUTION_CACHE_HELPER_KEYS = frozenset({"legacy_source_tree"})
 
 
-_MICROSCOPES_BY_NORMALIZED_LITERAL = {
-    member.value.lower(): member for member in Microscope
-}
 OPENHCS_AXIS_FILTER_PARAM = "openhcs_axis_filter"
 OPENHCS_MAX_AXIS_COUNT_PARAM = "openhcs_max_axis_count"
 OPENHCS_NUM_WORKERS_PARAM = "openhcs_num_workers"
@@ -496,8 +493,8 @@ class OpenHCSAdapter(ToolAdapter):
         from openhcs.core.config import (
             AnalysisConsolidationConfig,
             GlobalPipelineConfig,
-            LazyPathPlanningConfig,
             MaterializationBackend,
+            PathPlanningConfig,
             PipelineConfig,
             VFSConfig,
         )
@@ -581,11 +578,10 @@ class OpenHCSAdapter(ToolAdapter):
             generated_pipeline_module_name = prepared.module_name
             execution_plate_path = ingestion.execution_plate_path
             source_workspace_path = ingestion.source_workspace_path
-            execution_microscope = (
-                Microscope.AUTO
-                if source_workspace_path is not None
-                else self._configured_microscope(request.microscope_type)
+            pipeline_config = (
+                prepared.generated_pipeline.pipeline_config or PipelineConfig()
             )
+            execution_microscope = pipeline_config.microscope or Microscope.AUTO
 
             execution_config = OpenHCSBenchmarkExecutionConfig.from_pipeline_params(
                 request.pipeline_params
@@ -599,20 +595,18 @@ class OpenHCSAdapter(ToolAdapter):
                 analysis_consolidation_config=AnalysisConsolidationConfig(
                     enabled=False,
                 ),
-                materialize_runtime_artifacts=request.materialize_runtime_artifacts,
-                materialization_results_path=output_plate_root / "results",
-                microscope=execution_microscope,
-            )
-            ensure_global_config_context(GlobalPipelineConfig, global_config)
-            pipeline_config = PipelineConfig(
-                path_planning_config=LazyPathPlanningConfig(
+                path_planning_config=PathPlanningConfig(
                     global_output_folder=request.output_dir,
                     output_dir_suffix=output_suffix,
                 ),
                 vfs_config=VFSConfig(
                     materialization_backend=MaterializationBackend.DISK,
                 ),
+                materialize_runtime_artifacts=request.materialize_runtime_artifacts,
+                materialization_results_path=output_plate_root / "results",
+                microscope=execution_microscope,
             )
+            ensure_global_config_context(GlobalPipelineConfig, global_config)
             orchestrator = PipelineOrchestrator(
                 execution_plate_path,
                 pipeline_config=pipeline_config,
@@ -1198,21 +1192,6 @@ class OpenHCSAdapter(ToolAdapter):
             except RuntimeError:
                 continue
         return results
-
-    def _configured_microscope(
-        self,
-        microscope_type: str | None,
-    ) -> Microscope:
-        """Normalize benchmark microscope literals onto the OpenHCS enum SSOT."""
-        if microscope_type is None:
-            return Microscope.AUTO
-        normalized = microscope_type.strip().lower()
-        try:
-            return _MICROSCOPES_BY_NORMALIZED_LITERAL[normalized]
-        except KeyError as exc:
-            raise ToolExecutionError(
-                f"Unsupported OpenHCS microscope_type {microscope_type!r}."
-            ) from exc
 
     def _resolve_cppipe_source(
         self,

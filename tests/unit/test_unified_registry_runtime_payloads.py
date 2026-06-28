@@ -10,12 +10,17 @@ from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     ImagePayloadMetadata,
     RuntimeArrayPayload,
+    RuntimeImagePayloadContext,
+    SourceImageProvenancePlanes,
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
-    RuntimeImagePayloadContext,
     with_image_payload_data,
-SourceImageProvenancePlanes)
+)
+from openhcs.processing.backends.processors.numpy_processor import (
+    create_projection,
+    gaussian_blur,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import (
     LibraryRegistryBase,
     ProcessingContract,
@@ -57,7 +62,12 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     payload = ImageMetadataPayload(
         data=stack,
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("z0.tif", "z1.tif")), source_plane_dtypes=("float32", "float32"),
+            source_image_provenance_planes=(
+                SourceImageProvenancePlanes.from_components(
+                    paths=("z0.tif", "z1.tif")
+                )
+            ),
+            source_plane_dtypes=("float32", "float32"),
         ),
     )
     seen_paths: list[str | None] = []
@@ -79,7 +89,59 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     assert isinstance(result, ImageMetadataPayload)
     np.testing.assert_array_equal(image_payload_data(result), stack + 1)
     assert seen_paths == ["z0.tif", "z1.tif"]
-    assert image_payload_metadata(result).source_image_provenance_planes.paths == ("z0.tif", "z1.tif")
+    assert image_payload_metadata(result).source_image_provenance_planes.paths == (
+        "z0.tif",
+        "z1.tif",
+    )
+
+
+def test_pure_3d_contract_preserves_metadata_for_plain_numpy_processor() -> None:
+    stack = np.arange(60, dtype=np.float32).reshape(2, 5, 6)
+    payload = ImageMetadataPayload(
+        data=stack,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=(
+                SourceImageProvenancePlanes.from_components(
+                    paths=("z0.tif", "z1.tif")
+                )
+            ),
+            source_plane_dtypes=("float32", "float32"),
+        ),
+    )
+
+    result = ProcessingContract.PURE_3D.execute(
+        MinimalRegistry("minimal"),
+        gaussian_blur,
+        payload,
+        sigma=0.5,
+    )
+
+    assert isinstance(result, ImageMetadataPayload)
+    assert image_payload_data(result).shape == stack.shape
+    assert image_payload_data(result).dtype == stack.dtype
+    assert image_payload_metadata(result).source_image_provenance_planes.paths == (
+        "z0.tif",
+        "z1.tif",
+    )
+
+
+def test_pure_3d_projection_accepts_metadata_payload_array_methods() -> None:
+    stack = np.arange(60, dtype=np.float32).reshape(2, 5, 6)
+    payload = ImageMetadataPayload(
+        data=stack,
+        metadata=ImagePayloadMetadata(source_dtype="float32"),
+    )
+
+    result = ProcessingContract.PURE_3D.execute(
+        MinimalRegistry("minimal"),
+        create_projection,
+        payload,
+    )
+
+    assert isinstance(result, ImageMetadataPayload)
+    assert image_payload_data(result).shape == (1, 5, 6)
+    np.testing.assert_array_equal(image_payload_data(result), stack.max(axis=0)[None])
+    assert image_payload_metadata(result).source_dtype == "float32"
 
 
 def test_with_image_payload_data_projects_channel_last_mask_to_grayscale() -> None:
@@ -88,7 +150,8 @@ def test_with_image_payload_data_projects_channel_last_mask_to_grayscale() -> No
     source = RuntimeImagePayloadContext(
         np.ones((4, 5, 2), dtype=np.float32),
         mask=mask,
-    metadata = ImagePayloadMetadata()).payload()
+        metadata=ImagePayloadMetadata(),
+    ).payload()
 
     result = with_image_payload_data(
         source,
@@ -106,7 +169,8 @@ def test_runtime_callable_invocation_can_call_raw_signature_filtered_callable() 
     source = RuntimeImagePayloadContext(
         np.ones((4, 5), dtype=np.float32),
         mask=np.ones((4, 5), dtype=bool),
-    metadata = ImagePayloadMetadata()).payload()
+        metadata=ImagePayloadMetadata(),
+    ).payload()
 
     def raw(image: RuntimeArrayPayload, *, scale: int) -> RuntimeArrayPayload:
         assert isinstance(image, RuntimeArrayPayload)

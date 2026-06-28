@@ -17,6 +17,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.components.validation import convert_enum_by_value
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.source_metadata import (
     SourceMetadataIdentityItems,
@@ -29,8 +30,6 @@ from openhcs.core.source_metadata import (
 from openhcs.core.source_path_identity import source_path_identity_key
 
 
-SourceBindingGroupMap = Mapping[str | None, tuple["NamedSourceBinding", ...]]
-SourceBindingGroupDict = dict[str | None, tuple["NamedSourceBinding", ...]]
 SourceMetadataIdentity = tuple[tuple[str, SourceMetadataIdentityItems], ...]
 SOURCE_ALIAS_PART_SEPARATOR = "__"
 SourceBindingValue = TypeVar("SourceBindingValue")
@@ -478,55 +477,6 @@ class NamedSourceBinding(SourceAssignmentBase):
         )
 
 
-@dataclass(frozen=True, slots=True)
-class GroupedSourceBindings:
-    """Bindings scoped to one function-pattern or execution group."""
-
-    group_key: str | None = None
-    bindings: tuple[NamedSourceBinding, ...] = ()
-
-    def __post_init__(self) -> None:
-        normalized_group_key = None if self.group_key is None else str(self.group_key)
-        object.__setattr__(self, "group_key", normalized_group_key)
-        object.__setattr__(self, "bindings", tuple(self.bindings))
-        seen_aliases: set[str] = set()
-        for binding in self.bindings:
-            if not isinstance(binding, NamedSourceBinding):
-                raise TypeError(
-                    "GroupedSourceBindings.bindings must contain NamedSourceBinding values, "
-                    f"got {type(binding).__name__}."
-                )
-            if binding.alias in seen_aliases:
-                raise ValueError(
-                    f"GroupedSourceBindings for group {normalized_group_key!r} contains "
-                    f"duplicate alias {binding.alias!r}."
-                )
-            seen_aliases.add(binding.alias)
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingGroups:
-    """Validated grouped binding declarations keyed by source group."""
-
-    groups: tuple[GroupedSourceBindings, ...]
-
-    def normalized(self) -> tuple[GroupedSourceBindings, ...]:
-        groups = normalize_source_binding_values(
-            "StepSourceBindingsConfig.groups",
-            self.groups,
-            GroupedSourceBindings,
-        )
-        seen_group_keys: set[str | None] = set()
-        for group in groups:
-            if group.group_key in seen_group_keys:
-                raise ValueError(
-                    "StepSourceBindingsConfig contains duplicate group key "
-                    f"{group.group_key!r}."
-                )
-            seen_group_keys.add(group.group_key)
-        return groups
-
-
 @dataclass(frozen=True, kw_only=True)
 class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
     """Shared typed source-binding plan fields across editable and compiled views."""
@@ -536,39 +486,75 @@ class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
 
     registry_key: ClassVar[str | None] = None
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
+    """Regex/metadata extraction rules that add semantic fields for matching sources."""
+
     match_plan: SourceBindingMatchPlan | None = None
+    """Optional matching strategy for pairing declared bindings with available sources."""
 
     @classmethod
     def registered_plan_types(cls) -> tuple[type["_SourceBindingPlanBase"], ...]:
         """Return registered concrete source-binding plan views."""
 
-        return tuple(cls.__registry__.values())
+        registered_types: list[type["_SourceBindingPlanBase"]] = []
+        for plan_type in cls.__registry__.values():
+            concrete_type = cls.concrete_registered_plan_type(plan_type)
+            if concrete_type not in registered_types:
+                registered_types.append(concrete_type)
+        return tuple(registered_types)
+
+    @classmethod
+    def concrete_registered_plan_type(
+        cls,
+        plan_type: type["_SourceBindingPlanBase"],
+    ) -> type["_SourceBindingPlanBase"]:
+        """Return the concrete declaration type for a registered plan view."""
+
+        for base_type in plan_type.__mro__[1:]:
+            if base_type is _SourceBindingPlanBase:
+                break
+            if (
+                issubclass(base_type, _SourceBindingPlanBase)
+                and base_type.registry_key == plan_type.registry_key
+            ):
+                return base_type
+        return plan_type
 
     def _normalize_common_fields(self) -> None:
-        object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
-        for rule in self.metadata_rules:
-            if not isinstance(rule, MetadataExtractionRule):
-                raise TypeError(
-                    f"{type(self).__name__}.metadata_rules must contain "
-                    "MetadataExtractionRule values, got "
-                    f"{type(rule).__name__}."
-                )
-        if self.match_plan is not None and not isinstance(
-            self.match_plan,
+        metadata_rules = object.__getattribute__(self, "metadata_rules")
+        if metadata_rules is not None:
+            metadata_rules = tuple(metadata_rules)
+            for rule in metadata_rules:
+                if not isinstance(rule, MetadataExtractionRule):
+                    raise TypeError(
+                        f"{type(self).__name__}.metadata_rules must contain "
+                        "MetadataExtractionRule values, got "
+                        f"{type(rule).__name__}."
+                    )
+        object.__setattr__(self, "metadata_rules", metadata_rules)
+
+        match_plan = object.__getattribute__(self, "match_plan")
+        if match_plan is not None and not isinstance(
+            match_plan,
             SourceBindingMatchPlan,
         ):
             raise TypeError(
                 f"{type(self).__name__}.match_plan must be SourceBindingMatchPlan "
-                f"or None, got {type(self.match_plan).__name__}."
+                f"or None, got {type(match_plan).__name__}."
             )
 
     @property
     def is_empty(self) -> bool:
         return (
             not self.has_primary_content
-            and not self.metadata_rules
+            and not self.metadata_rule_declarations
             and self.match_plan is None
         )
+
+    @property
+    def metadata_rule_declarations(self) -> tuple[MetadataExtractionRule, ...]:
+        """Metadata rules explicitly declared on this plan."""
+
+        return tuple(self.metadata_rules or ())
 
     @property
     @abstractmethod
@@ -577,23 +563,99 @@ class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
 
 
 @dataclass(frozen=True)
-class StepSourceBindingsConfig(_SourceBindingPlanBase):
-    """First-class FunctionStep field for named semantic input bindings."""
+class SourceBindingsConfig(_SourceBindingPlanBase):
+    """Pipeline/plate source-binding defaults and init-time discovery config."""
 
-    registry_key: ClassVar[str] = "editable"
-    groups: tuple[GroupedSourceBindings, ...] = ()
+    registry_key: ClassVar[str] = "source"
+    source_filters: tuple[SourceFilterClause, ...] = ()
+    """Filters limiting the source universe before named bindings are resolved."""
+
+    bindings: tuple[NamedSourceBinding, ...] = ()
+    """Named semantic source bindings available to pipelines and inherited by steps."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "groups",
-            SourceBindingGroups(self.groups).normalized(),
-        )
+        source_filters = object.__getattribute__(self, "source_filters")
+        if source_filters is not None:
+            source_filters = normalize_source_binding_values(
+                "SourceBindingsConfig.source_filters",
+                source_filters,
+                SourceFilterClause,
+            )
+        bindings = object.__getattribute__(self, "bindings")
+        if bindings is not None:
+            bindings = normalize_source_binding_values(
+                f"{type(self).__name__}.bindings",
+                bindings,
+                NamedSourceBinding,
+            )
+        seen_aliases: set[str] = set()
+        if bindings is not None:
+            for binding in bindings:
+                if binding.alias in seen_aliases:
+                    raise ValueError(
+                        f"{type(self).__name__}.bindings contains duplicate alias "
+                        f"{binding.alias!r}."
+                    )
+                seen_aliases.add(binding.alias)
+        object.__setattr__(self, "source_filters", source_filters)
+        object.__setattr__(self, "bindings", bindings)
         self._normalize_common_fields()
 
     @property
     def has_primary_content(self) -> bool:
-        return bool(self.groups)
+        return bool(self.binding_declarations)
+
+    @property
+    def source_filter_declarations(self) -> tuple[SourceFilterClause, ...]:
+        """Source filters explicitly declared on this plan."""
+
+        return tuple(self.source_filters or ())
+
+    @property
+    def binding_declarations(self) -> tuple[NamedSourceBinding, ...]:
+        """Named bindings explicitly declared on this plan."""
+
+        return tuple(self.bindings or ())
+
+    @property
+    def image_stack_bindings(self) -> tuple[NamedSourceBinding, ...]:
+        """Bindings that anchor execution to the main source-image stack."""
+
+        return tuple(
+            binding
+            for binding in self.binding_declarations
+            if binding.participates_in_execution_anchoring
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return (
+            not self.has_primary_content
+            and not self.source_filter_declarations
+            and not self.metadata_rule_declarations
+            and self.match_plan is None
+        )
+
+
+@dataclass(frozen=True)
+class StepSourceBindingsConfig(SourceBindingsConfig):
+    """Step-local source-binding config inheriting pipeline/plate defaults."""
+
+    registry_key: ClassVar[str] = "editable"
+    metadata_rules: tuple[MetadataExtractionRule, ...] | None = None
+    """Step-local extraction rules; None inherits pipeline/plate metadata rules."""
+
+    match_plan: SourceBindingMatchPlan | None = None
+    """Step-local matching strategy; None inherits the pipeline/plate match plan."""
+
+    source_filters: tuple[SourceFilterClause, ...] | None = None
+    """Step-local source filters; None inherits pipeline/plate source filters."""
+
+    bindings: tuple[NamedSourceBinding, ...] | None = None
+    """Step-local named source bindings; None inherits pipeline/plate bindings."""
+
+    enabled: bool = False
+    """Whether this step uses source-binding resolution instead of the prior step image stack."""
 
     def requires_step_input_component_stack(
         self,
@@ -602,8 +664,7 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
         """Whether any binding needs component-resolved stack input."""
         return any(
             binding.requires_step_input_component_stack(components)
-            for group in self.groups
-            for binding in group.bindings
+            for binding in self.binding_declarations
         )
 
     @property
@@ -617,23 +678,21 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
 
         return any(
             binding.origin is SourceBindingOrigin.PIPELINE_START
-            for group in self.groups
-            for binding in group.bindings
+            for binding in self.binding_declarations
         )
 
     @property
     def requires_pipeline_start_image_set_stack(self) -> bool:
         """Whether pipeline-start bindings form multi-alias image sets."""
 
-        return any(
+        return (
             sum(
                 1
-                for binding in group.bindings
+                for binding in self.binding_declarations
                 if binding.origin is SourceBindingOrigin.PIPELINE_START
                 and binding.participates_in_execution_anchoring
             )
             > 1
-            for group in self.groups
         )
 
     @property
@@ -643,8 +702,88 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
         return any(
             binding.origin is SourceBindingOrigin.STEP_INPUT
             and binding.requires_selector_resolution
-            for group in self.groups
-            for binding in group.bindings
+            for binding in self.binding_declarations
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingCompilationRequest:
+    """Compiler request for freezing step source bindings into runtime plans."""
+
+    config: StepSourceBindingsConfig
+    required_aliases: tuple[str, ...] = ()
+
+    @classmethod
+    def from_module_contracts(
+        cls,
+        *,
+        config: StepSourceBindingsConfig,
+        contracts: tuple[ModuleArtifactContract, ...],
+    ) -> "SourceBindingCompilationRequest":
+        bindings = config.binding_declarations
+        if config.enabled or not bindings:
+            return cls(config=config)
+        binding_kinds = tuple(
+            dict.fromkeys(binding.artifact_kind for binding in bindings)
+        )
+        required_aliases: list[str] = []
+        for contract in contracts:
+            if not isinstance(contract, ModuleArtifactContract):
+                raise TypeError(
+                    "SourceBindingCompilationRequest.contracts must contain "
+                    "ModuleArtifactContract values, got "
+                    f"{type(contract).__name__}."
+                )
+            for artifact_kind in binding_kinds:
+                required_aliases.extend(contract.external_input_names(artifact_kind))
+        return cls(config=config, required_aliases=tuple(required_aliases))
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.config, StepSourceBindingsConfig):
+            raise TypeError(
+                "SourceBindingCompilationRequest.config must be "
+                f"StepSourceBindingsConfig, got {type(self.config).__name__}."
+            )
+        if self.config.enabled is None:
+            raise ValueError(
+                "SourceBindingCompilationRequest requires ObjectState-resolved "
+                "StepSourceBindingsConfig.enabled; unresolved lazy enabled=None "
+                "cannot be compiled."
+            )
+        object.__setattr__(
+            self,
+            "required_aliases",
+            tuple(
+                dict.fromkeys(
+                    alias
+                    for alias in (
+                        str(required_alias).strip()
+                        for required_alias in self.required_aliases
+                    )
+                    if alias
+                )
+            ),
+        )
+
+    def compile(self) -> "CompiledSourceBindingPlan":
+        """Return the immutable runtime source-binding plan for this step."""
+        if self.config.enabled:
+            return CompiledSourceBindingPlan.from_enabled_config(self.config)
+        if self.config.is_empty or not self.required_aliases:
+            return CompiledSourceBindingPlan.empty()
+
+        required_aliases = frozenset(self.required_aliases)
+        bindings = tuple(
+            binding
+            for binding in self.config.binding_declarations
+            if binding.alias in required_aliases
+        )
+        if not bindings:
+            return CompiledSourceBindingPlan.empty()
+        return CompiledSourceBindingPlan(
+            bindings=bindings,
+            metadata_rules=self.config.metadata_rule_declarations,
+            match_plan=self.config.match_plan,
         )
 
 
@@ -653,9 +792,7 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
     """Immutable compile-time source binding plan for one step."""
 
     registry_key: ClassVar[str] = "compiled"
-    bindings_by_group: SourceBindingGroupMap = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    bindings: tuple[NamedSourceBinding, ...] = ()
 
     @classmethod
     def empty(cls) -> "CompiledSourceBindingPlan":
@@ -666,73 +803,63 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
         cls,
         config: StepSourceBindingsConfig,
     ) -> "CompiledSourceBindingPlan":
+        return SourceBindingCompilationRequest(config=config).compile()
+
+    @classmethod
+    def from_enabled_config(
+        cls,
+        config: StepSourceBindingsConfig,
+    ) -> "CompiledSourceBindingPlan":
         if config.is_empty:
             return cls.empty()
         return cls(
-            bindings_by_group=MappingProxyType(
-                {group.group_key: group.bindings for group in config.groups}
-            ),
-            metadata_rules=config.metadata_rules,
+            bindings=config.binding_declarations,
+            metadata_rules=config.metadata_rule_declarations,
             match_plan=config.match_plan,
         )
 
     def __post_init__(self) -> None:
-        normalized: SourceBindingGroupDict = {}
-        for group_key, bindings in self.bindings_by_group.items():
-            normalized_group_key = None if group_key is None else str(group_key)
-            normalized_bindings = tuple(bindings)
-            for binding in normalized_bindings:
-                if not isinstance(binding, NamedSourceBinding):
-                    raise TypeError(
-                        "CompiledSourceBindingPlan bindings must contain NamedSourceBinding values, "
-                        f"got {type(binding).__name__}."
-                    )
-            if normalized_group_key in normalized:
+        bindings = normalize_source_binding_values(
+            "CompiledSourceBindingPlan.bindings",
+            self.bindings,
+            NamedSourceBinding,
+        )
+        seen_aliases: set[str] = set()
+        for binding in bindings:
+            if binding.alias in seen_aliases:
                 raise ValueError(
-                    f"CompiledSourceBindingPlan contains duplicate group key "
-                    f"{normalized_group_key!r}."
+                    "CompiledSourceBindingPlan.bindings contains duplicate alias "
+                    f"{binding.alias!r}."
                 )
-            normalized[normalized_group_key] = normalized_bindings
-        object.__setattr__(self, "bindings_by_group", MappingProxyType(normalized))
+            seen_aliases.add(binding.alias)
+        object.__setattr__(self, "bindings", bindings)
         self._normalize_common_fields()
 
     @property
     def has_primary_content(self) -> bool:
-        return bool(self.bindings_by_group)
+        return bool(self.bindings)
 
     def __reduce__(
         self,
     ) -> tuple[
         object,
         tuple[
-            SourceBindingGroupDict,
+            tuple[NamedSourceBinding, ...],
             tuple[MetadataExtractionRule, ...],
             SourceBindingMatchPlan | None,
         ],
     ]:
-        """Serialize mappingproxy-backed state as a plain dict for multiprocessing."""
+        """Serialize source-binding plan state for multiprocessing."""
         return (
             self.__class__._from_pickled_state,
-            (dict(self.bindings_by_group), self.metadata_rules, self.match_plan),
+            (self.bindings, self.metadata_rules, self.match_plan),
         )
-
-    def bindings_for_group(
-        self,
-        group_key: str | None,
-    ) -> tuple[NamedSourceBinding, ...]:
-        normalized_group_key = None if group_key is None else str(group_key)
-        if normalized_group_key in self.bindings_by_group:
-            return self.bindings_by_group[normalized_group_key]
-        if None in self.bindings_by_group:
-            return self.bindings_by_group[None]
-        return ()
 
     def binding_for_alias(
         self,
         alias: str,
-        group_key: str | None,
     ) -> NamedSourceBinding | None:
-        for binding in self.bindings_for_group(group_key):
+        for binding in self.bindings:
             if binding.alias == alias:
                 return binding
         return None
@@ -744,21 +871,50 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
         return any(
             binding.origin is SourceBindingOrigin.STEP_INPUT
             and binding.requires_selector_resolution
-            for bindings in self.bindings_by_group.values()
-            for binding in bindings
+            for binding in self.bindings
         )
 
     @classmethod
     def _from_pickled_state(
         cls,
-        bindings_by_group: SourceBindingGroupDict,
+        bindings: tuple[NamedSourceBinding, ...],
         metadata_rules: tuple[MetadataExtractionRule, ...],
         match_plan: SourceBindingMatchPlan | None,
     ) -> "CompiledSourceBindingPlan":
         return cls(
-            bindings_by_group=bindings_by_group,
+            bindings=bindings,
             metadata_rules=metadata_rules,
             match_plan=match_plan,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledSourceUniversePlan:
+    """Frozen source-file universe decisions for one compiled step."""
+
+    requires_step_input_selector_resolution: bool = False
+    requires_full_pipeline_source_universe: bool = False
+    uses_pipeline_start_binding_origin: bool = False
+
+    @classmethod
+    def empty(cls) -> "CompiledSourceUniversePlan":
+        return cls()
+
+    @classmethod
+    def from_source_binding_plan(
+        cls,
+        source_binding_plan: CompiledSourceBindingPlan,
+    ) -> "CompiledSourceUniversePlan":
+        uses_pipeline_start_binding_origin = any(
+            binding.origin is SourceBindingOrigin.PIPELINE_START
+            for binding in source_binding_plan.bindings
+        )
+        return cls(
+            requires_step_input_selector_resolution=(
+                source_binding_plan.requires_step_input_selector_resolution
+            ),
+            requires_full_pipeline_source_universe=False,
+            uses_pipeline_start_binding_origin=uses_pipeline_start_binding_origin,
         )
 
 

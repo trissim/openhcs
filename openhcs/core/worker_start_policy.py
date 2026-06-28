@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.config import GlobalPipelineConfig, MultiprocessingStartMethod
+from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.constants import VALID_GPU_MEMORY_TYPES
 
@@ -100,7 +100,7 @@ class WorkerStartDecision:
 
 
 def resolve_worker_start_context(
-    global_config: GlobalPipelineConfig,
+    requested: MultiprocessingStartMethod,
     *,
     server_mode: bool,
     gpu_enabled: bool,
@@ -114,7 +114,6 @@ def resolve_worker_start_context(
     for every multiprocessing primitive created for the same execution.
     """
 
-    requested = global_config.multiprocessing_start_method
     platform = platform or WorkerStartPlatform.current()
 
     if platform.is_windows:

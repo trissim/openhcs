@@ -22,7 +22,7 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
 
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifacts import ArtifactKind, ArtifactMaterializationPayload
 from openhcs.core.image_shapes import ColorImageShapeRole, image_spatial_shape_yx
 from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
@@ -46,7 +46,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
-    SourceIdentityStackAxisProjection,
+    VariableComponentAxisProjection,
     SourceImageIdentity,
     SourceImageProvenance,
     SourcePlaneIndexedMetadata,
@@ -1159,7 +1159,16 @@ class ViewerStreamBackendCallKwargs(BackendCallKwargs):
         self,
         output: Output,
     ) -> dict:
-        component_metadata = output.source_component_metadata
+        source_identity = output.source_identity
+        if source_identity is not None:
+            source_identity = source_identity.with_parsed_path_components(
+                self.values.stream_request.source.identity.microscope_handler.parser
+            )
+        component_metadata = (
+            source_identity.component_metadata
+            if source_identity is not None
+            else None
+        )
         if component_metadata is None:
             if not output.viewer_stream_requires_source_metadata:
                 return self.values.to_kwargs()
@@ -1167,9 +1176,12 @@ class ViewerStreamBackendCallKwargs(BackendCallKwargs):
                 "Viewer stream materialization requires output metadata with "
                 "source_component_metadata."
             )
-        projected_metadata = StreamViewerComponentMetadataProjector(
-            self.values.stream_request.display_semantics.component_order
-        ).project(component_metadata)
+        projected_metadata = (
+            StreamViewerComponentMetadataProjector(
+                self.values.stream_request.display_semantics.component_order
+            )
+            .project_required(index=0, metadata=component_metadata)
+        )
         return self.values.with_single_item_component_metadata(
             projected_metadata,
         ).to_kwargs()
@@ -1237,7 +1249,7 @@ class MaterializationContext:
     extra_inputs: dict
     context: "ProcessingContext | None" = None
     artifact_source_identity: SourceImageIdentity | None = None
-    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
+    variable_components: Sequence[VariableComponents] = field(default_factory=tuple)
     write_mode: WriteMode = WriteMode.OVERWRITE
 
     def paths(self, options: FileOutputOptions) -> PathHelper:
@@ -2100,7 +2112,7 @@ class TiffStackSlicePayloadAuthority:
 
 
 @singledispatch
-def materialization_emits_source_identity_stack_planes(
+def materialization_emits_variable_component_planes(
     options: FileOutputOptions,
     data: MaterializationValue,
 ) -> bool:
@@ -2109,8 +2121,8 @@ def materialization_emits_source_identity_stack_planes(
     return False
 
 
-@materialization_emits_source_identity_stack_planes.register(TiffStackOptions)
-def tiff_stack_emits_source_identity_stack_planes(
+@materialization_emits_variable_component_planes.register(TiffStackOptions)
+def tiff_stack_emits_variable_component_planes(
     options: TiffStackOptions,
     data: MaterializationValue,
 ) -> bool:
@@ -2124,6 +2136,20 @@ def tiff_stack_emits_source_identity_stack_planes(
         options,
     )
     return len(slices) > 1 and len(metadata_input.items) == len(slices)
+
+@materialization_emits_variable_component_planes.register(ROIOptions)
+def roi_emits_variable_component_planes(
+    options: ROIOptions,
+    data: MaterializationValue,
+) -> bool:
+    materialization_input = MaterializationInput.from_runtime_slice_projected_value(
+        data,
+        options,
+    )
+    return (
+        len(materialization_input.items) > 1
+        and materialization_input.source_plane_projection.requires_source_identity
+    )
 
 
 @singledispatch
@@ -2141,7 +2167,7 @@ def tiff_stack_uses_filename_source_identity(
     options: TiffStackOptions,
     data: MaterializationValue,
 ) -> bool:
-    return not materialization_emits_source_identity_stack_planes(options, data)
+    return not materialization_emits_variable_component_planes(options, data)
 
 
 @writer_for(
@@ -2172,7 +2198,7 @@ def _write_tiff_stack(
     slice_metadata = _TIFF_STACK_SLICE_METADATA.metadata_for_slices(
         metadata_input,
         len(slices),
-        source_identity_stack_axes=ctx.source_identity_stack_axes,
+        variable_components=ctx.variable_components,
         artifact_source_identity=ctx.artifact_source_identity,
     )
 
@@ -2244,9 +2270,9 @@ class TiffArrayAuthority:
 
 @dataclass(frozen=True, slots=True)
 class RuntimePlaneStackAxisMetadataProjection:
-    """Project scalar source identity across declared runtime stack axes."""
+    """Project scalar source identity across variable component runtime planes."""
 
-    source_identity_stack_axes: frozenset[str]
+    variable_components: Sequence[VariableComponents]
     artifact_source_identity: SourceImageIdentity | None = None
 
     def metadata_for_item(
@@ -2255,7 +2281,7 @@ class RuntimePlaneStackAxisMetadataProjection:
     ) -> ImagePayloadMetadata:
         metadata = self.metadata_with_artifact_source_identity(item.metadata)
         runtime_plane = item.runtime_plane
-        if runtime_plane is None or not self.source_identity_stack_axes:
+        if runtime_plane is None or not self.variable_components:
             return metadata
         if runtime_plane.carries_source_plane_identity:
             return metadata
@@ -2263,7 +2289,7 @@ class RuntimePlaneStackAxisMetadataProjection:
         axes = self.ordered_axes()
         if len(axes) != len(runtime_plane.plane_indices):
             raise ValueError(
-                "TIFF stack output declares source identity stack axes "
+                "TIFF stack output uses variable components "
                 f"{axes!r}, but runtime plane metadata has "
                 f"{len(runtime_plane.plane_indices)} coordinate(s)."
             )
@@ -2271,13 +2297,13 @@ class RuntimePlaneStackAxisMetadataProjection:
         component_metadata = metadata.source_component_metadata
         if component_metadata is None:
             raise ValueError(
-                "TIFF stack output declares source identity stack axes "
+                "TIFF stack output uses variable components "
                 f"{axes!r}, but slice metadata has no scalar "
                 "source_component_metadata."
             )
 
-        projected_metadata = SourceIdentityStackAxisProjection(
-            self.source_identity_stack_axes
+        projected_metadata = VariableComponentAxisProjection(
+            frozenset(axes)
         ).project_component_metadata(
             component_metadata,
             runtime_plane.plane_indices,
@@ -2304,22 +2330,26 @@ class RuntimePlaneStackAxisMetadataProjection:
         )
 
     def ordered_axes(self) -> tuple[str, ...]:
-        return SourceIdentityStackAxisProjection(
-            self.source_identity_stack_axes
+        return VariableComponentAxisProjection(
+            frozenset(
+                component.value
+                for component in self.variable_components
+                if component.value is not None
+            )
         ).ordered_axes()
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimePlaneStackAxesProjectionSelection:
-    """Select declared stack axes that still need runtime-plane projection."""
+    """Select variable component axes that still need runtime-plane projection."""
 
-    source_identity_stack_axes: frozenset[str]
+    variable_components: Sequence[VariableComponents]
     items: tuple[MaterializationInputItem, ...]
     artifact_source_identity: SourceImageIdentity | None = None
 
     def axes(self) -> frozenset[str]:
         ordered_axes = RuntimePlaneStackAxisMetadataProjection(
-            self.source_identity_stack_axes
+            self.variable_components
         ).ordered_axes()
         if not ordered_axes:
             return frozenset()
@@ -2336,11 +2366,11 @@ class RuntimePlaneStackAxesProjectionSelection:
         if runtime_rank != len(ordered_axes):
             raise ValueError(
                 "TIFF stack output cannot map runtime plane metadata with "
-                f"rank {runtime_rank} onto declared source identity stack axes "
+                f"rank {runtime_rank} onto variable component axes "
                 f"{ordered_axes!r}; slice metadata does not already vary across "
-                "any declared axis."
+                "any variable component axis."
             )
-        return self.source_identity_stack_axes
+        return frozenset(ordered_axes)
 
     def runtime_plane_rank(self) -> int:
         ranks = tuple(
@@ -2390,7 +2420,7 @@ class RuntimePlaneStackAxesProjectionSelection:
         return states[0]
 
     def axis_varies(self, axis: str) -> bool:
-        component = SourceIdentityStackAxisProjection.component_for_axis(axis)
+        component = VariableComponentAxisProjection.component_for_axis(axis)
         values = tuple(
             source_component_metadata_value(metadata, component)
             for metadata in self.item_component_metadata()
@@ -2454,7 +2484,7 @@ class TiffStackSliceMetadataRequest:
 
     materialization_input: MaterializationInput
     slice_count: int
-    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
+    variable_components: Sequence[VariableComponents] = field(default_factory=tuple)
     artifact_source_identity: SourceImageIdentity | None = None
 
     @property
@@ -2516,13 +2546,17 @@ class PreslicedTiffStackSliceMetadataPolicy(UnknownTiffStackSliceMetadataPolicy)
         self,
         request: TiffStackSliceMetadataRequest,
     ) -> tuple[ImagePayloadMetadata, ...]:
-        source_identity_stack_axes = RuntimePlaneStackAxesProjectionSelection(
-            request.source_identity_stack_axes,
+        selected_variable_components = RuntimePlaneStackAxesProjectionSelection(
+            request.variable_components,
             request.materialization_input.items,
             request.artifact_source_identity,
         ).axes()
         projector = RuntimePlaneStackAxisMetadataProjection(
-            source_identity_stack_axes,
+            tuple(
+                component
+                for component in request.variable_components
+                if component.value in selected_variable_components
+            ),
             request.artifact_source_identity,
         )
         return tuple(
@@ -2583,13 +2617,13 @@ class TiffStackSliceMetadataAuthority:
         materialization_input: MaterializationInput,
         slice_count: int,
         *,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
+        variable_components: Sequence[VariableComponents] = (),
         artifact_source_identity: SourceImageIdentity | None = None,
     ) -> tuple[ImagePayloadMetadata, ...]:
         request = TiffStackSliceMetadataRequest(
             materialization_input=materialization_input,
             slice_count=slice_count,
-            source_identity_stack_axes=source_identity_stack_axes,
+            variable_components=tuple(variable_components),
             artifact_source_identity=artifact_source_identity,
         )
         policy = TiffStackSliceMetadataPolicy.for_context(
@@ -2666,12 +2700,35 @@ class MaterializationSpec(ArtifactMaterializationPayload):
             ].candidate_paths(output_options, base_path)
         )
 
-    def emits_source_identity_stack_planes(self, data: MaterializationValue) -> bool:
-        """Return whether any writer emits source-stack identity as output planes."""
+    def emits_variable_component_planes(self, data: MaterializationValue) -> bool:
+        """Return whether any writer emits variable-component planes."""
         return any(
-            materialization_emits_source_identity_stack_planes(output_options, data)
+            materialization_emits_variable_component_planes(output_options, data)
             for output_options in self.outputs
         )
+
+    def emitted_source_identities(
+        self,
+        data: MaterializationValue,
+    ) -> tuple[SourceImageIdentity, ...]:
+        """Return source identities for writers that emit projected planes."""
+        for output_options in self.outputs:
+            if not materialization_emits_variable_component_planes(
+                output_options,
+                data,
+            ):
+                continue
+            materialization_input = (
+                MaterializationInput.from_runtime_slice_projected_value(
+                    data,
+                    output_options,
+                )
+            )
+            return tuple(
+                item.metadata.source_provenance.scalar_source_identity
+                for item in materialization_input.items
+            )
+        return ()
 
     def uses_filename_source_identity(self, data: MaterializationValue) -> bool:
         """Return whether any writer routes stream identity by materialized filename."""
@@ -2753,7 +2810,7 @@ def materialize(
     extra_inputs: dict | None = None,
     *,
     artifact_source_identity: SourceImageIdentity | None = None,
-    source_identity_stack_axes: frozenset[str] = frozenset(),
+    variable_components: Sequence[VariableComponents] = (),
     write_mode: WriteMode = WriteMode.OVERWRITE,
 ) -> str:
     """Materialize data to one or more backends."""
@@ -2774,7 +2831,7 @@ def materialize(
         extra_inputs=effective_extra_inputs,
         context=context,
         artifact_source_identity=artifact_source_identity,
-        source_identity_stack_axes=source_identity_stack_axes,
+        variable_components=tuple(variable_components),
         write_mode=write_mode,
     )
 

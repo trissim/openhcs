@@ -27,7 +27,6 @@ from openhcs.core.pipeline_image_schema import (
 )
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.core.source_bindings import (
-    GroupedSourceBindings,
     MetadataExtractionRule,
     NamedSourceBinding,
     SourceBindingMatchDimension,
@@ -124,7 +123,6 @@ class SourceBindingView:
     required: bool
     selector: SourceSelectorView
     declaration_scope: str
-    group_key: str | None = None
     payload_type: str | None = None
 
     @classmethod
@@ -133,7 +131,6 @@ class SourceBindingView:
         binding: NamedSourceBinding,
         *,
         declaration_scope: str,
-        group_key: str | None,
     ) -> "SourceBindingView":
         return cls(
             alias=binding.alias,
@@ -142,7 +139,6 @@ class SourceBindingView:
             required=binding.required,
             selector=SourceSelectorView.from_selector(binding.selector),
             declaration_scope=declaration_scope,
-            group_key=group_key,
         )
 
     @classmethod
@@ -172,28 +168,6 @@ class SourceBindingView:
         raise TypeError(
             "Unsupported source assignment view type "
             f"{type(assignment).__name__}."
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingGroupView:
-    """UI-neutral group of step-local source bindings."""
-
-    group_key: str | None
-    bindings: tuple[SourceBindingView, ...]
-
-    @classmethod
-    def from_group(cls, group: GroupedSourceBindings) -> "SourceBindingGroupView":
-        return cls(
-            group_key=group.group_key,
-            bindings=tuple(
-                SourceBindingView.from_named_binding(
-                    binding,
-                    declaration_scope="step",
-                    group_key=group.group_key,
-                )
-                for binding in group.bindings
-            ),
         )
 
 
@@ -329,7 +303,7 @@ class SourceBindingsViewModel:
 
     pipeline_sources: PipelineSourceUniverseView
     pipeline_bindings: tuple[SourceBindingView, ...]
-    step_binding_groups: tuple[SourceBindingGroupView, ...]
+    step_bindings: tuple[SourceBindingView, ...]
     metadata_rules: tuple[MetadataRuleView, ...]
     match_plans: tuple[SourceBindingMatchPlanView, ...]
     grouping: GroupingView | None
@@ -344,9 +318,7 @@ class SourceBindingsViewModel:
         return cls(
             pipeline_sources=PipelineSourceUniverseView.from_schema(schema),
             pipeline_bindings=cls.pipeline_binding_views(schema),
-            step_binding_groups=tuple(
-                SourceBindingGroupView.from_group(group) for group in bindings.groups
-            ),
+            step_bindings=cls.step_binding_views(bindings),
             metadata_rules=cls.metadata_rule_views(schema, bindings),
             match_plans=cls.match_plan_views(schema, bindings),
             grouping=(
@@ -382,6 +354,18 @@ class SourceBindingsViewModel:
         )
 
     @staticmethod
+    def step_binding_views(
+        bindings: StepSourceBindingsConfig,
+    ) -> tuple[SourceBindingView, ...]:
+        return tuple(
+            SourceBindingView.from_named_binding(
+                binding,
+                declaration_scope="step",
+            )
+            for binding in bindings.binding_declarations
+        )
+
+    @staticmethod
     def metadata_rule_views(
         schema: PipelineImageSchema,
         bindings: StepSourceBindingsConfig,
@@ -391,7 +375,7 @@ class SourceBindingsViewModel:
             for rule in schema.metadata_rules
         ) + tuple(
             MetadataRuleView.from_rule(rule, declaration_scope="step")
-            for rule in bindings.metadata_rules
+            for rule in bindings.metadata_rule_declarations
         )
 
     @staticmethod
@@ -418,11 +402,7 @@ class SourceBindingsViewModel:
 
     @property
     def all_bindings(self) -> tuple[SourceBindingView, ...]:
-        return self.pipeline_bindings + tuple(
-            binding
-            for group in self.step_binding_groups
-            for binding in group.bindings
-        )
+        return self.pipeline_bindings + self.step_bindings
 
     @property
     def artifact_kinds(self) -> tuple[str, ...]:
@@ -610,7 +590,7 @@ class SourceInventory:
         source_root: str | Path | None = None,
     ) -> "SourceInventory":
         root = None if source_root is None else Path(source_root)
-        metadata_rules = schema.metadata_rules + bindings.metadata_rules
+        metadata_rules = schema.metadata_rules + bindings.metadata_rule_declarations
         candidates = tuple(
             SourceInventory.candidate_from_path(
                 path,
@@ -734,7 +714,6 @@ class SourceBindingPreviewRow:
 
     alias: str
     declaration_scope: str
-    group_key: str | None
     matched_source_count: int
     sample_paths: tuple[str, ...]
 
@@ -749,7 +728,6 @@ class SourceBindingPreviewRow:
         return cls(
             alias=binding.alias,
             declaration_scope=binding.declaration_scope,
-            group_key=binding.group_key,
             matched_source_count=len(candidates),
             sample_paths=tuple(
                 candidate.relative_path for candidate in candidates[:sample_limit]

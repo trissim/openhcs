@@ -22,6 +22,8 @@ from openhcs.core.invocation_artifacts import (
 )
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from pyqt_reactive.pattern_metadata import PatternScopeToken
+from python_introspect import Enableable
 
 
 DEFAULT_GROUP_KEY = "default"
@@ -40,20 +42,12 @@ RuntimeComponentValue: TypeAlias = JsonScalar
 class RuntimeCallableKwargPolicy:
     """Classify FunctionStep item kwargs before runtime invocation."""
 
-    enabled_name: str = "enabled"
-    invocation_control_names: frozenset[str] = frozenset(
-        {
-            "enabled",
-            "dtype_config",
-            "__pyqt_reactive_scope_token__",
-        }
-    )
+    enableable_type: type[Enableable] = Enableable
+    scope_token_type: type[PatternScopeToken] = PatternScopeToken
 
     def item_is_disabled(self, kwargs: RuntimeKwargMap) -> bool:
         """Return whether an item should be removed from the function pattern."""
-        if self.enabled_name not in kwargs:
-            return False
-        return kwargs[self.enabled_name] is False
+        return self.enableable_type.disabled_in(kwargs)
 
     def invocation_items(
         self,
@@ -63,7 +57,13 @@ class RuntimeCallableKwargPolicy:
         return tuple(
             (key, value)
             for key, value in kwargs.items()
-            if key not in self.invocation_control_names
+            if not self._is_control_key(key)
+        )
+
+    def _is_control_key(self, key: object) -> bool:
+        return (
+            self.enableable_type.is_parameter_key(key)
+            or self.scope_token_type.is_key(key)
         )
 
 

@@ -1907,6 +1907,15 @@ class DebugExecutionPolicy(ABC, metaclass=AutoRegisterMeta):
             DebugExecutionConfig.from_payload(payload)
         )
 
+    @classmethod
+    def from_config(
+        cls,
+        config: DebugExecutionConfig | None,
+    ) -> "DebugExecutionPolicy":
+        if config is None:
+            return NoOpDebugExecutionPolicy()
+        return ProgressDebugExecutionPolicy(config)
+
     @abstractmethod
     def install_context_sink(
         self,
@@ -1950,6 +1959,19 @@ class DebugExecutionPolicy(ABC, metaclass=AutoRegisterMeta):
         available_axis_ids: tuple[str, ...],
     ) -> list[str]:
         """Return the axis IDs this execution policy should compile/run."""
+
+    def compile_worker_count(self, configured_num_workers: int) -> int:
+        """Return the worker count the compiler should use for assignments."""
+
+        return configured_num_workers
+
+    def compiled_runtime_environment(
+        self,
+        runtime_environment: "CompiledRuntimeEnvironmentPlan",
+    ) -> "CompiledRuntimeEnvironmentPlan":
+        """Return the runtime environment plan selected by this policy."""
+
+        return runtime_environment
 
 
 class DebugExecutionContext(ABC):
@@ -2105,6 +2127,22 @@ class ProgressDebugExecutionPolicy(DebugExecutionPolicy):
         if self.config.selected_source_group is not None:
             return [self.config.selected_source_group]
         return [] if not available_axis_ids else [available_axis_ids[0]]
+
+    def compile_worker_count(self, configured_num_workers: int) -> int:
+        if self.config.replay_mode is DebugReplayMode.PERSISTENT_PAUSED_WORKER:
+            return 1
+        return configured_num_workers
+
+    def compiled_runtime_environment(
+        self,
+        runtime_environment: "CompiledRuntimeEnvironmentPlan",
+    ) -> "CompiledRuntimeEnvironmentPlan":
+        if self.config.replay_mode is not DebugReplayMode.PERSISTENT_PAUSED_WORKER:
+            return runtime_environment
+        return runtime_environment.with_execution_shape(
+            use_threading=True,
+            configured_num_workers=1,
+        )
 
     def snapshot_store_for_context(
         self,

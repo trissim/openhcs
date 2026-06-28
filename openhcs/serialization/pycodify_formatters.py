@@ -3,15 +3,12 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, fields
 
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.steps.function_step import FunctionStep
-from pyqt_reactive.pattern_metadata import SCOPE_TOKEN_KEY
+from pyqt_reactive.pattern_metadata import PatternScopeToken
 from openhcs.config_framework.lazy_factory import LazyDataclass
 
 from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
-
-
-SLICE_BY_SLICE_ATTR = "slice_by_slice"
-PROCESSING_CONTRACT_ATTR = "__processing_contract__"
 
 
 def _module_contract_imports(contract) -> set[tuple[str, str]]:
@@ -37,25 +34,10 @@ def _module_contract_imports(contract) -> set[tuple[str, str]]:
 
 
 @dataclass(frozen=True)
-class CallableDecoratorMetadata:
-    attribute_names: frozenset[str]
-
-    @classmethod
-    def from_callable(cls, func) -> "CallableDecoratorMetadata":
-        if inspect.isfunction(func):
-            return cls(attribute_names=frozenset(func.__dict__))
-        return cls(attribute_names=frozenset())
-
-    def contains(self, attribute_name: str) -> bool:
-        return attribute_name in self.attribute_names
-
-
-@dataclass(frozen=True)
 class CallableExportIdentity:
     module: str | None
     name: str | None
-    has_slice_by_slice: bool
-    has_processing_contract: bool
+    has_openhcs_contract: bool
 
     @classmethod
     def from_callable(cls, func) -> "CallableExportIdentity":
@@ -63,17 +45,15 @@ class CallableExportIdentity:
             return cls(
                 module=None,
                 name=None,
-                has_slice_by_slice=False,
-                has_processing_contract=False,
+                has_openhcs_contract=False,
             )
 
-        metadata = CallableDecoratorMetadata.from_callable(func)
+        contract = CallableContract.from_callable(func)
 
         return cls(
             module=func.__module__,
             name=func.__name__,
-            has_slice_by_slice=metadata.contains(SLICE_BY_SLICE_ATTR),
-            has_processing_contract=metadata.contains(PROCESSING_CONTRACT_ATTR),
+            has_openhcs_contract=contract.processing_contract is not None,
         )
 
     @property
@@ -85,9 +65,7 @@ class CallableExportIdentity:
         if self.module is None:
             return False
         return (
-            self.has_slice_by_slice
-            and not self.has_processing_contract
-            and not self.module.startswith("openhcs.")
+            not self.has_openhcs_contract and not self.module.startswith("openhcs.")
         )
 
     @property
@@ -234,7 +212,7 @@ def _strip_internal_pattern_metadata(args):
     """Remove UI-only metadata keys from function-pattern kwargs."""
     if not isinstance(args, dict):
         return {}
-    return {k: v for k, v in args.items() if k != SCOPE_TOKEN_KEY}
+    return PatternScopeToken.without_token(args)
 
 
 class FunctionPatternTupleFormatter(SourceFormatter):
@@ -294,6 +272,20 @@ class FunctionPatternListFormatter(SourceFormatter):
         return SourceFragment(code, imports)
 
 
+class OpenHCSDtypeConversionFormatter(SourceFormatter):
+    priority = 95
+
+    def can_format(self, value) -> bool:
+        from openhcs.core.memory import DtypeConversion
+
+        return isinstance(value, DtypeConversion)
+
+    def format(self, value, context: FormatContext) -> SourceFragment:
+        import_pair = ("openhcs.core.memory", "DtypeConversion")
+        enum_name = NameMappingLookup.resolve(context, import_pair, "DtypeConversion")
+        return SourceFragment(f"{enum_name}.{value.name}", frozenset([import_pair]))
+
+
 @dataclass(frozen=True)
 class LazyDataclassFieldEmissionState:
     explicit_field_names: frozenset[str]
@@ -314,6 +306,38 @@ class LazyDataclassFieldEmissionState:
     @property
     def requires_serialization(self) -> bool:
         return bool(self.explicit_field_names) or self.has_concrete_field_values
+
+    @staticmethod
+    def value_requires_clean_serialization(value) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, LazyDataclass):
+            return LazyDataclassFieldEmissionState.from_instance(
+                value
+            ).requires_serialization
+        return True
+
+    @staticmethod
+    def raw_field_values_match(left: LazyDataclass, right: LazyDataclass) -> bool:
+        if type(left) is not type(right):
+            return False
+        left_values = left.__dict__
+        right_values = right.__dict__
+        for field in fields(left):
+            left_value = left_values[field.name]
+            right_value = right_values[field.name]
+            if isinstance(left_value, LazyDataclass) and isinstance(
+                right_value,
+                LazyDataclass,
+            ):
+                if not LazyDataclassFieldEmissionState.raw_field_values_match(
+                    left_value,
+                    right_value,
+                ):
+                    return False
+            elif left_value != right_value:
+                return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -348,12 +372,13 @@ class LazyDataclassSerializationPlan:
 
         for field in fields(value):
             current_value = raw_values[field.name]
-            if (
-                context.clean_mode
-                and field.name not in explicit_field_names
-                and current_value is None
-            ):
+            if context.clean_mode and current_value is None:
                 continue
+            if context.clean_mode and field.name not in explicit_field_names:
+                if not LazyDataclassFieldEmissionState.value_requires_clean_serialization(
+                    current_value
+                ):
+                    continue
 
             serialized_fields.append(
                 LazyDataclassSerializedField(
@@ -386,9 +411,20 @@ class FunctionStepCleanModeFieldPolicy:
             return True
 
         if isinstance(current_value, LazyDataclass):
-            return LazyDataclassFieldEmissionState.from_instance(
+            emission_state = LazyDataclassFieldEmissionState.from_instance(
                 current_value
-            ).requires_serialization
+            )
+            if not emission_state.requires_serialization:
+                return False
+            if (
+                isinstance(default_value, LazyDataclass)
+                and LazyDataclassFieldEmissionState.raw_field_values_match(
+                    current_value,
+                    default_value,
+                )
+            ):
+                return False
+            return True
 
         return current_value != default_value
 

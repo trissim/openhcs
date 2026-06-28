@@ -12,7 +12,6 @@ from openhcs.core.pipeline_image_schema import (
 )
 from openhcs.core.source_bindings import (
     ComponentSelector,
-    GroupedSourceBindings,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -123,20 +122,15 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
         grouping=GroupingPlan(metadata_fields=("Well",)),
     )
     bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                group_key="segment",
-                bindings=(
-                    NamedSourceBinding(
-                        alias="LocalDNA",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "DNA",
-                                ),
-                            ),
+        bindings=(
+            NamedSourceBinding(
+                alias="LocalDNA",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "DNA",
                         ),
                     ),
                 ),
@@ -166,8 +160,7 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
     ]
     assert view.pipeline_bindings[0].selector.components == (("channel", "1"),)
     assert view.pipeline_bindings[1].payload_type == "Objects"
-    assert view.step_binding_groups[0].group_key == "segment"
-    assert view.step_binding_groups[0].bindings[0].selector.filters[0].value == "DNA"
+    assert view.step_bindings[0].selector.filters[0].value == "DNA"
     assert view.metadata_rules[0].extracted_fields == ("well", "site")
     assert view.metadata_rules[1].declaration_scope == "step"
     assert view.match_plans[0].method == "order"
@@ -203,6 +196,17 @@ def test_source_bindings_view_model_exposes_metadata_match_dimensions():
         ("DNA", "well"),
         ("GFP", "well"),
     )
+
+
+def test_source_bindings_view_model_accepts_unresolved_lazy_step_bindings():
+    view = SourceBindingsViewModel.from_schema_and_bindings(
+        schema=PipelineImageSchema.empty(),
+        bindings=StepSourceBindingsConfig(),
+    )
+
+    assert view.step_bindings == ()
+    assert view.metadata_rules == ()
+    assert view.match_plans == ()
 
 
 def test_source_bindings_preview_reuses_typed_filter_and_order_matching(tmp_path):

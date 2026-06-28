@@ -37,13 +37,13 @@ class MaterializationFlagPlanner:
             context: ProcessingContext with step_plans
             pipeline_definition: List of pipeline steps
             plate_path: Path to plate data
-            pipeline_config: Merged GlobalPipelineConfig (from context.global_config)
-                           NOT the raw PipelineConfig - ensures proper global config inheritance
+            pipeline_config: Merged GlobalPipelineConfig, not the raw
+                           PipelineConfig. This ensures proper inheritance.
         """
 
         # === SETUP ===
-        # CRITICAL: pipeline_config is now the merged config (GlobalPipelineConfig) from context.global_config
-        # This ensures proper inheritance from global config without needing field-specific code
+        # CRITICAL: pipeline_config is the merged GlobalPipelineConfig.
+        # This ensures inheritance without field-specific resolution here.
         vfs_config = pipeline_config.vfs_config
         step_plans = context.step_plans
 
@@ -144,4 +144,3 @@ class MaterializationFlagPlanner:
         # Use the microscope handler's get_primary_backend method
         # This handles both OpenHCS (metadata-based) and other microscopes (compatibility-based)
         return context.microscope_handler.get_primary_backend(context.input_dir, context.filemanager)
-

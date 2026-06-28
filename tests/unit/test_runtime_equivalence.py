@@ -6741,6 +6741,77 @@ def test_runtime_measurement_snapshot_suppresses_label_geometry_mean_when_locati
     } == {("number", "4.0", 1)}
 
 
+def test_runtime_measurement_snapshot_merges_compact_and_label_location_aliases(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells")
+    center_x_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+        MeasurementStatistic.VALUE.value,
+    )
+    table_subject = MeasurementSubject(MeasurementScope.OBJECT, "Cells")
+    label_table = MeasurementTable(
+        name="IdentifyObjectsInGrid",
+        rows=(
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 1,
+                "center_x": 10.0,
+            },
+        ),
+        subject=table_subject,
+    )
+    compact_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 1,
+                MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD: (
+                    MeasurementObjectRowIdentity.ROW_ORDINAL.value
+                ),
+                "center_x": 20.0,
+            },
+        ),
+        subject=table_subject,
+    )
+    for table in (label_table, compact_table):
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            path=f"/memory/{table.name}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
+        candidate_root,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset({center_x_key}),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.measurement_fact_counts[center_x_key].items()
+    } == {("number", "10.0", 1)}
+
+
 def test_runtime_measurement_snapshot_projects_identity_only_object_exports(
     tmp_path: Path,
 ) -> None:
@@ -7603,6 +7674,80 @@ def test_runtime_reference_artifact_equivalence_derives_label_center_means(
                     [0, 2, 2],
                 ],
                 dtype=np.uint16,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_uses_payload_3d_label_locations_over_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Mean_Cells_Location_Center_Z\n"
+        "1,1.0\n",
+        encoding="utf-8",
+    )
+    rows = (
+        {
+            "ImageNumber": 1,
+            "ObjectNumber": 1,
+            "Location_Center_Z": 0.0,
+        },
+        {
+            "ImageNumber": 1,
+            "ObjectNumber": 2,
+            "Location_Center_Z": 0.0,
+        },
+    )
+    labels = np.zeros((3, 3, 3), dtype=np.uint16)
+    labels[0, 0, 0] = 1
+    labels[2, 2, 2] = 2
+    table = MeasurementTable(name="Cells", rows=rows)
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path="/memory/Cells.csv",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=labels,
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PAYLOAD),
             ),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
@@ -8495,6 +8640,70 @@ def test_runtime_reference_artifact_equivalence_merges_object_location_alias_row
     )
 
     assert report.is_equivalent
+
+
+def test_runtime_output_snapshot_merges_contextual_object_location_alias_columns(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "native"
+    output_root.mkdir()
+    (output_root / "BF_cells_on_grid.csv").write_text(
+        "Image,BF_cells_on_grid,BF_cells_on_grid,BF_cells_on_grid,SSC\n"
+        "ImageNumber,ObjectNumber,AreaShape_Center_X,Location_Center_X,Location_Center_X\n"
+        "1,1,7.5,8.5,20.5\n",
+        encoding="utf-8",
+    )
+
+    policy = cellprofiler_runtime_equivalence_policy()
+    snapshot = RuntimeMeasurementSnapshot.from_output_snapshot(
+        RuntimeOutputSnapshot.from_output_root(output_root),
+        policy=policy,
+    )
+    bf_center_x_key = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "BF_cells_on_grid"),
+        "center_x",
+    )
+    ssc_center_x_key = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "SSC"),
+        "center_x",
+    )
+
+    assert snapshot.measurement_fact_counts[bf_center_x_key] == Counter(
+        {runtime_cell_signature("7.5", policy): 1}
+    )
+    assert snapshot.measurement_fact_counts[ssc_center_x_key] == Counter(
+        {runtime_cell_signature("20.5", policy): 1}
+    )
+
+
+def test_runtime_output_snapshot_uses_contextual_object_number_for_split_location_rows(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "native"
+    output_root.mkdir()
+    (output_root / "BF_cells_on_grid.csv").write_text(
+        "Image,BF_cells_on_grid,BF_cells_on_grid,BF_cells_on_grid,"
+        "BF_cells_on_grid,SSC,SSC\n"
+        "ImageNumber,ObjectNumber,AreaShape_Center_X,Location_Center_X,"
+        "Number_Object_Number,Location_Center_X,Number_Object_Number\n"
+        "1,1,7.5,nan,1,nan,1\n"
+        "1,2,nan,7.5,1,nan,1\n",
+        encoding="utf-8",
+    )
+
+    policy = cellprofiler_runtime_equivalence_policy()
+    snapshot = RuntimeMeasurementSnapshot.from_output_snapshot(
+        RuntimeOutputSnapshot.from_output_root(output_root),
+        policy=policy,
+    )
+    bf_center_x_key = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "BF_cells_on_grid"),
+        "center_x",
+    )
+
+    assert snapshot.measurement_fact_counts[bf_center_x_key] == Counter(
+        {runtime_cell_signature("7.5", policy): 1}
+    )
 
 
 def test_runtime_reference_artifact_equivalence_uses_nominal_image_identity_dominance_for_aggregates(

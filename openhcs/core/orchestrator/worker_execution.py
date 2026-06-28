@@ -11,9 +11,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping
 
-from openhcs.config_framework.global_config import get_current_global_config
-from openhcs.core.compiled_execution import CompiledExecutionBundle
-from openhcs.core.config import GlobalPipelineConfig, MultiprocessingStartMethod
+from openhcs.core.compiled_execution import (
+    CompiledExecutionBundle,
+    CompiledGpuRegistryPlan,
+    CompiledRuntimeEnvironmentPlan,
+)
+from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.orchestrator.execution_result import (
@@ -251,27 +254,27 @@ class WorkerExecutorFactory:
     def create(
         self,
         *,
-        effective_config: GlobalPipelineConfig,
+        runtime_environment: CompiledRuntimeEnvironmentPlan,
         actual_max_workers: int,
     ) -> WorkerExecutorResources:
         multiprocessing_context = multiprocessing.get_context(
-            effective_config.multiprocessing_start_method.value
+            runtime_environment.multiprocessing_start_method.value
         )
         if actual_max_workers == 1:
             return InlineWorkerExecutorResources(
                 multiprocessing_context=multiprocessing_context,
-                use_multiprocessing=not effective_config.use_threading,
+                use_multiprocessing=not runtime_environment.use_threading,
             )
         if (
-            not effective_config.use_threading
-            and effective_config.multiprocessing_start_method
+            not runtime_environment.use_threading
+            and runtime_environment.multiprocessing_start_method
             is MultiprocessingStartMethod.FORK
         ):
             return ForkInheritedWorkerExecutorResources(
                 multiprocessing_context=multiprocessing_context,
                 use_multiprocessing=True,
             )
-        if effective_config.use_threading:
+        if runtime_environment.use_threading:
             executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=actual_max_workers
             )
@@ -279,10 +282,11 @@ class WorkerExecutorFactory:
             executor = self._process_pool_executor(
                 multiprocessing_context,
                 actual_max_workers,
+                runtime_environment.gpu_registry,
             )
         return PooledWorkerExecutorResources(
             multiprocessing_context=multiprocessing_context,
-            use_multiprocessing=not effective_config.use_threading,
+            use_multiprocessing=not runtime_environment.use_threading,
             _executor=executor,
         )
 
@@ -290,17 +294,15 @@ class WorkerExecutorFactory:
         self,
         multiprocessing_context: Any,
         actual_max_workers: int,
+        gpu_registry_plan: CompiledGpuRegistryPlan,
     ) -> concurrent.futures.ProcessPoolExecutor:
-        global_config = get_current_global_config(GlobalPipelineConfig)
-        if global_config is None:
-            raise RuntimeError("Worker process executor requires GlobalPipelineConfig.")
         return concurrent.futures.ProcessPoolExecutor(
             max_workers=actual_max_workers,
             mp_context=multiprocessing_context,
             initializer=_configure_worker_with_gpu,
             initargs=(
                 self._log_file_base,
-                global_config.__dict__,
+                gpu_registry_plan,
                 self._progress_queue,
                 self._progress_context,
             ),
@@ -334,7 +336,7 @@ def _configure_worker_logging(log_file_base: str) -> None:
 
 def _configure_worker_with_gpu(
     log_file_base: str | None,
-    global_config_dict: dict,
+    gpu_registry_plan: CompiledGpuRegistryPlan,
     progress_queue: ProgressQueue | None = None,
     progress_context: ProgressExecutionContext | None = None,
 ) -> None:
@@ -367,10 +369,7 @@ def _configure_worker_with_gpu(
     cv2.setNumThreads(1)
 
     if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
-        from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
-
-        global_config = GlobalPipelineConfig(**global_config_dict)
-        setup_global_gpu_registry(global_config)
+        gpu_registry_plan.setup_global_registry()
 
     if progress_queue is not None and progress_context is not None:
         from openhcs.core.progress import set_progress_queue

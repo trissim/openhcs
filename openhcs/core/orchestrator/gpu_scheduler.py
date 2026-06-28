@@ -18,12 +18,9 @@ import logging
 import math
 import os
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-# DEFAULT_NUM_WORKERS removed
 from openhcs.core.lazy_gpu_imports import check_gpu_capability, check_installed_gpu_libraries
-import os
-# Import necessary config classes
 from openhcs.core.config import GlobalPipelineConfig
 
 
@@ -177,34 +174,20 @@ def is_gpu_registry_initialized() -> bool:
         return _registry_initialized
 
 
-def setup_global_gpu_registry(global_config: Optional[GlobalPipelineConfig] = None) -> None:
+def setup_global_gpu_registry(global_config: GlobalPipelineConfig) -> None:
     """
-    Initializes the global GPU registry using the provided or default global configuration.
+    Initializes the global GPU registry using the provided global configuration.
 
     This function should be called once at application startup. It ensures that the
     GPU registry is initialized with worker configurations derived from the
     GlobalPipelineConfig.
 
     Args:
-        global_config (Optional[GlobalPipelineConfig]): An optional pre-loaded global
-            configuration object. If None, the default global configuration will be used.
+        global_config: Pre-loaded global configuration object.
     """
-    # Use the existing thread-safe check from is_gpu_registry_initialized()
-    # but need to acquire lock to make the check-and-set atomic if we were to set _registry_initialized here.
-    # However, initialize_gpu_registry itself is internally locked and handles the _registry_initialized flag.
-    
     if is_gpu_registry_initialized():
         logger.info("GPU registry is already initialized. Skipping setup.")
         return
 
-    config_to_use: GlobalPipelineConfig
-    if global_config is None:
-        logger.info("No global_config provided to setup_global_gpu_registry, using default configuration.")
-        config_to_use = GlobalPipelineConfig()
-    else:
-        config_to_use = global_config
-    
-    # initialize_gpu_registry is already designed to be called once and is thread-safe.
-    # FAIL LOUD: No try-except - let exceptions bubble up to caller
-    initialize_gpu_registry(configured_num_workers=config_to_use.num_workers)
+    initialize_gpu_registry(configured_num_workers=global_config.num_workers)
     logger.info("Global GPU registry setup complete via setup_global_gpu_registry.")

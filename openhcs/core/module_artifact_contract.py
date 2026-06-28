@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -21,6 +22,7 @@ class ModuleArtifactContract:
     runtime_artifact_inputs: tuple[ArtifactSpec, ...] = ()
     outputs: tuple[ArtifactSpec, ...] = ()
     declared_outputs: tuple[ArtifactSpec, ...] = ()
+    required_variable_components: tuple[VariableComponents, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.module_name:
@@ -36,6 +38,16 @@ class ModuleArtifactContract:
             self,
             "declared_outputs",
             tuple(self.declared_outputs or self.outputs),
+        )
+        object.__setattr__(
+            self,
+            "required_variable_components",
+            tuple(
+                component
+                if isinstance(component, VariableComponents)
+                else VariableComponents(component)
+                for component in self.required_variable_components
+            ),
         )
         self._validate_specs("inputs", self.inputs)
         self._validate_specs("runtime_artifact_inputs", self.runtime_artifact_inputs)

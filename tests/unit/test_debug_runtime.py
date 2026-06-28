@@ -136,8 +136,9 @@ class DebugRuntimeFixture:
             input_memory_type=MEMORY_TYPE_NUMPY,
             device_id=0,
             source_binding_plan=CompiledSourceBindingPlan.empty(),
-            source_identity_stack_axes=frozenset(),
+            variable_components=(),
             compiled_function_pattern=SimpleNamespace(is_grouped=False),
+            group_projects_runtime_plane=False,
             group_by_value=None,
         )
 

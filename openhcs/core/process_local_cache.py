@@ -67,6 +67,10 @@ class ProcessLocalBoundedCache(Generic[CacheKey, CachedValue]):
             self.entries.popitem(last=False)
         return value
 
+    def clear(self) -> None:
+        """Discard all values retained by this process-local cache instance."""
+        self.entries.clear()
+
     @classmethod
     def process_cache(cls) -> "ProcessLocalBoundedCache[CacheKey, CachedValue]":
         cache = cls._process_cache
@@ -75,7 +79,33 @@ class ProcessLocalBoundedCache(Generic[CacheKey, CachedValue]):
             cls._process_cache = cache
         return cache
 
+    @classmethod
+    def clear_process_cache(cls) -> None:
+        """Discard the singleton process-local cache for this concrete cache type."""
+        cache = cls._process_cache
+        if cache is not None:
+            cache.clear()
+
     _process_cache: ClassVar["ProcessLocalBoundedCache[object, object] | None"] = None
+
+
+@dataclass(slots=True)
+class RegisteredProcessLocalBoundedCache(
+    ProcessLocalBoundedCache[CacheKey, CachedValue],
+    metaclass=AutoRegisterMeta,
+):
+    """Process-local cache whose concrete owners participate in runtime cleanup."""
+
+    __registry_key__ = "__name__"
+    __registry__: ClassVar[
+        dict[str, type["RegisteredProcessLocalBoundedCache[Any, Any]"]]
+    ] = {}
+
+    @classmethod
+    def clear_registered_process_caches(cls) -> None:
+        """Clear all imported concrete cache families registered by inheritance."""
+        for cache_type in tuple(cls.__registry__.values()):
+            cache_type.clear_process_cache()
 
 
 class IdentityBoundProcessCache(
@@ -89,6 +119,12 @@ class IdentityBoundProcessCache(
 
     max_entries = 4096
     registry_key: ClassVar[str | None] = None
+
+    @classmethod
+    def clear_registered_process_caches(cls) -> None:
+        """Clear all imported identity-bound cache families registered by inheritance."""
+        for cache_type in tuple(cls.__registry__.values()):
+            cache_type.clear_process_cache()
 
     def get_bound(
         self,
@@ -110,3 +146,9 @@ class IdentityBoundProcessCache(
         value: Any,
     ) -> Any:
         return self.store_value(id(owner), (owner, value))[1]
+
+
+def clear_registered_process_local_caches() -> None:
+    """Clear all imported process-local runtime cache families."""
+    RegisteredProcessLocalBoundedCache.clear_registered_process_caches()
+    IdentityBoundProcessCache.clear_registered_process_caches()

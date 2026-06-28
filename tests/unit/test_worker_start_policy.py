@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.config import GlobalPipelineConfig, MultiprocessingStartMethod
+from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.worker_start_policy import (
     WorkerStartPlatform,
@@ -12,13 +12,9 @@ from openhcs.core.worker_start_policy import (
 )
 
 
-def _config(start_method: MultiprocessingStartMethod) -> GlobalPipelineConfig:
-    return GlobalPipelineConfig(multiprocessing_start_method=start_method)
-
-
 def test_linux_cpu_server_honors_configured_fork() -> None:
     decision = resolve_worker_start_context(
-        _config(MultiprocessingStartMethod.FORK),
+        MultiprocessingStartMethod.FORK,
         server_mode=True,
         gpu_enabled=False,
         platform=WorkerStartPlatform("linux"),
@@ -30,7 +26,7 @@ def test_linux_cpu_server_honors_configured_fork() -> None:
 
 def test_linux_gpu_execution_downgrades_fork_to_spawn() -> None:
     decision = resolve_worker_start_context(
-        _config(MultiprocessingStartMethod.FORK),
+        MultiprocessingStartMethod.FORK,
         server_mode=True,
         gpu_enabled=True,
         platform=WorkerStartPlatform("linux"),
@@ -45,7 +41,7 @@ def test_linux_gpu_execution_downgrades_fork_to_spawn() -> None:
 def test_windows_rejects_fork_request() -> None:
     with pytest.raises(ValueError, match="Windows only supports"):
         resolve_worker_start_context(
-            _config(MultiprocessingStartMethod.FORK),
+            MultiprocessingStartMethod.FORK,
             server_mode=True,
             gpu_enabled=False,
             platform=WorkerStartPlatform("win32"),
@@ -54,7 +50,7 @@ def test_windows_rejects_fork_request() -> None:
 
 def test_macos_downgrades_fork_without_unsafe_override() -> None:
     decision = resolve_worker_start_context(
-        _config(MultiprocessingStartMethod.FORK),
+        MultiprocessingStartMethod.FORK,
         server_mode=True,
         gpu_enabled=False,
         platform=WorkerStartPlatform("darwin"),
@@ -67,7 +63,6 @@ def test_macos_downgrades_fork_without_unsafe_override() -> None:
 def test_execution_facts_use_compiled_step_plan_semantics() -> None:
     compiled_contexts = {
         "A01": ProcessingContext(
-            global_config=_config(MultiprocessingStartMethod.FORK),
             step_plans={
                 0: CompiledStepPlan(
                     step_index=0,
@@ -94,7 +89,6 @@ def test_execution_facts_use_compiled_step_plan_semantics() -> None:
 def test_execution_facts_treat_numpy_contexts_as_cpu() -> None:
     compiled_contexts = {
         "A01": ProcessingContext(
-            global_config=_config(MultiprocessingStartMethod.FORK),
             step_plans={
                 0: CompiledStepPlan(
                     step_index=0,

@@ -24,6 +24,7 @@ from skimage import transform as trans
 
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.core.runtime_values import RuntimeArrayPayload
 from openhcs.processing.backends.processors.method_axes import (
     RegisteredProcessorMethodStrategy,
 )
@@ -117,7 +118,7 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
         TypeError: If the array is not a NumPy array
         ValueError: If the array is not 3D
     """
-    if not isinstance(array, np.ndarray):
+    if not isinstance(array, (np.ndarray, RuntimeArrayPayload)):
         raise TypeError(f"{name} must be a NumPy array, got {type(array)}")
 
     if array.ndim != 3:

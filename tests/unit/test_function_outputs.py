@@ -13,7 +13,7 @@ from polystore.streaming.viewer_transport import (
 from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
-from openhcs.constants.constants import AllComponents, Backend
+from openhcs.constants.constants import AllComponents, Backend, VariableComponents
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.runtime_values import (
@@ -34,6 +34,25 @@ from openhcs.core.steps.function_output_manifest import (
     step_output_manifest,
 )
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
+
+
+def complete_component_metadata(metadata):
+    completed = {"z_index": "1", "timepoint": "1"}
+    completed.update(metadata)
+    return completed
+
+
+def expected_viewer_metadata(metadata):
+    projected = complete_component_metadata(metadata)
+    return {
+        component: (
+            int(value)
+            if component in {"site", "channel", "z_index", "timepoint"}
+            else value
+        )
+        for component, value in projected.items()
+        if component in StreamingConfigStub.COMPONENT_ORDER
+    }
 
 
 class FileManagerStub:
@@ -97,12 +116,12 @@ class ParserStub:
     def parse_filename(self, name):
         stem = Path(name).stem
         well, site, channel = stem.split("_")
-        return {
+        return complete_component_metadata({
             "well": well,
             "site": site.removeprefix("s"),
             "channel": channel.removeprefix("w"),
             "extension": "".join(Path(name).suffixes),
-        }
+        })
 
     def construct_filename(self, **metadata):
         extension = metadata.get("extension") or ".tif"
@@ -146,7 +165,7 @@ def context_stub(filemanager, parser=None):
 def function_step_plan(
     path: str,
     step_name: str,
-    source_identity_stack_axes: frozenset[str] = frozenset(),
+    variable_components: tuple[VariableComponents, ...] = (),
 ) -> SimpleNamespace:
     return SimpleNamespace(
         streaming_configs=(StreamingConfigStub(),),
@@ -159,7 +178,7 @@ def function_step_plan(
         axis_id="A01",
         get_paths_for_axis=lambda *_args: [path],
         main_input_dependency=SimpleNamespace(kind=None),
-        step_source_identity_stack_axes=source_identity_stack_axes,
+        variable_components=variable_components,
     )
 
 
@@ -189,13 +208,14 @@ def record_output_path(context, plan, path, output_context=None):
 
 
 def image_payload_with_source_metadata(pixels, metadata, mask=None):
+    completed_metadata = complete_component_metadata(metadata)
     return RuntimeImagePayloadContext(
         pixels,
         mask=mask,
         metadata=ImagePayloadMetadata(
-            source_component_metadata=metadata,
+            source_component_metadata=completed_metadata,
             source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
-                component_metadata=(metadata,)
+                component_metadata=(completed_metadata,)
             ),
         ),
     ).payload()
@@ -227,22 +247,26 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.port == 5555
     assert stream_request.source.metadata.metadata_by_index == (
-        {
+        expected_viewer_metadata({
             "well": "A01",
             "site": "1",
             "channel": "1",
-        },
+        }),
     )
     assert stream_request.message_extra == {
         "component_value_domain": {
             "well": ["A01"],
             "site": [1],
             "channel": [1, 2, 3],
+            "z_index": [1],
+            "timepoint": [1],
         },
         "component_names_metadata": {
             "channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"},
             "well": {"A01": None},
             "site": {"1": None},
+            "z_index": {"1": None},
+            "timepoint": {"1": None},
         }
     }
     assert stream_request.producer.identity.to_payload() == {
@@ -355,13 +379,13 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
         def parse_filename(self, name):
             stem = Path(name).stem
             well, site, channel, z_index = stem.split("_")
-            return {
+            return complete_component_metadata({
                 "well": well,
                 "site": site.removeprefix("s"),
                 "channel": channel.removeprefix("w"),
                 "z_index": z_index.removeprefix("z"),
                 "extension": "".join(Path(name).suffixes),
-            }
+            })
 
         def construct_filename(self, **metadata):
             extension = metadata.get("extension") or ".tif"
@@ -375,14 +399,14 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
     metadata = ImagePayloadSourceMetadataContext(
         SourceImageIdentity(
             path,
-            {
+            complete_component_metadata({
                 "well": "A01",
                 "site": "1",
                 "channel": "1",
                 "z_index": "1",
                 SOURCE_PLANE_INDEX_FIELD: "0",
                 SOURCE_PLANE_COUNT_FIELD: "2",
-            },
+            }),
         )
     ).metadata_request(pixels).metadata()
     payload = RuntimeImagePayloadContext(pixels, mask=None, metadata=metadata).payload()
@@ -402,8 +426,12 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
     assert [item.shape for item in streamed_data] == [(5, 6), (5, 6)]
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.source.metadata.metadata_by_index == (
-        {"well": "A01", "site": "1", "channel": "1", "z_index": "1"},
-        {"well": "A01", "site": "1", "channel": "1", "z_index": "2"},
+        expected_viewer_metadata(
+            {"well": "A01", "site": "1", "channel": "1", "z_index": "1"}
+        ),
+        expected_viewer_metadata(
+            {"well": "A01", "site": "1", "channel": "1", "z_index": "2"}
+        ),
     )
 
 
@@ -414,12 +442,12 @@ def test_stream_outputs_projects_declared_channel_stack_axis():
         pixels,
         mask=None,
         metadata=ImagePayloadMetadata(
-            source_component_metadata={
+            source_component_metadata=complete_component_metadata({
                 "well": "A01",
                 "site": "1",
                 "channel": "1",
                 "z_index": "1",
-            }
+            })
         ),
     ).payload()
     filemanager = FileManagerStub({path: payload})
@@ -427,7 +455,7 @@ def test_stream_outputs_projects_declared_channel_stack_axis():
     plan = function_step_plan(
         path,
         "CalculateMath",
-        source_identity_stack_axes=frozenset({AllComponents.CHANNEL.value}),
+        variable_components=(VariableComponents.CHANNEL,),
     )
     record_output_path(context, plan, path)
 
@@ -439,8 +467,12 @@ def test_stream_outputs_projects_declared_channel_stack_axis():
     assert [item.shape for item in streamed_data] == [(5, 6), (5, 6)]
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.source.metadata.metadata_by_index == (
-        {"well": "A01", "site": "1", "channel": "1", "z_index": "1"},
-        {"well": "A01", "site": "1", "channel": "2", "z_index": "1"},
+        expected_viewer_metadata(
+            {"well": "A01", "site": "1", "channel": "1", "z_index": "1"}
+        ),
+        expected_viewer_metadata(
+            {"well": "A01", "site": "1", "channel": "2", "z_index": "1"}
+        ),
     )
 
 
@@ -456,8 +488,22 @@ def test_stream_outputs_projects_stack_planes_with_item_source_paths():
             source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
                 paths=(first_path, second_path),
                 component_metadata=(
-                    {"well": "A01", "site": "1", "channel": "1", "z_index": "1"},
-                    {"well": "A01", "site": "1", "channel": "2", "z_index": "1"},
+                    complete_component_metadata(
+                        {
+                            "well": "A01",
+                            "site": "1",
+                            "channel": "1",
+                            "z_index": "1",
+                        }
+                    ),
+                    complete_component_metadata(
+                        {
+                            "well": "A01",
+                            "site": "1",
+                            "channel": "2",
+                            "z_index": "1",
+                        }
+                    ),
                 ),
             )
         ),
@@ -467,7 +513,7 @@ def test_stream_outputs_projects_stack_planes_with_item_source_paths():
     plan = function_step_plan(
         path,
         "MeasureColocalization",
-        source_identity_stack_axes=frozenset({AllComponents.CHANNEL.value}),
+        variable_components=(VariableComponents.CHANNEL,),
     )
     record_output_path(context, plan, path)
 
@@ -479,8 +525,12 @@ def test_stream_outputs_projects_stack_planes_with_item_source_paths():
     assert [item.shape for item in streamed_data] == [(5, 6), (5, 6)]
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.source.metadata.metadata_by_index == (
-        {"well": "A01", "site": "1", "channel": "1", "z_index": "1"},
-        {"well": "A01", "site": "1", "channel": "2", "z_index": "1"},
+        expected_viewer_metadata(
+            {"well": "A01", "site": "1", "channel": "1", "z_index": "1"}
+        ),
+        expected_viewer_metadata(
+            {"well": "A01", "site": "1", "channel": "2", "z_index": "1"}
+        ),
     )
 
 
@@ -509,8 +559,12 @@ def test_stream_outputs_rejects_unaddressed_stack_payload_metadata():
 def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
     path = "/tmp/output/A01_s1_w1.tif"
     pixels = np.ones((2, 3, 4, 3), dtype=np.uint8)
-    first_metadata = {"well": "A01", "site": "1", "channel": "1"}
-    second_metadata = {"well": "A01", "site": "1", "channel": "2"}
+    first_metadata = complete_component_metadata(
+        {"well": "A01", "site": "1", "channel": "1"}
+    )
+    second_metadata = complete_component_metadata(
+        {"well": "A01", "site": "1", "channel": "2"}
+    )
     payload = RuntimeImagePayloadContext(
         pixels,
         metadata=ImagePayloadMetadata(
@@ -529,18 +583,22 @@ def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
     assert [item.shape for item in streamed_data] == [(3, 4, 3), (3, 4, 3)]
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.source.metadata.metadata_by_index == (
-        first_metadata,
-        second_metadata,
+        expected_viewer_metadata(first_metadata),
+        expected_viewer_metadata(second_metadata),
     )
     assert stream_request.message_extra["component_names_metadata"] == {
         "channel": {"1": "OrigDNA", "2": "OrigER", "3": "OrigRNA"},
         "well": {"A01": None},
         "site": {"1": None},
+        "z_index": {"1": None},
+        "timepoint": {"1": None},
     }
     assert stream_request.message_extra["component_value_domain"] == {
         "well": ["A01"],
         "site": [1],
         "channel": [1, 2, 3],
+        "z_index": [1],
+        "timepoint": [1],
     }
     assert stream_request.producer.identity.output_key == "main"
 
@@ -654,7 +712,7 @@ def test_stream_outputs_keeps_main_stream_with_adapter_managed_artifact_outputs(
         axis_id="A01",
         get_paths_for_axis=lambda *_args: [path],
         main_input_dependency=SimpleNamespace(kind=None),
-        step_source_identity_stack_axes=frozenset(),
+        variable_components=(),
     )
     record_output_path(context, plan, path)
 

@@ -166,7 +166,7 @@ def assemble_stack_cpu(
     overlap_blend_fraction: float = 1.0
 ) -> "np.ndarray":
     """
-    Assembles tiles with simple, working blending approach.
+    Stitch/assemble overlapping image tiles with simple blending.
     
     Args:
         image_tiles: 3D array of tiles (N, H, W)

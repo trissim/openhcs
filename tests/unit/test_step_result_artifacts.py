@@ -54,6 +54,7 @@ from openhcs.core.runtime_values import (
     RuntimeImagePayloadContext,
     image_payload_mask,
 )
+from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
 
 
 class MemoryBackend:
@@ -138,7 +139,7 @@ def _execute_function_core(request: CoreExecutionRequest):
             input_memory_type=MEMORY_TYPE_NUMPY,
             device_id=0,
             source_binding_plan=CompiledSourceBindingPlan.empty(),
-            source_identity_stack_axes=frozenset(),
+            variable_components=(),
             group_by_value=None,
             group_projects_runtime_plane=False,
         ),
@@ -168,6 +169,38 @@ def _execute_function_core(request: CoreExecutionRequest):
             projects_runtime_plane=False,
         ),
     ).execute()
+
+
+def test_function_core_passes_payload_data_to_array_callable_and_restores_context():
+    tiles = np.arange(2 * 4 * 4, dtype=np.uint16).reshape(2, 4, 4)
+    payload = RuntimeImagePayloadContext(
+        tiles,
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s001_w1_z001_t001.tif",
+        ),
+    ).payload()
+    positions = np.array([[0, 0], [4, 0]], dtype=np.float32)
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=assemble_stack_cpu,
+            main_data_arg=payload,
+            base_kwargs={
+                "positions": positions,
+                "blend_method": "none",
+            },
+            context=ContextStub(),
+            artifact_inputs={},
+            artifact_outputs={},
+        )
+    )
+
+    assert image_payload_data(result).shape == (1, 4, 8)
+    assert image_payload_data(result).dtype == tiles.dtype
+    assert image_payload_metadata(result).source_path == (
+        "/input/A01_s001_w1_z001_t001.tif"
+    )
 
 
 def test_crop_mask_sidecar_names_derive_from_core_artifact_role():

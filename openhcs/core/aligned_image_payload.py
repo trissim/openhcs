@@ -427,6 +427,24 @@ def stack_image_payload_context(
     ).payload()
 
 
+def stack_image_payload_context_from_metadata(
+    image_payloads: Sequence[Any],
+    stack: RuntimeArrayData,
+    metadata_by_payload: Sequence[ImagePayloadMetadata],
+) -> Any:
+    """Attach composed image context using already resolved payload metadata."""
+    payloads = tuple(image_payloads)
+    metadata = ImagePayloadMetadataCompositionRequest(
+        payloads,
+        source_metadata_override=tuple(metadata_by_payload),
+    ).metadata()
+    return RuntimeImagePayloadContext(
+        stack,
+        _stack_image_payload_mask(payloads, stack),
+        metadata,
+    ).payload()
+
+
 def _stack_image_payload_mask(
     image_payloads: Sequence[Any],
     stack: RuntimeArrayData,
@@ -1303,6 +1321,11 @@ def compose_aligned_image_payload(
 
 def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     """Return payload slices used for multi-source alignment."""
+    if isinstance(payload, RuntimeSliceAlignedValueSet):
+        return tuple(
+            payload.value_for_slice(index)
+            for index in range(payload.slice_count)
+        )
     data = (
         ObjectLabelDenseDataStrategy.for_payload(payload).data(payload)
         if isinstance(payload, (ObjectLabelPayload, ObjectLabelSet))

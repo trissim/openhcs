@@ -46,6 +46,7 @@ import logging
 import dataclasses
 import time
 from pathlib import Path
+from urllib.parse import quote
 from typing import (
     Annotated,
     Any,
@@ -62,6 +63,7 @@ from typing import (
 )
 
 from openhcs.constants.constants import (
+    AllComponents,
     get_multiprocessing_axis,
     OrchestratorState,
     VALID_GPU_MEMORY_TYPES,
@@ -70,7 +72,11 @@ from openhcs.constants.constants import (
     Backend,
 )
 
-from openhcs.core.compiled_execution import CompiledExecutionBundle
+from openhcs.core.compiled_execution import (
+    CompiledExecutionBundle,
+    CompiledGpuRegistryPlan,
+    CompiledRuntimeEnvironmentPlan,
+)
 from openhcs.core.context.processing_context import ProcessingContext, RequiredVisualizer
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
@@ -79,6 +85,7 @@ from openhcs.core.config import (
     StreamingConfig,
     VFSConfig,
 )
+from openhcs.core.debug import DebugExecutionPolicy, NoOpDebugExecutionPolicy
 from openhcs.core.axis_filter import (
     StepAxisFilterMap,
     StepAxisFilterResolution,
@@ -87,18 +94,31 @@ from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractVa
 from openhcs.core.pipeline.compilation_session import (
     CompilationPlateScope,
     CompilationSession,
+    PipelineIdentityCarrier,
     ResolvedPipelineDefinition,
 )
 from openhcs.core.pipeline.materialization_flag_planner import (
     MaterializationFlagPlanner,
 )
-from openhcs.core.compiled_step_plan import CompiledStepPlan, InputConversionPlan
+from openhcs.core.compiled_step_plan import (
+    CompiledStepPlan,
+    InputConversionPlan,
+    RuntimeArtifactMaterializationPlan,
+    SequentialRuntimeFilter,
+    SequentialRuntimeFilterPlan,
+)
 from openhcs.core.pipeline.path_planner import PipelinePathPlanner
 from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
 )
-from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    CompiledSourceUniversePlan,
+    SourceBindingCompilationRequest,
+    StepSourceBindingsConfig,
+)
+from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
@@ -134,6 +154,18 @@ def _compiler_step_scope_id(
     return f"{compilation_scope}::{_step_scope_token(step, step_index)}"
 
 
+def _compiler_pipeline_scope_id(
+    plate_path_str: str,
+    pipeline_definition: Sequence["AbstractStep"],
+) -> str:
+    """Build the compiler-owned ObjectState root for one submitted pipeline."""
+    if isinstance(pipeline_definition, PipelineIdentityCarrier):
+        pipeline_name = pipeline_definition.name
+        if pipeline_name:
+            return f"{plate_path_str}::pipeline::{quote(str(pipeline_name), safe='')}"
+    return f"{plate_path_str}::pipeline::submission_{id(pipeline_definition):x}"
+
+
 MATERIALIZATION_PLAN_REQUIREMENTS = (
     (READ_BACKEND, lambda plan: plan.read_backend),
     (WRITE_BACKEND, lambda plan: plan.write_backend),
@@ -151,6 +183,7 @@ class AxisCompilationRequest:
     """Authoritative context record for axis-level compilation fanout."""
 
     orchestrator: "PipelineOrchestrator"
+    global_config: "GlobalPipelineConfig"
     pipeline: ResolvedPipelineDefinition
     analysis_consolidation_config: AnalysisConsolidationConfig
     plate_metadata_config: PlateMetadataConfig
@@ -238,11 +271,11 @@ class PipelineCompiler:
         orchestrator,
         metadata_writer: bool = False,
         plate_path: Optional[Path] = None,
+        global_config: "GlobalPipelineConfig" | None = None,
         step_state_map: Dict[int, "ObjectState"] = None,
         step_snapshots: tuple[StepSnapshot, ...] | None = None,
         steps_already_resolved: bool = True,
         is_zmq_execution: bool = False,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
         # base_input_dir and axis_id parameters removed, will use from context
     ) -> CompilationSession:
         """
@@ -264,6 +297,11 @@ class PipelineCompiler:
         """
         PipelineCompiler._assert_context_mutable_for_planning(context)
         context.visualizer_config = None
+        compile_global_config = (
+            global_config
+            if global_config is not None
+            else orchestrator.get_effective_config()
+        )
 
         if steps_already_resolved and step_state_map is not None:
             logger.debug("Using pre-resolved steps for context %s", context.axis_id)
@@ -271,22 +309,22 @@ class PipelineCompiler:
                 context=context,
                 steps=steps_definition,
                 orchestrator=orchestrator,
+                global_config=compile_global_config,
                 step_state_map=step_state_map,
                 snapshots=step_snapshots,
                 metadata_writer=metadata_writer,
                 plate_path=plate_path,
                 is_zmq_execution=is_zmq_execution,
-                source_identity_stack_axes=source_identity_stack_axes,
             )
         else:
             session = PipelineCompiler._resolve_steps_for_context(
                 context=context,
                 steps_definition=steps_definition,
                 orchestrator=orchestrator,
+                global_config=compile_global_config,
                 metadata_writer=metadata_writer,
                 plate_path=plate_path,
                 is_zmq_execution=is_zmq_execution,
-                source_identity_stack_axes=source_identity_stack_axes,
             )
 
         PipelineCompiler._ensure_initial_step_plans(session)
@@ -362,28 +400,23 @@ class PipelineCompiler:
         context: ProcessingContext,
         steps_definition: Sequence[AbstractStep],
         orchestrator,
+        global_config: "GlobalPipelineConfig",
         metadata_writer: bool,
         plate_path: Path | None,
         is_zmq_execution: bool,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
     ) -> CompilationSession:
         compilation_id = f"compile_{int(time.time() * 1000)}"
 
-        from objectstate import get_current_global_config
-        from openhcs.core.config import GlobalPipelineConfig
-
         global_config_state = ObjectStateRegistry.get_by_scope("")
         if global_config_state is None:
-            global_config = get_current_global_config(GlobalPipelineConfig)
-            if global_config:
-                global_config_state = PipelineCompiler._register_object_state(
-                    global_config,
-                    "",
-                    None,
-                )
-                logger.info(
-                    "Registered global config at scope '' (initialize_step_plans)"
-                )
+            global_config_state = PipelineCompiler._register_object_state(
+                global_config,
+                "",
+                None,
+            )
+            logger.info(
+                "Registered global config at scope '' (initialize_step_plans)"
+            )
 
         orch_scope_id = f"{compilation_id}::orchestrator"
         orch_state = PipelineCompiler._register_object_state(
@@ -419,11 +452,11 @@ class PipelineCompiler:
             context=context,
             steps=resolved_steps,
             orchestrator=orchestrator,
+            global_config=global_config,
             step_state_map=step_state_map,
             metadata_writer=metadata_writer,
             plate_path=plate_path,
             is_zmq_execution=is_zmq_execution,
-            source_identity_stack_axes=source_identity_stack_axes,
         )
 
     @staticmethod
@@ -559,18 +592,88 @@ class PipelineCompiler:
                 snapshot.variable_components,
                 snapshot.name,
             )
-            current_plan.step_source_identity_stack_axes = (
-                snapshot.source_identity_stack_axis_values
-            )
-            current_plan.source_identity_stack_axes = (
-                session.source_identity_stack_axes
-                | current_plan.step_source_identity_stack_axes
-            )
             current_plan.input_source = snapshot.input_source
             current_plan.sequential_processing = snapshot.processing_config
-            current_plan.source_binding_plan = CompiledSourceBindingPlan.from_config(
-                snapshot.source_bindings
+            current_plan.sequential_filter_plan = (
+                PipelineCompiler._compile_sequential_runtime_filter_plan(session)
             )
+            current_plan.source_binding_plan = (
+                PipelineCompiler._compile_source_binding_plan(
+                    snapshot.source_bindings,
+                    current_plan,
+                )
+            )
+            current_plan.source_universe_plan = (
+                PipelineCompiler._compile_source_universe_plan(current_plan)
+            )
+            current_plan.source_load_plan = SourceLoadPlan(
+                zarr_config=session.global_config.zarr_config
+            )
+
+    @staticmethod
+    def _compile_sequential_runtime_filter_plan(
+        session: CompilationSession,
+    ) -> SequentialRuntimeFilterPlan:
+        current_combination = session.context.current_sequential_combination
+        if not current_combination:
+            return SequentialRuntimeFilterPlan.disabled()
+
+        seq_config = session.global_config.sequential_processing_config
+        if not seq_config or not seq_config.sequential_components:
+            return SequentialRuntimeFilterPlan.disabled()
+
+        filtered_components = tuple(
+            seq_component
+            for seq_component in seq_config.sequential_components
+            if len(
+                session.orchestrator.get_component_keys(
+                    AllComponents(seq_component.value)
+                )
+            )
+            > 1
+        )
+        if len(filtered_components) != len(current_combination):
+            raise ValueError(
+                "Sequential runtime filter cardinality mismatch: "
+                f"{len(filtered_components)} components for "
+                f"{len(current_combination)} active values."
+            )
+        return SequentialRuntimeFilterPlan(
+            tuple(
+                SequentialRuntimeFilter(seq_component, str(value))
+                for seq_component, value in zip(
+                    filtered_components,
+                    current_combination,
+                    strict=True,
+                )
+            )
+        )
+
+    @staticmethod
+    def _compile_source_binding_plan(
+        source_bindings: StepSourceBindingsConfig,
+        current_plan: CompiledStepPlan,
+    ) -> CompiledSourceBindingPlan:
+        if current_plan.compiled_function_pattern is None:
+            return SourceBindingCompilationRequest(
+                config=source_bindings,
+            ).compile()
+        return SourceBindingCompilationRequest.from_module_contracts(
+            config=source_bindings,
+            contracts=tuple(
+                invocation.contract.module_artifact_contract
+                for invocation in current_plan.compiled_function_pattern.iter_invocations()
+                if invocation.contract.module_artifact_contract is not None
+            ),
+        ).compile()
+
+    @staticmethod
+    def _compile_source_universe_plan(
+        current_plan: CompiledStepPlan,
+    ) -> CompiledSourceUniversePlan:
+        return CompiledSourceUniversePlan.from_source_binding_plan(
+            current_plan.source_binding_plan,
+        )
 
     @staticmethod
     def _collect_streaming_configs(
@@ -703,7 +806,7 @@ class PipelineCompiler:
             context,
             session.steps,
             session.orchestrator.plate_path,
-            context.global_config,  # Use merged config from context instead of raw pipeline_config
+            session.global_config,  # Use merged config instead of raw pipeline_config
         )
 
         # Post-check (optional, but good for ensuring contracts are met by the planner)
@@ -726,6 +829,29 @@ class PipelineCompiler:
                     f"Materialization flag planning incomplete for step {snapshot.name} (index: {step_index}). "
                     f"Missing required keys: {missing_keys}."
                 )
+        PipelineCompiler._compile_runtime_artifact_materialization_plans(session)
+
+    @staticmethod
+    def _compile_runtime_artifact_materialization_plans(
+        session: CompilationSession,
+    ) -> None:
+        persistent_enabled = bool(
+            session.global_config.materialize_runtime_artifacts
+        )
+        persistent_backend = None
+        if persistent_enabled:
+            persistent_backend = (
+                MaterializationFlagPlanner._resolve_materialization_backend(
+                    session.context,
+                    session.global_config.vfs_config,
+                )
+            )
+        plan = RuntimeArtifactMaterializationPlan(
+            persistent_enabled=persistent_enabled,
+            persistent_backend=persistent_backend,
+        )
+        for step_plan in session.plans.values():
+            step_plan.runtime_artifact_materialization = plan
 
     @staticmethod
     def validate_sequential_components_compatibility(
@@ -982,7 +1108,10 @@ class PipelineCompiler:
         )
 
     @staticmethod
-    def validate_backend_compatibility(orchestrator) -> None:
+    def validate_backend_compatibility(
+        orchestrator,
+        pipeline_config_state: "ObjectState" | None = None,
+    ) -> None:
         """
         Validate configured read backend against microscope support.
 
@@ -996,9 +1125,6 @@ class PipelineCompiler:
 
         microscope_handler = orchestrator.microscope_handler
 
-        # Read saved resolved vfs_config.read_backend from ObjectState (not live UI edits)
-        plate_scope_id = str(orchestrator.plate_path)
-        pipeline_config_state = ObjectStateRegistry.get_by_scope(plate_scope_id)
         if pipeline_config_state is not None:
             configured_read_backend = pipeline_config_state.get_saved_resolved_value(
                 "vfs_config.read_backend"
@@ -1095,7 +1221,7 @@ class PipelineCompiler:
         pipeline_definition: List[AbstractStep],
         *,
         is_zmq_execution: bool,
-    ) -> tuple["ObjectState", ResolvedPipelineDefinition]:
+    ) -> tuple[str, "ObjectState", ResolvedPipelineDefinition]:
         pipeline_metadata = ResolvedPipelineDefinition.metadata_from_steps(
             pipeline_definition
         )
@@ -1106,13 +1232,17 @@ class PipelineCompiler:
             force_fresh=force_fresh
         )
         plate_path_str = str(orchestrator.plate_path)
+        compiler_scope_id = _compiler_pipeline_scope_id(
+            plate_path_str,
+            pipeline_definition,
+        )
         plate_orch_state = PipelineCompiler._pipeline_config_state(
             orchestrator,
-            plate_path_str,
+            compiler_scope_id,
             global_config_state,
             force_fresh=force_fresh,
         )
-        orchestrator_scope_id = f"{plate_path_str}::orchestrator"
+        orchestrator_scope_id = f"{compiler_scope_id}::orchestrator"
         orch_state = PipelineCompiler._get_or_register_object_state(
             orchestrator_scope_id,
             orchestrator,
@@ -1123,7 +1253,7 @@ class PipelineCompiler:
 
         step_state_map = PipelineCompiler._register_pipeline_step_states(
             pipeline_definition,
-            plate_path_str,
+            compiler_scope_id,
             orch_state,
             force_fresh=force_fresh,
         )
@@ -1141,12 +1271,13 @@ class PipelineCompiler:
             pipeline_definition,
             step_state_map,
         )
-        pipeline_config_state = ObjectStateRegistry.get_by_scope(plate_path_str)
+        pipeline_config_state = ObjectStateRegistry.get_by_scope(compiler_scope_id)
         if pipeline_config_state is None:
             raise RuntimeError(
                 "Missing ObjectState for plate; cannot resolve pipeline config."
             )
         return (
+            compiler_scope_id,
             pipeline_config_state,
             ResolvedPipelineDefinition(
                 steps=pipeline_definition,
@@ -1179,26 +1310,26 @@ class PipelineCompiler:
     @staticmethod
     def _pipeline_config_state(
         orchestrator,
-        plate_path_str: str,
+        compiler_scope_id: str,
         global_config_state: "ObjectState" | None,
         *,
         force_fresh: bool,
     ) -> "ObjectState" | None:
-        plate_orch_state = ObjectStateRegistry.get_by_scope(plate_path_str)
+        plate_orch_state = ObjectStateRegistry.get_by_scope(compiler_scope_id)
         if orchestrator.pipeline_config:
             plate_orch_state = PipelineCompiler._get_or_register_object_state(
-                plate_path_str,
+                compiler_scope_id,
                 orchestrator.pipeline_config,
                 global_config_state,
                 force_fresh=force_fresh,
             )
-            logger.debug("Registered pipeline_config at scope '%s'", plate_path_str)
+            logger.debug("Registered pipeline_config at scope '%s'", compiler_scope_id)
         return plate_orch_state
 
     @staticmethod
     def _register_pipeline_step_states(
         pipeline_definition: Sequence[AbstractStep],
-        plate_path_str: str,
+        compiler_scope_id: str,
         orch_state: "ObjectState",
         *,
         force_fresh: bool,
@@ -1206,7 +1337,7 @@ class PipelineCompiler:
         step_state_map: Dict[int, "ObjectState"] = {}
         for step_index, step in enumerate(pipeline_definition):
             step_scope_id = _compiler_step_scope_id(
-                plate_path_str,
+                compiler_scope_id,
                 step,
                 step_index,
             )
@@ -1330,7 +1461,7 @@ class PipelineCompiler:
         PipelineCompiler._validate_sequential_components_for_session(temp_session)
         PipelineCompiler.analyze_pipeline_sequential_mode(
             temp_context,
-            temp_context.global_config,
+            temp_session.global_config,
             request.orchestrator,
         )
         if (
@@ -1362,11 +1493,11 @@ class PipelineCompiler:
             request.orchestrator,
             metadata_writer=metadata_writer,
             plate_path=request.orchestrator.plate_path,
+            global_config=request.global_config,
             step_state_map=dict(request.pipeline.step_state_map),
             step_snapshots=request.pipeline.snapshots,
             steps_already_resolved=True,
             is_zmq_execution=request.is_zmq_execution,
-            source_identity_stack_axes=request.pipeline.source_identity_stack_axes,
         )
 
     @staticmethod
@@ -1417,7 +1548,7 @@ class PipelineCompiler:
         PipelineCompiler._validate_sequential_components_for_session(session)
         PipelineCompiler.analyze_pipeline_sequential_mode(
             context,
-            context.global_config,
+            session.global_config,
             request.orchestrator,
         )
         PipelineCompiler._run_post_plan_compile_stages(
@@ -1446,7 +1577,7 @@ class PipelineCompiler:
     def _validate_sequential_components_for_session(
         session: CompilationSession,
     ) -> None:
-        seq_config = session.context.global_config.sequential_processing_config
+        seq_config = session.global_config.sequential_processing_config
         if seq_config and seq_config.sequential_components:
             PipelineCompiler.validate_sequential_components_compatibility(
                 session.steps,
@@ -1478,9 +1609,13 @@ class PipelineCompiler:
         orchestrator,
         pipeline_definition: List[AbstractStep],
         compiled_contexts: Mapping[str, ProcessingContext],
+        compiler_scope_id: str,
     ) -> None:
         PipelineCompiler._log_path_planning_summary(compiled_contexts)
-        PipelineCompiler._cleanup_compilation_object_states(orchestrator)
+        PipelineCompiler._cleanup_compilation_object_states(
+            orchestrator,
+            compiler_scope_id,
+        )
         logger.info("Stripping attributes from pipeline definition steps.")
         StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
         orchestrator._state = OrchestratorState.COMPILED
@@ -1515,8 +1650,15 @@ class PipelineCompiler:
                 )
 
     @staticmethod
-    def _cleanup_compilation_object_states(orchestrator) -> None:
-        orch_scope_id = f"{orchestrator.plate_path}::orchestrator"
+    def _cleanup_compilation_object_states(
+        orchestrator,
+        compiler_scope_id: str | None = None,
+    ) -> None:
+        orch_scope_id = (
+            compiler_scope_id
+            if compiler_scope_id is not None
+            else f"{orchestrator.plate_path}::orchestrator"
+        )
         ObjectStateRegistry.unregister_scope_and_descendants(
             orch_scope_id,
             _skip_snapshot=True,
@@ -1550,6 +1692,7 @@ class PipelineCompiler:
         axis_filter: Optional[List[str]] = None,
         enable_visualizer_override: bool = False,
         is_zmq_execution: bool = False,
+        debug_execution_policy: DebugExecutionPolicy = NoOpDebugExecutionPolicy(),
     ) -> Dict[str, Any]:
         """
         Compile-all phase: prepares execution artifacts for each axis value.
@@ -1575,6 +1718,7 @@ class PipelineCompiler:
             contexts, worker assignments, and the stateless pipeline definition.
         """
         PipelineCompiler._validate_compile_request(orchestrator, pipeline_definition)
+        compiler_scope_id: str | None = None
         try:
             axis_values_to_process = PipelineCompiler._axis_values_to_process(
                 orchestrator,
@@ -1586,13 +1730,18 @@ class PipelineCompiler:
                     pipeline_definition=pipeline_definition,
                     runtime_contexts={},
                     worker_assignments={},
+                    runtime_environment=CompiledRuntimeEnvironmentPlan.from_global_config(
+                        orchestrator.get_effective_config(),
+                        compiled_contexts={},
+                        server_mode=is_zmq_execution,
+                    ),
                 ).as_compilation_result()
 
             logger.info(
                 f"Starting compilation for axis values: {', '.join(axis_values_to_process)}"
             )
 
-            pipeline_config_state, pipeline_inputs = (
+            compiler_scope_id, pipeline_config_state, pipeline_inputs = (
                 PipelineCompiler._register_and_resolve_pipeline_once(
                     orchestrator,
                     pipeline_definition,
@@ -1603,11 +1752,19 @@ class PipelineCompiler:
                 logger.warning(
                     "All steps were disabled. Pipeline is empty after filtering."
                 )
-                PipelineCompiler._cleanup_compilation_object_states(orchestrator)
+                PipelineCompiler._cleanup_compilation_object_states(
+                    orchestrator,
+                    compiler_scope_id,
+                )
                 return CompiledExecutionBundle.from_runtime_contexts(
                     pipeline_definition=pipeline_definition,
                     runtime_contexts={},
                     worker_assignments={},
+                    runtime_environment=CompiledRuntimeEnvironmentPlan.from_global_config(
+                        orchestrator.get_effective_config(),
+                        compiled_contexts={},
+                        server_mode=is_zmq_execution,
+                    ),
                 ).as_compilation_result()
             (
                 analysis_config,
@@ -1615,13 +1772,22 @@ class PipelineCompiler:
                 auto_add_output_plate,
                 num_workers,
             ) = PipelineCompiler._capture_pipeline_config(pipeline_config_state)
-            PipelineCompiler.validate_backend_compatibility(orchestrator)
+            num_workers = debug_execution_policy.compile_worker_count(num_workers)
+            effective_config = orchestrator.get_effective_config()
+            CompiledGpuRegistryPlan(
+                configured_num_workers=num_workers
+            ).setup_global_registry()
+            PipelineCompiler.validate_backend_compatibility(
+                orchestrator,
+                pipeline_config_state,
+            )
             global_step_axis_filters = PipelineCompiler._resolve_global_step_axis_filters(
                 orchestrator,
                 pipeline_inputs.snapshots,
             )
             axis_request = AxisCompilationRequest(
                 orchestrator=orchestrator,
+                global_config=effective_config,
                 pipeline=pipeline_inputs,
                 analysis_consolidation_config=analysis_config,
                 plate_metadata_config=plate_metadata_config,
@@ -1643,17 +1809,31 @@ class PipelineCompiler:
                 list(compiled_contexts.keys()),
                 num_workers,
             )
+            runtime_environment = debug_execution_policy.compiled_runtime_environment(
+                CompiledRuntimeEnvironmentPlan.from_global_config(
+                    effective_config,
+                    compiled_contexts=compiled_contexts,
+                    server_mode=is_zmq_execution,
+                )
+            )
             PipelineCompiler._finalize_compilation(
                 orchestrator,
                 pipeline_definition,
                 compiled_contexts,
+                compiler_scope_id,
             )
             return CompiledExecutionBundle.from_runtime_contexts(
                 pipeline_definition=pipeline_definition,
                 runtime_contexts=compiled_contexts,
                 worker_assignments=worker_assignments,
+                runtime_environment=runtime_environment,
             ).as_compilation_result()
         except Exception as e:
+            if compiler_scope_id is not None:
+                PipelineCompiler._cleanup_compilation_object_states(
+                    orchestrator,
+                    compiler_scope_id,
+                )
             orchestrator._state = OrchestratorState.COMPILE_FAILED
             logger.error(f"Failed to compile pipelines: {e}")
             raise

@@ -477,13 +477,22 @@ class ProcessingConfig:
     """Input source strategy: PREVIOUS_STEP (normal chaining) or PIPELINE_START (access original input)."""
 
 
-from openhcs.core.source_bindings import StepSourceBindingsConfig as _StepSourceBindingsConfig
+from openhcs.core import source_bindings as source_binding_configs
 
-StepSourceBindingsConfig = global_pipeline_config(
+SourceBindingsConfig = global_pipeline_config(
     inherit_as_none=False,
     preview_label="SRC",
     abbreviation="src",
-)(_StepSourceBindingsConfig)
+)(source_binding_configs.SourceBindingsConfig)
+
+StepSourceBindingsConfig = global_pipeline_config(
+    preview_label="STEP_SRC",
+    abbreviation="step_src",
+)(source_binding_configs.StepSourceBindingsConfig)
+
+source_binding_configs.SourceBindingsConfig = SourceBindingsConfig
+source_binding_configs.StepSourceBindingsConfig = StepSourceBindingsConfig
+source_binding_configs.EMPTY_SOURCE_BINDINGS = StepSourceBindingsConfig()
 
 
 @abbreviation("seq")
@@ -880,6 +889,11 @@ class FijiStreamingConfig(
 from objectstate.lazy_factory import _inject_all_pending_fields
 
 _inject_all_pending_fields()
+
+SourceBindingsConfig = source_binding_configs.SourceBindingsConfig
+StepSourceBindingsConfig = source_binding_configs.StepSourceBindingsConfig
+LazySourceBindingsConfig = source_binding_configs.LazySourceBindingsConfig
+LazyStepSourceBindingsConfig = source_binding_configs.LazyStepSourceBindingsConfig
 
 
 # ============================================================================

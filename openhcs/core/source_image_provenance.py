@@ -5,8 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import InitVar, dataclass, field
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar, Generic, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -42,6 +43,9 @@ SourceProvenanceInitValues = tuple[
 
 SourceImageProvenanceAliasValueT = TypeVar("SourceImageProvenanceAliasValueT")
 SourceImageProvenancePlaneValueT = TypeVar("SourceImageProvenancePlaneValueT")
+
+if TYPE_CHECKING:
+    from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 
 def normalize_source_path(source_path: str | None) -> str | None:
@@ -125,6 +129,18 @@ class SourceImageIdentity:
             if fallback_value is not None:
                 merged[component.value] = fallback_value
         return MappingProxyType(merged)
+
+    def with_parsed_path_components(
+        self,
+        parser: "FilenameParser",
+    ) -> "SourceImageIdentity":
+        """Fill missing component metadata from this identity's source path."""
+        if self.path is None:
+            return self
+        parsed = parser.parse_filename(Path(self.path).name)
+        if parsed is None:
+            return self
+        return self.with_missing_from(type(self)(component_metadata=parsed))
 
 
 @dataclass(slots=True)
@@ -951,20 +967,20 @@ SourceImageProvenanceFields.source_image_names = SourceImageProvenanceAlias(
 
 
 @dataclass(frozen=True, slots=True)
-class SourceIdentityStackAxisProjection:
-    """Project scalar source identity over declared runtime stack axes."""
+class VariableComponentAxisProjection:
+    """Project scalar source identity over variable component runtime planes."""
 
     axes: frozenset[str]
 
     @classmethod
-    def empty(cls) -> "SourceIdentityStackAxisProjection":
+    def empty(cls) -> "VariableComponentAxisProjection":
         return cls(frozenset())
 
     @classmethod
     def from_axes(
         cls,
         axes: Iterable[str],
-    ) -> "SourceIdentityStackAxisProjection":
+    ) -> "VariableComponentAxisProjection":
         return cls(frozenset(axes))
 
     @property
@@ -985,7 +1001,7 @@ class SourceIdentityStackAxisProjection:
         axes = self.ordered_axes()
         if len(axes) != len(plane_indices):
             raise ValueError(
-                "Source identity stack axis projection cannot map "
+                "Variable component axis projection cannot map "
                 f"{len(plane_indices)} runtime coordinate(s) onto declared axes "
                 f"{axes!r}."
             )
@@ -1032,7 +1048,7 @@ class SourceIdentityStackAxisProjection:
         component = AllComponents.from_value(axis)
         if component is None:
             raise ValueError(
-                "Source identity stack axis is not an OpenHCS component: "
+                "Variable component axis is not an OpenHCS component: "
                 f"{axis!r}."
             )
         return component
@@ -1046,19 +1062,19 @@ class SourceIdentityStackAxisProjection:
         current = source_component_metadata_raw_value(metadata, component)
         if current is None:
             raise ValueError(
-                "Source identity stack axis projection requires scalar "
+                "Variable component axis projection requires scalar "
                 f"{component.value!r} metadata."
             )
         if isinstance(current, bool):
             raise ValueError(
-                "Source identity stack axis "
+                "Variable component axis "
                 f"{component.value!r} must be numeric, got bool."
             )
         try:
             base_value = int(current)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                "Source identity stack axis "
+                "Variable component axis "
                 f"{component.value!r} must be numeric, got {current!r}."
             ) from exc
         return base_value + plane_index

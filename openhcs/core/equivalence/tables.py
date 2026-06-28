@@ -32,7 +32,7 @@ from openhcs.core.measurement_row_materialization import (
     measurement_row_has_object_identity,
     measurement_row_identity_role,
 )
-from openhcs.core.runtime_artifact_queries import measurement_table_axis_values
+from openhcs.core.measurement_row_materialization import measurement_table_axis_values
 from openhcs.core.runtime_semantics import (
     FieldSpec,
     MeasurementObjectRowIdentity,

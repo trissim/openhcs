@@ -15,13 +15,16 @@ from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     InputConversionPlan,
     MaterializedOutputPlan,
+    RuntimeArtifactMaterializationPlan,
+    SequentialRuntimeFilterPlan,
 )
 from openhcs.core.config import StreamingConfig
 from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.source_bindings import CompiledSourceUniversePlan
+from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.steps.function_io import create_image_path_getter
-
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +44,11 @@ class FunctionStepExecutionPlan:
     output_dir: Path
     variable_components: Sequence[VariableComponents]
     group_by: Any
+    sequential_filter_plan: SequentialRuntimeFilterPlan
     main_input_dependency: StepInputDependency
     source_binding_plan: CompiledSourceBindingPlan
+    source_universe_plan: CompiledSourceUniversePlan
+    source_load_plan: SourceLoadPlan
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
     read_backend: str
@@ -58,9 +64,8 @@ class FunctionStepExecutionPlan:
     analysis_results_dir: str | None
     input_conversion: InputConversionPlan | None
     materialized_output: MaterializedOutputPlan | None
+    runtime_artifact_materialization: RuntimeArtifactMaterializationPlan
     streaming_configs: tuple[StreamingConfig, ...]
-    source_identity_stack_axes: frozenset[str]
-    step_source_identity_stack_axes: frozenset[str]
     compiled_function_pattern: CompiledFunctionPattern
     artifact_inputs_by_group: Mapping[Any, ArtifactInputPlans]
     artifact_outputs_by_group: Mapping[Any, ArtifactOutputPlans]
@@ -120,8 +125,11 @@ class FunctionStepExecutionPlan:
             output_dir=output_dir,
             variable_components=variable_components,
             group_by=compiled_plan.group_by,
+            sequential_filter_plan=compiled_plan.sequential_filter_plan,
             main_input_dependency=compiled_plan.main_input_dependency,
             source_binding_plan=compiled_plan.source_binding_plan,
+            source_universe_plan=compiled_plan.source_universe_plan,
+            source_load_plan=compiled_plan.source_load_plan,
             artifact_inputs=compiled_plan.artifact_inputs,
             artifact_outputs=compiled_plan.artifact_outputs,
             read_backend=_require_value(compiled_plan.read_backend, "read_backend", compiled_plan),
@@ -141,11 +149,10 @@ class FunctionStepExecutionPlan:
             analysis_results_dir=compiled_plan.analysis_results_dir,
             input_conversion=compiled_plan.input_conversion,
             materialized_output=compiled_plan.materialized_output,
-            streaming_configs=tuple(compiled_plan.streaming_configs.values()),
-            source_identity_stack_axes=compiled_plan.source_identity_stack_axes,
-            step_source_identity_stack_axes=(
-                compiled_plan.step_source_identity_stack_axes
+            runtime_artifact_materialization=(
+                compiled_plan.runtime_artifact_materialization
             ),
+            streaming_configs=tuple(compiled_plan.streaming_configs.values()),
             compiled_function_pattern=_require_value(
                 compiled_plan.compiled_function_pattern,
                 "compiled_function_pattern",
@@ -177,7 +184,10 @@ class FunctionStepExecutionPlan:
         group_by_value = self.group_by_value
         if group_by_value is None:
             return False
-        return group_by_value in self.source_identity_stack_axes
+        return any(
+            component.value == group_by_value
+            for component in self.variable_components
+        )
 
     @property
     def input_conversion_dir(self) -> Path:

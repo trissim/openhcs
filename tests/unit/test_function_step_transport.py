@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from pycodify import Assignment, generate_python_source
+from zmqruntime.messages import MessageFields
 
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
@@ -28,7 +29,6 @@ from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.source_bindings import (
-    GroupedSourceBindings,
     NamedSourceBinding,
     SourceBindingOrigin,
     StepSourceBindingsConfig,
@@ -46,6 +46,7 @@ from openhcs.processing.materialization.options import TiffStackOptions
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
     PycodifiedPipelineCode,
+    ZMQExecutionClient,
 )
 from openhcs.runtime.zmq_pipeline_transport import (
     PipelineStepsBoundary,
@@ -53,6 +54,16 @@ from openhcs.runtime.zmq_pipeline_transport import (
     ZMQPipelineCodeTransport,
     ZMQPipelineSourcePayload,
 )
+
+
+def _declared_runtime_callable(func, contract):
+    metadata = cellprofiler_backend.cellprofiler_function_runtime_metadata(func)
+    return cellprofiler_module_callable(
+        func,
+        contract,
+        declared_processing_contract=metadata.declared_processing_contract,
+        processing_contract=metadata.processing_contract,
+    )
 
 
 def test_transport_authority_accepts_stripped_compiled_function_steps():
@@ -90,10 +101,9 @@ def test_zmq_pipeline_transport_source_preserves_cellprofiler_contracts():
         module_name="Crop",
         outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
     )
-    runtime_callable = cellprofiler_module_callable(
+    runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.crop,
         contract,
-        declared_processing_contract="PURE_2D",
     )
     pipeline = [FunctionStep(func=runtime_callable, name="Crop")]
     pipeline_source = generate_python_source(
@@ -134,10 +144,9 @@ def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callable
         inputs=(ArtifactSpec("Primary", ArtifactKind.OBJECT_LABELS),),
         outputs=(ArtifactSpec("Secondary", ArtifactKind.OBJECT_LABELS),),
     )
-    runtime_callable = cellprofiler_module_callable(
+    runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.identify_secondary_objects,
         contract,
-        declared_processing_contract="PURE_2D",
     )
     submission = OpenHCSExecutionSubmission(
         plate_id="/tmp/plate",
@@ -164,18 +173,30 @@ def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callable
     pickle.dumps(restored.steps)
 
 
+def test_zmq_execution_submission_serializes_default_plate_config_on_client():
+    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+
+    submission = OpenHCSExecutionSubmission(
+        plate_id="/tmp/plate",
+        pipeline_steps=[],
+        global_config=GlobalPipelineConfig(),
+    )
+
+    payload = ZMQExecutionClient().serialize_task(submission)
+    namespace: dict[str, object] = {}
+    exec(payload[MessageFields.PIPELINE_CONFIG_CODE], namespace)
+
+    assert MessageFields.CONFIG_CODE in payload
+    assert isinstance(namespace["config"], PipelineConfig)
+
+
 def test_function_step_source_emits_source_bindings_once():
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigBlue",
                         origin=SourceBindingOrigin.PIPELINE_START,
                     ),
                 ),
-            ),
-        ),
     )
     pipeline = [
         FunctionStep(
@@ -253,7 +274,7 @@ def test_cellprofiler_runtime_callable_is_function_step_picklable():
         module_name="IdentifyTertiaryObjects",
         outputs=(ArtifactSpec("Tertiary", ArtifactKind.OBJECT_LABELS),),
     )
-    runtime_callable = cellprofiler_module_callable(
+    runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.identify_tertiary_objects,
         contract,
     )
@@ -280,10 +301,9 @@ def test_cellprofiler_runtime_callable_source_derives_materialization_contract()
             ),
         ),
     )
-    runtime_callable = cellprofiler_module_callable(
+    runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.crop,
         contract,
-        declared_processing_contract="PURE_2D",
     )
     pipeline = [FunctionStep(func=runtime_callable, name="Crop")]
     pipeline_source = generate_python_source(
@@ -355,15 +375,52 @@ def codex_pickle_probe(image):
     assert restored_step.func is custom_functions.codex_pickle_probe
 
 
+def test_persisted_custom_function_is_importable_from_package(monkeypatch, tmp_path):
+    import openhcs.processing.custom_functions as custom_functions
+    import openhcs.processing.custom_functions.manager as manager_module
+
+    func_name = "codex_lazy_import_probe"
+    storage_dir = tmp_path / "custom_functions"
+    storage_dir.mkdir()
+    (storage_dir / f"{func_name}.py").write_text(
+        """
+@numpy
+def codex_lazy_import_probe(image):
+    return image
+""",
+        encoding="utf-8",
+    )
+    vars(custom_functions).pop(func_name, None)
+    monkeypatch.setattr(
+        manager_module,
+        "get_data_file_path",
+        lambda _name: storage_dir,
+    )
+
+    namespace: dict[str, object] = {}
+    try:
+        exec(
+            f"from openhcs.processing.custom_functions import {func_name}\n"
+            f"imported = {func_name}",
+            namespace,
+        )
+
+        imported = namespace["imported"]
+        assert imported.__name__ == func_name
+        assert imported.__module__ == "openhcs.processing.custom_functions"
+        assert vars(custom_functions)[func_name] is imported
+    finally:
+        vars(custom_functions).pop(func_name, None)
+
+
 def test_function_reference_transport_preserves_runtime_callable_contracts():
     contract = ModuleArtifactContract(
         module_name="Crop",
         outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
     )
-    runtime_callable = cellprofiler_module_callable(
+    runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.crop,
         contract,
-        declared_processing_contract="PURE_2D",
     )
 
     referenced = FunctionReferenceTransportAuthority.reference_pipeline(
@@ -506,14 +563,14 @@ def test_function_reference_resolver_preserves_cellprofiler_module_contracts(
     monkeypatch,
 ):
     raw_crop = cellprofiler_backend.crop
-    blue_callable = cellprofiler_module_callable(
+    blue_callable = _declared_runtime_callable(
         raw_crop,
         ModuleArtifactContract(
             module_name="Crop",
             inputs=(ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),),
         ),
     )
-    green_callable = cellprofiler_module_callable(
+    green_callable = _declared_runtime_callable(
         raw_crop,
         ModuleArtifactContract(
             module_name="Crop",

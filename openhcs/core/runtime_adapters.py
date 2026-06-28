@@ -10,13 +10,14 @@ from weakref import WeakKeyDictionary
 
 from python_introspect import set_parameter_exclusions
 
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.component_set import ComponentSet
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingRuntimeContext,
 )
+from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.runtime_semantics import RuntimePlaneProjection
 
 RuntimeComponentValue = str | int | float | bool | None
@@ -163,7 +164,8 @@ class RuntimeAdapterRequest(SourceBindingRuntimeContext):
     plane_projection: RuntimePlaneProjection = field(
         default_factory=RuntimePlaneProjection.stack
     )
-    source_identity_stack_axes: frozenset[str] = frozenset()
+    variable_components: tuple[VariableComponents, ...] = ()
+    source_load_plan: SourceLoadPlan = field(default_factory=SourceLoadPlan)
 
     @classmethod
     def from_source_context(
@@ -177,7 +179,8 @@ class RuntimeAdapterRequest(SourceBindingRuntimeContext):
         group_key: str | None = None,
         axis_scope: RuntimeExecutionAxisScope | None = None,
         plane_projection: RuntimePlaneProjection | None = None,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
+        variable_components: tuple[VariableComponents, ...] | None = None,
+        source_load_plan: SourceLoadPlan | None = None,
     ) -> "RuntimeAdapterRequest":
         """Project a source-binding runtime context into an adapter request."""
         return cls(
@@ -197,7 +200,16 @@ class RuntimeAdapterRequest(SourceBindingRuntimeContext):
                 if plane_projection is not None
                 else RuntimePlaneProjection.stack()
             ),
-            source_identity_stack_axes=source_identity_stack_axes,
+            variable_components=(
+                tuple(variable_components)
+                if variable_components is not None
+                else ()
+            ),
+            source_load_plan=(
+                source_load_plan
+                if source_load_plan is not None
+                else SourceLoadPlan()
+            ),
         )
 
     @classmethod
@@ -220,9 +232,8 @@ class RuntimeAdapterRequest(SourceBindingRuntimeContext):
             group_key=group_key,
             axis_scope=runtime_scope.axis_scope,
             plane_projection=plane_projection,
-            source_identity_stack_axes=(
-                runtime_scope.execution_plan.source_identity_stack_axes
-            ),
+            variable_components=tuple(runtime_scope.execution_plan.variable_components),
+            source_load_plan=runtime_scope.execution_plan.source_load_plan,
         )
 
     @property

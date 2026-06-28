@@ -31,6 +31,8 @@ import sys
 import threading
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
+
 logger = logging.getLogger(__name__)
 
 # Thread-safe lock for registry access (reentrant to allow nested acquisition)
@@ -447,8 +449,8 @@ def register_function(func: Callable, backend: str = None, **kwargs) -> None:
             )
             return
 
-        # Wrap custom functions with contract wrapper to add 'enabled' parameter
-        # (OpenHCS backend functions are already wrapped during discovery)
+        # Wrap custom functions with the same callable-control declarations used
+        # during backend discovery.
         wrapped_func = func
         if registry_name == 'openhcs' and hasattr(func, '__module__') and func.__module__ == 'openhcs.processing.custom_functions':
             try:
@@ -457,9 +459,9 @@ def register_function(func: Callable, backend: str = None, **kwargs) -> None:
 
                 # Assign default contract for custom functions (FLEXIBLE)
                 contract = ProcessingContract.FLEXIBLE
-                func.__processing_contract__ = contract
+                vars(func)[FunctionContractAttribute.processing_contract] = contract
 
-                # Apply contract wrapper (adds enabled + slice_by_slice)
+                # Apply contract wrapper (enableable, dtype, and contract controls)
                 registry = OpenHCSRegistry()
                 wrapped_func = registry.apply_contract_wrapper(func, contract)
 

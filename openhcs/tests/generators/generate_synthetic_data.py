@@ -142,6 +142,7 @@ class SyntheticMicroscopyGenerator:
 
         # Always auto-calculate image size from grid and tile parameters
         self.image_size = self._calculate_image_size(grid_size, tile_size, overlap_percent, stage_error_px)
+        self.image_shape = (self.image_size[1], self.image_size[0])
         print(f"Auto-calculated image size: {self.image_size[0]}x{self.image_size[1]}")
         self.wavelengths = wavelengths
         self.z_stack_levels = z_stack_levels
@@ -355,10 +356,10 @@ class SyntheticMicroscopyGenerator:
         # STEP 1: Create uniform background
         # Get background intensity from wavelength_backgrounds or use default
         w_background = self.wavelength_backgrounds.get(wavelength_idx, self.background_intensity)
-        image = np.ones(self.image_size, dtype=np.uint16) * w_background
+        image = np.ones(self.image_shape, dtype=np.uint16) * w_background
 
         # STEP 2: Create cells on black background for blur processing
-        cell_image = np.zeros(self.image_size, dtype=np.uint16)
+        cell_image = np.zeros(self.image_shape, dtype=np.uint16)
 
         # Draw each cell on black background
         for cell in cells:
@@ -376,7 +377,7 @@ class SyntheticMicroscopyGenerator:
                 cell['y'], cell['x'],
                 b, a,
                 rotation=cell['rotation'],
-                shape=self.image_size
+                shape=self.image_shape
             )
 
             # Add cell to black background
@@ -403,7 +404,7 @@ class SyntheticMicroscopyGenerator:
         # Use wavelength-specific noise level if provided (add noise AFTER blur)
         w_noise_level = w_params.get('noise_level', self.noise_level)
         if w_noise_level > 0:
-            noise = np.random.normal(0, w_noise_level, self.image_size)
+            noise = np.random.normal(0, w_noise_level, self.image_shape)
             image = image.astype(np.float64) + noise
             image = np.clip(image, 0, 65535).astype(np.uint16)
         else:

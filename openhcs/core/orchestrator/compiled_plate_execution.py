@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from typing import Dict, List, Mapping, Optional, Protocol, TYPE_CHECKING
 
 from openhcs.constants.constants import OrchestratorState
-from openhcs.core.compiled_execution import CompiledExecutionBundle
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.compiled_execution import (
+    CompiledExecutionBundle,
+    CompiledRuntimeEnvironmentPlan,
+)
 from openhcs.core.context.processing_context import ProcessingContext, RequiredVisualizer
 from openhcs.core.debug import DebugExecutionPolicy
 from openhcs.core.orchestrator.analysis_consolidation import AnalysisConsolidationPlan
@@ -61,43 +63,26 @@ class ExecutionVisualizer(Protocol):
 class CompiledPlateExecutionRequest(ProgressExecutionContext):
     """Public execute-compiled-plate call normalized into one request record."""
 
-    pipeline_definition: List[AbstractStep]
-    compiled_contexts: Dict[str, ProcessingContext]
+    execution_bundle: CompiledExecutionBundle
     max_workers: Optional[int]
     visualizer: ExecutionVisualizer | None
     log_file_base: Optional[str]
     progress_queue: ProgressQueue | None
-    worker_assignments: Optional[Dict[str, List[str]]]
-    execution_bundle: Optional[CompiledExecutionBundle]
     runtime_observation_mode: RuntimeObservationMode
     debug_execution_policy: DebugExecutionPolicy
 
-    def execution_bundle_for(
-        self,
-        validated: "ValidatedCompiledPlateExecution",
-    ) -> CompiledExecutionBundle:
-        if self.execution_bundle is not None:
-            return self.execution_bundle
-        if self.worker_assignments is None:
-            return CompiledExecutionBundle.from_unassigned_runtime_contexts(
-                pipeline_definition=validated.pipeline_definition,
-                runtime_contexts=validated.compiled_contexts,
-            )
-        return CompiledExecutionBundle.from_runtime_contexts(
-            pipeline_definition=validated.pipeline_definition,
-            runtime_contexts=validated.compiled_contexts,
-            worker_assignments=self.worker_assignments,
-        )
+    @property
+    def pipeline_definition(self) -> List[AbstractStep]:
+        return list(self.execution_bundle.pipeline_definition)
 
-    def worker_assignments_for(
-        self,
-        execution_bundle: CompiledExecutionBundle,
-    ) -> Optional[Dict[str, List[str]]]:
-        if self.worker_assignments is not None:
-            return self.worker_assignments
-        if execution_bundle.worker_assignments:
-            return dict(execution_bundle.worker_assignments)
-        return None
+    @property
+    def compiled_contexts(self) -> Dict[str, ProcessingContext]:
+        return dict(self.execution_bundle.runtime_contexts)
+
+    def worker_assignments_for(self) -> Optional[Dict[str, List[str]]]:
+        if not self.execution_bundle.worker_assignments:
+            return None
+        return dict(self.execution_bundle.worker_assignments)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +93,7 @@ class ValidatedCompiledPlateExecution(ProgressExecutionContext):
     compiled_contexts: Dict[str, ProcessingContext]
     actual_max_workers: int
     progress_queue: ProgressQueue
+    runtime_environment: CompiledRuntimeEnvironmentPlan
 
     def worker_lane_execution_plan(
         self,
@@ -151,18 +137,17 @@ def execute_compiled_plate_request(
             f"with max_workers={validated.actual_max_workers}."
         )
 
-        effective_config: GlobalPipelineConfig = orchestrator.get_effective_config()
         executor_resources = WorkerExecutorFactory(
             log_file_base=request.log_file_base,
             progress_queue=validated.progress_queue,
             progress_context=validated,
         ).create(
-            effective_config=effective_config,
+            runtime_environment=validated.runtime_environment,
             actual_max_workers=validated.actual_max_workers,
         )
 
-        execution_bundle = request.execution_bundle_for(validated)
-        worker_assignments = request.worker_assignments_for(execution_bundle)
+        execution_bundle = request.execution_bundle
+        worker_assignments = request.worker_assignments_for()
 
         executor_resources.install_execution_bundle(execution_bundle)
         orchestrator._executor = executor_resources.executor
@@ -215,48 +200,38 @@ def validate_compiled_plate_execution(
 ) -> ValidatedCompiledPlateExecution | None:
     """Validate execute-compiled-plate invariants before worker setup."""
 
-    pipeline_definition = resolved_pipeline_definition(
-        orchestrator,
-        request.pipeline_definition,
-    )
+    pipeline_definition = request.pipeline_definition
+    compiled_contexts = request.compiled_contexts
     if not orchestrator.is_initialized():
         raise RuntimeError("Orchestrator must be initialized before executing.")
     if not pipeline_definition:
         raise ValueError("A valid (stateless) pipeline definition must be provided.")
-    if not request.compiled_contexts:
+    if not compiled_contexts:
         logger.warning("No compiled contexts provided for execution.")
         return None
     if request.progress_queue is None:
         raise ValueError(
             "progress_queue is required for execute_compiled_plate invariant path"
         )
+    runtime_environment = request.execution_bundle.runtime_environment
     return ValidatedCompiledPlateExecution(
         execution_id=request.execution_id,
         plate_id=request.plate_id,
         pipeline_definition=pipeline_definition,
-        compiled_contexts=request.compiled_contexts,
-        actual_max_workers=actual_max_workers(orchestrator, request.max_workers),
+        compiled_contexts=compiled_contexts,
+        actual_max_workers=actual_max_workers(runtime_environment, request.max_workers),
         progress_queue=request.progress_queue,
+        runtime_environment=runtime_environment,
     )
 
 
-def resolved_pipeline_definition(
-    orchestrator: "PipelineOrchestrator",
-    pipeline_definition: List[AbstractStep],
-) -> List[AbstractStep]:
-    """Return the runtime-resolved pipeline definition if one is installed."""
-
-    resolved_pipeline = orchestrator.resolved_pipeline_definition
-    return resolved_pipeline if resolved_pipeline is not None else pipeline_definition
-
-
 def actual_max_workers(
-    orchestrator: "PipelineOrchestrator",
+    runtime_environment: CompiledRuntimeEnvironmentPlan,
     max_workers: Optional[int],
 ) -> int:
-    """Resolve the worker count from call override or effective config."""
+    """Resolve the worker count from call override or compiled environment."""
 
-    configured_workers = orchestrator.get_effective_config().num_workers
+    configured_workers = runtime_environment.configured_num_workers
     requested_workers = max_workers if max_workers is not None else configured_workers
     return max(requested_workers, 1)
 

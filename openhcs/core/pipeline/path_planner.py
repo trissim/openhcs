@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Set, TypeAlias
 
-from openhcs.constants import GroupBy
+from openhcs.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.context.processing_context import ProcessingContext
@@ -59,6 +59,27 @@ PlannerGroupKey = str | None
 PathPlannerStepDisplayName = str | int
 MetadataResolverValue: TypeAlias = tuple[int, int]
 MetadataResolver: TypeAlias = Callable[[ProcessingContext], MetadataResolverValue]
+
+
+class MissingArtifactInputError(ValueError):
+    """Raised when a step consumes an artifact that no prior producer provides."""
+
+    def __init__(
+        self,
+        *,
+        step_id: int,
+        artifact_key: str,
+        step_name: str | None,
+    ) -> None:
+        self.step_id = step_id
+        self.artifact_key = artifact_key
+        self.step_name = step_name
+        step_label = step_name or str(step_id)
+        super().__init__(
+            f"Step {step_id} ({step_label}) needs artifact input "
+            f"{artifact_key!r}, but no previous step, source binding, or "
+            "metadata resolver provides it."
+        )
 
 
 @dataclass(frozen=True)
@@ -138,6 +159,62 @@ class PathPlannerGroupScope:
 
 
 @dataclass(frozen=True)
+class PathPlannerComponentScopes:
+    """Component value scopes carried by the main-flow image branch."""
+
+    scopes: Mapping[VariableComponents, PathPlannerGroupScope]
+
+    @classmethod
+    def empty(cls) -> "PathPlannerComponentScopes":
+        return cls({})
+
+    def scope_for_group_by(
+        self,
+        group_by: GroupBy | None,
+        fallback: Callable[[GroupBy], PathPlannerGroupScope],
+    ) -> PathPlannerGroupScope:
+        if not PathPlannerExecutionGroups.group_by_requires_component_keys(group_by):
+            return PathPlannerGroupScope.ungrouped()
+
+        component = self.component_from_group_by(group_by)
+        if component is None:
+            return PathPlannerGroupScope.ungrouped()
+        if component in self.scopes:
+            return self.scopes[component]
+        return fallback(group_by)
+
+    def output_after(
+        self,
+        snapshot: StepSnapshot,
+        execution_scope: PathPlannerGroupScope,
+    ) -> "PathPlannerComponentScopes":
+        if not snapshot.is_function_step:
+            return self
+
+        scopes = dict(self.scopes)
+        variable_components = tuple(snapshot.variable_components or ())
+        for component in variable_components:
+            scopes[component] = PathPlannerGroupScope.ungrouped()
+
+        group_by = PathPlannerExecutionGroups.normalized_group_by(snapshot)
+        group_by_component = self.component_from_group_by(group_by)
+        if (
+            group_by_component is not None
+            and group_by_component not in variable_components
+            and not execution_scope.is_ungrouped
+        ):
+            scopes[group_by_component] = execution_scope
+
+        return PathPlannerComponentScopes(scopes)
+
+    @staticmethod
+    def component_from_group_by(group_by: GroupBy | None) -> VariableComponents | None:
+        if group_by is None or group_by is GroupBy.NONE:
+            return None
+        return VariableComponents(group_by.value)
+
+
+@dataclass(frozen=True)
 class ArtifactPlanMaps:
     """Compiled artifact I/O maps for one step."""
 
@@ -167,7 +244,11 @@ class PathPlannerExecutionGroups:
     def normalize_group_key(key: Hashable | None) -> PlannerGroupKey:
         return PathPlannerGroupScope.normalize_key(key)
 
-    def get_execution_groups(self, snapshot: StepSnapshot) -> PathPlannerGroupScope:
+    def get_execution_groups(
+        self,
+        snapshot: StepSnapshot,
+        input_component_scopes: PathPlannerComponentScopes | None = None,
+    ) -> PathPlannerGroupScope:
         """Determine which component groups this step will execute for."""
         if not snapshot.is_function_step:
             return PathPlannerGroupScope.ungrouped()
@@ -189,6 +270,21 @@ class PathPlannerExecutionGroups:
             logger.debug("No group_by configured; using a single ungrouped execution.")
             return PathPlannerGroupScope.ungrouped()
 
+        if input_component_scopes is not None:
+            scope = input_component_scopes.scope_for_group_by(
+                group_by,
+                self._orchestrator_group_scope,
+            )
+            logger.debug(
+                "Resolved execution groups from main-flow component scope: %s",
+                scope.keys,
+            )
+            return scope
+
+        return self._orchestrator_group_scope(group_by)
+
+    def _orchestrator_group_scope(self, group_by: GroupBy) -> PathPlannerGroupScope:
+        """Resolve group scope from plate-level component keys."""
         if self.planner.orchestrator is None:
             logger.warning(
                 "PathPlanner: orchestrator not available; cannot resolve "
@@ -237,20 +333,23 @@ class PathPlannerArtifactStage:
     def prepare_step_declarations(
         self,
         snapshot: StepSnapshot,
+        input_component_scopes: PathPlannerComponentScopes | None = None,
     ) -> tuple[ArtifactGraph, PathPlannerGroupScope, FunctionPatternSyntax | None]:
         """Normalize a step's function pattern and collect artifact declarations."""
         if not snapshot.is_function_step:
             return ArtifactGraph.empty(), PathPlannerGroupScope.ungrouped(), None
 
-        func_pattern = self.inject_injectable_params(snapshot.func, snapshot)
-        func_pattern = strip_disabled_functions(func_pattern)
+        func_pattern = strip_disabled_functions(snapshot.func)
 
         declarations = extract_artifact_declarations(
             self.declaration_pattern(func_pattern),
             declaration_provider=self.planner.declaration_provider,
             step_context=self.artifact_declaration_context(snapshot),
         )
-        group_scope = self.planner.execution_groups.get_execution_groups(snapshot)
+        group_scope = self.planner.execution_groups.get_execution_groups(
+            snapshot,
+            input_component_scopes,
+        )
         declarations = self.namespace_grouped_outputs_for_runtime_consumers(
             func_pattern,
             declarations,
@@ -453,7 +552,11 @@ class PathPlannerArtifactStage:
                     source_step_scope_id=self.planner.plans[sid].step_scope_id,
                 )
             elif key not in METADATA_RESOLVERS:
-                raise ValueError(f"Step {sid} needs '{key}' but it's not available")
+                raise MissingArtifactInputError(
+                    step_id=sid,
+                    artifact_key=key,
+                    step_name=step_name,
+                )
 
         return result
 
@@ -574,30 +677,6 @@ class PathPlannerArtifactStage:
                 value = METADATA_RESOLVERS[key].resolver(self.planner.ctx)
                 pattern = inject_artifact_input_values(pattern, {key: value})
         return pattern
-
-    def inject_injectable_params(
-        self,
-        pattern: FunctionPatternSyntax,
-        snapshot: StepSnapshot,
-    ) -> FunctionPatternSyntax:
-        """Inject registry-declared injectable params into function kwargs."""
-        from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase
-
-        param_names = [
-            param_name
-            for param_name, _, _ in LibraryRegistryBase.INJECTABLE_PARAMS
-        ]
-        param_kwargs = {}
-        for param_name in param_names:
-            value = snapshot.injectable_values.get(param_name)
-            if value is not None:
-                param_kwargs[param_name] = value
-
-        if not param_kwargs:
-            return pattern
-
-        return inject_kwargs_into_pattern(pattern, param_kwargs)
-
 
 @dataclass(frozen=True)
 class PathPlannerMaterializationStage:
@@ -901,7 +980,7 @@ class PathPlannerPathAuthority:
 
     def results_path(self) -> Path:
         """Get analysis results path from global pipeline configuration."""
-        path = self.planner.ctx.global_config.materialization_results_path
+        path = self.planner.session.global_config.materialization_results_path
         output_plate_root = self.build_output_plate_root(
             self.planner.plate_path,
             self.planner.cfg,
@@ -948,10 +1027,14 @@ class PathPlannerStepAssemblyStage:
         """Plan one step's directories, artifacts, and executable pattern."""
         self.planner.plans[step_index].step_scope_id = snapshot.scope_id
         main_input_dependency = self.main_input_dependency(snapshot, step_index)
+        input_component_scopes = self.input_component_scopes(main_input_dependency)
         input_dir, output_dir = self.step_io_dirs(main_input_dependency, step_index)
 
         declarations, group_scope, func_pattern = (
-            self.planner.artifacts.prepare_step_declarations(snapshot)
+            self.planner.artifacts.prepare_step_declarations(
+                snapshot,
+                input_component_scopes,
+            )
         )
         artifact_maps = self.planner.artifacts.compile_plan_maps(
             snapshot,
@@ -995,6 +1078,24 @@ class PathPlannerStepAssemblyStage:
                 step_index,
                 input_dir,
             ),
+        )
+        self.planner.main_flow_component_scopes[step_index] = (
+            input_component_scopes.output_after(snapshot, artifact_maps.group_scope)
+        )
+
+    def input_component_scopes(
+        self,
+        main_input_dependency: StepInputDependency,
+    ) -> PathPlannerComponentScopes:
+        """Return component scopes visible on a step's main-flow input branch."""
+        if main_input_dependency.kind is StepInputDependencyKind.PIPELINE_START:
+            return PathPlannerComponentScopes.empty()
+        source_step_index = main_input_dependency.source_step_index
+        if source_step_index is None:
+            return PathPlannerComponentScopes.empty()
+        return self.planner.main_flow_component_scopes.get(
+            source_step_index,
+            PathPlannerComponentScopes.empty(),
         )
 
     def update_core_step_plan(
@@ -1118,6 +1219,7 @@ class PathPlanner:
         self.future_artifact_inputs: List[Set[str]] = [
             set() for _ in range(session.step_count)
         ]
+        self.main_flow_component_scopes: dict[int, PathPlannerComponentScopes] = {}
         self.execution_groups = PathPlannerExecutionGroups(self)
         self.paths = PathPlannerPathAuthority(self)
         self.artifacts = PathPlannerArtifactStage(self)

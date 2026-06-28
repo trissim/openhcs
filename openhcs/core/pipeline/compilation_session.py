@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Mapping, MutableMapping, Protocol, Sequence, r
 
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
 
 
 PIPELINE_SOURCE_SCHEMA_METADATA_KEY = "source_schema"
-PIPELINE_SOURCE_IDENTITY_STACK_AXES_METADATA_KEY = "source_identity_stack_axes"
 
 
 @runtime_checkable
@@ -32,6 +30,13 @@ class PipelineMetadataCarrier(Protocol):
     """Structural protocol for pipeline declarations carrying metadata."""
 
     metadata: Mapping[str, object]
+
+
+@runtime_checkable
+class PipelineIdentityCarrier(Protocol):
+    """Structural protocol for pipeline declarations carrying a stable name."""
+
+    name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,13 +74,13 @@ class CompilationSession:
     context: ProcessingContext
     steps: Sequence[AbstractStep]
     orchestrator: "PipelineOrchestrator"
+    global_config: "GlobalPipelineConfig"
     step_state_map: Mapping[int, "ObjectState"]
     snapshots: tuple[StepSnapshot, ...]
     plans: MutableMapping[int, CompiledStepPlan]
     metadata_writer: bool = False
     plate_scope: CompilationPlateScope | None = None
     is_zmq_execution: bool = False
-    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_context(
@@ -84,12 +89,12 @@ class CompilationSession:
         context: ProcessingContext,
         steps: Sequence[AbstractStep],
         orchestrator: "PipelineOrchestrator",
+        global_config: "GlobalPipelineConfig",
         step_state_map: Mapping[int, "ObjectState"],
         snapshots: tuple[StepSnapshot, ...] | None = None,
         metadata_writer: bool = False,
         plate_path: Path | None = None,
         is_zmq_execution: bool = False,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
     ) -> "CompilationSession":
         if context.step_plans is None:
             raise ValueError("CompilationSession requires context.step_plans.")
@@ -99,6 +104,7 @@ class CompilationSession:
             context=context,
             steps=steps,
             orchestrator=orchestrator,
+            global_config=global_config,
             step_state_map=step_state_map,
             snapshots=snapshots,
             plans=context.step_plans,
@@ -109,7 +115,6 @@ class CompilationSession:
                 else None
             ),
             is_zmq_execution=is_zmq_execution,
-            source_identity_stack_axes=source_identity_stack_axes,
         )
 
     def __post_init__(self) -> None:
@@ -134,10 +139,6 @@ class CompilationSession:
                     f"StepSnapshot index mismatch: expected {expected_index}, "
                     f"got {snapshot.index}."
                 )
-
-    @property
-    def global_config(self) -> "GlobalPipelineConfig":
-        return self.context.global_config
 
     @property
     def axis_id(self) -> str:
@@ -200,30 +201,3 @@ class ResolvedPipelineDefinition:
         if not isinstance(steps, PipelineMetadataCarrier):
             return MappingProxyType({})
         return MappingProxyType(dict(steps.metadata))
-
-    @property
-    def source_identity_stack_axes(self) -> frozenset[str]:
-        explicit_axes = self.metadata.get(
-            PIPELINE_SOURCE_IDENTITY_STACK_AXES_METADATA_KEY
-        )
-        if explicit_axes is not None:
-            if isinstance(explicit_axes, str):
-                raise TypeError(
-                    "Pipeline metadata source_identity_stack_axes must be a "
-                    "sequence of axis names, got str."
-                )
-            return frozenset(str(axis) for axis in explicit_axes)
-
-        source_schema = self.metadata.get(PIPELINE_SOURCE_SCHEMA_METADATA_KEY)
-        if source_schema is None:
-            return frozenset()
-        if not isinstance(source_schema, PipelineImageSchema):
-            raise TypeError(
-                "Pipeline metadata source_schema must be PipelineImageSchema, "
-                f"got {type(source_schema).__name__}."
-            )
-        return frozenset(
-            str(component.value)
-            for component in source_schema.source_stack_components
-            if component.value is not None
-        )

@@ -27,6 +27,7 @@ class Microscope(Enum):
     BBBC038 = "bbbc038"
     OMERO = "omero"  # Added for OMERO virtual filesystem backend
     BIOFORMATS = "bioformats"
+    SOURCE_BINDINGS = "source_bindings"
 
 class LiteralDtype(Enum):
     """Concrete numpy dtype literals (single source of truth)."""
@@ -377,7 +378,7 @@ def get_default_group_by():
     _, _, gb, _ = _create_enums()  # Get the enum directly
     config = get_openhcs_config()
     if config.default_group_by is None:
-        return None
+        return gb.__members__["NONE"]
     return gb.__members__[config.default_group_by.name]
 
 @lru_cache(maxsize=1)

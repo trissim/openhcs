@@ -16,6 +16,7 @@ from openhcs.core.pipeline.artifact_planning import extract_artifact_declaration
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.pipeline.path_planner import (
     PathPlanner,
+    PathPlannerComponentScopes,
     PathPlannerArtifactStage,
     PathPlannerExecutionGroups,
     PathPlannerGroupScope,
@@ -40,9 +41,11 @@ def _artifact_planner_stub() -> PathPlanner:
     planner = PathPlanner.__new__(PathPlanner)
     planner.plate_path = Path("/data/plate1")
     planner.cfg = PathConfigStub(sub_dir="images")
+    planner.session = SimpleNamespace(
+        global_config=SimpleNamespace(materialization_results_path="analysis"),
+    )
     planner.ctx = SimpleNamespace(
         axis_id="A01",
-        global_config=SimpleNamespace(materialization_results_path="analysis"),
     )
     planner.plans = {
         2: CompiledStepPlan(
@@ -54,6 +57,7 @@ def _artifact_planner_stub() -> PathPlanner:
         )
     }
     planner.declared = {}
+    planner.main_flow_component_scopes = {}
     planner.execution_groups = PathPlannerExecutionGroups(planner)
     planner.paths = PathPlannerPathAuthority(planner)
     planner.artifacts = PathPlannerArtifactStage(planner)
@@ -196,7 +200,6 @@ def test_planner_uses_invocation_aware_artifact_declaration_provider():
     snapshot = SimpleNamespace(
         is_function_step=True,
         func=(identify, {"artifact_name": "cells"}),
-        injectable_values={},
         group_by=GroupBy.NONE,
         variable_components=(VariableComponents.SITE,),
         name="identify_cells",
@@ -244,6 +247,65 @@ def test_execution_groups_use_normalized_group_by_for_variable_conflicts():
     assert planner.execution_groups.get_execution_groups(snapshot) == (
         PathPlannerGroupScope.ungrouped()
     )
+
+
+def test_execution_groups_follow_main_flow_component_scope_after_collapse():
+    planner = _artifact_planner_stub()
+
+    def component_lookup(group_by):
+        assert group_by is GroupBy.CHANNEL
+        return ("1", "2")
+
+    planner.orchestrator = SimpleNamespace(get_component_keys=component_lookup)
+    input_scopes = PathPlannerComponentScopes.empty()
+    source_snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE,),
+        name="enhance",
+    )
+
+    source_scope = planner.execution_groups.get_execution_groups(
+        source_snapshot,
+        input_scopes,
+    )
+    assert source_scope == PathPlannerGroupScope.from_raw(("1", "2"))
+
+    composite_snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.CHANNEL,),
+        name="create_composite",
+    )
+    composite_input_scopes = input_scopes.output_after(
+        source_snapshot,
+        source_scope,
+    )
+    composite_scope = planner.execution_groups.get_execution_groups(
+        composite_snapshot,
+        composite_input_scopes,
+    )
+    assert composite_scope == PathPlannerGroupScope.ungrouped()
+
+    downstream_input_scopes = composite_input_scopes.output_after(
+        composite_snapshot,
+        composite_scope,
+    )
+    position_snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE,),
+        name="Position Computation",
+    )
+    position_scope = planner.execution_groups.get_execution_groups(
+        position_snapshot,
+        downstream_input_scopes,
+    )
+
+    assert position_scope == PathPlannerGroupScope.ungrouped()
 
 
 def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():

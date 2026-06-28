@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 import logging
-import time
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -32,7 +31,7 @@ from openhcs.core.runtime_semantics import (
     RuntimePlaneAxisValueProjection,
     coerce_enum,
 )
-from openhcs.core.runtime_profile import RuntimeProfileLogger
+from openhcs.core.runtime_profile import RuntimeProfileLogger, RuntimeProfileTimer
 from openhcs.core.source_spatial_domain import SourceSpatialDomainAdapter
 from openhcs.core.runtime_values import (
     ObjectLabelMeasurementPayloadStrategy,
@@ -185,6 +184,7 @@ class MeasurementImageAlignmentSource(ABC):
         labels: ObjectLabelMeasurementSource,
         label_payload: ObjectLabelValue | None = None,
         plane_projector: RuntimePlaneAxisProjector | None = None,
+        align_image_to_labels: bool = True,
     ) -> "MeasurementImageLabelAlignmentRequest":
         """Return a request carrying only label/projector-local alignment facts."""
         return MeasurementImageLabelAlignmentRequest(
@@ -192,6 +192,24 @@ class MeasurementImageAlignmentSource(ABC):
             labels=labels,
             label_payload=label_payload,
             plane_projector=plane_projector,
+            align_image_to_labels=align_image_to_labels,
+        )
+
+    def object_label_alignment_request(
+        self,
+        label_payload: ObjectLabelValue,
+        *,
+        plane_projector: RuntimePlaneAxisProjector | None = None,
+        align_image_to_labels: bool = True,
+    ) -> "MeasurementImageLabelAlignmentRequest":
+        """Return a measurement-label alignment request from an object-label payload."""
+        return self.alignment_request(
+            labels=ObjectLabelDenseDataStrategy.for_payload(label_payload).data(
+                label_payload
+            ),
+            label_payload=label_payload,
+            plane_projector=plane_projector,
+            align_image_to_labels=align_image_to_labels,
         )
 
 
@@ -203,6 +221,7 @@ class MeasurementImageLabelAlignmentRequest:
     labels: ObjectLabelMeasurementSource
     label_payload: ObjectLabelValue | None = None
     plane_projector: RuntimePlaneAxisProjector | None = None
+    align_image_to_labels: bool = True
     monochrome_projection: MeasurementImageMonochromeProjection = field(
         default_factory=ReplicatedChannelMonochromeProjection
     )
@@ -315,23 +334,17 @@ class PreparedMeasurementObjectLabels:
     ) -> "PreparedMeasurementObjectLabels":
         """Prepare labels from one measurement-image source and payload."""
         return cls.from_request(
-            request=source.alignment_request(
-                labels=(
-                    ObjectLabelDenseDataStrategy.for_payload(label_payload)
-                    .data(label_payload)
-                ),
-                label_payload=label_payload,
+            request=source.object_label_alignment_request(
+                label_payload,
                 plane_projector=plane_projector,
+                align_image_to_labels=align_image_to_labels,
             ),
-            align_image_to_labels=align_image_to_labels,
         )
 
     @classmethod
     def from_request(
         cls,
         request: MeasurementImageLabelAlignmentRequest,
-        *,
-        align_image_to_labels: bool = True,
     ) -> "PreparedMeasurementObjectLabels":
         """Prepare image, dense labels, and completion payload in one pass."""
         if request.label_payload is None:
@@ -340,20 +353,20 @@ class PreparedMeasurementObjectLabels:
             )
         profile_enabled = RuntimeProfileLogger.enabled()
         source_payload = request.label_payload
-        source_projection_started_at = time.perf_counter() if profile_enabled else 0.0
+        source_projection_timer = RuntimeProfileTimer.start()
         source_projected_request = request.with_source_projected_labels()
         source_projected_labels = source_projected_request.labels
         if profile_enabled:
             RuntimeProfileLogger.log(
                 logger,
                 "measurement_object_labels_source_projection",
-                time.perf_counter() - source_projection_started_at,
+                source_projection_timer.elapsed(),
                 reference_domain=request.reference_domain.value,
                 source_type=type(request.image).__name__,
                 labels_type=type(request.labels).__name__,
                 source_aliases=request.source_aliases,
             )
-        source_context_started_at = time.perf_counter() if profile_enabled else 0.0
+        source_context_timer = RuntimeProfileTimer.start()
         source_projected_payload = cls.source_context_payload(
             source_projected_request,
             source_payload,
@@ -363,7 +376,7 @@ class PreparedMeasurementObjectLabels:
             RuntimeProfileLogger.log(
                 logger,
                 "measurement_object_labels_source_context",
-                time.perf_counter() - source_context_started_at,
+                source_context_timer.elapsed(),
                 reference_domain=request.reference_domain.value,
                 payload_reused=source_projected_payload is source_payload,
             )
@@ -372,8 +385,8 @@ class PreparedMeasurementObjectLabels:
             labels=source_projected_labels,
             label_payload=source_projected_payload,
         )
-        image_align_started_at = time.perf_counter() if profile_enabled else 0.0
-        if align_image_to_labels:
+        image_align_timer = RuntimeProfileTimer.start()
+        if request.align_image_to_labels:
             aligned_image = MeasurementImageLabelAlignmentStrategy.align(
                 image_request
             )
@@ -383,12 +396,12 @@ class PreparedMeasurementObjectLabels:
             RuntimeProfileLogger.log(
                 logger,
                 "measurement_object_labels_image_alignment",
-                time.perf_counter() - image_align_started_at,
+                image_align_timer.elapsed(),
                 reference_domain=request.reference_domain.value,
-                align_image_to_labels=align_image_to_labels,
+                align_image_to_labels=request.align_image_to_labels,
                 aligned_type=type(aligned_image).__name__,
             )
-        label_align_started_at = time.perf_counter() if profile_enabled else 0.0
+        label_align_timer = RuntimeProfileTimer.start()
         measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(
             aligned_image,
             source_projected_labels,
@@ -398,11 +411,11 @@ class PreparedMeasurementObjectLabels:
             RuntimeProfileLogger.log(
                 logger,
                 "measurement_object_labels_label_alignment",
-                time.perf_counter() - label_align_started_at,
+                label_align_timer.elapsed(),
                 reference_domain=request.reference_domain.value,
                 labels_reused=measurement_labels is source_projected_labels,
             )
-        completion_started_at = time.perf_counter() if profile_enabled else 0.0
+        completion_timer = RuntimeProfileTimer.start()
         completion_payload = (
             ObjectLabelMeasurementPayloadStrategy.for_source(source_projected_payload)
             .materialize(
@@ -414,7 +427,7 @@ class PreparedMeasurementObjectLabels:
             RuntimeProfileLogger.log(
                 logger,
                 "measurement_object_labels_completion_payload",
-                time.perf_counter() - completion_started_at,
+                completion_timer.elapsed(),
                 reference_domain=request.reference_domain.value,
                 payload_reused=completion_payload is source_projected_payload,
             )

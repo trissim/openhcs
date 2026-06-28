@@ -200,11 +200,23 @@ def run_pipeline():
     for plate_path in plate_paths:
         orchestrator = PipelineOrchestrator(plate_path)
         orchestrator.initialize()
-        compiled_contexts = orchestrator.compile_pipelines(pipeline_data[plate_path])
+        compilation_result = orchestrator.compile_pipelines(pipeline_data[plate_path])
+        execution_bundle = compilation_result["execution_bundle"]
+        progress_context = {
+            "execution_id": f"debug::{plate_path}",
+            "plate_id": str(plate_path),
+            "axis_id": "",
+        }
+        progress_queue = (
+            execution_bundle.runtime_environment.worker_start
+            .multiprocessing_context()
+            .Queue()
+        )
         orchestrator.execute_compiled_plate(
-            pipeline_definition=pipeline_data[plate_path],
-            compiled_contexts=compiled_contexts,
-            max_workers=global_config.num_workers
+            execution_bundle=execution_bundle,
+            max_workers=global_config.num_workers,
+            progress_queue=progress_queue,
+            progress_context=progress_context,
         )
 
 if __name__ == "__main__":

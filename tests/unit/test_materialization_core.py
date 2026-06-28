@@ -24,10 +24,11 @@ from polystore.streaming.viewer_transport import (
 )
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.config import TransportMode
 from openhcs.core.measurement_row_materialization import MeasurementProjectedColumnarRows
+from openhcs.core.runtime_semantics import RuntimePlaneAxis
 from openhcs.core.runtime_slice_projection import RuntimeProjectionPlaneMetadata
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -77,7 +78,7 @@ def _memory_materialize(spec, data, path, filemanager):
 
 
 class _TestViewerDisplayConfig(ViewerDisplayConfigABC):
-    COMPONENT_ORDER = ("well", "site", "z_index", "channel")
+    COMPONENT_ORDER = AllComponents.ordered_names()
 
     def component_modes(self):
         return {}
@@ -85,7 +86,24 @@ class _TestViewerDisplayConfig(ViewerDisplayConfigABC):
 
 class _TestViewerFilenameParser(ViewerFilenameParserABC):
     def parse_filename(self, filename):
-        return None
+        import re
+
+        match = re.match(
+            r"(?P<well>[A-Z]\d{2})_s(?P<site>\d+)_w(?P<channel>\d+)"
+            r"(?:_z(?P<z_index>\d+))?(?:_t(?P<timepoint>\d+))?"
+            r"(?P<extension>\.[^.]+)?$",
+            filename,
+        )
+        if match is None:
+            return None
+        parsed = {
+            key: value
+            for key, value in match.groupdict().items()
+            if value is not None
+        }
+        parsed.setdefault("z_index", "1")
+        parsed.setdefault("timepoint", "1")
+        return parsed
 
 
 class _TestViewerMetadataHandler(ViewerMetadataHandlerABC):
@@ -113,7 +131,13 @@ def _viewer_stream_backend_kwargs():
                 plate_path="/tmp/test_plate",
             ),
             metadata=BatchViewerStreamSourceMetadata(
-                {"well": "A01", "site": 1, "channel": 1}
+                {
+                    "timepoint": 1,
+                    "z_index": 1,
+                    "site": 1,
+                    "well": "A01",
+                    "channel": 1,
+                }
             ),
         ),
         producer=ViewerStreamProducer.from_identity(
@@ -140,7 +164,13 @@ def _viewer_stream_backend_kwargs_for_display(display_config):
                 plate_path="/tmp/test_plate",
             ),
             metadata=BatchViewerStreamSourceMetadata(
-                {"well": "A01", "site": 1, "channel": 1}
+                {
+                    "timepoint": 1,
+                    "z_index": 1,
+                    "site": 1,
+                    "well": "A01",
+                    "channel": 1,
+                }
             ),
         ),
         producer=ViewerStreamProducer.from_identity(
@@ -424,8 +454,8 @@ def test_tiff_stack_streaming_saves_per_slice_component_metadata() -> None:
     payload = ObjectLabelPayload(
         labels=np.zeros((2, 5, 7), dtype=np.int32),
         source_image_provenance_planes = SourceImageProvenancePlanes.from_components(component_metadata = (
-            {"well": "A01", "site": 1, "z_index": 1},
-            {"well": "A01", "site": 2, "z_index": 1},
+            {"well": "A01", "site": 1, "z_index": 1, "channel": 1, "timepoint": 1},
+            {"well": "A01", "site": 2, "z_index": 1, "channel": 1, "timepoint": 1},
         )))
 
     materialize(
@@ -443,8 +473,8 @@ def test_tiff_stack_streaming_saves_per_slice_component_metadata() -> None:
         if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
     ]
     assert [_stream_component_metadata(item) for item in saved_slices] == [
-        {"well": "A01", "site": 1, "z_index": 1},
-        {"well": "A01", "site": 2, "z_index": 1},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 2, "well": "A01", "channel": 1},
     ]
 
 
@@ -459,6 +489,7 @@ def test_tiff_stack_streaming_projects_scalar_metadata_over_declared_stack_axis(
                 "site": 1,
                 "z_index": 1,
                 "channel": 3,
+                "timepoint": 1,
             },
         ),
     )
@@ -470,7 +501,7 @@ def test_tiff_stack_streaming_projects_scalar_metadata_over_declared_stack_axis(
         filemanager=fm,
         backends=["napari_stream"],
         backend_kwargs={"napari_stream": _viewer_stream_backend_kwargs()},
-        source_identity_stack_axes=frozenset({"z_index"}),
+        variable_components=(VariableComponents.Z_INDEX,),
     )
 
     saved_images = [
@@ -479,8 +510,8 @@ def test_tiff_stack_streaming_projects_scalar_metadata_over_declared_stack_axis(
         if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
     ]
     assert [_stream_component_metadata(item) for item in saved_images] == [
-        {"well": "A01", "site": 1, "z_index": "1", "channel": 3},
-        {"well": "A01", "site": 1, "z_index": "2", "channel": 3},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 3},
+        {"timepoint": 1, "z_index": 2, "site": 1, "well": "A01", "channel": 3},
     ]
 
 
@@ -497,6 +528,7 @@ def test_tiff_stack_projection_skips_axes_already_varying_in_slice_metadata() ->
                         AllComponents.SITE.value: 1,
                         AllComponents.Z_INDEX.value: index + 1,
                         AllComponents.CHANNEL.value: 3,
+                        AllComponents.TIMEPOINT.value: 1,
                     },
                 ),
             ).payload(),
@@ -510,7 +542,7 @@ def test_tiff_stack_projection_skips_axes_already_varying_in_slice_metadata() ->
     )
 
     axes = RuntimePlaneStackAxesProjectionSelection(
-        frozenset((AllComponents.Z_INDEX.value, AllComponents.CHANNEL.value)),
+        (VariableComponents.Z_INDEX, VariableComponents.CHANNEL),
         items,
     ).axes()
 
@@ -543,7 +575,7 @@ def test_tiff_stack_projection_rejects_ambiguous_scalar_declared_axes() -> None:
 
     with pytest.raises(ValueError, match="cannot map runtime plane metadata"):
         RuntimePlaneStackAxesProjectionSelection(
-            frozenset((AllComponents.Z_INDEX.value, AllComponents.CHANNEL.value)),
+            (VariableComponents.Z_INDEX, VariableComponents.CHANNEL),
             items,
         ).axes()
 
@@ -563,7 +595,7 @@ def test_tiff_stack_projection_uses_artifact_scalar_z_origin() -> None:
     )
 
     axes = RuntimePlaneStackAxesProjectionSelection(
-        frozenset((AllComponents.Z_INDEX.value, AllComponents.CHANNEL.value)),
+        (VariableComponents.Z_INDEX, VariableComponents.CHANNEL),
         items,
         SourceImageIdentity(
             component_metadata={
@@ -591,6 +623,7 @@ def test_tiff_stack_streaming_preserves_runtime_source_plane_metadata() -> None:
                 "site": 1,
                 "z_index": 1,
                 "channel": 3,
+                "timepoint": 1,
                 SOURCE_PLANE_INDEX_FIELD: "0",
                 SOURCE_PLANE_COUNT_FIELD: "2",
             },
@@ -604,7 +637,10 @@ def test_tiff_stack_streaming_preserves_runtime_source_plane_metadata() -> None:
         filemanager=fm,
         backends=["napari_stream"],
         backend_kwargs={"napari_stream": _viewer_stream_backend_kwargs()},
-        source_identity_stack_axes=frozenset({"z_index", "channel"}),
+        variable_components=(
+            VariableComponents.Z_INDEX,
+            VariableComponents.CHANNEL,
+        ),
     )
 
     saved_images = [
@@ -613,8 +649,8 @@ def test_tiff_stack_streaming_preserves_runtime_source_plane_metadata() -> None:
         if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
     ]
     assert [_stream_component_metadata(item) for item in saved_images] == [
-        {"well": "A01", "site": 1, "z_index": "1", "channel": 3},
-        {"well": "A01", "site": 1, "z_index": "2", "channel": 3},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 3},
+        {"timepoint": 1, "z_index": 2, "site": 1, "well": "A01", "channel": 3},
     ]
 
 
@@ -635,9 +671,10 @@ def test_tiff_stack_streaming_projects_artifact_identity_over_declared_stack_axi
                 "site": 1,
                 "z_index": 1,
                 "channel": 3,
+                "timepoint": 1,
             },
         ),
-        source_identity_stack_axes=frozenset({"z_index"}),
+        variable_components=(VariableComponents.Z_INDEX,),
     )
 
     saved_images = [
@@ -646,8 +683,8 @@ def test_tiff_stack_streaming_projects_artifact_identity_over_declared_stack_axi
         if item[1].endswith(("_slice_000.tif", "_slice_001.tif"))
     ]
     assert [_stream_component_metadata(item) for item in saved_images] == [
-        {"well": "A01", "site": 1, "z_index": "1", "channel": 3},
-        {"well": "A01", "site": 1, "z_index": "2", "channel": 3},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 3},
+        {"timepoint": 1, "z_index": 2, "site": 1, "well": "A01", "channel": 3},
     ]
 
 
@@ -659,7 +696,7 @@ def test_tiff_stack_streaming_uses_single_plane_scalar_source_identity() -> None
         metadata=ImagePayloadMetadata(
             source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
                 component_metadata=(
-                    {"well": "A01", "site": 1, "channel": 3},
+                    {"well": "A01", "site": 1, "z_index": 1, "channel": 3, "timepoint": 1},
                 )
             ),
         ),
@@ -681,17 +718,16 @@ def test_tiff_stack_streaming_uses_single_plane_scalar_source_identity() -> None
     ]
     assert len(saved_images) == 1
     assert _stream_component_metadata(saved_images[0]) == {
-        "well": "A01",
+        "timepoint": 1,
+        "z_index": 1,
         "site": 1,
+        "well": "A01",
         "channel": 3,
     }
 
 
 @pytest.mark.unit
 def test_materialized_tiff_output_uses_artifact_source_identity_as_fallback() -> None:
-    class _TimepointDisplayConfig(_TestViewerDisplayConfig):
-        COMPONENT_ORDER = ("well", "site", "z_index", "channel", "timepoint")
-
     fm = _RecordingFileManager()
     payload = ImageMetadataPayload(
         data=np.zeros((5, 7, 3), dtype=np.float32),
@@ -713,7 +749,7 @@ def test_materialized_tiff_output_uses_artifact_source_identity_as_fallback() ->
         backends=["napari_stream"],
         backend_kwargs={
             "napari_stream": _viewer_stream_backend_kwargs_for_display(
-                _TimepointDisplayConfig()
+                _TestViewerDisplayConfig()
             )
         },
         artifact_source_identity=SourceImageIdentity(
@@ -851,7 +887,7 @@ def test_roi_streaming_preserves_singleton_projected_source_metadata() -> None:
         "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
     ]
     assert [_stream_component_metadata(item) for item in roi_saves] == [
-        {"well": "A01", "site": 1, "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 1},
     ]
 
 
@@ -907,8 +943,8 @@ def test_roi_materialization_splits_addressable_label_planes_for_streaming() -> 
         "/tmp/A01_s002_w1_z001_t001_Nuclei_step3_rois.roi.zip",
     ]
     assert [_stream_component_metadata(item) for item in roi_saves] == [
-        {"well": "A01", "site": 1, "channel": 1},
-        {"well": "A01", "site": 2, "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 2, "well": "A01", "channel": 1},
     ]
     assert [len(item[0]) for item in roi_saves] == [1, 1]
 
@@ -971,12 +1007,14 @@ def test_roi_materialization_replaces_parser_equivalent_reference_source_prefix(
             "site": 1,
             "channel": 1,
             "z_index": 1,
+            "timepoint": 1,
         },
         {
             "well": "A14",
             "site": 2,
             "channel": 1,
             "z_index": 1,
+            "timepoint": 1,
         },
     ]
 
@@ -1032,8 +1070,8 @@ def test_roi_streaming_applies_target_metadata_without_scalar_stream_metadata() 
         if item[1].endswith(".roi.zip")
     ]
     assert [_stream_component_metadata(item) for item in roi_saves] == [
-        {"well": "A01", "site": 1, "channel": 1},
-        {"well": "A01", "site": 2, "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A01", "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 2, "well": "A01", "channel": 1},
     ]
 
 
@@ -1087,8 +1125,10 @@ def test_roi_materialization_coalesces_duplicate_stream_targets() -> None:
         "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
     ]
     assert _stream_component_metadata(roi_saves[0]) == {
-        "well": "A01",
+        "timepoint": 1,
+        "z_index": 1,
         "site": 1,
+        "well": "A01",
         "channel": 1,
     }
     assert len(roi_saves[0][0]) == 2
@@ -1140,6 +1180,7 @@ def test_roi_materialization_coalesces_source_stack_archive_with_artifact_identi
                 "well": "A01",
                 "site": 1,
                 "channel": 1,
+                "z_index": 1,
                 "timepoint": 1,
                 "extension": ".tif",
             },
@@ -1155,8 +1196,10 @@ def test_roi_materialization_coalesces_source_stack_archive_with_artifact_identi
         "/tmp/A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
     ]
     assert _stream_component_metadata(roi_saves[0]) == {
-        "well": "A01",
+        "timepoint": 1,
+        "z_index": 1,
         "site": 1,
+        "well": "A01",
         "channel": 1,
     }
     assert len(roi_saves[0][0]) == 2
@@ -1345,8 +1388,8 @@ def test_roi_materialization_uses_source_context_for_partial_label_stack() -> No
         "/tmp/A02_s002_w1_z001_t001_Nuclei_step3_rois.roi.zip",
     ]
     assert [_stream_component_metadata(item) for item in roi_saves] == [
-        {"well": "A02", "site": 1, "channel": 1},
-        {"well": "A02", "site": 2, "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 1, "well": "A02", "channel": 1},
+        {"timepoint": 1, "z_index": 1, "site": 2, "well": "A02", "channel": 1},
     ]
 
 
@@ -1362,6 +1405,65 @@ def test_roi_materialization_rejects_unaddressed_stack_provenance_slots() -> Non
             "/tmp/A01_s001_w1_z001_t001_Nuclei_step3.roi.zip",
             fm,
         )
+
+
+@pytest.mark.unit
+def test_roi_materialization_spec_reports_projected_source_identities() -> None:
+    labels = np.zeros((2, 8, 8), dtype=np.int32)
+    labels[0, 1:4, 1:4] = 1
+    labels[1, 4:7, 4:7] = 2
+    payload = ObjectLabelPayload(
+        labels=labels,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s001_w1_z001_t001.tif",
+                "/input/A01_s001_w2_z001_t001.tif",
+            ),
+            component_metadata=(
+                {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 1,
+                    "z_index": 1,
+                    "timepoint": 1,
+                    "extension": ".tif",
+                },
+                {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 2,
+                    "z_index": 1,
+                    "timepoint": 1,
+                    "extension": ".tif",
+                },
+            ),
+        ),
+    )
+    spec = MaterializationSpec(ROIOptions(min_area=0))
+
+    assert spec.emits_variable_component_planes(payload) is True
+    assert [
+        identity.component_metadata
+        for identity in spec.emitted_source_identities(payload)
+    ] == [
+        {
+            "well": "A01",
+            "site": 1,
+            "channel": 1,
+            "z_index": 1,
+            "timepoint": 1,
+            "extension": ".tif",
+        },
+        {
+            "well": "A01",
+            "site": 1,
+            "channel": 2,
+            "z_index": 1,
+            "timepoint": 1,
+            "extension": ".tif",
+        },
+    ]
 
 
 @pytest.mark.unit

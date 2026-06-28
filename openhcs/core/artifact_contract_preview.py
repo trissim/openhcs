@@ -168,8 +168,7 @@ class SourceBindingRuntimeContractGuard:
     def _source_binding_specs(self) -> set[tuple[str, ArtifactKind]]:
         return {
             (binding.alias, binding.artifact_kind)
-            for group in self.source_bindings.groups
-            for binding in group.bindings
+            for binding in self.source_bindings.bindings
         }
 
 

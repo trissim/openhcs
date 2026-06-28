@@ -7,6 +7,8 @@ from typing import Dict, Optional, Union, Tuple
 import re
 import tifffile
 
+from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
+
 class TiffPixelSizeMixin:
     """Utility mixin to extract pixel size and channel name from TIFF metadata."""
 
@@ -34,7 +36,7 @@ class TiffPixelSizeMixin:
                 m = re.search(r"spatial[- ]calibration[- ]x[^0-9]*([0-9.]+)", text, re.IGNORECASE)
                 if m:
                     return float(m.group(1))
-        raise ValueError(f"Pixel size not found in TIFF metadata for {img}")
+        raise MicroscopePixelSizeUnavailableError(img)
 
     def _channel_from_tiff(self, plate_path, filemanager) -> Optional[Dict[str, Optional[str]]]:
         img = self._first_tiff(plate_path, filemanager)

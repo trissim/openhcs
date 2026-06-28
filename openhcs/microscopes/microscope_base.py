@@ -9,7 +9,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, Type
+from typing import Any, Dict, List, Optional, Tuple, Union, Type, TYPE_CHECKING
 
 # Import constants
 from openhcs.constants.constants import Backend
@@ -31,6 +31,9 @@ from openhcs.microscopes.microscope_interfaces import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from openhcs.core.source_bindings import SourceBindingsConfig
 
 # Dictionary to store registered metadata handlers for auto-detection
 # This will be auto-wrapped with SecondaryRegistryDict by the metaclass
@@ -95,6 +98,18 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         self.plate_folder: Optional[Path] = None # Store workspace path if needed by methods
 
         # Pattern discovery engine will be created on demand with the provided filemanager
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        filemanager: FileManager,
+        pattern_format: Optional[str] = None,
+        source_bindings_config: Optional["SourceBindingsConfig"] = None,
+    ) -> "MicroscopeHandler":
+        """Construct a registered microscope handler from factory inputs."""
+        del source_bindings_config
+        return cls(filemanager, pattern_format=pattern_format)
 
     @classmethod
     def detect(cls, plate_folder: Path, filemanager: FileManager) -> bool:
@@ -632,6 +647,7 @@ def create_microscope_handler(microscope_type: str = 'auto',
                               plate_folder: Optional[Union[str, Path]] = None,
                               filemanager: Optional[FileManager] = None,
                               pattern_format: Optional[str] = None,
+                              source_bindings_config: Optional["SourceBindingsConfig"] = None,
                               allowed_auto_types: Optional[List[str]] = None) -> MicroscopeHandler:
     """
     Factory function to create a microscope handler.
@@ -646,6 +662,7 @@ def create_microscope_handler(microscope_type: str = 'auto',
         plate_folder: Required for 'auto' detection.
         filemanager: FileManager instance. Must be provided.
         pattern_format: Name of the pattern format to use.
+        source_bindings_config: Source-binding declarations for explicit source-binding mode.
         allowed_auto_types: For 'auto' mode, limit detection to these types.
                            'openhcs' is always included and tried first.
 
@@ -688,9 +705,11 @@ def create_microscope_handler(microscope_type: str = 'auto',
     # Create and configure the handler
     logger.info(f"Creating {handler_class.__name__}")
 
-    # Create the handler with the parser and metadata handler
-    # The filemanager will be passed to methods that need it
-    handler = handler_class(filemanager, pattern_format=pattern_format)
+    handler = handler_class.create(
+        filemanager=filemanager,
+        pattern_format=pattern_format,
+        source_bindings_config=source_bindings_config,
+    )
 
     # If the handler is OpenHCSMicroscopeHandler, set its plate_folder attribute.
     # This is crucial for its dynamic parser loading mechanism.

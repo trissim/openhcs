@@ -88,7 +88,7 @@ def _compiled_plan(**overrides):
 
 
 def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
-    compiled_plan = _compiled_plan(source_identity_stack_axes=frozenset({"z_index"}))
+    compiled_plan = _compiled_plan()
     context = ContextStub(compiled_plan)
 
     plan = FunctionStepExecutionPlan.from_context(context, 2)
@@ -107,20 +107,6 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
     assert plan.has_materialized_output
     assert plan.materialized_output_dir == Path("/tmp/materialized")
     assert plan.artifact_analysis_output_dir == Path("/tmp/materialized_results")
-    assert plan.source_identity_stack_axes == frozenset({"z_index"})
-
-
-def test_execution_plan_preserves_step_local_source_identity_stack_axes():
-    compiled_plan = _compiled_plan(
-        source_identity_stack_axes=frozenset({"channel", "z_index"}),
-        step_source_identity_stack_axes=frozenset({"z_index"}),
-    )
-    context = ContextStub(compiled_plan)
-
-    plan = FunctionStepExecutionPlan.from_context(context, 2)
-
-    assert plan.source_identity_stack_axes == frozenset({"channel", "z_index"})
-    assert plan.step_source_identity_stack_axes == frozenset({"z_index"})
 
 
 def test_function_step_execution_does_not_prepare_callables_in_hot_path(monkeypatch):

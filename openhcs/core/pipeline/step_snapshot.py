@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
-from openhcs.constants.constants import AllComponents
 from openhcs.core.config import WellFilterConfig
 from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
@@ -14,9 +12,6 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.processing.backends.lib_registry.unified_registry import (
-    LibraryRegistryBase,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,10 +50,8 @@ class StepSnapshot:
     is_function_step: bool
     func: Any
     source_bindings: StepSourceBindingsConfig
-    source_identity_stack_axes: tuple[AllComponents, ...]
     processing: StepProcessingSnapshot
     materialization_config: Any
-    injectable_values: Mapping[str, Any]
     well_filters: tuple[StepWellFilterSnapshot, ...] = ()
 
     @classmethod
@@ -89,11 +82,6 @@ class StepSnapshot:
             config=_saved_value(step_state, "processing_config", index),
         )
 
-        injectable_values = {
-            param_name: _saved_value(step_state, param_name, index)
-            for param_name, _, _ in LibraryRegistryBase.INJECTABLE_PARAMS
-        }
-
         return cls(
             index=index,
             scope_id=step_state.scope_id,
@@ -107,18 +95,12 @@ class StepSnapshot:
                 if isinstance(step, FunctionStep)
                 else EMPTY_SOURCE_BINDINGS
             ),
-            source_identity_stack_axes=(
-                step.source_identity_stack_axes
-                if isinstance(step, FunctionStep)
-                else ()
-            ),
             processing=processing,
             materialization_config=_saved_value(
                 step_state,
                 "step_materialization_config",
                 index,
             ),
-            injectable_values=MappingProxyType(injectable_values),
             well_filters=_build_well_filter_snapshots(step_state, index),
         )
 
@@ -137,13 +119,6 @@ class StepSnapshot:
     @property
     def processing_config(self) -> Any:
         return self.processing.config
-
-    @property
-    def source_identity_stack_axis_values(self) -> frozenset[str]:
-        return frozenset(
-            component.value for component in self.source_identity_stack_axes
-        )
-
 
 def build_step_snapshots(
     steps: Sequence[AbstractStep],

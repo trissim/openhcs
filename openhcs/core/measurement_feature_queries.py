@@ -38,12 +38,13 @@ from openhcs.core.measurement_row_materialization import (
     measurement_row_object_name,
     measurement_row_source_image_name,
     measurement_rows,
+    measurement_table_axis_values,
     measurement_table_object_id_field,
     measurement_table_object_name,
 )
 from openhcs.core.process_local_cache import (
     IdentityBoundProcessCache,
-    ProcessLocalBoundedCache,
+    RegisteredProcessLocalBoundedCache,
     identity_owner_tuples_match,
 )
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
@@ -740,6 +741,10 @@ class MeasurementObjectFeatureVectorBatchQuery:
         row_axis: MeasurementRowAxisField,
     ) -> dict[int, MeasurementValueIndexesByObject] | None:
         """Return object-keyed feature indexes grouped by one declared row axis."""
+        required_axis_values = self.required_axis_values(
+            measurement_tables_by_object,
+            row_axis,
+        )
         cached_axis_indexes = self.cached_matching_axis_value_indexes(
             measurement_tables_by_object,
             row_axis,
@@ -748,12 +753,19 @@ class MeasurementObjectFeatureVectorBatchQuery:
         cache_object_names = self.cache_object_names(measurement_tables_by_object)
         if cached_axis_indexes is not None:
             requested = self.requested_axis_value_indexes(cached_axis_indexes)
-            if self.requested_axis_indexes_present(requested):
+            if self.requested_axis_indexes_present(
+                requested,
+                required_axis_values=required_axis_values,
+            ):
                 return requested
             cached_object_names = frozenset(
                 object_name
-                for object_indexes in cached_axis_indexes.values()
-                for object_name in object_indexes
+                for object_name in cache_object_names
+                if self.axis_indexes_contain_object(
+                    cached_axis_indexes,
+                    object_name,
+                    required_axis_values=required_axis_values,
+                )
             )
         else:
             cached_axis_indexes = {}
@@ -1168,7 +1180,13 @@ class MeasurementObjectFeatureVectorBatchQuery:
         if cached_indexes is None:
             return None
         requested = self.requested_axis_value_indexes(cached_indexes)
-        if not self.requested_axis_indexes_present(requested):
+        if not self.requested_axis_indexes_present(
+            requested,
+            required_axis_values=self.required_axis_values(
+                measurement_tables_by_object,
+                row_axis,
+            ),
+        ):
             return None
         return requested
 
@@ -1210,12 +1228,50 @@ class MeasurementObjectFeatureVectorBatchQuery:
     def requested_axis_indexes_present(
         self,
         indexes_by_axis: Mapping[int, MeasurementValueIndexesByObject],
+        *,
+        required_axis_values: tuple[int, ...],
     ) -> bool:
         """Return whether cached axis indexes satisfy every requested object."""
         return all(
-            any(object_name in object_indexes for object_indexes in indexes_by_axis.values())
+            self.axis_indexes_contain_object(
+                indexes_by_axis,
+                object_name,
+                required_axis_values=required_axis_values,
+            )
             for object_name in self.normalized_object_names
         )
+
+    @staticmethod
+    def axis_indexes_contain_object(
+        indexes_by_axis: Mapping[int, MeasurementValueIndexesByObject],
+        object_name: str,
+        *,
+        required_axis_values: tuple[int, ...],
+    ) -> bool:
+        """Return whether one object has complete cached indexes for an axis scope."""
+        default_indexes = indexes_by_axis.get(-1)
+        if default_indexes is not None and object_name in default_indexes:
+            return True
+        if required_axis_values:
+            return all(
+                object_name in indexes_by_axis.get(axis_value, {})
+                for axis_value in required_axis_values
+            )
+        return any(
+            object_name in object_indexes
+            for object_indexes in indexes_by_axis.values()
+        )
+
+    def required_axis_values(
+        self,
+        measurement_tables_by_object: MeasurementTablesByObject,
+        row_axis: MeasurementRowAxisField,
+    ) -> tuple[int, ...]:
+        """Return declared row-axis values that must be represented in the cache."""
+        values: set[int] = set()
+        for table in self.feature_measurement_tables(measurement_tables_by_object):
+            values.update(self.table_axis_values(table, row_axis))
+        return tuple(sorted(values))
 
     def cache_value_indexes(
         self,
@@ -1242,7 +1298,7 @@ class MeasurementObjectFeatureVectorBatchQuery:
 
 
 class MeasurementObjectFeatureVectorBatchQueryCache(
-    ProcessLocalBoundedCache[
+    RegisteredProcessLocalBoundedCache[
         MeasurementObjectFeatureVectorBatchCacheKey,
         MeasurementObjectFeatureVectorBatchCacheValue,
     ]
@@ -1253,7 +1309,7 @@ class MeasurementObjectFeatureVectorBatchQueryCache(
 
 
 class MeasurementObjectFeatureAxisBatchQueryCache(
-    ProcessLocalBoundedCache[
+    RegisteredProcessLocalBoundedCache[
         MeasurementObjectFeatureAxisBatchCacheKey,
         MeasurementObjectFeatureAxisBatchCacheValue,
     ]
@@ -1703,7 +1759,7 @@ MeasurementRowSequenceLayoutCacheValue = tuple[
 
 
 class MeasurementRowSequenceLayoutCache(
-    ProcessLocalBoundedCache[
+    RegisteredProcessLocalBoundedCache[
         MeasurementRowSequenceLayoutCacheKey,
         MeasurementRowSequenceLayoutCacheValue,
     ]

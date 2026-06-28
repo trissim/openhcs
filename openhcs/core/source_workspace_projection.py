@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar
@@ -62,6 +63,12 @@ class VirtualWorkspaceSourceProjection:
     source_paths_by_virtual_path: Mapping[str, str]
     source_metadata_by_path: Mapping[str, SourceMetadataMapping]
     workspace_root: str | None = None
+    _pipeline_start_files_by_axis: dict[str | None, tuple[str, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def empty(cls, plate_path: Path | None = None) -> "VirtualWorkspaceSourceProjection":
@@ -143,10 +150,21 @@ class VirtualWorkspaceSourceProjection:
         if metadata is not None:
             return metadata
         source_path = self.source_path_for(lookup)
-        return self.source_metadata_by_path.get(source_path)
+        metadata = self.source_metadata_by_path.get(source_path)
+        if metadata is not None:
+            return metadata
+        for key in lookup.candidates():
+            metadata = source_schema_filename_metadata(key)
+            if metadata is not None:
+                return metadata
+        return None
 
     def pipeline_start_files(self, *, axis_id: str | None = None) -> tuple[str, ...]:
         """Return loadable virtual source paths for one runtime source universe."""
+        cached = self._pipeline_start_files_by_axis.get(axis_id)
+        if cached is not None:
+            return cached
+
         relative_virtual_paths = tuple(
             virtual_path
             for virtual_path in self.source_paths_by_virtual_path
@@ -160,11 +178,43 @@ class VirtualWorkspaceSourceProjection:
             for virtual_path in relative_virtual_paths
             if self._path_belongs_to_axis(virtual_path, axis_id)
         )
-        return tuple(
+        result = tuple(
             dict.fromkeys(
                 self._loadable_virtual_path(virtual_path)
                 for virtual_path in selected
             )
+        )
+        self._pipeline_start_files_by_axis[axis_id] = result
+        return result
+
+    def filtered_by_axis(
+        self,
+        *,
+        axis_id: str | None,
+    ) -> "VirtualWorkspaceSourceProjection":
+        """Return a projection view restricted to one multiprocessing axis."""
+        if axis_id is None:
+            return self
+
+        source_paths_by_virtual_path: dict[str, str] = {}
+        source_metadata_by_path: dict[str, SourceMetadataMapping] = {}
+        for virtual_path, source_path in self.source_paths_by_virtual_path.items():
+            if not self._path_belongs_to_axis(virtual_path, axis_id):
+                continue
+            source_paths_by_virtual_path[virtual_path] = source_path
+            for metadata_path in (
+                virtual_path,
+                self._loadable_virtual_path(virtual_path),
+                source_path,
+            ):
+                metadata = self.source_metadata_by_path.get(metadata_path)
+                if metadata is not None:
+                    source_metadata_by_path[metadata_path] = metadata
+
+        return VirtualWorkspaceSourceProjection(
+            source_paths_by_virtual_path=MappingProxyType(source_paths_by_virtual_path),
+            source_metadata_by_path=MappingProxyType(source_metadata_by_path),
+            workspace_root=self.workspace_root,
         )
 
     def _path_belongs_to_axis(
@@ -174,7 +224,12 @@ class VirtualWorkspaceSourceProjection:
     ) -> bool:
         if axis_id is None:
             return True
-        metadata = self.source_metadata_by_path.get(virtual_path)
+        metadata = self.source_metadata_for(
+            VirtualWorkspacePathLookup.from_paths(
+                virtual_path,
+                self._loadable_virtual_path(virtual_path),
+            )
+        )
         if metadata is None:
             return True
         from openhcs.constants import MULTIPROCESSING_AXIS
@@ -192,6 +247,26 @@ class VirtualWorkspaceSourceProjection:
         return virtual_path
 
 
+@lru_cache(maxsize=8192)
+def source_schema_filename_metadata(path: str) -> SourceMetadataMapping | None:
+    """Return component metadata encoded in a normalized virtual source filename."""
+
+    from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
+
+    parsed = SourceSchemaFilenameParser().parse_filename(path)
+    if parsed is None:
+        return None
+    return dict(parsed)
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualWorkspaceSourceProjectionAxisCacheKey:
+    """Cache key for an axis-filtered projection view."""
+
+    projection_identity: int
+    axis_id: str | None
+
+
 @dataclass(slots=True)
 class VirtualWorkspaceSourceProjectionCache:
     """Process-local cache for source-workspace projections keyed by plate path."""
@@ -199,6 +274,10 @@ class VirtualWorkspaceSourceProjectionCache:
     projections_by_plate_path: dict[str, VirtualWorkspaceSourceProjection] = field(
         default_factory=dict
     )
+    axis_filtered_projections: dict[
+        VirtualWorkspaceSourceProjectionAxisCacheKey,
+        VirtualWorkspaceSourceProjection,
+    ] = field(default_factory=dict)
 
     def projection_for(
         self,
@@ -214,6 +293,25 @@ class VirtualWorkspaceSourceProjectionCache:
             )
             self.projections_by_plate_path[plate_key] = projection
         return projection
+
+    def filtered_by_axis(
+        self,
+        projection: VirtualWorkspaceSourceProjection,
+        *,
+        axis_id: str | None,
+    ) -> VirtualWorkspaceSourceProjection:
+        """Return an axis-filtered projection owned by this cache."""
+        if axis_id is None:
+            return projection
+        cache_key = VirtualWorkspaceSourceProjectionAxisCacheKey(
+            projection_identity=id(projection),
+            axis_id=axis_id,
+        )
+        filtered = self.axis_filtered_projections.get(cache_key)
+        if filtered is None:
+            filtered = projection.filtered_by_axis(axis_id=axis_id)
+            self.axis_filtered_projections[cache_key] = filtered
+        return filtered
 
 
 @dataclass(frozen=True, slots=True)

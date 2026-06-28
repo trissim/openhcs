@@ -146,6 +146,11 @@ def source_schema_auxiliary_payload(path: str | Path) -> object | None:
     return None
 
 
+def clear_source_schema_auxiliary_payload_cache() -> None:
+    """Discard cached auxiliary source payloads retained in this process."""
+    _AUXILIARY_PAYLOAD_CACHE.clear()
+
+
 def _auxiliary_payload_cache_keys(path: str | Path) -> tuple[str, ...]:
     raw_key = str(path)
     resolved_key = str(Path(path).resolve()) if Path(path).is_absolute() else raw_key
@@ -454,6 +459,7 @@ class SourceSchemaCandidateDiscoveryRequest:
     discovery_mode: SourceSchemaCandidateDiscoveryMode = (
         SourceSchemaCandidateDiscoveryMode.AUTO
     )
+    image_set_selection: "SourceSchemaImageSetSelection | None" = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_root", Path(self.source_root))
@@ -592,6 +598,7 @@ class SourceSchemaCandidateDiscovery:
             image_set_count = SourceSchemaCandidateImageSetViability(
                 self.request.schema,
                 candidates,
+                self.request.image_set_selection,
             ).image_set_count()
         except Exception as exc:
             return SourceSchemaImageSetProbeResult(
@@ -614,6 +621,7 @@ class SourceSchemaCandidateImageSetViability:
 
     schema: PipelineImageSchema
     candidates: tuple["SourceSchemaCandidate", ...]
+    image_set_selection: "SourceSchemaImageSetSelection | None" = None
 
     def image_set_count(self) -> int:
         candidate_matches = SourceSchemaCandidateMatches(self.candidates, self.schema)
@@ -624,6 +632,7 @@ class SourceSchemaCandidateImageSetViability:
                 ImageSetAssembler.for_schema(self.schema).image_sets(
                     self.schema,
                     stack_candidates,
+                    self.image_set_selection,
                 )
             )
         auxiliary_assignments = candidate_matches.auxiliary_assignments()
@@ -655,6 +664,7 @@ class SourceSchemaImageSetProbe:
     discovery_mode: SourceSchemaCandidateDiscoveryMode = (
         SourceSchemaCandidateDiscoveryMode.AUTO
     )
+    image_set_selection: "SourceSchemaImageSetSelection | None" = None
 
     def result(self) -> SourceSchemaImageSetProbeResult:
         try:
@@ -671,6 +681,7 @@ class SourceSchemaImageSetProbe:
             image_sets = ImageSetAssembler.for_schema(self.schema).image_sets(
                 self.schema,
                 stack_candidates,
+                self.image_set_selection,
             )
         except Exception as exc:
             return SourceSchemaImageSetProbeResult(
@@ -1931,6 +1942,7 @@ class ImageSetAssembler(ABC, metaclass=AutoRegisterMeta):
         self,
         schema: PipelineImageSchema,
         candidates_by_alias: SourceSchemaCandidatesByAlias,
+        selection: "SourceSchemaImageSetSelection | None" = None,
     ) -> tuple[ImageSetRecord, ...]:
         """Assemble candidate groups for projection into OpenHCS files."""
 
@@ -1943,7 +1955,9 @@ class MetadataImageSetAssembler(ImageSetAssembler):
         self,
         schema: PipelineImageSchema,
         candidates_by_alias: SourceSchemaCandidatesByAlias,
+        selection: "SourceSchemaImageSetSelection | None" = None,
     ) -> tuple[ImageSetRecord, ...]:
+        del selection
         if schema.match_plan is None:
             raise ValueError("Metadata image-set assembly requires a match plan.")
         grouped: dict[tuple[str, ...], dict[str, SourceSchemaCandidate]] = {}
@@ -1988,23 +2002,63 @@ class OrderImageSetAssembler(ImageSetAssembler):
     method = SourceBindingMatchMethod.ORDER
     method_key = SourceBindingMatchMethod.ORDER.value
 
+    def alias_candidate_counts(
+        self,
+        candidates_by_alias: SourceSchemaCandidatesByAlias,
+    ) -> Mapping[str, int]:
+        return MappingProxyType(
+            {
+                alias: len(candidates)
+                for alias, candidates in candidates_by_alias.items()
+            }
+        )
+
     def image_set_count(
         self,
         candidates_by_alias: SourceSchemaCandidatesByAlias,
+        selection: "SourceSchemaImageSetSelection | None" = None,
     ) -> int:
         """Return the count of complete CellProfiler order-matched image sets."""
-        return min(
-            (len(candidates) for candidates in candidates_by_alias.values()),
-            default=0,
-        )
+        counts = self.alias_candidate_counts(candidates_by_alias)
+        if not counts:
+            return 0
+        distinct_counts = set(counts.values())
+        if len(distinct_counts) != 1:
+            selected_count = self.selected_image_set_count(counts, selection)
+            if selected_count is not None:
+                return selected_count
+            raise ValueError(
+                "Order-matched source image sets are incomplete; aliases matched "
+                "different image counts: "
+                + ", ".join(
+                    f"{alias}={count}" for alias, count in sorted(counts.items())
+                )
+            )
+        return next(iter(distinct_counts))
+
+    def selected_image_set_count(
+        self,
+        counts: Mapping[str, int],
+        selection: "SourceSchemaImageSetSelection | None",
+    ) -> int | None:
+        """Return bounded ordered image-set count when selection makes it complete."""
+        if selection is None or selection.max_image_set_count is None:
+            return None
+        selected_count = selection.max_image_set_count
+        if selected_count <= 0:
+            return None
+        if all(count >= selected_count for count in counts.values()):
+            return selected_count
+        return None
 
     def image_sets(
         self,
         schema: PipelineImageSchema,
         candidates_by_alias: SourceSchemaCandidatesByAlias,
+        selection: "SourceSchemaImageSetSelection | None" = None,
     ) -> tuple[ImageSetRecord, ...]:
         aliases = tuple(candidates_by_alias)
-        image_set_count = self.image_set_count(candidates_by_alias)
+        image_set_count = self.image_set_count(candidates_by_alias, selection)
         image_sets: list[ImageSetRecord] = []
         for index in range(image_set_count):
             candidates = {
@@ -2075,6 +2129,7 @@ def materialize_source_schema_workspace(
             source_files,
             schema,
             candidate_discovery_mode,
+            selection,
         )
     ).candidates()
     candidates = SourceSchemaCandidateCollection.merge(
@@ -2090,6 +2145,7 @@ def materialize_source_schema_workspace(
         image_sets = ImageSetAssembler.for_schema(schema).image_sets(
             schema,
             stack_candidates,
+            selection,
         )
         image_sets = selection.apply(schema, image_sets)
         primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(

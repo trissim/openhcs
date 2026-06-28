@@ -1,6 +1,7 @@
 import pytest
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.source_bindings import (
     SourceFilterClause,
     SourceFilterMatchType,
@@ -156,6 +157,18 @@ def test_merge_source_metadata_accepts_equivalent_absolute_paths(
     merge_source_metadata(metadata, {"Folder": str(leaf)}, path="image.tif")
 
     assert metadata["Folder"] == str(leaf.resolve())
+
+
+def test_merge_source_metadata_canonicalizes_image_type_labels():
+    metadata = {SOURCE_IMAGE_TYPE_METADATA_FIELD: "grayscale image"}
+
+    merge_source_metadata(
+        metadata,
+        {SOURCE_IMAGE_TYPE_METADATA_FIELD: "Grayscale image"},
+        path="image.tif",
+    )
+
+    assert metadata[SOURCE_IMAGE_TYPE_METADATA_FIELD] == "Grayscale image"
 
 
 def test_merge_source_metadata_rejects_distinct_values():

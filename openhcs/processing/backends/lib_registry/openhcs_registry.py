@@ -17,6 +17,7 @@ from functools import lru_cache
 
 from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase, FunctionMetadata
 
 logger = logging.getLogger(__name__)
@@ -279,14 +280,14 @@ class OpenHCSRegistry(LibraryRegistryBase):
                         ProcessingContract,
                     )
 
-                    # Add the contract attribute so other parts of the system can find it
-                    func.__processing_contract__ = contract
+                    # Attach nominal contract metadata for downstream authorities.
+                    vars(func)[FunctionContractAttribute.processing_contract] = contract
 
-                    # Apply contract wrapper (adds slice_by_slice for FLEXIBLE)
+                    # Apply nominal contract wrapper.
                     wrapped_func = self.apply_contract_wrapper(func, contract)
 
                     # Override the function in the module with the wrapped version
-                    # This ensures that imports from the module get the wrapped version with 'enabled'
+                    # so imports see the callable-control signature.
                     setattr(module, name, wrapped_func)
 
                     # Generate unique function name using module information

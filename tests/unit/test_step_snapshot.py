@@ -1,8 +1,7 @@
-from types import MappingProxyType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
-from openhcs.constants.constants import AllComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import StepMaterializationConfig, WellFilterMode
 from openhcs.core.pipeline.step_snapshot import (
@@ -11,7 +10,6 @@ from openhcs.core.pipeline.step_snapshot import (
 )
 from openhcs.core.source_bindings import (
     ComponentSelector,
-    GroupedSourceBindings,
     NamedSourceBinding,
     SourceSelector,
     StepSourceBindingsConfig,
@@ -37,20 +35,14 @@ class StateStub:
 
 
 def _state_values(**overrides):
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(
+    source_bindings = StepSourceBindingsConfig(bindings=(
                     NamedSourceBinding(
                         alias="OrigBlue",
                         selector=SourceSelector(
                             components=(ComponentSelector("channel", "1"),)
                         ),
                     ),
-                )
-            ),
-        )
-    )
+                ))
     values = {
         "enabled": True,
         "source_bindings": source_bindings,
@@ -59,7 +51,6 @@ def _state_values(**overrides):
         "processing_config.input_source": InputSource.PIPELINE_START,
         "processing_config": SimpleNamespace(name="processing"),
         "step_materialization_config": SimpleNamespace(enabled=False),
-        "dtype_config": SimpleNamespace(name="dtype"),
     }
     values.update(overrides)
     return values
@@ -69,7 +60,6 @@ def test_step_snapshot_captures_saved_values_without_object_conversion():
     step = FunctionStep(
         func=_identity,
         name="identity",
-        source_identity_stack_axes=(AllComponents.CHANNEL,),
     )
     state = StateStub(_state_values())
 
@@ -86,13 +76,8 @@ def test_step_snapshot_captures_saved_values_without_object_conversion():
     assert snapshot.is_function_step is True
     assert snapshot.func is _identity
     assert snapshot.source_bindings == state.values["source_bindings"]
-    assert snapshot.source_identity_stack_axes == (AllComponents.CHANNEL,)
-    assert snapshot.source_identity_stack_axis_values == frozenset({"channel"})
     assert snapshot.input_source is InputSource.PIPELINE_START
     assert snapshot.variable_components == ("site",)
-    assert isinstance(snapshot.injectable_values, MappingProxyType)
-    assert snapshot.injectable_values["enabled"] is True
-    assert snapshot.injectable_values["dtype_config"].name == "dtype"
 
 
 def test_step_snapshot_captures_well_filter_roots():

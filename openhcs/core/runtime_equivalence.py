@@ -234,6 +234,15 @@ _RuntimeMeasurementRowMergeCache = dict[
     _RuntimeMeasurementRowMergeKey,
     _RuntimeMeasurementRowMergeValue,
 ]
+RuntimeMeasurementFactWithRowIdentity = tuple[
+    RuntimeMeasurementFeatureKey,
+    RuntimeCellSignature,
+    RuntimeObjectMeasurementRowIdentity | None,
+]
+RuntimeMeasurementFactsWithRowIdentity = tuple[
+    RuntimeMeasurementFactWithRowIdentity,
+    ...,
+]
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowPriorityCacheKey:
     """Identity for row-to-feature priority resolution within one equivalence pass."""
@@ -514,6 +523,13 @@ class RuntimeObjectMeasurementFactRowDomain:
                 image_number_offset=image_number_offset,
             ),
         )
+        self.record_row_facts_for_identity(identity, facts)
+
+    def record_row_facts_for_identity(
+        self,
+        identity: RuntimeObjectMeasurementRowIdentity,
+        facts: Iterable[RuntimeMeasurementFact],
+    ) -> None:
         subjects = frozenset(
             key.subject
             for key, _value in facts
@@ -540,8 +556,12 @@ class RuntimeObjectMeasurementFactRowDomain:
         *,
         required_keys: RuntimeRequiredMeasurementKeys,
         policy: RuntimeEquivalencePolicy,
-        primary_row_identities: _RuntimeMeasurementPrimaryRowSet,
     ) -> None:
+        self.record_row_merge_value_facts(
+            measurement_fact_counts,
+            row_merge_cache,
+            required_keys=required_keys,
+        )
         aggregate_values_by_identity: dict[
             tuple[RuntimeMeasurementFeatureKey, RuntimeMeasurementRowIdentity],
             RuntimeAggregateMeanAccumulator,
@@ -552,8 +572,6 @@ class RuntimeObjectMeasurementFactRowDomain:
             row_identity,
         ), (_priority, _row_priority, value) in row_merge_cache.items():
             object_identity = RuntimeObjectMeasurementRowIdentity(row_identity)
-            if (key.subject, object_identity) not in primary_row_identities:
-                continue
             mean_key = AggregateMeanKeyProjection(
                 key,
                 required_keys,
@@ -562,9 +580,6 @@ class RuntimeObjectMeasurementFactRowDomain:
             value_required = required_keys is None or key in required_keys
             if not value_required and mean_key is None:
                 continue
-            if value_required:
-                runtime_measurement_fact_counter(measurement_fact_counts, key)[value] += 1
-                self.record_subject_row_identity(key.subject, row_identity)
             if mean_key is None or not object_identity.has_image_identity:
                 continue
             numeric_value = _finite_numeric_runtime_cell_value(value)
@@ -592,6 +607,22 @@ class RuntimeObjectMeasurementFactRowDomain:
             runtime_measurement_fact_counter(measurement_fact_counts, mean_key)[
                 runtime_cell_signature(str(accumulator.mean), policy)
             ] += 1
+
+    def record_row_merge_value_facts(
+        self,
+        measurement_fact_counts: RuntimeMeasurementFactCounterMap,
+        row_merge_cache: _RuntimeMeasurementRowMergeCache,
+        *,
+        required_keys: RuntimeRequiredMeasurementKeys,
+    ) -> None:
+        for (
+            key,
+            row_identity,
+        ), (_priority, _row_priority, value) in row_merge_cache.items():
+            if required_keys is not None and key not in required_keys:
+                continue
+            runtime_measurement_fact_counter(measurement_fact_counts, key)[value] += 1
+            self.record_subject_row_identity(key.subject, row_identity)
 
     def primary_row_keys(self) -> frozenset[_RuntimeMeasurementPrimaryRowKey]:
         return frozenset(
@@ -874,6 +905,31 @@ class RuntimeMeasurementObservationAxis:
             )
 
 
+def _remove_authoritative_object_label_location_facts(
+    measurement_fact_counts: RuntimeMeasurementFactCounterMap,
+    subjects: frozenset[RuntimeMeasurementSubjectKey],
+    policy: RuntimeEquivalencePolicy,
+) -> None:
+    """Remove row-derived location facts owned by dimensional object-label payloads."""
+    if not subjects:
+        return
+    for key in tuple(measurement_fact_counts):
+        if key.subject not in subjects:
+            continue
+        location_role_key = RuntimeMeasurementFeatureKey(
+            key.subject,
+            key.feature_name,
+            MeasurementStatistic.VALUE.value,
+            key.source_name,
+        )
+        if object_measurement_feature_has_role(
+            location_role_key,
+            ObjectMeasurementFeatureRole.LOCATION,
+            policy.measurement_dialect,
+        ):
+            measurement_fact_counts.pop(key, None)
+
+
 @dataclass(slots=True, kw_only=True)
 class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
     """Mutable authority for one runtime measurement projection."""
@@ -904,258 +960,6 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
             required_keys=self.required_measurement_keys,
         )
 
-    def row_has_primary_object_features(
-        self,
-        row: RuntimeMeasurementRowMapping,
-    ) -> bool:
-        primary_location_priority = _object_location_primary_row_priority(self.policy)
-        long_form_feature = row.first_value(MEASUREMENT_FEATURE_NAME_FIELDS)
-        feature_names = (
-            (str(long_form_feature),)
-            if long_form_feature is not None
-            else row.header
-        )
-        for feature_name in feature_names:
-            priority = RuntimeMeasurementFeatureCategoryPriority(
-                feature_name,
-                self.policy.measurement_dialect,
-            ).priority()
-            if priority is not None and priority <= primary_location_priority:
-                return True
-        return False
-
-    def record_primary_row_identity(
-        self,
-        row: RuntimeMeasurementRowMapping,
-        subject: RuntimeMeasurementSubjectKey,
-        axis_key: str | None,
-        scoped_table: RuntimeScopedMeasurementTable,
-        image_number_offset: RuntimeImageNumberOffset,
-    ) -> None:
-        if subject.scope is not MeasurementScope.OBJECT:
-            return
-        if row.identity_role() is MeasurementObjectRowIdentity.ROW_SEQUENCE:
-            return
-        if not self.row_has_primary_object_features(row):
-            return
-        object_label = row.object_label()
-        if object_label is None:
-            return
-        identity = RuntimeObjectMeasurementRowIdentity.from_object_instance(
-            row,
-            axis_key,
-            self.policy,
-            scoped_table.object_instance_key(
-                row,
-                object_label,
-                image_number_offset=image_number_offset,
-            ),
-        )
-        self.primary_row_identities.add((subject, identity))
-
-    def merge_runtime_row_measurement_facts(
-        self,
-        row: RuntimeMeasurementRowMapping,
-        axis_key: str | None,
-        scoped_table: RuntimeScopedMeasurementTable,
-        image_number_offset: RuntimeImageNumberOffset,
-        facts: Iterable[RuntimeMeasurementFact],
-        row_priority_cache: _RuntimeMeasurementRowPriorityCache,
-    ) -> RuntimeMeasurementFacts:
-        remaining_facts: RuntimeMeasurementFactList = []
-        row_merge_contract = RuntimeObjectLocationRowMergeContract(self.policy)
-        for key, value in facts:
-            if not row_merge_contract.owns_key(key):
-                remaining_facts.append((key, value))
-                continue
-            object_label = row.object_label()
-            if object_label is None:
-                remaining_facts.append((key, value))
-                continue
-            identity = RuntimeObjectMeasurementRowIdentity.from_object_instance(
-                row,
-                axis_key,
-                self.policy,
-                scoped_table.object_instance_key(
-                    row,
-                    object_label,
-                    image_number_offset=image_number_offset,
-                ),
-            )
-            merge_key = (key, identity.row_identity)
-            priority = _runtime_row_measurement_fact_priority(
-                row,
-                key,
-                self.policy,
-                row_priority_cache,
-            )
-            candidate = (
-                priority,
-                priority,
-                value,
-            )
-            current = self.row_merge_cache.get(merge_key)
-            if current is None or _runtime_row_merge_candidate_preferred(
-                candidate,
-                current,
-            ):
-                self.row_merge_cache[merge_key] = (
-                    candidate[0],
-                    candidate[1] if current is None else min(candidate[1], current[1]),
-                    candidate[2],
-                )
-            elif current is not None:
-                self.row_merge_cache[merge_key] = (
-                    current[0],
-                    min(current[1], priority),
-                    current[2],
-                )
-        return tuple(remaining_facts)
-
-    def record_aggregate_input_value(
-        self,
-        key: RuntimeMeasurementFeatureKey,
-        value: RuntimeCellSignature,
-        row: RuntimeMeasurementRowMapping,
-        axis_key: str | None,
-        scoped_table: RuntimeScopedMeasurementTable,
-        image_number_offset: RuntimeImageNumberOffset,
-        aggregate_measurement_fact_counts: _AggregateValuesByFeature,
-        aggregate_input_key_cache: _AggregateMeanKeyCache,
-        *,
-        row_identity: RuntimeMeasurementRowIdentityOrMissing,
-    ) -> RuntimeMeasurementRowIdentityOrMissing:
-        if key.subject.scope is not MeasurementScope.OBJECT:
-            return row_identity
-        if key.statistic != "value":
-            return row_identity
-        mean_key = AggregateMeanKeyProjection(
-            key,
-            self.required_measurement_keys,
-            aggregate_input_key_cache,
-        ).key()
-        if mean_key is None:
-            return row_identity
-        numeric_value = _finite_numeric_runtime_cell_value(value)
-        if numeric_value is None:
-            return row_identity
-        if row_identity is None:
-            object_label = row.object_label()
-            if object_label is None:
-                row_identity = row.axis_scoped_identity(
-                    axis_key,
-                    self.policy.measurement_dialect,
-                )
-            else:
-                row_identity = RuntimeObjectMeasurementRowIdentity.from_object_instance(
-                    row,
-                    axis_key,
-                    self.policy,
-                    scoped_table.object_instance_key(
-                        row,
-                        object_label,
-                        image_number_offset=image_number_offset,
-                    ),
-                ).image_identity
-        _runtime_aggregate_mean_accumulator(
-            aggregate_measurement_fact_counts,
-            mean_key,
-            row_identity,
-        ).add(numeric_value)
-        return row_identity
-
-    def record_projected_row_facts(
-        self,
-        row: RuntimeMeasurementRowMapping,
-        axis_key: str | None,
-        scoped_table: RuntimeScopedMeasurementTable,
-        image_number_offset: RuntimeImageNumberOffset,
-        facts: Iterable[RuntimeMeasurementFact],
-        row_priority_cache: _RuntimeMeasurementRowPriorityCache,
-        aggregate_measurement_fact_counts: _AggregateValuesByFeature,
-        aggregate_input_key_cache: _AggregateMeanKeyCache,
-        explicit_measurement_keys: set[RuntimeMeasurementFeatureKey],
-    ) -> None:
-        row_identity: RuntimeMeasurementRowIdentityOrMissing = None
-        emitted_row_facts: RuntimeMeasurementFactList = []
-        for key, value in self.merge_runtime_row_measurement_facts(
-            row,
-            axis_key,
-            scoped_table,
-            image_number_offset,
-            tuple(facts),
-            row_priority_cache,
-        ):
-            explicit_measurement_keys.add(key)
-            if not self.accept_projected_measurement_fact(
-                row,
-                axis_key,
-                scoped_table,
-                key,
-                value,
-            ):
-                continue
-            if (
-                self.required_measurement_keys is None
-                or key in self.required_measurement_keys
-            ):
-                runtime_measurement_fact_counter(
-                    self.measurement_fact_counts,
-                    key,
-                )[value] += 1
-                emitted_row_facts.append((key, value))
-            row_identity = self.record_aggregate_input_value(
-                key,
-                value,
-                row,
-                axis_key,
-                scoped_table,
-                image_number_offset,
-                aggregate_measurement_fact_counts,
-                aggregate_input_key_cache,
-                row_identity=row_identity,
-            )
-        if emitted_row_facts:
-            self.record_row_facts(
-                row,
-                axis_key,
-                scoped_table,
-                image_number_offset,
-                self.policy,
-                emitted_row_facts,
-            )
-
-    def accept_projected_measurement_fact(
-        self,
-        row: RuntimeMeasurementRowMapping,
-        axis_key: str | None,
-        scoped_table: RuntimeScopedMeasurementTable,
-        key: RuntimeMeasurementFeatureKey,
-        value: RuntimeCellSignature,
-    ) -> bool:
-        """Return whether one projected fact contributes a new observation."""
-        if key.subject.scope is not MeasurementScope.IMAGE:
-            return True
-        image_identity = row.axis_scoped_identity(
-            axis_key,
-            self.policy.measurement_dialect,
-        )
-        identity = (
-            image_identity,
-            scoped_table.table.source_provenance.equality_identity,
-            key,
-            value,
-        )
-        record_identities = self.seen_image_feature_fact_records.get(identity)
-        record_identity = scoped_table.record_identity
-        if record_identities is None:
-            self.seen_image_feature_fact_records[identity] = {record_identity}
-            return True
-        if record_identity not in record_identities:
-            record_identities.add(record_identity)
-            return False
-        return True
-
     def record_runtime_aggregate_mean_facts(
         self,
         aggregate_measurement_fact_counts: _AggregateValuesByFeature,
@@ -1175,6 +979,16 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
             runtime_measurement_fact_counter(self.measurement_fact_counts, mean_key)[
                 runtime_cell_signature(str(accumulator.mean), self.policy)
             ] += 1
+
+    def project_recorded_row_fact_counts(self) -> RuntimeMeasurementFactCounterMap:
+        """Finalize projected row facts without artifact-owned completions."""
+        self.record_runtime_row_merge_facts(
+            self.measurement_fact_counts,
+            self.row_merge_cache,
+            required_keys=self.required_measurement_keys,
+            policy=self.policy,
+        )
+        return self.measurement_fact_counts
 
     def record_measurement_table(
         self,
@@ -1225,13 +1039,7 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
             source_qualification = subject.bind_row_source_identity(
                 row_subject_projection.source_name()
             )
-            self.record_primary_row_identity(
-                row,
-                subject,
-                axis_key,
-                scoped_table,
-                image_number_offset,
-            )
+            recorder.record_primary_row_identity(row, subject)
             row_context = RuntimeRowProjectionContext.from_row(
                 row,
                 subject,
@@ -1249,22 +1057,22 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
             )
             row_facts = row_context.facts()
             if row_facts:
-                self.record_projected_row_facts(
-                    row,
-                    axis_key,
-                    scoped_table,
-                    image_number_offset,
-                    row_facts,
-                    row_priority_cache,
-                    aggregate_measurement_fact_counts,
-                    aggregate_input_key_cache,
-                    explicit_measurement_keys,
-                )
+                recorder.record_projected_row_facts(row, row_facts)
 
         table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
         table_padding_group = measurement_table_padding_group(table.name)
         image_number_offset = RuntimeImageNumberOffset.from_runtime_rows(
             iter_measurement_rows((table,))
+        )
+        recorder = RuntimeTableRowProjectionRecorder(
+            state=self,
+            image_number_offset=image_number_offset,
+            row_priority_cache=row_priority_cache,
+            aggregate_measurement_fact_counts=aggregate_measurement_fact_counts,
+            aggregate_input_key_cache=aggregate_input_key_cache,
+            explicit_measurement_keys=explicit_measurement_keys,
+            axis_key=axis_key,
+            scoped_table=scoped_table,
         )
         for row in iter_measurement_rows((table,)):
             record_row_mapping(
@@ -1295,12 +1103,16 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
                 self.policy,
             )
         )
-        self.record_runtime_row_merge_facts(
+        object_location_aggregate_subjects = (
+            object_location_aggregate_subjects.difference(
+                object_label_measurement_authority.location_subjects
+            )
+        )
+        self.project_recorded_row_fact_counts()
+        _remove_authoritative_object_label_location_facts(
             measurement_fact_counts,
-            row_merge_cache,
-            required_keys=self.required_measurement_keys,
-            policy=self.policy,
-            primary_row_identities=primary_row_identities,
+            object_label_measurement_authority.location_subjects,
+            self.policy,
         )
         object_location_subjects = object_measurement_subjects_with_role(
             measurement_fact_counts,
@@ -1309,7 +1121,9 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
         ) | RuntimeObjectLocationRowMergeContract.registered_projection(
             RuntimeObjectLocationRowMergeProjectionKey.LOCATION,
             self.policy,
-        ).subjects(row_merge_cache)
+        ).subjects(row_merge_cache).difference(
+            object_label_measurement_authority.location_subjects
+        )
         record_measurement_facts(
             measurement_fact_counts,
             _primary_row_object_count_measurement_facts(
@@ -1373,6 +1187,381 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
                 self,
                 explicit_measurement_keys=explicit_measurement_keys,
             )
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeMeasurementRowProjectionRecorder(ABC):
+    """Shared semantic recorder for projected measurement rows."""
+
+    state: RuntimeMeasurementProjectionState
+    image_number_offset: RuntimeImageNumberOffset
+    row_priority_cache: _RuntimeMeasurementRowPriorityCache
+    explicit_measurement_keys: set[RuntimeMeasurementFeatureKey]
+    axis_key: str | None = None
+
+    @abstractmethod
+    def object_row_identity(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> RuntimeObjectMeasurementRowIdentity | None:
+        """Return the object-row identity for this row source."""
+
+    def row_has_primary_object_features(
+        self,
+        row: RuntimeMeasurementRowMapping,
+    ) -> bool:
+        primary_location_priority = _object_location_primary_row_priority(
+            self.state.policy
+        )
+        long_form_feature = row.first_value(MEASUREMENT_FEATURE_NAME_FIELDS)
+        feature_names = (
+            (str(long_form_feature),)
+            if long_form_feature is not None
+            else row.header
+        )
+        for feature_name in feature_names:
+            priority = RuntimeMeasurementFeatureCategoryPriority(
+                feature_name,
+                self.state.policy.measurement_dialect,
+            ).priority()
+            if priority is not None and priority <= primary_location_priority:
+                return True
+        return False
+
+    def record_primary_row_identity(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> None:
+        if subject.scope is not MeasurementScope.OBJECT:
+            return
+        if row.identity_role() is MeasurementObjectRowIdentity.ROW_SEQUENCE:
+            return
+        if (
+            row.identity_role() is not MeasurementObjectRowIdentity.LABEL_ID
+            and not self.row_has_primary_object_features(row)
+        ):
+            return
+        object_row_identity = self.object_row_identity(row, subject)
+        if object_row_identity is None:
+            return
+        self.state.primary_row_identities.add((subject, object_row_identity))
+
+    def record_projected_row_facts(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        facts: Iterable[RuntimeMeasurementFact],
+    ) -> None:
+        object_row_identities: dict[
+            RuntimeMeasurementSubjectKey,
+            RuntimeObjectMeasurementRowIdentity | None,
+        ] = {}
+        row_identities: dict[
+            RuntimeObjectMeasurementRowIdentity | None,
+            RuntimeMeasurementRowIdentityOrMissing,
+        ] = {}
+        emitted_row_facts_by_identity: dict[
+            RuntimeObjectMeasurementRowIdentity,
+            RuntimeMeasurementFactList,
+        ] = {}
+        for key, value, object_row_identity in self.merge_row_measurement_facts(
+            row,
+            tuple(facts),
+            object_row_identities,
+        ):
+            self.explicit_measurement_keys.add(key)
+            if not self.accept_projected_measurement_fact(row, key, value):
+                continue
+            if (
+                self.state.required_measurement_keys is None
+                or key in self.state.required_measurement_keys
+            ):
+                runtime_measurement_fact_counter(
+                    self.state.measurement_fact_counts,
+                    key,
+                )[value] += 1
+                if object_row_identity is not None:
+                    emitted_row_facts_by_identity.setdefault(
+                        object_row_identity,
+                        [],
+                    ).append((key, value))
+            row_identity = self.record_projected_fact_side_effects(
+                key,
+                value,
+                row,
+                object_row_identity,
+                row_identity=row_identities.get(object_row_identity),
+            )
+            row_identities[object_row_identity] = row_identity
+        for object_row_identity, emitted_row_facts in emitted_row_facts_by_identity.items():
+            self.state.record_row_facts_for_identity(
+                object_row_identity,
+                emitted_row_facts,
+            )
+
+    def merge_row_measurement_facts(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        facts: Iterable[RuntimeMeasurementFact],
+        object_row_identities: dict[
+            RuntimeMeasurementSubjectKey,
+            RuntimeObjectMeasurementRowIdentity | None,
+        ],
+    ) -> RuntimeMeasurementFactsWithRowIdentity:
+        remaining_facts: list[RuntimeMeasurementFactWithRowIdentity] = []
+        row_merge_contract = RuntimeObjectLocationRowMergeContract(self.state.policy)
+        for key, value in facts:
+            object_row_identity = self.object_row_identity_for_subject(
+                row,
+                key.subject,
+                object_row_identities,
+            )
+            if not row_merge_contract.owns_key(key):
+                remaining_facts.append((key, value, object_row_identity))
+                continue
+            if object_row_identity is None:
+                remaining_facts.append((key, value, None))
+                continue
+            merge_key = (key, object_row_identity.row_identity)
+            priority = _runtime_row_measurement_fact_priority(
+                row,
+                key,
+                self.state.policy,
+                self.row_priority_cache,
+            )
+            candidate = (
+                priority,
+                priority,
+                value,
+            )
+            current = self.state.row_merge_cache.get(merge_key)
+            if current is None or _runtime_row_merge_candidate_preferred(
+                candidate,
+                current,
+            ):
+                self.state.row_merge_cache[merge_key] = (
+                    candidate[0],
+                    candidate[1] if current is None else min(candidate[1], current[1]),
+                    candidate[2],
+                )
+            elif current is not None:
+                self.state.row_merge_cache[merge_key] = (
+                    current[0],
+                    min(current[1], priority),
+                    current[2],
+                )
+        return tuple(remaining_facts)
+
+    def object_row_identity_for_subject(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+        object_row_identities: dict[
+            RuntimeMeasurementSubjectKey,
+            RuntimeObjectMeasurementRowIdentity | None,
+        ],
+    ) -> RuntimeObjectMeasurementRowIdentity | None:
+        if subject not in object_row_identities:
+            object_row_identities[subject] = self.object_row_identity(row, subject)
+        return object_row_identities[subject]
+
+    def record_projected_fact_side_effects(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        value: RuntimeCellSignature,
+        row: RuntimeMeasurementRowMapping,
+        object_row_identity: RuntimeObjectMeasurementRowIdentity | None,
+        *,
+        row_identity: RuntimeMeasurementRowIdentityOrMissing,
+    ) -> RuntimeMeasurementRowIdentityOrMissing:
+        del key, value, row, object_row_identity
+        return row_identity
+
+    def accept_projected_measurement_fact(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        key: RuntimeMeasurementFeatureKey,
+        value: RuntimeCellSignature,
+    ) -> bool:
+        del row, key, value
+        return True
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRecorder):
+    """Projection recorder for typed runtime measurement tables."""
+
+    scoped_table: RuntimeScopedMeasurementTable
+    aggregate_measurement_fact_counts: _AggregateValuesByFeature
+    aggregate_input_key_cache: _AggregateMeanKeyCache
+
+    def object_row_identity(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> RuntimeObjectMeasurementRowIdentity | None:
+        del subject
+        object_label = row.object_label()
+        if object_label is None:
+            return None
+        return RuntimeObjectMeasurementRowIdentity.from_object_instance(
+            row,
+            self.axis_key,
+            self.state.policy,
+            self.scoped_table.object_instance_key(
+                row,
+                object_label,
+                image_number_offset=self.image_number_offset,
+            ),
+        )
+
+    def record_projected_fact_side_effects(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        value: RuntimeCellSignature,
+        row: RuntimeMeasurementRowMapping,
+        object_row_identity: RuntimeObjectMeasurementRowIdentity | None,
+        *,
+        row_identity: RuntimeMeasurementRowIdentityOrMissing,
+    ) -> RuntimeMeasurementRowIdentityOrMissing:
+        if key.subject.scope is not MeasurementScope.OBJECT:
+            return row_identity
+        if key.statistic != "value":
+            return row_identity
+        mean_key = AggregateMeanKeyProjection(
+            key,
+            self.state.required_measurement_keys,
+            self.aggregate_input_key_cache,
+        ).key()
+        if mean_key is None:
+            return row_identity
+        numeric_value = _finite_numeric_runtime_cell_value(value)
+        if numeric_value is None:
+            return row_identity
+        if row_identity is None:
+            if object_row_identity is None:
+                row_identity = row.axis_scoped_identity(
+                    self.axis_key,
+                    self.state.policy.measurement_dialect,
+                )
+            else:
+                row_identity = object_row_identity.image_identity
+        _runtime_aggregate_mean_accumulator(
+            self.aggregate_measurement_fact_counts,
+            mean_key,
+            row_identity,
+        ).add(numeric_value)
+        return row_identity
+
+    def accept_projected_measurement_fact(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        key: RuntimeMeasurementFeatureKey,
+        value: RuntimeCellSignature,
+    ) -> bool:
+        if key.subject.scope is not MeasurementScope.IMAGE:
+            return True
+        image_identity = row.axis_scoped_identity(
+            self.axis_key,
+            self.state.policy.measurement_dialect,
+        )
+        identity = (
+            image_identity,
+            self.scoped_table.table.source_provenance.equality_identity,
+            key,
+            value,
+        )
+        record_identities = self.state.seen_image_feature_fact_records.get(identity)
+        record_identity = self.scoped_table.record_identity
+        if record_identities is None:
+            self.state.seen_image_feature_fact_records[identity] = {record_identity}
+            return True
+        if record_identity not in record_identities:
+            record_identities.add(record_identity)
+            return False
+        return True
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeExportTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRecorder):
+    """Projection recorder for exported measurement-table snapshots."""
+
+    table: RuntimeTableSnapshot
+    contextual_identity_candidates_by_subject: dict[
+        RuntimeMeasurementSubjectKey,
+        tuple[RuntimeExportContextualObjectIdentityCandidate, ...],
+    ] = field(default_factory=dict)
+
+    def object_row_identity(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> RuntimeObjectMeasurementRowIdentity | None:
+        if subject.scope is not MeasurementScope.OBJECT:
+            return None
+        object_label = self.contextual_object_label(row, subject)
+        if object_label is None:
+            object_label = row.object_label()
+        if object_label is None:
+            return None
+        return RuntimeObjectMeasurementRowIdentity.from_object_instance(
+            row,
+            self.axis_key,
+            self.state.policy,
+            ObjectInstanceKey.from_measurement_row(
+                row.row,
+                object_label,
+                image_number_offset=self.image_number_offset.value,
+            ),
+        )
+
+    def contextual_object_label(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> int | None:
+        for candidate in self.contextual_object_identity_candidates(subject):
+            object_label = measurement_object_label(
+                row.row,
+                object_id_field=candidate.field_name,
+            )
+            if object_label is not None:
+                return object_label
+        return None
+
+    def contextual_object_identity_candidates(
+        self,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> tuple[RuntimeExportContextualObjectIdentityCandidate, ...]:
+        candidates = self.contextual_identity_candidates_by_subject.get(subject)
+        if candidates is not None:
+            return candidates
+        if not self.table.column_context:
+            candidates = ()
+        else:
+            candidates = tuple(
+                sorted(
+                    (
+                        candidate
+                        for index, context in enumerate(self.table.column_context)
+                        for candidate in (
+                            RuntimeExportContextualObjectIdentityField(
+                                table=self.table,
+                                index=index,
+                                context=context,
+                                subject=subject,
+                                policy=self.state.policy,
+                                known_source_names=self.state.known_source_names,
+                            ).candidate(),
+                        )
+                        if candidate is not None
+                    ),
+                    key=lambda item: item.specificity.value,
+                )
+            )
+        self.contextual_identity_candidates_by_subject[subject] = candidates
+        return candidates
 
 
 class RuntimeMeasurementObservationRecordHandler(
@@ -2031,18 +2220,17 @@ class RuntimeMeasurementSnapshot:
         known_source_names: tuple[str, ...] = (),
     ) -> "RuntimeMeasurementSnapshot":
         """Project exported tables into semantic measurement facts."""
-        measurement_fact_counts: RuntimeMeasurementFactCounterMap = {}
+        state = RuntimeMeasurementProjectionState(
+            policy=policy,
+            known_source_names=known_source_names,
+        )
         for table in snapshot.tables:
-            extractor = RuntimeTableSnapshotFactExtractor(
+            RuntimeTableSnapshotFactExtractor(
                 table,
                 known_source_names=known_source_names,
                 policy=policy,
-            )
-            record_measurement_facts(
-                measurement_fact_counts,
-                extractor.measurement_facts(),
-            )
-        return cls(measurement_fact_counts=measurement_fact_counts)
+            ).record_measurement_table(state)
+        return cls(measurement_fact_counts=state.project_recorded_row_fact_counts())
 
     @classmethod
     def from_artifact_execution_observation(
@@ -3672,16 +3860,44 @@ class RuntimeTableSnapshotFactExtractor:
     known_source_names: tuple[str, ...] = ()
 
     def measurement_facts(self) -> RuntimeMeasurementFacts:
+        """Project exported table rows into semantic facts."""
+        counts = self.measurement_fact_counts()
+        return tuple(
+            (key, value)
+            for key, counter in counts.items()
+            for value, count in counter.items()
+            for _ in range(count)
+        )
+
+    def measurement_fact_counts(self) -> RuntimeMeasurementFactCounterMap:
+        """Project this exported table into semantic fact counters."""
+        state = RuntimeMeasurementProjectionState(
+            policy=self.policy,
+            known_source_names=self.known_source_names,
+        )
+        self.record_measurement_table(state)
+        return state.project_recorded_row_fact_counts()
+
+    def record_measurement_table(
+        self,
+        state: RuntimeMeasurementProjectionState,
+    ) -> None:
+        """Record this exported table into a shared measurement projection state."""
         feature_indexes = tuple(
             index
             for index, field_name in enumerate(self.table.header)
             if not runtime_measurement_identity_field_matches(
                 field_name,
-                self.policy.measurement_dialect,
+                state.policy.measurement_dialect,
             )
         )
         if not feature_indexes:
-            return self.identity_facts()
+            record_measurement_facts(
+                state.measurement_fact_counts,
+                self.identity_facts(),
+                required_keys=state.required_measurement_keys,
+            )
+            return
         image_number_offset = RuntimeImageNumberOffset.from_table_rows(
             self.table.header,
             self.table.rows,
@@ -3691,7 +3907,15 @@ class RuntimeTableSnapshotFactExtractor:
         long_form_key_cache: RuntimeMeasurementLongFormKeyCache = {}
         qualifier_render_cache: RuntimeMeasurementQualifierRenderCache = {}
         padding_group_cache: RuntimeMeasurementPaddingGroupCache = {}
-        facts: RuntimeMeasurementFactList = []
+        explicit_measurement_keys: set[RuntimeMeasurementFeatureKey] = set()
+        row_priority_cache: _RuntimeMeasurementRowPriorityCache = {}
+        recorder = RuntimeExportTableRowProjectionRecorder(
+            state=state,
+            image_number_offset=image_number_offset,
+            row_priority_cache=row_priority_cache,
+            explicit_measurement_keys=explicit_measurement_keys,
+            table=self.table,
+        )
         for row in self.table.rows:
             row_mapping = dict(zip(self.table.header, row, strict=True))
             runtime_row = RuntimeMeasurementRowMapping(row_mapping)
@@ -3699,14 +3923,15 @@ class RuntimeTableSnapshotFactExtractor:
                 self.table.path,
                 runtime_row,
             ).subject()
+            recorder.record_primary_row_identity(runtime_row, row_subject)
             source_name = measurement_row_source_image_name(row_mapping)
             row_context = RuntimeExportRowProjectionContext(
                 row=runtime_row,
                 subject=row_subject,
-                policy=self.policy,
+                policy=state.policy,
                 source_name=source_name,
-                known_source_names=self.known_source_names,
-                required_keys=None,
+                known_source_names=state.known_source_names,
+                required_keys=state.required_measurement_keys,
                 table_padding_group=measurement_table_padding_group(
                     self.table.path.stem
                 ),
@@ -3718,10 +3943,9 @@ class RuntimeTableSnapshotFactExtractor:
                 padding_group_cache=padding_group_cache,
                 table=self.table,
             )
-            facts.extend(
-                row_context.facts()
-            )
-        return tuple(facts)
+            row_facts = row_context.facts()
+            if row_facts:
+                recorder.record_projected_row_facts(runtime_row, row_facts)
 
     def identity_facts(self) -> RuntimeMeasurementFacts:
         """Project object identity-only exports into semantic object-number facts."""
@@ -3849,6 +4073,108 @@ class RuntimeExportColumnSubject:
         if not normalized_context:
             return None, None
         return context, normalized_context
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeExportContextualObjectIdentityField:
+    """Resolve a contextual object-id column for one exported object subject."""
+
+    table: RuntimeTableSnapshot
+    index: int
+    context: str | None
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    known_source_names: tuple[str, ...]
+
+    def candidate(self) -> "RuntimeExportContextualObjectIdentityCandidate | None":
+        if self.subject.scope is not MeasurementScope.OBJECT:
+            return None
+        if self.subject.name is None:
+            return None
+        if self.context is None:
+            return None
+        if normalize_runtime_identifier(self.context) != self.subject.name:
+            return None
+        field_name = self.table.header[self.index]
+        contextual_feature_name = RuntimeExportContextualFeatureName(
+            field_name,
+            self.subject,
+        )
+        projected_feature_name, _source_name = RuntimeMeasurementFeatureNameProjection.from_feature_name(
+            contextual_feature_name.feature_name(),
+            self.policy,
+            None,
+            self.known_source_names,
+        ).project()
+        if projected_feature_name != ObjectCoreMeasurementFeature.OBJECT_NUMBER.value:
+            return None
+        return RuntimeExportContextualObjectIdentityCandidate(
+            field_name=field_name,
+            specificity=RuntimeExportContextualObjectIdentitySpecificity.from_field(
+                field_name,
+                contextual_feature_name,
+                self.policy,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeExportContextualObjectIdentityCandidate:
+    """Contextual object-id field candidate with deterministic specificity."""
+
+    field_name: str
+    specificity: "RuntimeExportContextualObjectIdentitySpecificity"
+
+
+class RuntimeExportContextualObjectIdentitySpecificity(Enum):
+    """Specificity ordering for contextual object-id fields."""
+
+    CONTEXT_SUFFIX = 0
+    CONTEXT_MEASUREMENT = 1
+    ROW_IDENTITY = 2
+
+    @classmethod
+    def from_field(
+        cls,
+        field_name: str,
+        contextual_feature_name: "RuntimeExportContextualFeatureName",
+        policy: RuntimeEquivalencePolicy,
+    ) -> "RuntimeExportContextualObjectIdentitySpecificity":
+        if contextual_feature_name.has_context_suffix():
+            return cls.CONTEXT_SUFFIX
+        if runtime_measurement_identity_field_matches(
+            field_name,
+            policy.measurement_dialect,
+        ):
+            return cls.ROW_IDENTITY
+        return cls.CONTEXT_MEASUREMENT
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeExportContextualFeatureName:
+    """Feature-name view after removing a suffix introduced by CSV context."""
+
+    field_name: str
+    subject: RuntimeMeasurementSubjectKey
+
+    def feature_name(self) -> str:
+        normalized_field_name = normalize_runtime_identifier(self.field_name)
+        subject_suffix = self.subject_suffix()
+        if subject_suffix is not None and normalized_field_name.endswith(subject_suffix):
+            return normalized_field_name[: -len(subject_suffix)]
+        return normalized_field_name
+
+    def has_context_suffix(self) -> bool:
+        subject_suffix = self.subject_suffix()
+        return subject_suffix is not None and normalize_runtime_identifier(
+            self.field_name
+        ).endswith(subject_suffix)
+
+    def subject_suffix(self) -> str | None:
+        subject_name = self.subject.name
+        if subject_name is None:
+            return None
+        return f"_{subject_name}"
 
 
 @dataclass(frozen=True, slots=True)

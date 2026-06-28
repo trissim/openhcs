@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,8 +13,9 @@ import numpy as np
 from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import ViewerStreamProducer
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, VariableComponents
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.compiled_step_plan import RuntimeArtifactMaterializationPlan
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.runtime_slice_projection import (
     RuntimeProjectedPayloadItem,
@@ -28,7 +29,6 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
-    SourceIdentityStackAxisProjection,
 )
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
@@ -266,7 +266,7 @@ class StreamOutputProjectionRequest:
     payloads: tuple[StreamPayload, ...]
     paths: tuple[str, ...]
     produced_outputs: tuple[ProducedOutputSemantics, ...]
-    source_identity_stack_projection: SourceIdentityStackAxisProjection
+    variable_components: tuple[VariableComponents, ...]
 
     @classmethod
     def from_sequences(
@@ -276,14 +276,14 @@ class StreamOutputProjectionRequest:
         payloads: list[StreamPayload],
         paths: list[str],
         produced_outputs: tuple[ProducedOutputSemantics, ...],
-        source_identity_stack_projection: SourceIdentityStackAxisProjection,
+        variable_components: Sequence[VariableComponents],
     ) -> "StreamOutputProjectionRequest":
         return cls(
             parser=parser,
             payloads=tuple(payloads),
             paths=tuple(paths),
             produced_outputs=produced_outputs,
-            source_identity_stack_projection=source_identity_stack_projection,
+            variable_components=tuple(variable_components),
         )
 
     def __post_init__(self) -> None:
@@ -316,7 +316,7 @@ class StreamOutputProjectionRequest:
         return RuntimeProjectionSourceIdentityRequest(
             value=payload,
             source_description=path,
-            source_identity_stack_projection=self.source_identity_stack_projection,
+            variable_components=self.variable_components,
         )
 
     def for_producer(
@@ -341,7 +341,7 @@ class StreamOutputProjectionRequest:
             payloads=payloads,
             paths=paths,
             produced_outputs=tuple(produced_outputs),
-            source_identity_stack_projection=self.source_identity_stack_projection,
+            variable_components=self.variable_components,
         )
 
 
@@ -512,11 +512,7 @@ class StreamOutputsAuthority:
                     payloads=streaming_payloads,
                     paths=list(streaming_paths),
                     produced_outputs=produced_outputs,
-                    source_identity_stack_projection=(
-                        SourceIdentityStackAxisProjection.from_axes(
-                            plan.step_source_identity_stack_axes
-                        )
-                    ),
+                    variable_components=plan.variable_components,
                 )
             )
             stream_batches = tuple(
@@ -618,9 +614,8 @@ class RuntimeArtifactMaterializationAuthority:
     ) -> None:
         if not plan.artifact_outputs:
             return
-        has_persistent_target = bool(
-            context.global_config.materialize_runtime_artifacts
-        )
+        materialization_plan = plan.runtime_artifact_materialization
+        has_persistent_target = materialization_plan.has_persistent_target
         has_streaming_target = bool(plan.streaming_configs)
         if not has_persistent_target and not has_streaming_target:
             logger.info("Skipping runtime artifact materialization and streaming")
@@ -633,30 +628,22 @@ class RuntimeArtifactMaterializationAuthority:
         materialize_artifact_outputs(
             context.filemanager,
             plan,
-            cls.target_plan(context, has_persistent_target),
+            cls.target_plan(materialization_plan),
             context,
         )
         logger.info("Completed artifact materialization")
 
     @staticmethod
     def target_plan(
-        context: ProcessingContext,
-        has_persistent_target: bool,
+        materialization_plan: RuntimeArtifactMaterializationPlan,
     ) -> (
         PersistentArtifactMaterializationTargetPlan
         | StreamingOnlyArtifactMaterializationTargetPlan
     ):
-        if not has_persistent_target:
+        if not materialization_plan.has_persistent_target:
             logger.info("Skipping persistent runtime artifact materialization")
             return StreamingOnlyArtifactMaterializationTargetPlan()
 
-        from openhcs.core.pipeline.materialization_flag_planner import (
-            MaterializationFlagPlanner,
-        )
-
         return PersistentArtifactMaterializationTargetPlan(
-            MaterializationFlagPlanner._resolve_materialization_backend(
-                context,
-                context.global_config.vfs_config,
-            )
+            materialization_plan.require_persistent_backend()
         )

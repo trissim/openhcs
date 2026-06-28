@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -227,6 +227,13 @@ class SourcePatternResolutionContext:
     ) -> SourceMetadataCandidates:
         return self.metadata_for_paths(self.candidate_paths(pattern))
 
+    def source_path_for(self, path: str) -> str:
+        """Return the physical source path represented by a runtime path."""
+        resolved_paths = self._candidate_path_resolution(path).mapped_source_paths
+        if resolved_paths:
+            return str(resolved_paths[0])
+        return str(path)
+
     def metadata_for_paths(
         self,
         paths: tuple[str, ...],
@@ -254,6 +261,32 @@ class SourcePatternResolutionContext:
         if metadata:
             return SourceMetadataRecord.from_mapping(metadata)
         return None
+
+    def merged_metadata_for_paths(
+        self,
+        paths: tuple[str, ...],
+    ) -> SourceMetadataRecord | None:
+        """Return one metadata record merged from all path identities."""
+        metadata: dict[str, SourceMetadataValue] = {}
+        for path in dict.fromkeys(paths):
+            path_metadata = self.metadata_for_path(path)
+            if path_metadata is not None:
+                merge_source_metadata(metadata, path_metadata, path=path)
+        if metadata:
+            return SourceMetadataRecord.from_mapping(metadata)
+        return None
+
+    def source_metadata_by_paths(
+        self,
+        paths: Sequence[str],
+    ) -> Mapping[str, SourceMetadataMapping]:
+        """Return resolved metadata keyed by the paths visible in a source universe."""
+        metadata_by_path: dict[str, SourceMetadataMapping] = {}
+        for path in dict.fromkeys(str(path) for path in paths):
+            metadata = self.metadata_for_path(path)
+            if metadata is not None:
+                metadata_by_path[path] = metadata
+        return MappingProxyType(metadata_by_path)
 
     def has_metadata_field(
         self,
@@ -809,7 +842,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         bindings: Sequence[NamedSourceBinding],
         match_plan: SourceBindingMatchPlan,
         source_context: SourcePatternResolutionContext,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
+        plane_member_fields: frozenset[str] = frozenset(),
     ) -> "SourceBindingMatchedImageSet":
         return cls(
             parser=source_context.parser,
@@ -819,7 +852,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
             bindings=tuple(bindings),
             match_plan=match_plan,
             identity_policy=SourceImageSetIdentityPolicy.from_plane_member_fields(
-                source_identity_stack_axes
+                plane_member_fields
             ),
         )
 
@@ -1053,13 +1086,6 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         return MappingProxyType(values)
 
 
-class SourceUniverseScope(str, Enum):
-    """Source-binding universe requested by one runtime boundary."""
-
-    STEP_INPUT = "step_input"
-    PIPELINE_START = "pipeline_start"
-
-
 @dataclass(frozen=True, slots=True)
 class SourceFileUniverse:
     """Concrete file universe plus the backend that names those files."""
@@ -1069,19 +1095,142 @@ class SourceFileUniverse:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceUniverseRequest:
-    """Source-file universe request for source-binding runtime resolution."""
+class SourceUniverseRuntimeState:
+    """Resolved source universes assembled from the registered request family."""
 
-    scope: SourceUniverseScope
+    step_input_universe: SourceFileUniverse | None = None
+    pipeline_start_universe: SourceFileUniverse | None = None
+    load_universe: SourceFileUniverse | None = None
+    step_input_source_paths: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    source_metadata_by_path: Mapping[str, SourceMetadataMapping] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def with_source_metadata(
+        self,
+        source_metadata_by_path: Mapping[str, SourceMetadataMapping],
+    ) -> "SourceUniverseRuntimeState":
+        if self.source_metadata_by_path is source_metadata_by_path:
+            return self
+        if not self.source_metadata_by_path:
+            return replace(
+                self,
+                source_metadata_by_path=source_metadata_by_path,
+            )
+        if not source_metadata_by_path:
+            return self
+        merged = dict(self.source_metadata_by_path)
+        merged.update(source_metadata_by_path)
+        return replace(self, source_metadata_by_path=MappingProxyType(merged))
+
+    def require_step_input_universe(self) -> SourceFileUniverse:
+        if self.step_input_universe is None:
+            raise RuntimeError("Source universe runtime state has no step-input universe.")
+        return self.step_input_universe
+
+    def require_pipeline_start_universe(self) -> SourceFileUniverse:
+        if self.pipeline_start_universe is None:
+            raise RuntimeError(
+                "Source universe runtime state has no pipeline-start universe."
+            )
+        return self.pipeline_start_universe
+
+    def require_load_universe(self) -> SourceFileUniverse:
+        if self.load_universe is None:
+            raise RuntimeError("Source universe runtime state has no load universe.")
+        return self.load_universe
+
+    def runtime_context(
+        self,
+        request: "SourceBindingRuntimeContextRequest",
+        source_metadata_by_path: Mapping[str, SourceMetadataMapping],
+    ) -> SourceBindingRuntimeContext:
+        """Build the runtime context from source-universe contributions."""
+        step_input_universe = self.require_step_input_universe()
+        pipeline_source_universe = self.require_pipeline_start_universe()
+        return SourceBindingRuntimeContext(
+            step_input_files=step_input_universe.files,
+            current_step_input_files=request.current_step_input_files(
+                step_input_universe
+            ),
+            current_image_files=request.matching_files,
+            step_input_dir=str(request.plan.input_dir),
+            step_input_source_backend=request.plan.read_backend,
+            step_input_storage_backend=Backend.MEMORY.value,
+            step_input_source_paths=self.step_input_source_paths,
+            source_metadata_by_path=source_metadata_by_path,
+            source_metadata_is_normalized=True,
+            pipeline_input_files=pipeline_source_universe.files,
+            pipeline_input_backend=pipeline_source_universe.backend.value,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceUniverseRequest(metaclass=AutoRegisterMeta):
+    """Plan-artifact request for source-binding runtime universe resolution."""
+
+    __registry_key__ = "universe_request_kind"
+    __skip_if_no_key__ = True
+
+    universe_request_kind: ClassVar[str | None] = None
     context: "ProcessingContext"
     plan: "FunctionStepExecutionPlan"
     matching_files: tuple[str, ...]
     source_backend: Backend
     source_projection: VirtualWorkspaceSourceProjection | None
 
+    @classmethod
+    def registered_request_types(cls) -> tuple[type["SourceUniverseRequest"], ...]:
+        """Return registered concrete runtime plan request classes."""
+        request_types: list[type[SourceUniverseRequest]] = []
+        for request_type in cls.__registry__.values():
+            if (
+                issubclass(request_type, cls)
+                and request_type not in request_types
+            ):
+                request_types.append(request_type)
+        return tuple(request_types)
+
+    @classmethod
+    def from_runtime_context(
+        cls,
+        request: "SourceBindingRuntimeContextRequest",
+    ) -> "SourceUniverseRequest":
+        """Build this registered request type from the runtime context request."""
+        return cls(
+            context=request.context,
+            plan=request.plan,
+            matching_files=request.matching_files,
+            source_backend=request.source_backend,
+            source_projection=request.source_projection,
+        )
+
+    @classmethod
+    def runtime_state(
+        cls,
+        request: "SourceBindingRuntimeContextRequest",
+    ) -> SourceUniverseRuntimeState:
+        """Resolve every registered source-universe request into runtime state."""
+        state = SourceUniverseRuntimeState()
+        for request_type in cls.registered_request_types():
+            universe_request = request_type.from_runtime_context(request)
+            universe = SourceUniverseStrategy.universe(universe_request)
+            state = universe_request.contribute_runtime_state(state, universe)
+        return state
+
+    def contribute_runtime_state(
+        self,
+        state: SourceUniverseRuntimeState,
+        universe: SourceFileUniverse,
+    ) -> SourceUniverseRuntimeState:
+        """Contribute resolved metadata to runtime state."""
+        return state.with_source_metadata(self.source_metadata_by_universe(universe))
+
     @property
     def requires_step_input_selector_resolution(self) -> bool:
-        return self.plan.source_binding_plan.requires_step_input_selector_resolution
+        return self.plan.source_universe_plan.requires_step_input_selector_resolution
 
     @property
     def uses_virtual_workspace_projection(self) -> bool:
@@ -1092,19 +1241,11 @@ class SourceUniverseRequest:
 
     @property
     def requires_full_pipeline_source_universe(self) -> bool:
-        if any(
-            invocation.contract.runtime_adapter is not None
-            for invocation in self.plan.compiled_function_pattern.iter_invocations()
-        ):
-            return True
-        source_binding_plan = self.plan.source_binding_plan
-        if source_binding_plan.metadata_rules:
-            return True
-        return any(
-            binding.origin is SourceBindingOrigin.PIPELINE_START
-            for bindings in source_binding_plan.bindings_by_group.values()
-            for binding in bindings
-        )
+        return self.plan.source_universe_plan.requires_full_pipeline_source_universe
+
+    @property
+    def uses_pipeline_start_binding_origin(self) -> bool:
+        return self.plan.source_universe_plan.uses_pipeline_start_binding_origin
 
     @property
     def step_input_source_paths(self) -> Mapping[str, str]:
@@ -1120,10 +1261,34 @@ class SourceUniverseRequest:
             return MappingProxyType({})
         return projection.source_metadata_by_path
 
+    def source_context(self) -> SourcePatternResolutionContext:
+        metadata_rules = self.plan.source_binding_plan.metadata_rules
+        if self.source_projection is not None:
+            return SourcePatternResolutionContext.from_projection(
+                parser=self.context.microscope_handler.parser,
+                projection=self.source_projection,
+                metadata_rules=metadata_rules,
+            )
+        return SourcePatternResolutionContext.from_sources(
+            parser=self.context.microscope_handler.parser,
+            source_paths_by_virtual_path={},
+            metadata_rules=metadata_rules,
+        )
+
+    def source_metadata_by_universe(
+        self,
+        universe: SourceFileUniverse,
+    ) -> Mapping[str, SourceMetadataMapping]:
+        if self.source_projection is not None:
+            return self.source_projection.source_metadata_by_path
+        return self.source_context().source_metadata_by_paths(universe.files)
+
     def require_source_projection(self) -> VirtualWorkspaceSourceProjection:
         projection = self.source_projection
         if projection is None:
-            raise RuntimeError("Virtual workspace source universe requires projection metadata.")
+            raise RuntimeError(
+                "Virtual workspace source universe requires projection metadata."
+            )
         return projection
 
     def axis_files(self) -> tuple[str, ...]:
@@ -1136,6 +1301,57 @@ class SourceUniverseRequest:
 
     def physical_full_universe_backend(self) -> Backend:
         return PipelineStartListingBackendPolicy.backend_for(self.source_backend)
+
+
+@dataclass(frozen=True, slots=True)
+class StepInputSourceUniverseRequest(SourceUniverseRequest):
+    """Request for the source universe represented by the current step input."""
+
+    universe_request_kind = "step_input"
+
+    def contribute_runtime_state(
+        self,
+        state: SourceUniverseRuntimeState,
+        universe: SourceFileUniverse,
+    ) -> SourceUniverseRuntimeState:
+        state = replace(
+            state,
+            step_input_universe=universe,
+            load_universe=state.load_universe or universe,
+            step_input_source_paths=self.step_input_source_paths,
+        )
+        return SourceUniverseRequest.contribute_runtime_state(self, state, universe)
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineStartSourceUniverseRequest(SourceUniverseRequest):
+    """Request for the source universe represented by the pipeline start."""
+
+    universe_request_kind = "pipeline_start"
+
+    def contribute_runtime_state(
+        self,
+        state: SourceUniverseRuntimeState,
+        universe: SourceFileUniverse,
+    ) -> SourceUniverseRuntimeState:
+        load_universe = self.load_universe()
+        state = replace(
+            state,
+            pipeline_start_universe=universe,
+            load_universe=state.load_universe if load_universe is None else load_universe,
+        )
+        return SourceUniverseRequest.contribute_runtime_state(self, state, universe)
+
+    def load_universe(self) -> SourceFileUniverse | None:
+        projection = self.source_projection
+        if projection is None:
+            return None
+        if not self.uses_pipeline_start_binding_origin:
+            return None
+        return SourceFileUniverse(
+            files=projection.pipeline_start_files(axis_id=self.plan.axis_id),
+            backend=self.source_backend,
+        )
 
 
 class PipelineStartListingBackendPolicy(
@@ -1212,6 +1428,37 @@ class SourceUniverseStrategy(
         """Return source files and backend for pipeline-start bindings."""
 
 
+class StepInputSourceUniverseStrategy(SourceUniverseStrategy, ABC):
+    """Source-universe strategy branch for current step input."""
+
+    def matches(self, request: SourceUniverseRequest) -> bool:
+        return isinstance(
+            request,
+            StepInputSourceUniverseRequest,
+        ) and self.matches_step_input(request)
+
+    @abstractmethod
+    def matches_step_input(self, request: StepInputSourceUniverseRequest) -> bool:
+        """Return whether this strategy owns one step-input request."""
+
+
+class PipelineStartSourceUniverseStrategy(SourceUniverseStrategy, ABC):
+    """Source-universe strategy branch for original pipeline input."""
+
+    def matches(self, request: SourceUniverseRequest) -> bool:
+        return isinstance(
+            request,
+            PipelineStartSourceUniverseRequest,
+        ) and self.matches_pipeline_start(request)
+
+    @abstractmethod
+    def matches_pipeline_start(
+        self,
+        request: PipelineStartSourceUniverseRequest,
+    ) -> bool:
+        """Return whether this strategy owns one pipeline-start request."""
+
+
 class AxisFilesSourceUniverseStrategy(SourceUniverseStrategy):
     """Source-universe strategy that uses current-axis files from the source backend."""
 
@@ -1222,16 +1469,29 @@ class AxisFilesSourceUniverseStrategy(SourceUniverseStrategy):
         )
 
 
-class CurrentPatternStepInputSourceUniverseStrategy(SourceUniverseStrategy):
+class StepInputAxisFilesSourceUniverseStrategy(
+    AxisFilesSourceUniverseStrategy,
+    StepInputSourceUniverseStrategy,
+    ABC,
+):
+    """Axis-file universe strategy branch for current step input."""
+
+
+class PipelineStartAxisFilesSourceUniverseStrategy(
+    AxisFilesSourceUniverseStrategy,
+    PipelineStartSourceUniverseStrategy,
+    ABC,
+):
+    """Axis-file universe strategy branch for original pipeline input."""
+
+
+class CurrentPatternStepInputSourceUniverseStrategy(StepInputSourceUniverseStrategy):
     """Use the already-loaded pattern files when selectors do not need fan-out."""
 
     strategy_key = "step_input_current_pattern"
 
-    def matches(self, request: SourceUniverseRequest) -> bool:
-        return (
-            request.scope is SourceUniverseScope.STEP_INPUT
-            and not request.requires_step_input_selector_resolution
-        )
+    def matches_step_input(self, request: StepInputSourceUniverseRequest) -> bool:
+        return not request.requires_step_input_selector_resolution
 
     def source_universe(self, request: SourceUniverseRequest) -> SourceFileUniverse:
         return SourceFileUniverse(
@@ -1240,15 +1500,14 @@ class CurrentPatternStepInputSourceUniverseStrategy(SourceUniverseStrategy):
         )
 
 
-class VirtualWorkspaceStepInputSourceUniverseStrategy(SourceUniverseStrategy):
+class VirtualWorkspaceStepInputSourceUniverseStrategy(StepInputSourceUniverseStrategy):
     """Use source-schema virtual files when selector resolution must span sources."""
 
     strategy_key = "step_input_virtual_workspace_source_projection"
 
-    def matches(self, request: SourceUniverseRequest) -> bool:
+    def matches_step_input(self, request: StepInputSourceUniverseRequest) -> bool:
         return (
-            request.scope is SourceUniverseScope.STEP_INPUT
-            and request.requires_step_input_selector_resolution
+            request.requires_step_input_selector_resolution
             and request.uses_virtual_workspace_projection
         )
 
@@ -1261,40 +1520,60 @@ class VirtualWorkspaceStepInputSourceUniverseStrategy(SourceUniverseStrategy):
         )
 
 
-class PhysicalAxisStepInputSourceUniverseStrategy(AxisFilesSourceUniverseStrategy):
+class PhysicalAxisStepInputSourceUniverseStrategy(
+    StepInputAxisFilesSourceUniverseStrategy,
+):
     """Use physical axis files when source selectors need fan-out outside VWS."""
 
     strategy_key = "step_input_physical_axis"
 
-    def matches(self, request: SourceUniverseRequest) -> bool:
+    def matches_step_input(self, request: StepInputSourceUniverseRequest) -> bool:
         return (
-            request.scope is SourceUniverseScope.STEP_INPUT
-            and request.requires_step_input_selector_resolution
+            request.requires_step_input_selector_resolution
             and not request.uses_virtual_workspace_projection
         )
 
 
-class AxisScopedPipelineStartSourceUniverseStrategy(AxisFilesSourceUniverseStrategy):
+class AxisScopedPipelineStartSourceUniverseStrategy(
+    PipelineStartAxisFilesSourceUniverseStrategy,
+):
     """Use the current axis source files when full pipeline fan-out is unnecessary."""
 
     strategy_key = "axis_scoped"
 
-    def matches(self, request: SourceUniverseRequest) -> bool:
-        return (
-            request.scope is SourceUniverseScope.PIPELINE_START
-            and not request.requires_full_pipeline_source_universe
+    def matches_pipeline_start(
+        self,
+        request: PipelineStartSourceUniverseRequest,
+    ) -> bool:
+        return not request.requires_full_pipeline_source_universe
+
+    def source_universe(self, request: SourceUniverseRequest) -> SourceFileUniverse:
+        if request.uses_virtual_workspace_projection:
+            return SourceFileUniverse(
+                files=request.require_source_projection().pipeline_start_files(
+                    axis_id=request.plan.axis_id
+                ),
+                backend=request.source_backend,
+            )
+        return SourceFileUniverse(
+            files=request.axis_files(),
+            backend=request.source_backend,
         )
 
 
-class VirtualWorkspacePipelineStartSourceUniverseStrategy(SourceUniverseStrategy):
+class VirtualWorkspacePipelineStartSourceUniverseStrategy(
+    PipelineStartSourceUniverseStrategy,
+):
     """Use declared virtual-workspace source paths for pipeline-start fan-out."""
 
     strategy_key = "virtual_workspace_source_projection"
 
-    def matches(self, request: SourceUniverseRequest) -> bool:
+    def matches_pipeline_start(
+        self,
+        request: PipelineStartSourceUniverseRequest,
+    ) -> bool:
         return (
-            request.scope is SourceUniverseScope.PIPELINE_START
-            and request.requires_full_pipeline_source_universe
+            request.requires_full_pipeline_source_universe
             and request.source_projection is not None
         )
 
@@ -1311,15 +1590,17 @@ class VirtualWorkspacePipelineStartSourceUniverseStrategy(SourceUniverseStrategy
         )
 
 
-class PhysicalPipelineStartSourceUniverseStrategy(SourceUniverseStrategy):
+class PhysicalPipelineStartSourceUniverseStrategy(PipelineStartSourceUniverseStrategy):
     """Use a file listing backend for full pipeline fan-out outside VWS."""
 
     strategy_key = "physical_full_universe"
 
-    def matches(self, request: SourceUniverseRequest) -> bool:
+    def matches_pipeline_start(
+        self,
+        request: PipelineStartSourceUniverseRequest,
+    ) -> bool:
         return (
-            request.scope is SourceUniverseScope.PIPELINE_START
-            and request.requires_full_pipeline_source_universe
+            request.requires_full_pipeline_source_universe
             and request.source_projection is None
         )
 
@@ -1372,62 +1653,20 @@ class SourceBindingRuntimeContextRequest:
         )
 
     def runtime_context(self) -> SourceBindingRuntimeContext:
-        step_input_request = self.source_universe_request(SourceUniverseScope.STEP_INPUT)
-        pipeline_start_request = self.source_universe_request(
-            SourceUniverseScope.PIPELINE_START
-        )
-        step_input_universe = SourceUniverseStrategy.universe(step_input_request)
-        pipeline_source_universe = SourceUniverseStrategy.universe(
-            pipeline_start_request
-        )
+        universe_state = SourceUniverseRequest.runtime_state(self)
         source_metadata_by_path = (
             self.context.runtime_source_binding_context_cache.normalized_source_metadata(
-                step_input_request.source_metadata_by_path
+                universe_state.source_metadata_by_path
             )
         )
-        return SourceBindingRuntimeContext(
-            step_input_files=step_input_universe.files,
-            current_step_input_files=self.current_step_input_files(
-                step_input_universe
-            ),
-            current_image_files=self.matching_files,
-            step_input_dir=str(self.plan.input_dir),
-            step_input_source_backend=self.plan.read_backend,
-            step_input_storage_backend=Backend.MEMORY.value,
-            step_input_source_paths=step_input_request.step_input_source_paths,
-            source_metadata_by_path=source_metadata_by_path,
-            source_metadata_is_normalized=True,
-            pipeline_input_files=pipeline_source_universe.files,
-            pipeline_input_backend=pipeline_source_universe.backend.value,
+        return universe_state.runtime_context(
+            self,
+            source_metadata_by_path,
         )
 
     def current_step_input_files(
         self,
         step_input_universe: SourceFileUniverse,
     ) -> tuple[str, ...]:
-        if self.requires_source_identity_stack_input():
-            return step_input_universe.files
+        del step_input_universe
         return self.matching_files
-
-    def requires_source_identity_stack_input(self) -> bool:
-        """Return whether this invocation needs full stack files as input."""
-        source_identity_stack_axes = self.plan.source_identity_stack_axes
-        if not source_identity_stack_axes:
-            return False
-        variable_components = self.plan.variable_components or ()
-        variable_axes = frozenset(
-            str(component.value)
-            for component in variable_components
-            if component.value is not None
-        )
-        return bool(source_identity_stack_axes - variable_axes)
-
-    def source_universe_request(self, scope: SourceUniverseScope) -> SourceUniverseRequest:
-        return SourceUniverseRequest(
-            scope=scope,
-            context=self.context,
-            plan=self.plan,
-            matching_files=self.matching_files,
-            source_backend=self.source_backend,
-            source_projection=self.source_projection,
-        )

@@ -21,6 +21,7 @@ from openhcs.constants.constants import (
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import FunctionGroupKey
 from openhcs.core.progress import ProgressPhase, ProgressStatus, emit
+from openhcs.core.runtime_pattern_cache import RuntimePatternDiscoveryCacheKey
 from openhcs.core.source_binding_selection import (
     SourceCandidatePath,
     SourceBoundAnchorPatternPolicy,
@@ -28,7 +29,9 @@ from openhcs.core.source_binding_selection import (
 )
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspaceSourceProjectionAuthority,
+    VirtualWorkspaceSourceProjectionCache,
 )
+from openhcs.core.step_dependencies import StepInputDependencyKind
 from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
     generate_materialized_paths,
@@ -201,6 +204,7 @@ class StepAnchorPatternFilter:
     parser: "FilenameParser"
     output_manifest: StepOutputManifestStore
     source_workspace_authority: VirtualWorkspaceSourceProjectionAuthority
+    source_workspace_projection_cache: VirtualWorkspaceSourceProjectionCache
 
     @classmethod
     def from_context(
@@ -213,7 +217,13 @@ class StepAnchorPatternFilter:
             parser=context.microscope_handler.parser,
             output_manifest=step_output_manifest(context),
             source_workspace_authority=(
-                VirtualWorkspaceSourceProjectionAuthority.from_context(context)
+                VirtualWorkspaceSourceProjectionAuthority.from_context(
+                    context,
+                    cache=context.runtime_source_workspace_projection_cache,
+                )
+            ),
+            source_workspace_projection_cache=(
+                context.runtime_source_workspace_projection_cache
             ),
         )
 
@@ -228,6 +238,8 @@ class StepAnchorPatternFilter:
     ) -> PatternGroups:
         """Restrict source-bound step anchors to compatible declared sources."""
 
+        if self.plan.main_input_dependency.kind is StepInputDependencyKind.STEP_OUTPUT:
+            return grouped_patterns
         if not self.plan.source_binding_plan.has_primary_content:
             return grouped_patterns
 
@@ -245,12 +257,9 @@ class StepAnchorPatternFilter:
             )
             if compiled_group is None:
                 return pattern_list
-            bindings = self.plan.source_binding_plan.bindings_for_group(
-                compiled_group.group_key
-            )
             return policy.select(
                 pattern_list,
-                bindings=bindings,
+                bindings=self.plan.source_binding_plan.bindings,
                 source_context=source_context,
             )
 
@@ -333,9 +342,13 @@ class StepAnchorPatternFilter:
     def source_pattern_context(self) -> SourcePatternResolutionContext:
         """Return source-path context used to filter source-bound anchors."""
 
+        projection = self.source_workspace_authority.projection_or_empty()
         return SourcePatternResolutionContext.from_projection(
             parser=self.parser,
-            projection=self.source_workspace_authority.projection_or_empty(),
+            projection=self.source_workspace_projection_cache.filtered_by_axis(
+                projection,
+                axis_id=self.plan.axis_id,
+            ),
             metadata_rules=self.plan.source_binding_plan.metadata_rules,
         )
 
@@ -518,6 +531,49 @@ class FunctionStepExecutor:
     def _detect_patterns(self) -> dict[str, DiscoveredPatternCollection]:
         plan = self.plan
         axis_name = MULTIPROCESSING_AXIS.value
+        axis_filter = {f"{axis_name}_filter": [plan.axis_id]}
+        source_projection = (
+            VirtualWorkspaceSourceProjectionAuthority.from_context(
+                self.context,
+                cache=self.context.runtime_source_workspace_projection_cache,
+            )
+            .projection_if_available()
+        )
+        if (
+            plan.main_input_dependency.kind is StepInputDependencyKind.PIPELINE_START
+            and source_projection is not None
+        ):
+            source_files = source_projection.pipeline_start_files(axis_id=plan.axis_id)
+            if source_files:
+                cache_key = RuntimePatternDiscoveryCacheKey.from_source_files(
+                    axis_id=plan.axis_id,
+                    source_files=source_files,
+                    group_by=plan.group_by_value,
+                    variable_components=plan.variable_component_values,
+                )
+                cached_patterns = self.context.runtime_pattern_discovery_cache.get(
+                    cache_key
+                )
+                if cached_patterns is not None:
+                    return cached_patterns
+                from openhcs.formats.pattern.pattern_discovery import (
+                    PatternDiscoveryEngine,
+                )
+
+                patterns_by_axis = PatternDiscoveryEngine(
+                    self.context.microscope_handler.parser,
+                    self.context.filemanager,
+                ).auto_detect_patterns_from_files(
+                    list(source_files),
+                    group_by=plan.group_by,
+                    variable_components=plan.variable_component_values,
+                    **axis_filter,
+                )
+                self.context.runtime_pattern_discovery_cache.store(
+                    cache_key,
+                    patterns_by_axis,
+                )
+                return patterns_by_axis
         return self.context.microscope_handler.auto_detect_patterns(
             str(plan.input_dir),
             self.context.filemanager,
@@ -525,7 +581,7 @@ class FunctionStepExecutor:
             extensions=LOADABLE_IMAGE_EXTENSIONS,
             group_by=plan.group_by,
             variable_components=plan.variable_component_values,
-            **{f"{axis_name}_filter": [plan.axis_id]},
+            **axis_filter,
         )
 
     def _log_discovered_patterns(
@@ -623,18 +679,18 @@ class FunctionStepExecutor:
         self,
         patterns_by_axis: dict[str, DiscoveredPatternCollection],
     ) -> None:
-        if not self.context.current_sequential_combination:
+        if not self.plan.sequential_filter_plan.enabled:
             return
 
-        seq_config = self.context.global_config.sequential_processing_config
-        seq_component = seq_config.sequential_components[0].value
-        target_value = self.context.current_sequential_combination[0]
-        patterns_by_axis[self.plan.axis_id] = _filter_patterns_by_component(
-            patterns_by_axis[self.plan.axis_id],
-            seq_component,
-            target_value,
-            self.context.microscope_handler.parser,
-        )
+        filtered_patterns = patterns_by_axis[self.plan.axis_id]
+        for sequential_filter in self.plan.sequential_filter_plan.filters:
+            filtered_patterns = _filter_patterns_by_component(
+                filtered_patterns,
+                sequential_filter.component_name,
+                sequential_filter.value,
+                self.context.microscope_handler.parser,
+            )
+        patterns_by_axis[self.plan.axis_id] = filtered_patterns
 
     def _prepare_groups(
         self,
@@ -673,7 +729,7 @@ class FunctionStepExecutor:
         mem_before_mb = process.memory_info().rss / 1024 / 1024
         logger.debug("Memory before preload: %.1f MB RSS", mem_before_mb)
 
-        if self.context.current_sequential_combination:
+        if plan.sequential_filter_plan.enabled:
             patterns_to_preload = [
                 pattern
                 for pattern_list in grouped_patterns.values()

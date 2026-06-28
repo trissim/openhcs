@@ -2,13 +2,36 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
+import time
 from typing import Any
 
 
 PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProfileTimer:
+    """Runtime-profile timer that owns disabled-profile elapsed semantics."""
+
+    enabled: bool
+    started_at: float
+
+    @classmethod
+    def start(cls) -> "RuntimeProfileTimer":
+        """Start a timer under the current profile sink state."""
+        if RuntimeProfileLogger.enabled():
+            return cls(enabled=True, started_at=time.perf_counter())
+        return cls(enabled=False, started_at=0.0)
+
+    def elapsed(self) -> float:
+        """Return elapsed seconds, or the declared disabled-profile value."""
+        if not self.enabled:
+            return 0.0
+        return time.perf_counter() - self.started_at
 
 
 class RuntimeProfileLogger:

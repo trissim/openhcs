@@ -9,7 +9,7 @@ from weakref import WeakKeyDictionary
 
 from polystore.streaming.identity import StreamProducerIdentity
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.path_pattern_matching import PathPatternTemplateMatcher
@@ -136,14 +136,53 @@ class StepOutputManifestStore:
         self,
         plan: FunctionStepExecutionPlan,
     ) -> tuple[ProducedOutputSemantics, ...] | None:
+        artifact_records = self._artifact_input_producer_records_for(plan)
+        if artifact_records is not None:
+            return artifact_records
+
+        key = self._main_input_producer_key(plan)
+        if key is None:
+            return None
+        return self.records_for_key(key)
+
+    def _artifact_input_producer_records_for(
+        self,
+        plan: FunctionStepExecutionPlan,
+    ) -> tuple[ProducedOutputSemantics, ...] | None:
+        keys = self._artifact_input_producer_keys(plan)
+        if not keys:
+            return None
+        return tuple(
+            record
+            for key in keys
+            for record in self.records_for_key(key)
+        )
+
+    def _artifact_input_producer_keys(
+        self,
+        plan: FunctionStepExecutionPlan,
+    ) -> tuple[StepOutputManifestKey, ...]:
+        if not self._artifact_inputs_drive_anchor_filter(plan):
+            return ()
+        return tuple(
+            dict.fromkeys(
+                StepOutputManifestKey(artifact_input.source_step_scope_id, plan.axis_id)
+                for artifact_input in plan.artifact_inputs.values()
+                if self._is_main_flow_artifact_input(artifact_input)
+                and artifact_input.source_step_scope_id is not None
+            )
+        )
+
+    @staticmethod
+    def _main_input_producer_key(
+        plan: FunctionStepExecutionPlan,
+    ) -> StepOutputManifestKey | None:
         dependency = plan.main_input_dependency
         if dependency.kind is not StepInputDependencyKind.STEP_OUTPUT:
             return None
         if dependency.source_step_scope_id is None:
             return None
-        return self.records_for_key(
-            StepOutputManifestKey(dependency.source_step_scope_id, plan.axis_id)
-        )
+        return StepOutputManifestKey(dependency.source_step_scope_id, plan.axis_id)
 
     def producer_paths_for(
         self,
@@ -152,6 +191,7 @@ class StepOutputManifestStore:
         records = self.producer_records_for(plan)
         if records is None:
             return None
+        records = self._unique_output_path_records(records)
         return tuple(record.relative_output_path for record in records)
 
     def produced_records_for(
@@ -185,6 +225,7 @@ class StepOutputManifestStore:
             plan,
             producer_records,
         )
+        producer_records = self._unique_output_path_records(producer_records)
         allowed = ProducedPathSet.from_records(producer_records, parser)
         selected = [
             path
@@ -211,11 +252,22 @@ class StepOutputManifestStore:
             plan,
             producer_records,
         )
+        producer_records = self._unique_output_path_records(producer_records)
+        selector = ProducedPathPatternSelector.from_pattern(pattern)
         return [
-            record.relative_output_path
+            record.output_path
             for record in producer_records
-            if ProducedPathSet.from_records((record,), parser).contains(pattern)
+            if selector.matches(ProducedPathSet.from_records((record,), parser))
         ]
+
+    @staticmethod
+    def _unique_output_path_records(
+        records: Sequence[ProducedOutputSemantics],
+    ) -> tuple[ProducedOutputSemantics, ...]:
+        records_by_path: dict[str, ProducedOutputSemantics] = {}
+        for record in records:
+            records_by_path.setdefault(record.output_path, record)
+        return tuple(records_by_path.values())
 
     def _select_requested_producer_records(
         self,
@@ -253,8 +305,6 @@ class StepOutputManifestStore:
         plan: FunctionStepExecutionPlan,
     ) -> frozenset[tuple[str, str, str | None]]:
         dependency = plan.main_input_dependency
-        if dependency.kind is not StepInputDependencyKind.STEP_OUTPUT:
-            return frozenset()
         return frozenset(
             (
                 AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
@@ -263,13 +313,35 @@ class StepOutputManifestStore:
             )
             for artifact_input in plan.artifact_inputs.values()
             if (
-                artifact_input.source_step_id in (
-                    dependency.source_step_index,
-                    "prev",
+                artifact_input.source_step_scope_id is not None
+                or (
+                    dependency.kind is StepInputDependencyKind.STEP_OUTPUT
+                    and artifact_input.source_step_id in (
+                        dependency.source_step_index,
+                        "prev",
+                    )
                 )
-                or artifact_input.source_step_scope_id == dependency.source_step_scope_id
+                or (
+                    dependency.kind is StepInputDependencyKind.STEP_OUTPUT
+                    and artifact_input.source_step_scope_id
+                    == dependency.source_step_scope_id
+                )
             )
-            and artifact_input.kind.participates_in_main_flow_output
+            and StepOutputManifestStore._is_main_flow_artifact_input(artifact_input)
+        )
+
+    @staticmethod
+    def _artifact_inputs_drive_anchor_filter(plan: FunctionStepExecutionPlan) -> bool:
+        return (
+            plan.main_input_dependency.kind is StepInputDependencyKind.STEP_OUTPUT
+            or not plan.source_binding_plan.has_primary_content
+        )
+
+    @staticmethod
+    def _is_main_flow_artifact_input(artifact_input: ArtifactInputPlan) -> bool:
+        return (
+            artifact_input.kind.participates_in_main_flow_output
+            and artifact_input.sidecar_role is None
         )
 
     def records_for_key(
@@ -340,10 +412,25 @@ class ProducedPathSet:
         return cls(frozenset(tokens))
 
     def contains(self, path: str) -> bool:
+        return ProducedPathPatternSelector.from_pattern(path).matches(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ProducedPathPatternSelector:
+    """Prepared matcher for concrete and template producer path membership."""
+
+    path: str
+    matcher: PathPatternTemplateMatcher | None
+
+    @classmethod
+    def from_pattern(cls, path: str) -> "ProducedPathPatternSelector":
         path_text = Path(path).as_posix()
-        if path_text in self.tokens:
+        return cls(path_text, PathPatternTemplateMatcher.from_pattern(path_text))
+
+    def matches(self, path_set: ProducedPathSet) -> bool:
+        tokens = path_set.tokens
+        if self.path in tokens:
             return True
-        matcher = PathPatternTemplateMatcher.from_pattern(path_text)
-        if matcher is None:
+        if self.matcher is None:
             return False
-        return any(matcher.matches(token) for token in self.tokens)
+        return any(self.matcher.matches(token) for token in tokens)

@@ -10,7 +10,6 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSp
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.module_artifact_contract import module_artifact_contract
 from openhcs.core.source_bindings import (
-    GroupedSourceBindings,
     NamedSourceBinding,
     StepSourceBindingsConfig,
 )
@@ -91,12 +90,7 @@ def test_source_binding_contract_alignment_reports_drift() -> None:
         module_name="Crop",
         inputs=(ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),),
     )
-    source_bindings = StepSourceBindingsConfig(
-        groups=(
-            GroupedSourceBindings(
-                bindings=(NamedSourceBinding(alias="OrigGreen"),),
-            ),
-        ),
+    source_bindings = StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias="OrigGreen"),),
     )
 
     alignment = SourceBindingRuntimeContractGuard(
@@ -123,12 +117,7 @@ def test_artifact_contract_projection_message_surfaces_source_binding_drift() ->
 
     projection = ArtifactContractPreviewProjection(
         crop,
-        source_bindings=StepSourceBindingsConfig(
-            groups=(
-                GroupedSourceBindings(
-                    bindings=(NamedSourceBinding(alias="OrigGreen"),),
-                ),
-            ),
+        source_bindings=StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias="OrigGreen"),),
         ),
     )
 

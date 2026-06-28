@@ -11,7 +11,11 @@ from typing import Any
 
 from polystore.filemanager import FileManager
 
-from openhcs.core.config import GlobalPipelineConfig, StreamingConfig
+from openhcs.core.config import (
+    AnalysisConsolidationConfig,
+    PlateMetadataConfig,
+    StreamingConfig,
+)
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.debug import (
     DebugEventSink,
@@ -19,9 +23,12 @@ from openhcs.core.debug import (
     NO_OP_DEBUG_EVENT_SINK,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_pattern_cache import RuntimePatternDiscoveryCache
 from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
 from openhcs.core.runtime_source_binding_cache import RuntimeSourceBindingContextCache
+from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjectionCache
 from openhcs.core.axis_filter import StepAxisFilterMap
+from openhcs.core.steps.function_output_identity import FunctionOutputIdentityCache
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +61,9 @@ class ProcessingContext:
         step_plans: Dictionary mapping step indices to compiled execution plans.
         axis_id: Identifier of the multiprocessing axis value being processed.
         filemanager: Instance of FileManager for VFS operations.
-        global_config: GlobalPipelineConfig holding system-wide configurations.
+        analysis_consolidation_config: Runtime analysis consolidation settings.
+        plate_metadata_config: Runtime plate metadata settings.
+        auto_add_output_plate_to_plate_manager: Runtime output-plate registration flag.
         pipeline_sequential_mode: Flag indicating pipeline-wide vs step-wide sequential processing.
         pipeline_sequential_combinations: Pre-computed sequential combinations for pipeline-wide mode.
         current_sequential_combination: Active combination during pipeline-wide sequential execution.
@@ -65,19 +74,23 @@ class ProcessingContext:
 
     def __init__(
         self,
-        global_config: GlobalPipelineConfig,
         step_plans: dict[int, CompiledStepPlan] | None = None,
         axis_id: str | None = None,
         filemanager: FileManager | None = None,
+        analysis_consolidation_config: AnalysisConsolidationConfig | None = None,
+        plate_metadata_config: PlateMetadataConfig | None = None,
+        auto_add_output_plate_to_plate_manager: bool = False,
     ):
         """
         Initialize the processing context.
 
         Args:
-            global_config: The global pipeline configuration object.
             step_plans: Dictionary mapping step indices to compiled execution plans.
             axis_id: Identifier of the multiprocessing axis value being processed.
             filemanager: FileManager instance for VFS operations.
+            analysis_consolidation_config: Analysis consolidation runtime settings.
+            plate_metadata_config: Plate metadata runtime settings.
+            auto_add_output_plate_to_plate_manager: Output-plate registration flag.
         """
         self._is_frozen = False
 
@@ -87,9 +100,13 @@ class ProcessingContext:
             self.step_plans = dict(step_plans)
         self.runtime_value_store = RuntimeValueStore()
         self.runtime_image_stack_cache = RuntimeImageStackCache()
+        self.runtime_function_output_identity_cache = FunctionOutputIdentityCache()
+        self.runtime_pattern_discovery_cache = RuntimePatternDiscoveryCache()
         self.runtime_source_binding_context_cache = RuntimeSourceBindingContextCache()
+        self.runtime_source_workspace_projection_cache = (
+            VirtualWorkspaceSourceProjectionCache()
+        )
         self.axis_id = axis_id
-        self.global_config = global_config
         self.filemanager = filemanager
         self.microscope_handler = None
         self.input_dir = None
@@ -99,11 +116,17 @@ class ProcessingContext:
         self.step_axis_filters: StepAxisFilterMap = {}
         self.metadata_cache: dict[str, dict[str, str | None]] | None = None
         self.analysis_consolidation_config = (
-            global_config.analysis_consolidation_config
+            analysis_consolidation_config
+            if analysis_consolidation_config is not None
+            else AnalysisConsolidationConfig()
         )
-        self.plate_metadata_config = global_config.plate_metadata_config
+        self.plate_metadata_config = (
+            plate_metadata_config
+            if plate_metadata_config is not None
+            else PlateMetadataConfig()
+        )
         self.auto_add_output_plate_to_plate_manager = (
-            global_config.auto_add_output_plate_to_plate_manager
+            auto_add_output_plate_to_plate_manager
         )
 
         self.execution_id = None

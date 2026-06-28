@@ -30,7 +30,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache, wraps
-from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
+from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Type, get_type_hints
 
 
 import numpy as np
@@ -56,7 +56,9 @@ from openhcs.core.runtime_values import (
     RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
+    image_payload_metadata,
     image_payload_slice_context,
+    with_image_payload_data,
 )
 from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
@@ -66,9 +68,13 @@ from openhcs.core.runtime_batch_contracts import (
     RuntimePure2DSliceBatchRequest,
     runtime_batch_executors_from_callable,
 )
+from openhcs.core.variable_component_stack_requirement import (
+    AlwaysRequiresVariableComponentStack,
+    SemanticControlVariableComponentStackRequirement,
+    VariableComponentStackRequirement,
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
-from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +300,28 @@ def runtime_output_tuple(value: Any) -> Any:
     if isinstance(value, RuntimeOutputBundle):
         return value.as_runtime_tuple()
     return value
+
+
+def contextualize_main_image_output(source_image: Any, result: Any) -> Any:
+    """Preserve source image context when plain array callables return plain arrays."""
+    if isinstance(result, RuntimeOutputBundle):
+        return result
+    if isinstance(result, tuple):
+        if not result:
+            return result
+        return (
+            contextualize_main_image_output(source_image, result[0]),
+            *result[1:],
+        )
+    if isinstance(result, RuntimeArrayPayload):
+        return result
+    if not isinstance(result, np.ndarray):
+        return result
+    if image_payload_mask(source_image) is None and not image_payload_metadata(
+        source_image
+    ).has_values:
+        return result
+    return with_image_payload_data(source_image, result)
 
 
 class Pure2DRegisteredStrategyFamily(ABC):
@@ -677,14 +705,14 @@ class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutput
 
 
 class ColumnarRowsPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
-    """Preserve nominal columnar measurement tables across PURE_2D slices."""
+    """Stamp nominal columnar measurement rows with their PURE_2D slice identity."""
 
     value_type = ColumnarRows
 
     def aggregate_values(self, values: list[Any], memory_type: str) -> ColumnarRows:
         del memory_type
         if len(values) == 1:
-            return self.slice_projected_rows(values[0], 0)
+            return self.slice_aggregated_rows(values[0], 0)
         return ConcatenatedColumnarRows(
             tuple(
                 self.slice_projected_rows(value, slice_index)
@@ -694,6 +722,23 @@ class ColumnarRowsPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
 
     @staticmethod
     def slice_projected_rows(rows: ColumnarRows, slice_index: int) -> ColumnarRows:
+        if not isinstance(rows, ColumnarRows):
+            raise TypeError(
+                "ColumnarRowsPure2DAuxiliaryOutputAggregator requires ColumnarRows, "
+                f"got {type(rows).__name__}."
+            )
+        projected_rows = MeasurementRowsAxisProjection.from_rows(
+            rows
+        ).project_runtime_slice_index(slice_index)
+        if not isinstance(projected_rows, ColumnarRows):
+            raise TypeError(
+                "ColumnarRows axis projection must return ColumnarRows, got "
+                f"{type(projected_rows).__name__}."
+            )
+        return projected_rows
+
+    @staticmethod
+    def slice_aggregated_rows(rows: ColumnarRows, slice_index: int) -> ColumnarRows:
         if not isinstance(rows, ColumnarRows):
             raise TypeError(
                 "ColumnarRowsPure2DAuxiliaryOutputAggregator requires ColumnarRows, "
@@ -804,14 +849,154 @@ class ModuleFilterComponents(Enum):
         return any(component == item.value for item in cls)
 
 
+class ProcessingContractDeclaration(ABC):
+    """Nominal execution contract owned by a ProcessingContract member."""
+
+    def runtime_parameter_types(
+        self,
+    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+        """Return runtime control parameter declarations owned by this contract."""
+        return ()
+
+    def execution_parameter_names(self) -> frozenset[str]:
+        """Runtime controls that should remain present for contract execution."""
+        return frozenset(
+            parameter_type.require_parameter_name()
+            for parameter_type in self.runtime_parameter_types()
+            if parameter_type.preserve_for_execution
+        )
+
+    def semantic_control_parameter_names(self) -> frozenset[str]:
+        """Runtime controls that select this contract's semantic execution mode."""
+        return frozenset(
+            parameter_type.require_parameter_name()
+            for parameter_type in self.runtime_parameter_types()
+            if parameter_type.is_semantic_control
+        )
+
+    def consume_semantic_control(
+        self,
+        kwargs: MutableMapping[str, Any],
+    ) -> bool:
+        """Consume semantic selectors from kwargs and report whether enabled."""
+        control_values = tuple(
+            kwargs.pop(name)
+            for name in tuple(self.semantic_control_parameter_names())
+            if name in kwargs
+        )
+        return any(bool(value) for value in control_values)
+
+    @property
+    def variable_component_stack_requirement(
+        self,
+    ) -> VariableComponentStackRequirement | None:
+        """Return the stack-axis requirement declared by this contract type."""
+        return None
+
+    @abstractmethod
+    def execute(self, registry, func, image, *args, **kwargs):
+        """Execute one callable according to this contract declaration."""
+
+
+class VariableComponentStackProcessingContract(ProcessingContractDeclaration):
+    """Marker parent for contracts that require a real variable-component stack."""
+
+    @property
+    def variable_component_stack_requirement(
+        self,
+    ) -> VariableComponentStackRequirement:
+        return AlwaysRequiresVariableComponentStack()
+
+
+class SemanticControlVariableComponentStackProcessingContract(
+    VariableComponentStackProcessingContract
+):
+    """Stack contract selected off unless a semantic-control parameter is enabled."""
+
+    @property
+    def variable_component_stack_requirement(
+        self,
+    ) -> VariableComponentStackRequirement:
+        return SemanticControlVariableComponentStackRequirement(
+            self.runtime_parameter_types()
+        )
+
+
+class Pure3DProcessingContract(VariableComponentStackProcessingContract):
+    """Execute a callable once with full image-domain semantics."""
+
+    def execute(self, registry, func, image, *args, **kwargs):
+        return registry.execute_pure_3d(func, image, *args, **kwargs)
+
+
+class Pure2DProcessingContract(ProcessingContractDeclaration):
+    """Execute a callable as independent 2D slices."""
+
+    def execute(self, registry, func, image, *args, **kwargs):
+        return registry.execute_pure_2d(func, image, *args, **kwargs)
+
+
+class FlexibleProcessingContract(SemanticControlVariableComponentStackProcessingContract):
+    """Choose 2D or full-stack semantics using this contract's control hook."""
+
+    def runtime_parameter_types(
+        self,
+    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+        return (SliceBySliceRuntimeParameter,)
+
+    def execute(self, registry, func, image, *args, **kwargs):
+        if self.consume_semantic_control(kwargs):
+            return ProcessingContract.PURE_2D.execute(
+                registry,
+                func,
+                image,
+                *args,
+                **kwargs,
+            )
+        return ProcessingContract.PURE_3D.execute(
+            registry,
+            func,
+            image,
+            *args,
+            **kwargs,
+        )
+
+
+class VolumetricToSliceProcessingContract(VariableComponentStackProcessingContract):
+    """Execute a volumetric-to-slice callable through its declared hook."""
+
+    def execute(self, registry, func, image, *args, **kwargs):
+        return registry.execute_volumetric_to_slice(func, image, *args, **kwargs)
+
+
 class ProcessingContract(Enum):
-    """
-    Unified contract classification with direct method execution.
-    """
-    PURE_3D = "execute_pure_3d"
-    PURE_2D = "execute_pure_2d"
-    FLEXIBLE = "execute_flexible"
-    VOLUMETRIC_TO_SLICE = "execute_volumetric_to_slice"
+    """Unified contract classification with nominal declaration hooks."""
+
+    PURE_3D = Pure3DProcessingContract
+    PURE_2D = Pure2DProcessingContract
+    FLEXIBLE = FlexibleProcessingContract
+    VOLUMETRIC_TO_SLICE = VolumetricToSliceProcessingContract
+
+    def __new__(
+        cls,
+        declaration_type: type[ProcessingContractDeclaration],
+    ) -> "ProcessingContract":
+        member = object.__new__(cls)
+        member._value_ = declaration_type.__name__
+        member._declaration_type = declaration_type
+        return member
+
+    @property
+    def declaration(self) -> ProcessingContractDeclaration:
+        """Return this member's nominal execution declaration."""
+        return self._declaration_type()
+
+    @property
+    def variable_component_stack_requirement(
+        self,
+    ) -> VariableComponentStackRequirement | None:
+        """Return the stack-axis requirement declared by this contract type."""
+        return self.declaration.variable_component_stack_requirement
 
     @classmethod
     def from_declared_name(cls, contract_name: str) -> "ProcessingContract | None":
@@ -822,15 +1007,8 @@ class ProcessingContract(Enum):
         return cls[normalized]
 
     def execute(self, registry, func, image, *args, **kwargs):
-        """Execute the contract method on the registry."""
-        if self is ProcessingContract.PURE_3D:
-            return RuntimeCallablePolicy().invocation(
-                func,
-                (image, *args),
-                kwargs,
-            ).call()
-        method = getattr(registry, self.value)
-        return method(func, image, *args, **kwargs)
+        """Execute this contract through its declaration hook."""
+        return self.declaration.execute(registry, func, image, *args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -877,6 +1055,71 @@ class FunctionMetadata:
             Registry name string (e.g., "openhcs", "skimage", "cupy", "pyclesperanto")
         """
         return self.registry.library_name
+
+
+class ContractRuntimeParameter(ABC, metaclass=AutoRegisterMeta):
+    """Nominal declaration for parameters owned by ProcessingContract execution."""
+
+    __registry_key__ = "parameter_name"
+    __skip_if_no_key__ = True
+
+    parameter_name: ClassVar[str | None] = None
+    annotation_type: ClassVar[type]
+    preserve_for_execution: ClassVar[bool] = False
+    is_semantic_control: ClassVar[bool] = False
+
+    @classmethod
+    @abstractmethod
+    def default_value(cls):
+        """Return the public signature default for this injected parameter."""
+
+    @classmethod
+    def registered_parameter_types(
+        cls,
+    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[ContractRuntimeParameter]] = []
+        seen: set[type[ContractRuntimeParameter]] = set()
+
+        def visit(owner: type[ContractRuntimeParameter]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        parameter_name = cls.parameter_name
+        if parameter_name is None:
+            raise ValueError(f"{cls.__name__} must declare parameter_name.")
+        return parameter_name
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=cls.default_value(),
+            annotation=cls.annotation_type,
+        )
+
+
+class SliceBySliceRuntimeParameter(ContractRuntimeParameter):
+    """Flexible-contract semantic selector for plane-wise execution."""
+
+    parameter_name = "slice_by_slice"
+    annotation_type = bool
+    preserve_for_execution = True
+    is_semantic_control = True
+
+    @classmethod
+    def default_value(cls) -> bool:
+        return False
+
 
 class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     """
@@ -936,51 +1179,31 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Discover and return function metadata. Must be implemented by subclasses."""
         pass
 
-    # ===== DECLARATIVE INJECTABLE PARAMETERS =====
-    # Parameters injected into all registered functions
-    # Format: (param_name, default_value, type_annotation)
-    # Use lambda for lazy instantiation to avoid circular imports
-    INJECTABLE_PARAMS = [
-        ('enabled', True, bool),
-        ('dtype_config', lambda: LazyDtypeConfig(), 'LazyDtypeConfig'),
-#        ('well_filter_config', lambda: LazyWellFilterConfig(), 'LazyWellFilterConfig'),
-#        ('step_well_filter_config', lambda: LazyStepWellFilterConfig(), 'LazyStepWellFilterConfig'),
-    ]
-
-    # Parameters injected only into FLEXIBLE contract functions
-    FLEXIBLE_ONLY_PARAMS = [
-        ('slice_by_slice', False, bool),
-    ]
-
     # ===== CONTRACT HANDLING =====
     def apply_contract_wrapper(self, func: Callable, contract: ProcessingContract) -> Callable:
-        """Apply contract wrapper with parameter injection using declarative INJECTABLE_PARAMS."""
+        """Apply contract wrapper with nominal runtime parameter injection."""
         from functools import wraps
         import inspect
+        from python_introspect import Enableable
 
+        declaration = contract.declaration
         original_sig = inspect.signature(func)
         param_names = {p.name for p in original_sig.parameters.values()}
 
-        # Import type annotations (resolve lazy strings)
-        from openhcs.core.config import LazyDtypeConfig
-        type_map = {'LazyDtypeConfig': LazyDtypeConfig}
+        signature_parameter_types = (
+            Enableable,
+            *declaration.runtime_parameter_types(),
+        )
 
-        # Build injectable params list from declarative constants
-        # Resolve lambda defaults by calling them
-        injectable_params = []
-        for name, default, annotation in self.INJECTABLE_PARAMS:
-            resolved_default = default() if callable(default) else default
-            resolved_annotation = type_map.get(annotation, annotation) if isinstance(annotation, str) else annotation
-            injectable_params.append((name, resolved_default, resolved_annotation))
-
-        if contract == ProcessingContract.FLEXIBLE:
-            for name, default, annotation in self.FLEXIBLE_ONLY_PARAMS:
-                resolved_default = default() if callable(default) else default
-                resolved_annotation = type_map.get(annotation, annotation) if isinstance(annotation, str) else annotation
-                injectable_params.append((name, resolved_default, resolved_annotation))
-
-        # Filter out already-existing parameters
-        params_to_add = [(name, default, annotation) for name, default, annotation in injectable_params if name not in param_names]
+        # Filter out already-existing parameters and declaration-name collisions.
+        params_to_add: list[inspect.Parameter] = []
+        seen_param_names = set(param_names)
+        for parameter_type in signature_parameter_types:
+            parameter = parameter_type.parameter()
+            if parameter.name in seen_param_names:
+                continue
+            params_to_add.append(parameter)
+            seen_param_names.add(parameter.name)
 
         # If nothing to inject, return original function
         if not params_to_add:
@@ -1000,61 +1223,59 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             len(new_params),
         )
 
-        for param_name, default_value, annotation in params_to_add:
-            new_params.insert(
-                insert_index,
-                inspect.Parameter(
-                    param_name,
-                    inspect.Parameter.KEYWORD_ONLY,
-                    default=default_value,
-                    annotation=annotation,
-                ),
-            )
+        for parameter in params_to_add:
+            new_params.insert(insert_index, parameter)
             insert_index += 1
 
         # Create wrapper
         @wraps(func)
         def wrapper(image, *args, **kwargs):
-            # Extract injectable params and set them as attributes on func
-            for param_name, _, _ in injectable_params:
-                if param_name in kwargs:
-                    setattr(func, param_name, kwargs[param_name])
-
-            # Populate missing injectable params with their defaults from the signature
+            # Populate missing wrapper controls with their defaults from the signature
             # This is critical for internal calls between OpenHCS functions where
-            # injectable params may not be explicitly passed (e.g., create_projection calling max_projection)
+            # wrapper controls may not be explicitly passed (e.g., create_projection calling max_projection)
             from python_introspect import SignatureAnalyzer
             sig_params = SignatureAnalyzer.analyze(wrapper)
-            for param_name, _, _ in injectable_params:
+            for parameter_type in signature_parameter_types:
+                param_name = parameter_type.require_parameter_name()
                 if param_name not in kwargs and param_name in sig_params:
                     default_value = sig_params[param_name].default_value
                     if default_value is not inspect.Parameter.empty:
                         kwargs[param_name] = default_value
 
-            # Filter injectable params from kwargs, EXCEPT dtype_config which needs to
-            # flow through to ArrayBridge's dtype_wrapper for conversion logic
-            params_to_filter = {name for name, _, _ in injectable_params if name != 'dtype_config'}
+            # Keep only declared controls that participate in execution.
+            execution_parameter_names = declaration.execution_parameter_names()
+            params_to_filter = {
+                parameter_type.require_parameter_name()
+                for parameter_type in signature_parameter_types
+                if (
+                    parameter_type.require_parameter_name()
+                    not in execution_parameter_names
+                )
+            }
             filtered_kwargs = {k: v for k, v in kwargs.items() if k not in params_to_filter}
 
             return contract.execute(self, func, image, *args, **filtered_kwargs)
 
-        # Set defaults and signature
-        for param_name, default_value, _ in injectable_params:
-            setattr(wrapper, param_name, default_value)
-
         wrapper.__signature__ = original_sig.replace(parameters=new_params)
-        wrapper.__annotations__ = getattr(func, '__annotations__', {}).copy()
-        for param_name, _, annotation in injectable_params:
-            wrapper.__annotations__[param_name] = annotation
+        wrapper.__annotations__ = inspect.get_annotations(func, eval_str=False).copy()
+        for parameter_type in signature_parameter_types:
+            parameter = parameter_type.parameter()
+            wrapper.__annotations__[parameter.name] = parameter.annotation
 
-        # Explicitly copy __processing_contract__ if it exists
-        if hasattr(func, '__processing_contract__'):
-            wrapper.__processing_contract__ = func.__processing_contract__
+        # Explicitly copy nominal processing metadata when the wrapped callable owns it.
         from openhcs.core.callable_contract import attach_callable_contract_metadata
+        from openhcs.core.function_contract_metadata import FunctionContractAttribute
+
+        source_namespace = vars(func)
+        processing_contract_key = FunctionContractAttribute.processing_contract
+        if processing_contract_key in source_namespace:
+            vars(wrapper)[processing_contract_key] = source_namespace[
+                processing_contract_key
+            ]
         attach_callable_contract_metadata(wrapper, raw_processing_function=func)
 
         # Nominal enable semantics: decorated callables are Enableable.
-        # (Enableable is metadata only; enabled remains a kw-only param for call sites.)
+        # (Enableable is metadata only; enabled remains owned by python_introspect.)
         from python_introspect import mark_enableable
         mark_enableable(wrapper, enabled_default=True)
 
@@ -1160,6 +1381,15 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         return original_func
 
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
+    def execute_pure_3d(self, func, image, *args, **kwargs):
+        """Execute a full-stack callable once and restore payload context."""
+        result = RuntimeCallablePolicy().invocation(
+            func,
+            (image, *args),
+            kwargs,
+        ).call()
+        return contextualize_main_image_output(image, result)
+
     def execute_pure_2d(self, func, image, *args, **kwargs):
         """Execute 2D→2D function with unstack/restack wrapper."""
         # Get memory type from the decorated function
@@ -1293,23 +1523,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             and label_array.ndim == image_array.ndim
             and tuple(label_array.shape) == tuple(image_array.shape)
         )
-
-    def execute_flexible(self, func, image, *args, **kwargs):
-        """Execute function that handles both 3D→3D and 2D→2D with toggle."""
-        # Check if slice_by_slice attribute is set on the function
-        slice_by_slice = getattr(func, 'slice_by_slice', False)
-        if slice_by_slice:
-            # Reuse the 2D-only execution logic (unstack -> process -> restack)
-            return self.execute_pure_2d(func, image, *args, **kwargs)
-        else:
-            # Use 3D-only execution logic (no modification)
-            return ProcessingContract.PURE_3D.execute(
-                self,
-                func,
-                image,
-                *args,
-                **kwargs,
-            )
 
     def execute_volumetric_to_slice(self, func, image, *args, **kwargs):
         """Execute 3D→2D function returning slice 3D array."""
@@ -1885,7 +2098,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                 # Apply library adapter (preprocessing/postprocessing)
                 adapted_func = self.create_library_adapter(func, contract)
 
-                # Apply contract wrapper (slice_by_slice for FLEXIBLE)
+                # Apply nominal contract wrapper.
                 contract_wrapped_func = self.apply_contract_wrapper(adapted_func, contract)
 
                 # Inject optional dataclass parameters

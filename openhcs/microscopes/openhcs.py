@@ -145,6 +145,32 @@ class AtomicMetadataWriter:
             metadata_path,
         )
 
+    def replace_subdirectory_metadata(
+        self,
+        metadata_path: Union[str, Path],
+        subdirectory_name: str,
+        subdirectory_metadata: Dict[str, Any],
+    ) -> None:
+        """Atomically replace one managed subdirectory metadata record."""
+
+        def update_func(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            data = self._ensure_subdirectories_structure(data)
+            data[METADATA_CONFIG.SUBDIRECTORIES_KEY][subdirectory_name] = dict(
+                subdirectory_metadata
+            )
+            return data
+
+        self._execute_update(
+            metadata_path,
+            update_func,
+            {METADATA_CONFIG.SUBDIRECTORIES_KEY: {}},
+        )
+        self.logger.debug(
+            "Replaced subdirectory %s in %s",
+            subdirectory_name,
+            metadata_path,
+        )
+
     def _execute_update(
         self,
         metadata_path: Union[str, Path],
@@ -288,7 +314,7 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
             MetadataNotFoundError: If the metadata file cannot be found or parsed.
             FileNotFoundError: If plate_path does not exist.
         """
-        current_path = Path(plate_path)
+        current_path = self._resolve_plate_root(plate_path)
         if self._metadata_cache is not None and self._plate_path_cache == current_path:
             return self._metadata_cache
 
@@ -307,9 +333,7 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
 
             # Handle subdirectory-keyed format
             subdirs = self._metadata_subdirectories(metadata_dict, plate_path)
-            main_subdir_name = self._main_subdirectory_name(subdirs, plate_path)
-            main_subdir = subdirs[main_subdir_name]
-            base_metadata = dict(main_subdir)
+            base_metadata = self._metadata_projection(subdirs, plate_path)
             base_metadata[FIELDS.IMAGE_FILES] = [
                 image_file
                 for subdir_name, subdir in subdirs.items()
@@ -333,7 +357,7 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
 
     def _load_metadata_dict(self, plate_path: Union[str, Path]) -> Dict[str, Any]:
         """Load and parse metadata JSON, fail-loud on errors."""
-        current_path = Path(plate_path)
+        current_path = self._resolve_plate_root(plate_path)
         if (
             self._metadata_dict_cache is not None
             and self._metadata_dict_plate_path_cache == current_path
@@ -406,7 +430,7 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
 
     def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
         """Find the OpenHCS JSON metadata file."""
-        plate_p = Path(plate_path)
+        plate_p = self._resolve_plate_root(plate_path)
         if not self.filemanager.is_dir(str(plate_p), Backend.DISK.value):
             raise MetadataNotFoundError(f"OpenHCS plate path is not a directory: {plate_p}")
 
@@ -483,10 +507,13 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
                 )
             result_path = plate_root / result_dir_name
             if not result_path.exists():
-                raise FileNotFoundError(
-                    f"OpenHCS metadata subdirectory {subdirectory_name!r} "
-                    f"declares missing results directory: {result_path}"
+                logger.debug(
+                    "OpenHCS metadata subdirectory %r declares missing results "
+                    "directory %s; treating it as no result artifacts.",
+                    subdirectory_name,
+                    result_path,
                 )
+                continue
             if not result_path.is_dir():
                 raise NotADirectoryError(
                     f"OpenHCS metadata subdirectory {subdirectory_name!r} "
@@ -499,6 +526,168 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
                 )
             )
         return tuple(result_directories)
+
+    def _metadata_projection(
+        self,
+        subdirectories: Mapping[str, Mapping[str, Any]],
+        plate_path: Union[str, Path],
+    ) -> Dict[str, Any]:
+        try:
+            main_subdirectory_name = self._main_subdirectory_name(
+                subdirectories,
+                plate_path,
+            )
+        except MetadataNotFoundError:
+            return self._aggregate_subdirectory_metadata(subdirectories, plate_path)
+        return dict(subdirectories[main_subdirectory_name])
+
+    def _aggregate_subdirectory_metadata(
+        self,
+        subdirectories: Mapping[str, Mapping[str, Any]],
+        plate_path: Union[str, Path],
+    ) -> Dict[str, Any]:
+        """Project no-main output metadata when subdirectories share authority."""
+        metadata_by_subdirectory = {
+            subdirectory_name: _openhcs_metadata_from_subdirectory(
+                subdirectory_name,
+                subdirectory_data,
+            )
+            for subdirectory_name, subdirectory_data in subdirectories.items()
+        }
+
+        return {
+            FIELDS.MICROSCOPE_HANDLER_NAME: self._consistent_subdirectory_value(
+                {
+                    subdirectory_name: metadata.microscope_handler_name
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "microscope_handler_name",
+            ),
+            FIELDS.SOURCE_FILENAME_PARSER_NAME: self._consistent_subdirectory_value(
+                {
+                    subdirectory_name: metadata.source_filename_parser_name
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "source_filename_parser_name",
+            ),
+            FIELDS.GRID_DIMENSIONS: self._consistent_subdirectory_value(
+                {
+                    subdirectory_name: metadata.grid_dimensions
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "grid_dimensions",
+            ),
+            FIELDS.PIXEL_SIZE: self._consistent_subdirectory_value(
+                {
+                    subdirectory_name: metadata.pixel_size
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "pixel_size",
+            ),
+            FIELDS.CHANNELS: self._merge_subdirectory_mapping(
+                {
+                    subdirectory_name: metadata.channels
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "channels",
+            ),
+            FIELDS.WELLS: self._merge_subdirectory_mapping(
+                {
+                    subdirectory_name: metadata.wells
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "wells",
+            ),
+            FIELDS.SITES: self._merge_subdirectory_mapping(
+                {
+                    subdirectory_name: metadata.sites
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "sites",
+            ),
+            FIELDS.Z_INDEXES: self._merge_subdirectory_mapping(
+                {
+                    subdirectory_name: metadata.z_indexes
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "z_indexes",
+            ),
+            FIELDS.TIMEPOINTS: self._merge_subdirectory_mapping(
+                {
+                    subdirectory_name: metadata.timepoints
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "timepoints",
+            ),
+            FIELDS.AVAILABLE_BACKENDS: self._merge_subdirectory_mapping(
+                {
+                    subdirectory_name: metadata.available_backends
+                    for subdirectory_name, metadata in metadata_by_subdirectory.items()
+                },
+                plate_path,
+                "available_backends",
+            ),
+        }
+
+    @staticmethod
+    def _consistent_subdirectory_value(
+        values_by_subdirectory: Mapping[str, Any],
+        plate_path: Union[str, Path],
+        field_name: str,
+    ) -> Any:
+        values = tuple(values_by_subdirectory.items())
+        if not values:
+            raise MetadataNotFoundError(
+                f"No OpenHCS metadata subdirectories found for {plate_path}."
+            )
+        first_value = values[0][1]
+        conflicting_subdirectories = tuple(
+            subdirectory_name
+            for subdirectory_name, value in values
+            if value != first_value
+        )
+        if conflicting_subdirectories:
+            raise ValueError(
+                f"OpenHCS metadata subdirectories for {plate_path} disagree on "
+                f"{field_name!r}: {conflicting_subdirectories}"
+            )
+        return first_value
+
+    @staticmethod
+    def _merge_subdirectory_mapping(
+        values_by_subdirectory: Mapping[str, Mapping[str, Any] | None],
+        plate_path: Union[str, Path],
+        field_name: str,
+    ) -> Dict[str, Any] | None:
+        merged: Dict[str, Any] = {}
+        observed = False
+        for subdirectory_name, values in values_by_subdirectory.items():
+            if values is None:
+                continue
+            observed = True
+            if not isinstance(values, Mapping):
+                raise ValueError(
+                    f"OpenHCS metadata subdirectory {subdirectory_name!r} field "
+                    f"{field_name!r} must be a mapping in {plate_path}."
+                )
+            for key, value in values.items():
+                normalized_key = str(key)
+                if normalized_key in merged and merged[normalized_key] != value:
+                    raise ValueError(
+                        f"OpenHCS metadata subdirectories for {plate_path} "
+                        f"disagree on {field_name!r}[{normalized_key!r}]."
+                    )
+                merged[normalized_key] = value
+        return merged if observed else None
 
     def _metadata_subdirectories(
         self,

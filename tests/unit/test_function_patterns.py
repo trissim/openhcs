@@ -272,7 +272,10 @@ def test_compile_function_pattern_builds_invocation_source_of_truth():
         FunctionInvocationKey("second", "DAPI", 1),
     ]
     assert group.invocations[0].contract.function_name == "first"
-    assert group.invocations[0].kwargs == (("sigma", 1),)
+    assert group.invocations[0].kwargs == (
+        ("sigma", 1),
+        ("dtype_config", "inherited"),
+    )
     assert group.invocations[0].artifact_input_keys == ("positions",)
     assert group.invocations[0].artifact_output_keys == ("positions",)
     assert group.invocations[1].artifact_output_keys == ("measurements",)

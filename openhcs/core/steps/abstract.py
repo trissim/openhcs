@@ -17,8 +17,8 @@ from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyStepMaterializationConfig, LazyStreamingDefaults, LazyNapariStreamingConfig, LazyFijiStreamingConfig
 from openhcs.core.config import LazyStepWellFilterConfig
 from openhcs.core.config import LazyProcessingConfig, LazyDtypeConfig
+from openhcs.core.config import LazyStepSourceBindingsConfig
 from openhcs.core.source_bindings import (
-    EMPTY_SOURCE_BINDINGS,
     StepSourceBindingsConfig,
 )
 
@@ -107,7 +107,7 @@ class AbstractStep(abc.ABC):
         debug_pause: bool = False,
         dtype_config: 'LazyDtypeConfig' = LazyDtypeConfig(),
         processing_config: 'LazyProcessingConfig' = LazyProcessingConfig(),
-        source_bindings: 'StepSourceBindingsConfig' = EMPTY_SOURCE_BINDINGS,
+        source_bindings: 'LazyStepSourceBindingsConfig' = LazyStepSourceBindingsConfig(),
         step_well_filter_config: 'LazyStepWellFilterConfig' = LazyStepWellFilterConfig(),
         step_materialization_config: 'LazyStepMaterializationConfig' = LazyStepMaterializationConfig(),
         streaming_defaults: 'LazyStreamingDefaults' = LazyStreamingDefaults(),
@@ -130,7 +130,7 @@ class AbstractStep(abc.ABC):
                     not affect normal execution.
             dtype_config: LazyDtypeConfig for dtype conversion behavior in memory type decorators.
             processing_config: LazyProcessingConfig for variable_components, group_by, input_source, and sequential processing.
-            source_bindings: StepSourceBindingsConfig for named semantic input bindings.
+            source_bindings: LazyStepSourceBindingsConfig for named semantic input bindings.
             step_well_filter_config: LazyStepWellFilterConfig for well filtering.
             step_materialization_config: Optional LazyStepMaterializationConfig for per-step materialized output.
                                    When provided, enables saving materialized copy of step output

@@ -16,6 +16,7 @@ from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataExtractionRule,
     NamedSourceBinding,
+    SourceBindingsConfig,
     SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceAssignmentBase,
@@ -87,6 +88,14 @@ class ImageAssignment(SourceAssignmentBase):
             self.image_type
         ).participates_in_image_stack
 
+    @property
+    def source_bindings_config_representable(self) -> bool:
+        """Whether SourceBindingsConfig can preserve this source declaration."""
+
+        return ImageTypeSourceRole.for_image_type(
+            self.image_type
+        ).source_bindings_config_representable
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SourceArtifactAssignment(SourceAssignmentBase):
@@ -122,6 +131,12 @@ class SourceArtifactAssignment(SourceAssignmentBase):
     def participates_in_image_stack(self) -> bool:
         return False
 
+    @property
+    def source_bindings_config_representable(self) -> bool:
+        """Whether SourceBindingsConfig can preserve this source declaration."""
+
+        return not self.payload_type
+
 
 class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
     """Nominal role for pipeline image-type source semantics."""
@@ -143,6 +158,15 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
                 f"Unsupported pipeline source image type {image_type!r}."
             )
         return role_type()
+
+    @classmethod
+    def image_type(cls) -> str:
+        """Return the schema image-type label owned by this registered role."""
+        if cls.image_type_key is None:
+            raise TypeError(
+                f"{cls.__name__} is an abstract image-type role with no image_type_key."
+            )
+        return cls.image_type_key
 
     @property
     def participates_in_image_stack(self) -> bool:
@@ -167,6 +191,12 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
         """Whether source pixels require an explicit per-pixel validity mask."""
 
         return type(self).MATERIALIZE_SOURCE_MASK
+
+    @property
+    def source_bindings_config_representable(self) -> bool:
+        """Whether this role can be lowered to SourceBindingsConfig losslessly."""
+
+        return isinstance(self, SourceBindingsRepresentableImageTypeSourceRole)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +237,13 @@ MonochromeImageStackSourceRole = ImageTypeSourceRoleClassSpec(
     load_as_monochrome=True,
     materialize_source_mask=True,
 ).declare()
+SourceBindingsRepresentableImageTypeSourceRole = ImageTypeSourceRoleClassSpec(
+    "SourceBindingsRepresentableImageTypeSourceRole",
+    MonochromeImageStackSourceRole,
+    participates_in_image_stack=True,
+    load_as_monochrome=True,
+    materialize_source_mask=True,
+).declare()
 SourceArtifactImageTypeSourceRole = ImageTypeSourceRoleClassSpec(
     "SourceArtifactImageTypeSourceRole",
     ImageTypeSourceRole,
@@ -243,7 +280,7 @@ for _image_type_role_spec in (
     ImageTypeSourceRoleSpec(
         "GrayscaleImageTypeSourceRole",
         "grayscale image",
-        MonochromeImageStackSourceRole,
+        SourceBindingsRepresentableImageTypeSourceRole,
     ),
     ImageTypeSourceRoleSpec(
         "ColorImageTypeSourceRole",
@@ -574,6 +611,186 @@ class PipelineImageSchema:
             )
         return artifact_assignment
 
+    def to_source_bindings_config(self) -> SourceBindingsConfig:
+        """Project a representable source schema into source-binding init config."""
+
+        return PipelineImageSchemaSourceBindingsProjection(self).config()
+
+    def to_runtime_source_bindings_config(self) -> SourceBindingsConfig:
+        """Project source-binding fields needed for runtime step inheritance."""
+
+        return PipelineImageSchemaSourceBindingsProjection(self).runtime_config()
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineImageSchemaUnsupportedField:
+    """One pipeline-image-schema feature not representable as SourceBindingsConfig."""
+
+    feature_type: type["PipelineImageSchemaSourceBindingsFeature"]
+
+    def __post_init__(self) -> None:
+        if not issubclass(self.feature_type, PipelineImageSchemaSourceBindingsFeature):
+            raise TypeError(
+                "PipelineImageSchemaUnsupportedField.feature_type must be "
+                "PipelineImageSchemaSourceBindingsFeature, got "
+                f"{self.feature_type.__name__}."
+            )
+
+    @property
+    def field_name(self) -> str:
+        return self.feature_type.field_name()
+
+
+class PipelineImageSchemaSourceBindingsFeature(ABC, metaclass=AutoRegisterMeta):
+    """Nominal source-schema feature requiring full workspace materialization."""
+
+    __registry_key__ = "schema_field_name"
+    __skip_if_no_key__ = True
+
+    schema_field_name: ClassVar[str | None] = None
+
+    @classmethod
+    def field_name(cls) -> str:
+        if cls.schema_field_name is None:
+            raise TypeError(f"{cls.__name__} has no schema_field_name.")
+        return cls.schema_field_name
+
+    @classmethod
+    def unsupported_fields_for(
+        cls,
+        schema: PipelineImageSchema,
+    ) -> tuple[PipelineImageSchemaUnsupportedField, ...]:
+        return tuple(
+            PipelineImageSchemaUnsupportedField(feature_type)
+            for feature_type in cls.__registry__.values()
+            if feature_type().present(schema)
+        )
+
+    @abstractmethod
+    def present(self, schema: PipelineImageSchema) -> bool:
+        """Return whether this unsupported feature is present in the schema."""
+
+
+class ImagePlaneSourcesSourceBindingsFeature(PipelineImageSchemaSourceBindingsFeature):
+    """Embedded image-plane sources require source-schema materialization."""
+
+    schema_field_name = "image_plane_sources"
+
+    def present(self, schema: PipelineImageSchema) -> bool:
+        return bool(schema.image_plane_sources)
+
+
+class ImportedMetadataTablesSourceBindingsFeature(
+    PipelineImageSchemaSourceBindingsFeature
+):
+    """Imported metadata tables require source-schema materialization."""
+
+    schema_field_name = "imported_metadata_tables"
+
+    def present(self, schema: PipelineImageSchema) -> bool:
+        return bool(schema.imported_metadata_tables)
+
+
+class SourceImageStackSourceBindingsFeature(PipelineImageSchemaSourceBindingsFeature):
+    """Source-image stack semantics require source-schema materialization."""
+
+    schema_field_name = "source_image_stack"
+
+    def present(self, schema: PipelineImageSchema) -> bool:
+        return not schema.source_image_stack.is_empty
+
+
+class GroupingSourceBindingsFeature(PipelineImageSchemaSourceBindingsFeature):
+    """Source-schema grouping requires source-schema materialization."""
+
+    schema_field_name = "grouping"
+
+    def present(self, schema: PipelineImageSchema) -> bool:
+        return schema.grouping is not None
+
+
+class SourceAssignmentPayloadSourceBindingsFeature(
+    PipelineImageSchemaSourceBindingsFeature
+):
+    """Typed source payloads require source-schema materialization."""
+
+    schema_field_name = "source_assignment_payloads"
+
+    def present(self, schema: PipelineImageSchema) -> bool:
+        assignments = (
+            *schema.assignments_by_alias.values(),
+            *schema.source_artifacts_by_alias.values(),
+        )
+        return any(
+            not assignment.source_bindings_config_representable
+            for assignment in assignments
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineImageSchemaSourceBindingsRepresentability:
+    """Validate whether a source schema can initialize through source bindings."""
+
+    schema: PipelineImageSchema
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema, PipelineImageSchema):
+            raise TypeError(
+                "PipelineImageSchemaSourceBindingsRepresentability.schema must be "
+                f"PipelineImageSchema, got {type(self.schema).__name__}."
+            )
+
+    def unsupported_fields(self) -> tuple[PipelineImageSchemaUnsupportedField, ...]:
+        return PipelineImageSchemaSourceBindingsFeature.unsupported_fields_for(
+            self.schema
+        )
+
+    def require_supported(self) -> None:
+        unsupported = self.unsupported_fields()
+        if not unsupported:
+            return
+        raise ValueError(
+            "PipelineImageSchema cannot be represented as SourceBindingsConfig; "
+            "use source-schema workspace materialization for fields: "
+            + ", ".join(field.field_name for field in unsupported)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineImageSchemaSourceBindingsProjection:
+    """Project representable pipeline-image schemas into source-binding config."""
+
+    schema: PipelineImageSchema
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema, PipelineImageSchema):
+            raise TypeError(
+                "PipelineImageSchemaSourceBindingsProjection.schema must be "
+                f"PipelineImageSchema, got {type(self.schema).__name__}."
+            )
+
+    def config(self) -> SourceBindingsConfig:
+        PipelineImageSchemaSourceBindingsRepresentability(
+            self.schema
+        ).require_supported()
+        return self.runtime_config()
+
+    def runtime_config(self) -> SourceBindingsConfig:
+        """Return source-binding payload without init-time representability checks."""
+        images_rule = self.schema.images_rule
+        return SourceBindingsConfig(
+            source_filters=() if images_rule is None else images_rule.filters,
+            bindings=self.bindings(),
+            metadata_rules=self.schema.metadata_rules,
+            match_plan=self.schema.match_plan,
+        )
+
+    def bindings(self) -> tuple[NamedSourceBinding, ...]:
+        assignments: list[SourceAssignmentBase] = []
+        assignments.extend(self.schema.assignments_by_alias.values())
+        assignments.extend(self.schema.source_artifacts_by_alias.values())
+        return tuple(assignment.to_binding() for assignment in assignments)
+
 
 class PipelineImageSchemaBuilder:
     """Mutable accumulator for pipeline-level source schema declarations."""
@@ -705,7 +922,7 @@ class OrigColorLegacyImageAssignmentStrategy(LegacyImageAssignmentStrategy):
         color = normalized[4:]
         return ImageAssignment(
             alias=alias,
-            image_type="Grayscale image",
+            image_type=GrayscaleImageTypeSourceRole.image_type(),
             selector=SourceSelector(
                 components=(
                     ComponentSelector(

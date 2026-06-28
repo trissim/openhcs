@@ -1120,7 +1120,7 @@ def test_object_label_payload_from_composed_source_image_keeps_site_axis_metadat
         labels=labels,
     ).payload()
 
-    assert payload.plane_axis is RuntimePlaneAxis.SOURCE_BINDING
+    assert payload.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
     assert payload.source_image_provenance_planes.paths == (
         "/input/A01_s001_w1_z001_t001.TIF",
         "/input/A01_s002_w1_z001_t001.TIF",
@@ -1220,6 +1220,58 @@ def test_source_image_plane_axis_request_uses_channel_provenance() -> None:
             SourceImagePlaneAxisRequest(image)
         ).axis()
         is RuntimePlaneAxis.SOURCE_BINDING
+    )
+
+
+def test_source_image_plane_axis_request_uses_channel_component_metadata() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "1", "channel": "2"},
+                ),
+            )
+        ),
+    )
+
+    assert (
+        SourceImagePlaneAxisPolicy.for_request(
+            SourceImagePlaneAxisRequest(image)
+        ).axis()
+        is RuntimePlaneAxis.SOURCE_BINDING
+    )
+
+
+def test_source_image_plane_axis_request_uses_site_component_metadata() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "2", "channel": "1"},
+                ),
+            )
+        ),
+    )
+    labels = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+        )
+    )
+
+    assert (
+        SourceImagePlaneAxisPolicy.for_request(
+            SourceImagePlaneAxisRequest(image)
+        ).axis()
+        is RuntimePlaneAxis.RUNTIME_SLICE
+    )
+    assert (
+        SourceImageObjectLabelBuildRequest(image=image, labels=labels).payload().plane_axis
+        is RuntimePlaneAxis.RUNTIME_SLICE
     )
 
 
@@ -2806,6 +2858,7 @@ def test_image_metadata_payload_exposes_array_methods() -> None:
     np.testing.assert_array_equal(copied, image)
     assert copied is not image
     np.testing.assert_array_equal(payload.astype(np.float64), image.astype(np.float64))
+    np.testing.assert_array_equal(payload.reshape(3, 2), image.reshape(3, 2))
 
 
 def test_image_metadata_payload_supports_nominal_array_comparison() -> None:
@@ -2870,6 +2923,15 @@ def test_image_payload_metadata_composition_tracks_unit_interval_proof() -> None
     assert metadata.source_plane_unit_interval_intensity_scales == (65535, 255)
     assert metadata.for_source_plane(0).unit_interval_intensity_scale == 65535
     assert metadata.for_source_plane(1).unit_interval_intensity_scale == 255
+
+
+def test_image_payload_metadata_common_unit_interval_uses_scalar_fallback() -> None:
+    metadata = ImagePayloadMetadata(
+        unit_interval_intensity_scale=65535,
+        source_plane_unit_interval_intensity_scales=(None, None, None),
+    )
+
+    assert metadata.common_unit_interval_intensity_scale() == 65535
 
 
 def test_image_payload_metadata_tracks_spatial_crop_edges() -> None:

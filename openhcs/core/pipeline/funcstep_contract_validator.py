@@ -16,23 +16,27 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from openhcs.constants.constants import (
     AllComponents,
+    GroupBy,
     VALID_MEMORY_TYPES,
     get_openhcs_config,
 )
-from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.function_patterns import (
     CompiledFunctionPattern,
     FunctionPatternSyntax,
+    NormalizedFunctionItem,
     normalize_function_pattern,
 )
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.variable_component_stack_requirement import (
+    VariableComponentStackRequirementRequest,
+)
 
 from openhcs.core.components.validation import GenericValidator
 
@@ -62,20 +66,6 @@ class FunctionStepArtifactContractScope:
     group_by: Enum | None
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
     compiled_function_pattern: CompiledFunctionPattern
-    variable_component_key_counts: Mapping[str, int] | None = None
-    source_identity_stack_axes: frozenset[str] = frozenset()
-
-    def __post_init__(self) -> None:
-        if self.variable_component_key_counts is None:
-            return
-        missing_axes = self.variable_component_axes() - frozenset(
-            self.variable_component_key_counts
-        )
-        if missing_axes:
-            raise ValueError(
-                "FunctionStepArtifactContractScope missing component-key "
-                f"count(s) for variable axis: {', '.join(sorted(missing_axes))}."
-            )
 
     @classmethod
     def from_step_plan(
@@ -84,7 +74,6 @@ class FunctionStepArtifactContractScope:
         *,
         group_by: Enum | None = None,
         variable_components: tuple[Enum, ...] | None = None,
-        variable_component_key_counts: Mapping[str, int] | None = None,
     ) -> "FunctionStepArtifactContractScope":
         resolved_components = step_plan.variable_components
         if resolved_components is None:
@@ -100,8 +89,6 @@ class FunctionStepArtifactContractScope:
             group_by=step_plan.group_by if group_by is None else group_by,
             artifact_outputs=resolved_outputs,
             compiled_function_pattern=step_plan.compiled_function_pattern,
-            variable_component_key_counts=variable_component_key_counts,
-            source_identity_stack_axes=step_plan.source_identity_stack_axes,
         )
 
     def variable_component_axes(self) -> frozenset[str]:
@@ -119,15 +106,6 @@ class FunctionStepArtifactContractScope:
             axes.add(str(self.group_by.value))
         return frozenset(axes)
 
-    def multi_plane_variable_axes(self) -> frozenset[str]:
-        """Return variable axes that can contribute multiple planes."""
-        axes = self.variable_component_axes() - self.source_identity_stack_axes
-        if self.variable_component_key_counts is None:
-            return axes
-        return frozenset(
-            axis for axis in axes if self.variable_component_key_counts[axis] > 1
-        )
-
     def artifact_managed_invocation_names(self) -> tuple[str, ...]:
         """Return runtime-adapter invocation names that consume and produce artifacts."""
         names: list[str] = []
@@ -141,17 +119,6 @@ class FunctionStepArtifactContractScope:
                 continue
             names.append(invocation.key.function_name)
         return tuple(names)
-
-    def source_identity_materialized_outputs(
-        self,
-    ) -> tuple[ArtifactOutputPlan, ...]:
-        """Return outputs whose materialized filenames need scalar source identity."""
-        return tuple(
-            output
-            for output in self.artifact_outputs.values()
-            if output.materialization is not NO_ARTIFACT_MATERIALIZATION
-            and output.materialization_uses_source_identity_filename()
-        )
 
 
 @dataclass(frozen=True)
@@ -168,7 +135,7 @@ class ArtifactManagedRuntimeScopePolicy:
         forbidden_axes = (
             self.forbidden_expansion_axes
             & scope.expansion_axes()
-            - scope.source_identity_stack_axes
+            - scope.variable_component_axes()
         )
         if not forbidden_axes:
             return
@@ -187,36 +154,6 @@ class ArtifactManagedRuntimeScopePolicy:
 _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY = ArtifactManagedRuntimeScopePolicy(
     forbidden_expansion_axes=frozenset((AllComponents.CHANNEL.value,)),
 )
-
-
-@dataclass(frozen=True)
-class SourceIdentityMaterializationPolicy:
-    """Validation policy for source-identity-named artifact materialization."""
-
-    def validate(self, scope: FunctionStepArtifactContractScope) -> None:
-        variable_axes = scope.multi_plane_variable_axes()
-        if not variable_axes:
-            return
-
-        outputs = scope.source_identity_materialized_outputs()
-        if not outputs:
-            return
-
-        output_labels = ", ".join(
-            f"{output.name} ({output.kind.value})" for output in outputs
-        )
-        axis_labels = ", ".join(sorted(axis.upper() for axis in variable_axes))
-        raise ValueError(
-            "FunctionStep "
-            f"{scope.step_name!r} materializes source-identity-named artifact "
-            f"output(s) {output_labels} while processing multi-plane variable "
-            f"component(s) {axis_labels}. Runtime artifact materialization "
-            "requires one source image identity per output record; split those "
-            "component(s) across invocations before materialization."
-        )
-
-
-_SOURCE_IDENTITY_MATERIALIZATION_POLICY = SourceIdentityMaterializationPolicy()
 
 
 def _parameter_kind_policy_by_kind(
@@ -739,7 +676,7 @@ class FuncStepContractValidator:
         """Validate FunctionStep structure from the compiled plan SSOT."""
         func_pattern = step_plan.func
         step_name = step_plan.step_name
-        FuncStepContractValidator._contracts_from_pattern(
+        contracts = FuncStepContractValidator._contracts_from_pattern(
             func_pattern,
             step_name,
         )
@@ -767,6 +704,22 @@ class FuncStepContractValidator:
         if not validation_result.is_valid:
             raise ValueError(validation_result.error_message)
 
+        FuncStepContractValidator.validate_required_variable_components(
+            variable_components,
+            contracts,
+            step_name,
+        )
+        FuncStepContractValidator.validate_processing_contract_variable_components(
+            variable_components,
+            tuple(step_plan.compiled_function_pattern.iter_invocations()),
+            step_name,
+        )
+        FuncStepContractValidator.validate_allowed_group_by(
+            group_by,
+            contracts,
+            step_name,
+        )
+
         if orchestrator is not None and isinstance(func_pattern, dict) and group_by is not None:
             dict_validation_result = validator.validate_dict_pattern_keys(
                 func_pattern,
@@ -781,12 +734,6 @@ class FuncStepContractValidator:
             step_plan,
             group_by=group_by,
             variable_components=tuple(variable_components),
-            variable_component_key_counts=(
-                FuncStepContractValidator.variable_component_key_counts(
-                    orchestrator,
-                    tuple(variable_components),
-                )
-            ),
         )
         FuncStepContractValidator.validate_artifact_contract_scope(artifact_scope)
 
@@ -796,23 +743,6 @@ class FuncStepContractValidator:
     ) -> None:
         """Validate every artifact contract policy for one compiled step scope."""
         _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
-        _SOURCE_IDENTITY_MATERIALIZATION_POLICY.validate(scope)
-
-    @staticmethod
-    def variable_component_key_counts(
-        orchestrator,
-        variable_components: tuple[Enum, ...],
-    ) -> Mapping[str, int] | None:
-        """Return concrete component-key cardinality when compile owns it."""
-        if orchestrator is None:
-            return None
-        counts: dict[str, int] = {}
-        for component in variable_components:
-            if component.value is None:
-                continue
-            axis = str(component.value)
-            counts[axis] = len(tuple(orchestrator.get_component_keys(component)))
-        return MappingProxyType(counts)
 
     @staticmethod
     def validate_artifact_managed_runtime_scope(
@@ -828,21 +758,6 @@ class FuncStepContractValidator:
             variable_components=variable_components,
         )
         _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
-
-    @staticmethod
-    def validate_source_identity_materialization_scope(
-        step_plan,
-        *,
-        group_by: Enum | None = None,
-        variable_components: tuple[Enum, ...] | None = None,
-    ) -> None:
-        """Reject multi-plane invocation shapes for scalar-source materialization."""
-        scope = FunctionStepArtifactContractScope.from_step_plan(
-            step_plan,
-            group_by=group_by,
-            variable_components=variable_components,
-        )
-        _SOURCE_IDENTITY_MATERIALIZATION_POLICY.validate(scope)
 
     @staticmethod
     def validate_funcstep(
@@ -874,7 +789,13 @@ class FuncStepContractValidator:
         step_name = step.name
 
         # Validate pattern structure before generic config validation.
-        FuncStepContractValidator._contracts_from_pattern(func_pattern, step_name)
+        normalized = FuncStepContractValidator._normalized_function_pattern(
+            func_pattern,
+            step_name,
+        )
+        contracts = [item.contract for item in normalized.iter_items()]
+        if not contracts:
+            raise ValueError(f"No valid functions found in pattern for step {step_name}")
 
         # Validate using generic validation system
         config = get_openhcs_config()
@@ -895,6 +816,22 @@ class FuncStepContractValidator:
         )
         if not validation_result.is_valid:
             raise ValueError(validation_result.error_message)
+
+        FuncStepContractValidator.validate_required_variable_components(
+            variable_components,
+            contracts,
+            step_name,
+        )
+        FuncStepContractValidator.validate_processing_contract_variable_components(
+            variable_components,
+            tuple(normalized.iter_items()),
+            step_name,
+        )
+        FuncStepContractValidator.validate_allowed_group_by(
+            group_by,
+            contracts,
+            step_name,
+        )
 
         # Validate dict pattern keys if orchestrator is available
         if orchestrator is not None and isinstance(func_pattern, dict) and group_by is not None:
@@ -1150,11 +1087,105 @@ class FuncStepContractValidator:
         step_name: str,
     ) -> list[CallableContract]:
         """Return callable contracts from the function-pattern authority."""
-        try:
-            normalized = normalize_function_pattern(func)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(invalid_pattern_error(func)) from exc
+        normalized = FuncStepContractValidator._normalized_function_pattern(
+            func,
+            step_name,
+        )
         contracts = [item.contract for item in normalized.iter_items()]
         if not contracts:
             raise ValueError(f"No valid functions found in pattern for step {step_name}")
         return contracts
+
+    @staticmethod
+    def _normalized_function_pattern(
+        func: FunctionPatternSyntax,
+        step_name: str,
+    ):
+        """Return normalized function-pattern items with contextualized errors."""
+        try:
+            return normalize_function_pattern(func)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(invalid_pattern_error(func)) from exc
+
+    @staticmethod
+    def validate_required_variable_components(
+        variable_components,
+        contracts: Sequence[CallableContract],
+        step_name: str,
+    ) -> None:
+        """Validate callable/module required axes against resolved step config."""
+        resolved_components = set(variable_components or ())
+        for contract in contracts:
+            missing = tuple(
+                component
+                for component in contract.required_variable_components
+                if component not in resolved_components
+            )
+            if not missing:
+                continue
+            required = ", ".join(component.name for component in missing)
+            actual = ", ".join(component.name for component in resolved_components)
+            raise ValueError(
+                f"Step '{step_name}' callable '{contract.function_name}' requires "
+                f"variable_components {required}; resolved {actual or 'none'}."
+            )
+
+    @staticmethod
+    def validate_processing_contract_variable_components(
+        variable_components,
+        invocations: Sequence[NormalizedFunctionItem],
+        step_name: str,
+    ) -> None:
+        """Validate declared stack semantics against resolved axes."""
+        resolved_components = tuple(variable_components or ())
+        if resolved_components:
+            return
+
+        for invocation in invocations:
+            requirement = invocation.contract.variable_component_stack_requirement
+            if requirement is None:
+                continue
+            func = invocation.contract.func if callable(invocation.contract.func) else None
+            if not requirement.is_required(
+                VariableComponentStackRequirementRequest(
+                    func=func,
+                    kwargs=invocation.kwargs_dict,
+                )
+            ):
+                continue
+            processing_contract = invocation.contract.processing_contract
+            contract_label = (
+                processing_contract.name
+                if isinstance(processing_contract, Enum)
+                else type(requirement).__name__
+            )
+            raise ValueError(
+                f"Step '{step_name}' callable '{invocation.contract.function_name}' "
+                f"uses {contract_label} stack semantics but resolved "
+                "variable_components none. Full-stack processing contracts require "
+                "at least one variable component so each invocation receives a real "
+                "stack axis."
+            )
+
+    @staticmethod
+    def validate_allowed_group_by(
+        group_by,
+        contracts: Sequence[CallableContract],
+        step_name: str,
+    ) -> None:
+        """Validate callable/module allowed group_by values against step config."""
+        resolved_group_by = GroupBy.NONE if group_by is None else group_by
+        for contract in contracts:
+            allowed = contract.allowed_group_by
+            if not allowed or resolved_group_by in allowed:
+                continue
+            allowed_names = ", ".join(value.name for value in allowed)
+            actual = (
+                resolved_group_by.name
+                if isinstance(resolved_group_by, Enum)
+                else str(resolved_group_by)
+            )
+            raise ValueError(
+                f"Step '{step_name}' callable '{contract.function_name}' allows "
+                f"group_by {allowed_names}; resolved {actual}."
+            )

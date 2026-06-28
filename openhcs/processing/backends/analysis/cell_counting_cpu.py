@@ -342,8 +342,8 @@ def count_cells_multi_channel(
     }
 
     # Process each channel
-    _, chan_1_results = count_cells_single_channel(chan_1_img, **chan_1_params)
-    _, chan_2_results = count_cells_single_channel(chan_2_img, **chan_2_params)
+    _, chan_1_results, _ = count_cells_single_channel(chan_1_img, **chan_1_params)
+    _, chan_2_results, _ = count_cells_single_channel(chan_2_img, **chan_2_params)
 
     # Perform colocalization analysis
     multi_results = []

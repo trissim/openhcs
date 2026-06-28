@@ -44,6 +44,7 @@ from openhcs.core.measurement_row_materialization import (
     measurement_row_object_name,
     measurement_row_source_image_name,
     measurement_rows,
+    measurement_table_axis_values,
     measurement_table_object_id_field,
     measurement_table_object_name,
 )
@@ -68,7 +69,7 @@ from openhcs.core.measurement_lookup_dialect import (
     resolve_runtime_measurement_lookup_dialect,
 )
 from openhcs.core.process_local_cache import (
-    ProcessLocalBoundedCache,
+    RegisteredProcessLocalBoundedCache,
     identity_owner_tuples_match,
     named_identity_owner_tuples_match,
 )
@@ -132,7 +133,7 @@ class MeasurementLabelSliceFeatureBatchCacheKey:
 
 
 class MeasurementLabelSliceFeatureBatchQueryCache(
-    ProcessLocalBoundedCache[
+    RegisteredProcessLocalBoundedCache[
         MeasurementLabelSliceFeatureBatchCacheKey,
         MeasurementLabelSliceFeatureBatchCacheValue,
     ]
@@ -642,40 +643,6 @@ def measurement_table_slice_indices(table: MeasurementTable) -> set[int]:
     return measurement_table_axis_values(table, MeasurementRowAxisField.SLICE_INDEX)
 
 
-def measurement_table_axis_values(
-    table: MeasurementTable,
-    axis: MeasurementRowAxisField,
-) -> set[int]:
-    """Return declared row-axis values for one measurement table."""
-    axis_field = axis.value
-    if isinstance(table.rows, ColumnarRows):
-        column_names = tuple(str(column) for column in table.rows.columns)
-        if axis_field not in column_names:
-            return set()
-        return set(
-            measurement_axis_integer_domain(
-                columnar_row_values(table.rows, axis_field),
-                axis,
-            )
-        )
-    return {
-        axis_integer
-        for row in measurement_rows((table,))
-        for row_mapping in (measurement_row_mapping(row),)
-        for axis_integer in (
-            _measurement_axis_integer_value(row_mapping.get(axis_field), axis),
-        )
-        if axis_integer is not None
-    }
-
-
-def _measurement_axis_integer_value(
-    value: object,
-    axis: MeasurementRowAxisField,
-) -> int | None:
-    return measurement_axis_integer_value(value, axis)
-
-
 @dataclass(frozen=True, slots=True)
 class MeasurementLabelSliceAxisSelection:
     """Authoritative row-axis binding for label-stack measurement lookup."""
@@ -851,8 +818,9 @@ class MeasurementLabelSliceFeatureQuery(MeasurementTableFeatureQuery):
         )
         if batch_values_by_axis is not None and self.object_name is not None:
             values_by_axis = {
-                axis_value: values_by_object.get(self.object_name, ({}, []))
+                axis_value: values_by_object[self.object_name]
                 for axis_value, values_by_object in batch_values_by_axis.items()
+                if self.object_name in values_by_object
             }
             return tuple(
                 axis_selection.value_index_for_slice(
@@ -1057,8 +1025,9 @@ class MeasurementLabelSliceFeatureBatchQuery(MeasurementLabelSliceFeatureQuery):
                 )
             else:
                 values_by_axis = {
-                    axis_value: values_by_object.get(object_name, ({}, []))
+                    axis_value: values_by_object[object_name]
                     for axis_value, values_by_object in batch_values_by_axis.items()
+                    if object_name in values_by_object
                 }
                 indexed_values_by_plane = tuple(
                     axis_selection.value_index_for_slice(

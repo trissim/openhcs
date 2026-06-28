@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Mapping, TypeAlias
+from typing import TYPE_CHECKING, Mapping, Sequence, TypeAlias
 
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     RuntimeArrayData,
@@ -15,9 +15,10 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
+    SourceImageProvenanceIdentity,
     SourceImageProvenancePlane,
 )
-from openhcs.core.source_matching import source_component_metadata_value
+from openhcs.core.source_matching import source_component_metadata_items
 from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 if TYPE_CHECKING:
@@ -27,6 +28,54 @@ ParsedFilenameValue: TypeAlias = str | int | float | bool | None
 FunctionOutputComponentValue: TypeAlias = str | int
 FunctionOutputComponentValues: TypeAlias = Mapping[str, FunctionOutputComponentValue]
 
+
+@dataclass(frozen=True, slots=True)
+class FunctionOutputParsedPathIdentityCacheKey:
+    """Context-local cache identity for parser-derived output identity."""
+
+    parser_id: int
+    path_name: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionOutputFilenameCacheKey:
+    """Context-local cache identity for constructed output filenames."""
+
+    parser_id: int
+    component_values: tuple[tuple[str, FunctionOutputComponentValue], ...]
+    extension: str | None
+    filename_qualifier: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionOutputMetadataIdentityCacheKey:
+    """Context-local cache identity for payload-metadata-derived output identity."""
+
+    parser_id: int
+    source_provenance_identity: SourceImageProvenanceIdentity
+    fallback_identity_path: str | None
+    variable_components: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class FunctionOutputIdentityCache:
+    """Processing-context-local cache for output identity filename resolution."""
+
+    parsed_path_identities: dict[
+        FunctionOutputParsedPathIdentityCacheKey,
+        "FunctionOutputIdentity | None",
+    ] = field(default_factory=dict)
+    filenames_by_identity: dict[
+        FunctionOutputFilenameCacheKey,
+        str,
+    ] = field(default_factory=dict)
+    metadata_identities: dict[
+        FunctionOutputMetadataIdentityCacheKey,
+        "FunctionOutputIdentity | None",
+    ] = field(default_factory=dict)
+
+
 @dataclass(frozen=True, slots=True)
 class FunctionOutputPathRequest:
     """Inputs needed to project one runtime output slice into a VFS path."""
@@ -35,7 +84,10 @@ class FunctionOutputPathRequest:
     output_dir: Path
     output_payload: RuntimeArrayData
     input_path: str | None
-    source_identity_stack_axes: frozenset[str] = field(default_factory=frozenset)
+    variable_components: Sequence[VariableComponents] = field(default_factory=tuple)
+    identity_cache: FunctionOutputIdentityCache = field(
+        default_factory=FunctionOutputIdentityCache
+    )
 
 @dataclass(frozen=True, slots=True)
 class FunctionOutputIdentity:
@@ -149,7 +201,26 @@ class FunctionOutputPathAuthority:
         request: FunctionOutputPathRequest,
         identity: FunctionOutputIdentity,
     ) -> str:
-        return cls.filename_for_identity(request.parser, identity)
+        return cls.cached_filename_for_identity(
+            request.parser,
+            identity,
+            request.identity_cache,
+        )
+
+    @classmethod
+    def cached_filename_for_identity(
+        cls,
+        parser: FilenameParser,
+        identity: FunctionOutputIdentity,
+        identity_cache: FunctionOutputIdentityCache,
+    ) -> str:
+        cache_key = cls._filename_cache_key(parser, identity)
+        cached = identity_cache.filenames_by_identity.get(cache_key)
+        if cached is not None:
+            return cached
+        filename = cls.filename_for_identity(parser, identity)
+        identity_cache.filenames_by_identity[cache_key] = filename
+        return filename
 
     @classmethod
     def filename_for_identity(
@@ -187,6 +258,25 @@ class FunctionOutputPathAuthority:
         suffixes = "".join(path.suffixes)
         stem = path.name[: -len(suffixes)] if suffixes else path.name
         return f"{stem}_{qualifier}{suffixes}"
+
+    @staticmethod
+    def _filename_cache_key(
+        parser: FilenameParser,
+        identity: FunctionOutputIdentity,
+    ) -> FunctionOutputFilenameCacheKey:
+        component_values = (
+            identity.filename_component_values
+            if identity.filename_component_values is not None
+            else identity.component_values
+        )
+        return FunctionOutputFilenameCacheKey(
+            parser_id=id(parser),
+            component_values=tuple(
+                sorted((str(key), value) for key, value in component_values.items())
+            ),
+            extension=identity.extension,
+            filename_qualifier=identity.filename_qualifier,
+        )
 
 
 class FunctionOutputExtensionAuthority:
@@ -236,9 +326,7 @@ class FunctionOutputComponentIdentityAuthority:
             return {}
         return {
             component.value: cls.coerce_component_value(component, value)
-            for component in AllComponents
-            if (value := source_component_metadata_value(metadata, component))
-            is not None
+            for component, value in source_component_metadata_items(metadata)
         }
 
     @classmethod
@@ -272,11 +360,12 @@ class FunctionOutputIdentityAuthority:
     @classmethod
     def identity(cls, request: FunctionOutputPathRequest) -> FunctionOutputIdentity:
         metadata = image_payload_metadata(request.output_payload)
-        payload_identity = cls.identity_from_metadata(
+        payload_identity = cls._identity_from_metadata_with_cache(
             request.parser,
             metadata,
             fallback_identity_path=request.input_path,
-            source_identity_stack_axes=request.source_identity_stack_axes,
+            variable_components=request.variable_components,
+            identity_cache=request.identity_cache,
         )
         if payload_identity is not None:
             if payload_identity.extension is None:
@@ -295,17 +384,94 @@ class FunctionOutputIdentityAuthority:
         metadata: ImagePayloadMetadata,
         *,
         fallback_identity_path: str | None = None,
-        source_identity_stack_axes: frozenset[str] = frozenset(),
+        variable_components: Sequence[VariableComponents] = (),
     ) -> FunctionOutputIdentity | None:
         """Return parser-backed identity carried by image payload metadata."""
+        return cls._identity_from_metadata_with_cache(
+            parser,
+            metadata,
+            fallback_identity_path=fallback_identity_path,
+            variable_components=variable_components,
+            identity_cache=FunctionOutputIdentityCache(),
+        )
+
+    @classmethod
+    def identity_from_metadata_with_cache(
+        cls,
+        parser: FilenameParser,
+        metadata: ImagePayloadMetadata,
+        *,
+        fallback_identity_path: str | None = None,
+        variable_components: Sequence[VariableComponents] = (),
+        identity_cache: FunctionOutputIdentityCache,
+    ) -> FunctionOutputIdentity | None:
+        """Return parser-backed identity using a caller-owned identity cache."""
+        return cls._identity_from_metadata_with_cache(
+            parser,
+            metadata,
+            fallback_identity_path=fallback_identity_path,
+            variable_components=variable_components,
+            identity_cache=identity_cache,
+        )
+
+    @classmethod
+    def _identity_from_metadata_with_cache(
+        cls,
+        parser: FilenameParser,
+        metadata: ImagePayloadMetadata,
+        *,
+        fallback_identity_path: str | None,
+        variable_components: Sequence[VariableComponents],
+        identity_cache: FunctionOutputIdentityCache,
+    ) -> FunctionOutputIdentity | None:
+        """Return parser-backed identity using a caller-owned identity cache."""
+        metadata_cache_key = FunctionOutputMetadataIdentityCacheKey(
+            parser_id=id(parser),
+            source_provenance_identity=metadata.source_provenance.equality_identity,
+            fallback_identity_path=fallback_identity_path,
+            variable_components=tuple(
+                component.value
+                for component in variable_components
+                if component.value is not None
+            ),
+        )
+        if metadata_cache_key in identity_cache.metadata_identities:
+            return identity_cache.metadata_identities[metadata_cache_key]
+        identity = cls._identity_from_metadata_uncached(
+            parser,
+            metadata,
+            fallback_identity_path=fallback_identity_path,
+            variable_components=variable_components,
+            identity_cache=identity_cache,
+        )
+        identity_cache.metadata_identities[metadata_cache_key] = identity
+        return identity
+
+    @classmethod
+    def _identity_from_metadata_uncached(
+        cls,
+        parser: FilenameParser,
+        metadata: ImagePayloadMetadata,
+        *,
+        fallback_identity_path: str | None,
+        variable_components: Sequence[VariableComponents],
+        identity_cache: FunctionOutputIdentityCache,
+    ) -> FunctionOutputIdentity | None:
+        """Resolve parser-backed identity without consulting the metadata cache."""
         provenance_planes = metadata.source_image_provenance_planes
         if provenance_planes.count > 1:
-            if source_identity_stack_axes:
+            variable_component_values = frozenset(
+                component.value
+                for component in variable_components
+                if component.value is not None
+            )
+            if variable_component_values:
                 return cls._source_stack_identity_from_provenance(
                     parser,
                     metadata,
-                    source_identity_stack_axes,
+                    variable_component_values,
                     fallback_identity_path=fallback_identity_path,
+                    identity_cache=identity_cache,
                 )
             if fallback_identity_path is not None:
                 return None
@@ -329,17 +495,18 @@ class FunctionOutputIdentityAuthority:
             return cls._complete_identity_from_paths(
                 parser,
                 identity,
+                (
                     (
-                        (
-                            metadata.source_path,
-                            "payload source path",
-                        ),
-                        (
-                            fallback_identity_path,
-                            "fallback parsed filename",
-                        ),
+                        metadata.source_path,
+                        "payload source path",
                     ),
-                )
+                    (
+                        fallback_identity_path,
+                        "fallback parsed filename",
+                    ),
+                ),
+                identity_cache,
+            )
 
         if provenance_planes.count == 1:
             plane = provenance_planes.plane(0)
@@ -367,19 +534,22 @@ class FunctionOutputIdentityAuthority:
                             "fallback parsed filename",
                         ),
                     ),
+                    identity_cache,
                 )
             if plane.path is not None:
-                return cls._parsed_path_identity(
+                return cls._parsed_path_identity_with_cache(
                     parser,
                     plane.path,
                     source="single-plane payload provenance path",
+                    identity_cache=identity_cache,
                 )
 
         if metadata.source_path is not None:
-            return cls._parsed_path_identity(
+            return cls._parsed_path_identity_with_cache(
                 parser,
                 metadata.source_path,
                 source="payload source path",
+                identity_cache=identity_cache,
             )
         return None
 
@@ -392,6 +562,7 @@ class FunctionOutputIdentityAuthority:
         fallback_identity_path: str | None = None,
     ) -> FunctionOutputIdentity | None:
         """Return the identity that should name a filename-addressed output."""
+        identity_cache = FunctionOutputIdentityCache()
         identity = cls._identity_from_metadata(
             metadata.source_component_metadata,
             extension=FunctionOutputExtensionAuthority.first(
@@ -416,6 +587,7 @@ class FunctionOutputIdentityAuthority:
                         "fallback parsed filename",
                     ),
                 ),
+                identity_cache,
             )
 
         for path, source in (
@@ -430,10 +602,11 @@ class FunctionOutputIdentityAuthority:
         ):
             if path is None:
                 continue
-            parsed_identity = cls._parsed_path_identity(
+            parsed_identity = cls._parsed_path_identity_with_cache(
                 parser,
                 path,
                 source=source,
+                identity_cache=identity_cache,
             )
             if parsed_identity is not None:
                 return parsed_identity
@@ -444,6 +617,7 @@ class FunctionOutputIdentityAuthority:
                 parser,
                 provenance_planes.plane(0),
                 0,
+                identity_cache,
             )
         return None
 
@@ -453,14 +627,16 @@ class FunctionOutputIdentityAuthority:
         parser: FilenameParser,
         identity: FunctionOutputIdentity,
         candidates: tuple[tuple[str | None, str], ...],
+        identity_cache: FunctionOutputIdentityCache,
     ) -> FunctionOutputIdentity:
         for path, source in candidates:
             if path is None:
                 continue
-            parsed_identity = cls._parsed_path_identity(
+            parsed_identity = cls._parsed_path_identity_with_cache(
                 parser,
                 path,
                 source=source,
+                identity_cache=identity_cache,
             )
             if parsed_identity is None:
                 continue
@@ -474,6 +650,26 @@ class FunctionOutputIdentityAuthority:
                 ),
                 source=f"{identity.source} over {parsed_identity.source}",
             )
+        return identity
+
+    @classmethod
+    def _parsed_path_identity_with_cache(
+        cls,
+        parser: FilenameParser,
+        path: str,
+        *,
+        source: str,
+        identity_cache: FunctionOutputIdentityCache,
+    ) -> FunctionOutputIdentity | None:
+        cache_key = FunctionOutputParsedPathIdentityCacheKey(
+            parser_id=id(parser),
+            path_name=Path(path).name,
+            source=source,
+        )
+        if cache_key in identity_cache.parsed_path_identities:
+            return identity_cache.parsed_path_identities[cache_key]
+        identity = cls._parsed_path_identity(parser, path, source=source)
+        identity_cache.parsed_path_identities[cache_key] = identity
         return identity
 
     @classmethod
@@ -500,9 +696,10 @@ class FunctionOutputIdentityAuthority:
         cls,
         parser: FilenameParser,
         metadata: ImagePayloadMetadata,
-        source_identity_stack_axes: frozenset[str],
+        variable_component_values: frozenset[str],
         *,
         fallback_identity_path: str | None,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> FunctionOutputIdentity:
         provenance_planes = metadata.source_image_provenance_planes
         plane_identities = tuple(
@@ -510,16 +707,17 @@ class FunctionOutputIdentityAuthority:
                 parser,
                 provenance_planes.plane(plane_index),
                 plane_index,
+                identity_cache,
             )
             for plane_index in range(provenance_planes.count)
         )
         semantic_component_values = cls._source_stack_semantic_component_values(
             plane_identities,
-            source_identity_stack_axes,
+            variable_component_values,
         )
         extension = cls._source_stack_extension(
             plane_identities,
-            source_identity_stack_axes,
+            variable_component_values,
             fallback_identity_path=fallback_identity_path,
         )
         filename_component_values = dict(plane_identities[0].component_values)
@@ -527,8 +725,8 @@ class FunctionOutputIdentityAuthority:
             component_values=semantic_component_values,
             extension=extension,
             source=(
-                "multi-plane payload provenance over source identity stack axes "
-                f"{tuple(sorted(source_identity_stack_axes))!r}"
+                "multi-plane payload provenance over variable components "
+                f"{tuple(sorted(variable_component_values))!r}"
             ),
             filename_component_values=filename_component_values,
         )
@@ -539,6 +737,7 @@ class FunctionOutputIdentityAuthority:
         parser: FilenameParser,
         plane: SourceImageProvenancePlane,
         plane_index: int,
+        identity_cache: FunctionOutputIdentityCache,
     ) -> FunctionOutputIdentity:
         identity = cls._identity_from_metadata(
             plane.component_metadata,
@@ -560,12 +759,14 @@ class FunctionOutputIdentityAuthority:
                         f"source-stack provenance plane {plane_index} path",
                     ),
                 ),
+                identity_cache,
             )
         if plane.path is not None:
-            parsed_identity = cls._parsed_path_identity(
+            parsed_identity = cls._parsed_path_identity_with_cache(
                 parser,
                 plane.path,
                 source=f"source-stack provenance plane {plane_index} path",
+                identity_cache=identity_cache,
             )
             if parsed_identity is not None:
                 return parsed_identity
@@ -578,11 +779,11 @@ class FunctionOutputIdentityAuthority:
     def _source_stack_semantic_component_values(
         cls,
         plane_identities: tuple[FunctionOutputIdentity, ...],
-        source_identity_stack_axes: frozenset[str],
+        variable_component_values: frozenset[str],
     ) -> dict[str, FunctionOutputComponentValue]:
         semantic_keys = cls._source_stack_semantic_component_keys(
             plane_identities,
-            source_identity_stack_axes,
+            variable_component_values,
         )
         semantic_component_values: dict[str, FunctionOutputComponentValue] = {}
         for key in semantic_keys:
@@ -595,9 +796,9 @@ class FunctionOutputIdentityAuthority:
             if len(frozenset(values)) != 1:
                 raise ValueError(
                     "FunctionStep output source stack provenance varies outside "
-                    "declared source identity stack axes. "
-                    f"Component {key!r} has values {values!r}; declared stack axes "
-                    f"are {tuple(sorted(source_identity_stack_axes))!r}."
+                    "variable components. "
+                    f"Component {key!r} has values {values!r}; variable components "
+                    f"are {tuple(sorted(variable_component_values))!r}."
                 )
             semantic_component_values[key] = values[0]
         return semantic_component_values
@@ -606,7 +807,7 @@ class FunctionOutputIdentityAuthority:
     def _source_stack_semantic_component_keys(
         cls,
         plane_identities: tuple[FunctionOutputIdentity, ...],
-        source_identity_stack_axes: frozenset[str],
+        variable_component_values: frozenset[str],
     ) -> tuple[str, ...]:
         keys = (
             frozenset(
@@ -614,7 +815,7 @@ class FunctionOutputIdentityAuthority:
                 for identity in plane_identities
                 for key in identity.component_values
             )
-            - source_identity_stack_axes
+            - variable_component_values
         )
         ordered_keys = tuple(
             component.value
@@ -627,7 +828,7 @@ class FunctionOutputIdentityAuthority:
     @staticmethod
     def _source_stack_extension(
         plane_identities: tuple[FunctionOutputIdentity, ...],
-        source_identity_stack_axes: frozenset[str],
+        variable_component_values: frozenset[str],
         *,
         fallback_identity_path: str | None,
     ) -> str | None:
@@ -648,8 +849,8 @@ class FunctionOutputIdentityAuthority:
         if any(candidate != extension for candidate in extensions):
             raise ValueError(
                 "FunctionStep output source stack provenance has multiple "
-                f"extensions {extensions!r}; declared stack axes are "
-                f"{tuple(sorted(source_identity_stack_axes))!r}."
+                f"extensions {extensions!r}; variable components are "
+                f"{tuple(sorted(variable_component_values))!r}."
             )
         return extension
 
@@ -663,19 +864,18 @@ class FunctionOutputIdentityAuthority:
                 "FunctionStep output payload has no component identity and no "
                 "input path is available for input-aligned output identity."
             )
-        parsed = request.parser.parse_filename(Path(request.input_path).name)
-        if parsed is None:
+        parsed_identity = cls._parsed_path_identity_with_cache(
+            request.parser,
+            request.input_path,
+            source="input-aligned parsed filename",
+            identity_cache=request.identity_cache,
+        )
+        if parsed_identity is None:
             raise ValueError(
                 "FunctionStep output payload has no component identity and the "
                 f"input path cannot be parsed: {request.input_path!r}."
             )
-        return FunctionOutputIdentity(
-            component_values=FunctionOutputComponentIdentityAuthority.from_parsed(
-                parsed
-            ),
-            extension=FunctionOutputExtensionAuthority.from_metadata(parsed),
-            source="input-aligned parsed filename",
-        )
+        return parsed_identity
 
     @classmethod
     def _identity_from_metadata(

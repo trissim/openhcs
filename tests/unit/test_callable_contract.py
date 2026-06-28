@@ -10,15 +10,19 @@ from openhcs.core.callable_contract import (
     CallableContract,
     CallableMetadata,
     CompilerPreparedAutoRegisterFamily,
-    PROCESSING_CONTRACT_ATTR,
-    PROCESSING_PREPARE_ATTR,
-    _PREPARED_CALLABLE_KEYS,
-    _prepare_module_autoregister_families,
     attach_callable_contract_metadata,
     prepare_processing_callable,
+    prepare_module_autoregister_families,
+    reset_processing_callable_preparation_cache,
     runtime_image_execution_mode,
 )
+from openhcs.constants.constants import VariableComponents
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_reference import FunctionReference
+from openhcs.core.pipeline.function_contracts import (
+    required_variable_components,
+    runtime_bound_parameters,
+)
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
@@ -71,6 +75,33 @@ def test_callable_contract_reads_runtime_image_execution_mode() -> None:
     assert contract.runtime_image_execution_mode is ImagePayloadExecutionMode.FULL_STACK
 
 
+def test_callable_contract_reads_runtime_bound_parameters() -> None:
+    @runtime_bound_parameters("slice_index")
+    def process(image, *, slice_index: int = 0):
+        del slice_index
+        return image
+
+    contract = CallableContract.from_callable(process)
+
+    assert contract.runtime_bound_parameters == ("slice_index",)
+    assert CallableMetadata.from_callable(process).as_namespace()[
+        FunctionContractAttribute.runtime_bound_parameters
+    ] == ("slice_index",)
+
+
+def test_callable_contract_reads_required_variable_components() -> None:
+    @required_variable_components(VariableComponents.TIMEPOINT)
+    def process(image):
+        return image
+
+    contract = CallableContract.from_callable(process)
+
+    assert contract.required_variable_components == (VariableComponents.TIMEPOINT,)
+    assert CallableMetadata.from_callable(process).as_namespace()[
+        FunctionContractAttribute.required_variable_components
+    ] == (VariableComponents.TIMEPOINT,)
+
+
 def test_callable_contract_reads_runtime_image_execution_mode_from_function_reference() -> None:
     reference = FunctionReference(
         function_name="process",
@@ -92,7 +123,9 @@ def test_callable_contract_metadata_preserves_explicit_nominal_processing_contra
     def process(image):
         return image
 
-    process.__processing_contract__ = ProcessingContract.FLEXIBLE
+    vars(process)[FunctionContractAttribute.processing_contract] = (
+        ProcessingContract.FLEXIBLE
+    )
 
     attach_callable_contract_metadata(
         process,
@@ -100,7 +133,10 @@ def test_callable_contract_metadata_preserves_explicit_nominal_processing_contra
     )
 
     contract = CallableContract.from_callable(process)
-    assert getattr(process, PROCESSING_CONTRACT_ATTR) is ProcessingContract.FLEXIBLE
+    assert (
+        vars(process)[FunctionContractAttribute.processing_contract]
+        is ProcessingContract.FLEXIBLE
+    )
     assert contract.processing_contract is ProcessingContract.FLEXIBLE
     assert contract.declared_processing_contract == ProcessingContract.PURE_2D.name
 
@@ -108,8 +144,7 @@ def test_callable_contract_metadata_preserves_explicit_nominal_processing_contra
 def test_prepare_processing_callable_warms_imported_registered_families() -> None:
     global _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS
     _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
-    _prepare_module_autoregister_families.cache_clear()
-    AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+    reset_processing_callable_preparation_cache()
 
     prepare_processing_callable(_function_with_imported_prepared_family)
 
@@ -158,8 +193,7 @@ def test_prepare_processing_callable_does_not_warm_unrelated_loaded_families() -
     unrelated_module.UnrelatedImplementation = UnrelatedImplementation
     process.__module__ = related_module.__name__
 
-    _prepare_module_autoregister_families.cache_clear()
-    AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+    reset_processing_callable_preparation_cache()
     sys.modules[related_module.__name__] = related_module
     sys.modules[unrelated_module.__name__] = unrelated_module
     try:
@@ -167,8 +201,7 @@ def test_prepare_processing_callable_does_not_warm_unrelated_loaded_families() -
     finally:
         sys.modules.pop(related_module.__name__, None)
         sys.modules.pop(unrelated_module.__name__, None)
-        _prepare_module_autoregister_families.cache_clear()
-        AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
+        reset_processing_callable_preparation_cache()
 
     assert calls == {"related": 1, "unrelated": 0}
 
@@ -190,10 +223,10 @@ def test_prepare_processing_callable_caches_equivalent_bound_method_hooks() -> N
 
     first = PreparedCallable()
     second = PreparedCallable()
-    first.__dict__[PROCESSING_PREPARE_ATTR] = first.prepare
-    second.__dict__[PROCESSING_PREPARE_ATTR] = second.prepare
+    first.__dict__[FunctionContractAttribute.processing_prepare] = first.prepare
+    second.__dict__[FunctionContractAttribute.processing_prepare] = second.prepare
 
-    _PREPARED_CALLABLE_KEYS.clear()
+    reset_processing_callable_preparation_cache()
 
     prepare_processing_callable(first)
     prepare_processing_callable(second)
@@ -202,7 +235,7 @@ def test_prepare_processing_callable_caches_equivalent_bound_method_hooks() -> N
 
 
 def test_prepare_module_autoregister_families_skips_cellprofiler_backend_mixin_root() -> None:
-    _prepare_module_autoregister_families(
+    prepare_module_autoregister_families(
         "openhcs.processing.backends.cellprofiler.crop"
     )
 

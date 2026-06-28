@@ -12,8 +12,10 @@ from openhcs.core.orchestrator.execution_result import (
     RuntimeObservationMode,
 )
 from openhcs.core.orchestrator.compiled_plate_execution import (
+    CompiledPlateExecutionRequest,
     project_execution_state,
     stop_execution_visualizers,
+    validate_compiled_plate_execution,
 )
 from openhcs.core.orchestrator.worker_execution import (
     ForkInheritedWorkerLaneRunner,
@@ -29,13 +31,39 @@ from openhcs.core.orchestrator.worker_lanes import (
     WorkerAssignmentPlan,
     WorkerLaneExecutionPlan,
 )
-from openhcs.core.compiled_execution import CompiledExecutionBundle
+from openhcs.core.compiled_execution import (
+    CompiledExecutionBundle,
+    CompiledGpuRegistryPlan,
+    CompiledRuntimeEnvironmentPlan,
+    CompiledWorkerStartPlan,
+)
 
 
 PROGRESS_CONTEXT = ProgressExecutionContext(
     execution_id="exec",
     plate_id="plate",
 )
+
+
+def _runtime_environment(
+    *,
+    use_threading: bool,
+    start_method: MultiprocessingStartMethod,
+    configured_num_workers: int = 4,
+) -> CompiledRuntimeEnvironmentPlan:
+    return CompiledRuntimeEnvironmentPlan(
+        worker_start=CompiledWorkerStartPlan(
+            requested=start_method,
+            resolved=start_method,
+            reason="test",
+            gpu_enabled=False,
+            server_mode=False,
+        ),
+        use_threading=use_threading,
+        gpu_registry=CompiledGpuRegistryPlan(
+            configured_num_workers=configured_num_workers
+        ),
+    )
 
 
 def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
@@ -71,6 +99,44 @@ def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
         ],
         "worker_1": [("B01", [("B01", "b-context")])],
     }
+
+
+def test_compiled_plate_execution_request_uses_bundle_as_runtime_authority():
+    runtime_environment = _runtime_environment(
+        use_threading=True,
+        start_method=MultiprocessingStartMethod.SPAWN,
+        configured_num_workers=7,
+    )
+    context = SimpleNamespace()
+    bundle = CompiledExecutionBundle(
+        pipeline_definition=("step",),
+        runtime_contexts={"A01": context},
+        transport_contexts={"A01": context},
+        worker_assignments={"worker_0": ["A01"]},
+        runtime_environment=runtime_environment,
+    )
+    request = CompiledPlateExecutionRequest(
+        execution_id="exec",
+        plate_id="plate",
+        execution_bundle=bundle,
+        max_workers=None,
+        visualizer=None,
+        log_file_base=None,
+        progress_queue="queue",
+        runtime_observation_mode=RuntimeObservationMode.MERGE_INTO_PARENT,
+        debug_execution_policy=NoOpDebugExecutionPolicy(),
+    )
+    orchestrator = SimpleNamespace(
+        is_initialized=lambda: True,
+    )
+
+    validated = validate_compiled_plate_execution(orchestrator, request)
+
+    assert validated is not None
+    assert validated.pipeline_definition == ["step"]
+    assert validated.compiled_contexts == {"A01": context}
+    assert validated.runtime_environment is runtime_environment
+    assert validated.actual_max_workers == 7
 
 
 def test_lane_planner_preserves_fork_lane_payload_as_context_keys():
@@ -133,9 +199,9 @@ def test_executor_factory_uses_inline_lane_for_single_threaded_worker(monkeypatc
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
     ).create(
-        effective_config=SimpleNamespace(
+        runtime_environment=_runtime_environment(
             use_threading=True,
-            multiprocessing_start_method=MultiprocessingStartMethod.SPAWN,
+            start_method=MultiprocessingStartMethod.SPAWN,
         ),
         actual_max_workers=1,
     )
@@ -160,9 +226,9 @@ def test_executor_factory_uses_inline_lane_for_single_fork_worker(monkeypatch):
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
     ).create(
-        effective_config=SimpleNamespace(
+        runtime_environment=_runtime_environment(
             use_threading=False,
-            multiprocessing_start_method=MultiprocessingStartMethod.FORK,
+            start_method=MultiprocessingStartMethod.FORK,
         ),
         actual_max_workers=1,
     )
@@ -198,9 +264,9 @@ def test_executor_factory_creates_thread_pool_for_multi_worker_threading(monkeyp
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
     ).create(
-        effective_config=SimpleNamespace(
+        runtime_environment=_runtime_environment(
             use_threading=True,
-            multiprocessing_start_method=MultiprocessingStartMethod.SPAWN,
+            start_method=MultiprocessingStartMethod.SPAWN,
         ),
         actual_max_workers=3,
     )
@@ -225,9 +291,9 @@ def test_executor_factory_uses_fork_inherited_lane_without_pool(monkeypatch):
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
     ).create(
-        effective_config=SimpleNamespace(
+        runtime_environment=_runtime_environment(
             use_threading=False,
-            multiprocessing_start_method=MultiprocessingStartMethod.FORK,
+            start_method=MultiprocessingStartMethod.FORK,
         ),
         actual_max_workers=2,
     )
@@ -257,10 +323,9 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
         "ProcessPoolExecutor",
         FakeProcessPoolExecutor,
     )
-    monkeypatch.setattr(
-        worker_execution_module,
-        "get_current_global_config",
-        lambda config_type: SimpleNamespace(alpha=1),
+    runtime_environment = _runtime_environment(
+        use_threading=False,
+        start_method=MultiprocessingStartMethod.SPAWN,
     )
 
     resources = WorkerExecutorFactory(
@@ -268,10 +333,7 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
     ).create(
-        effective_config=SimpleNamespace(
-            use_threading=False,
-            multiprocessing_start_method=MultiprocessingStartMethod.SPAWN,
-        ),
+        runtime_environment=runtime_environment,
         actual_max_workers=4,
     )
 
@@ -281,7 +343,7 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     assert created["initializer"] is worker_execution_module._configure_worker_with_gpu
     assert created["initargs"] == (
         "/tmp/worker-log",
-        {"alpha": 1},
+        runtime_environment.gpu_registry,
         "queue",
         PROGRESS_CONTEXT,
     )
@@ -431,6 +493,10 @@ def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
             runtime_contexts={"A01": "runtime-context"},
             transport_contexts={},
             worker_assignments={"worker_0": ["A01"]},
+            runtime_environment=_runtime_environment(
+                use_threading=False,
+                start_method=MultiprocessingStartMethod.FORK,
+            ),
         )
     )
     try:

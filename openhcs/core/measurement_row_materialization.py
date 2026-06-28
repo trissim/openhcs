@@ -91,6 +91,33 @@ def measurement_rows(
     return tuple(iter_measurement_rows(measurement_tables))
 
 
+def measurement_table_axis_values(
+    table: MeasurementTable,
+    axis: MeasurementRowAxisField,
+) -> set[int]:
+    """Return declared row-axis values for one measurement table."""
+    axis_field = axis.value
+    if isinstance(table.rows, ColumnarRows):
+        column_names = tuple(str(column) for column in table.rows.columns)
+        if axis_field not in column_names:
+            return set()
+        return set(
+            measurement_axis_integer_domain(
+                columnar_row_values(table.rows, axis_field),
+                axis,
+            )
+        )
+    return {
+        axis_integer
+        for row in measurement_rows((table,))
+        for row_mapping in (measurement_row_mapping(row),)
+        for axis_integer in (
+            measurement_axis_integer_value(row_mapping.get(axis_field), axis),
+        )
+        if axis_integer is not None
+    }
+
+
 ProjectedMeasurementRows: TypeAlias = Sequence[Mapping[str, Any]] | ColumnarRows
 
 
@@ -99,6 +126,12 @@ class MeasurementProjectedColumnarRows(ColumnarRows):
     """Columnar measurement rows with projected row-axis values."""
 
     columns: Mapping[str, Sequence[Any]]
+    declared_object_measurement_domain_covered: bool = False
+
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        """Return whether projection preserved complete object-domain rows."""
+        return bool(self.declared_object_measurement_domain_covered)
 
     def __len__(self) -> int:
         return column_mapping_row_count(self.columns)
@@ -123,6 +156,40 @@ class MeasurementSparseCell:
 
 
 MEASUREMENT_SPARSE_CELL = MeasurementSparseCell()
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnarRowColumnOverlay(Mapping[str, Sequence[Any]]):
+    """Lazy column mapping that overlays projected columns on an existing table."""
+
+    base_columns: Mapping[str, Sequence[Any]]
+    overlay_columns: Mapping[str, Sequence[Any]]
+    column_names: tuple[str, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "column_names",
+            tuple(
+                dict.fromkeys(
+                    (
+                        *(str(column) for column in self.base_columns),
+                        *(str(column) for column in self.overlay_columns),
+                    )
+                )
+            ),
+        )
+
+    def __getitem__(self, column_name: str) -> Sequence[Any]:
+        if column_name in self.overlay_columns:
+            return self.overlay_columns[column_name]
+        return self.base_columns[column_name]
+
+    def __iter__(self):
+        return iter(self.column_names)
+
+    def __len__(self) -> int:
+        return len(self.column_names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,9 +582,17 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
         slice_index: int,
     ) -> ColumnarRows:
         slice_index_field = MeasurementRowAxisField.SLICE_INDEX.value
-        columns = dict(self.columns)
-        columns[slice_index_field] = (int(slice_index),) * self.rows.row_count()
-        return MeasurementProjectedColumnarRows(MappingProxyType(columns))
+        return MeasurementProjectedColumnarRows(
+            ColumnarRowColumnOverlay(
+                self.columns,
+                MappingProxyType(
+                    {slice_index_field: (int(slice_index),) * self.rows.row_count()}
+                ),
+            ),
+            declared_object_measurement_domain_covered=(
+                self.rows.covers_declared_object_measurement_domain
+            ),
+        )
 
     def aggregate_runtime_slice_index(
         self,
@@ -530,10 +605,19 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
 
     def project_current_image_number(self, start: int) -> ColumnarRows:
         image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        columns = dict(self.columns)
-        if image_number_field not in columns:
-            columns[image_number_field] = (start,) * column_mapping_row_count(columns)
-        return MeasurementProjectedColumnarRows(MappingProxyType(columns))
+        overlay_columns: Mapping[str, Sequence[Any]]
+        if image_number_field in self.columns:
+            overlay_columns = MappingProxyType({})
+        else:
+            overlay_columns = MappingProxyType(
+                {image_number_field: (start,) * self.rows.row_count()}
+            )
+        return MeasurementProjectedColumnarRows(
+            ColumnarRowColumnOverlay(self.columns, overlay_columns),
+            declared_object_measurement_domain_covered=(
+                self.rows.covers_declared_object_measurement_domain
+            ),
+        )
 
     def project_slice_index(
         self,
@@ -541,12 +625,22 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
     ) -> ColumnarRows:
         slice_index_field = MeasurementRowAxisField.SLICE_INDEX.value
         image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        projected_columns = dict(self.columns)
-        projected_columns[image_number_field] = self.projected_image_numbers(
-            image_numbers,
-            self.columns[slice_index_field],
+        return MeasurementProjectedColumnarRows(
+            ColumnarRowColumnOverlay(
+                self.columns,
+                MappingProxyType(
+                    {
+                        image_number_field: self.projected_image_numbers(
+                            image_numbers,
+                            self.columns[slice_index_field],
+                        )
+                    }
+                ),
+            ),
+            declared_object_measurement_domain_covered=(
+                self.rows.covers_declared_object_measurement_domain
+            ),
         )
-        return MeasurementProjectedColumnarRows(MappingProxyType(projected_columns))
 
     def project_image_number(self, start: int) -> ColumnarRows | None:
         image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
@@ -558,14 +652,24 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
         if not image_numbers or min(image_numbers) >= start:
             return None
         offset = start - 1
-        projected_columns = dict(columns)
-        projected_columns[image_number_field] = tuple(
-            int(value) + offset
-            if MeasurementScalarLiteral(value).is_present_axis_value
-            else value
-            for value in columns[image_number_field]
+        return MeasurementProjectedColumnarRows(
+            ColumnarRowColumnOverlay(
+                columns,
+                MappingProxyType(
+                    {
+                        image_number_field: tuple(
+                            int(value) + offset
+                            if MeasurementScalarLiteral(value).is_present_axis_value
+                            else value
+                            for value in columns[image_number_field]
+                        )
+                    }
+                ),
+            ),
+            declared_object_measurement_domain_covered=(
+                self.rows.covers_declared_object_measurement_domain
+            ),
         )
-        return MeasurementProjectedColumnarRows(MappingProxyType(projected_columns))
 
     @staticmethod
     def projected_image_numbers(

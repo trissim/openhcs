@@ -20,6 +20,7 @@ from typing import Any, ClassVar, Mapping, get_type_hints
 
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.core.module_artifact_contract import (
@@ -27,6 +28,7 @@ from openhcs.core.module_artifact_contract import (
     ModuleArtifactContract,
     module_artifact_contract_from_namespace,
 )
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.runtime_adapters import (
     RuntimeAdapterSpec,
     runtime_adapter_spec_from_callable,
@@ -35,18 +37,15 @@ from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchCallableFamily,
     RuntimeBatchExecutionDomain,
 )
+from openhcs.core.variable_component_stack_requirement import (
+    VariableComponentStackRequirement,
+)
 
 
 ArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
 CallableNamespace = Mapping[str, Any]
-PROCESSING_CONTRACT_ATTR = "__processing_contract__"
-DECLARED_PROCESSING_CONTRACT_ATTR = "__openhcs_declared_processing_contract__"
-RAW_PROCESSING_FUNCTION_ATTR = "__openhcs_raw_processing_function__"
-PROCESSING_PREPARE_ATTR = "__openhcs_prepare__"
-RUNTIME_IMAGE_EXECUTION_MODE_ATTR = "__openhcs_runtime_image_execution_mode__"
-CALLABLE_REQUEST_BINDING_ATTR = "__openhcs_callable_request_binding__"
-_PREPARED_CALLABLE_KEYS: set[tuple[str, str, int]] = set()
-_PREPARED_CALLABLE_LOCK = Lock()
+_prepared_callable_keys: set[tuple[str, str, Hashable]] = set()
+_prepared_callable_lock = Lock()
 
 CallableContractCacheKey = tuple[Hashable | None, ...]
 CallableRuntimeCacheKey = int | tuple[str, CallableContractCacheKey]
@@ -69,6 +68,10 @@ class CallableMetadata:
     output_memory_type: str | None = None
     artifact_inputs: ArtifactSpecItems = ()
     artifact_outputs: ArtifactSpecItems = ()
+    runtime_bound_parameters: tuple[str, ...] = ()
+    required_variable_components: tuple[VariableComponents, ...] = ()
+    variable_component_stack_requirement: VariableComponentStackRequirement | None = None
+    allowed_group_by: tuple[GroupBy, ...] = ()
     runtime_adapter: RuntimeAdapterSpec | None = None
     processing_contract: Enum | None = None
     declared_processing_contract: str | None = None
@@ -97,32 +100,50 @@ class CallableMetadata:
             artifact_inputs=_artifact_spec_items(
                 namespace,
                 projection.name,
-                "__artifact_inputs__",
+                FunctionContractAttribute.artifact_inputs,
             ),
             artifact_outputs=_artifact_spec_items(
                 namespace,
                 projection.name,
-                "__artifact_outputs__",
+                FunctionContractAttribute.artifact_outputs,
+            ),
+            runtime_bound_parameters=reader.optional_string_tuple(
+                FunctionContractAttribute.runtime_bound_parameters,
+            ),
+            required_variable_components=reader.optional_variable_component_tuple(
+                FunctionContractAttribute.required_variable_components,
+            ),
+            variable_component_stack_requirement=(
+                reader.optional_variable_component_stack_requirement(
+                    FunctionContractAttribute.variable_component_stack_requirement
+                )
+            ),
+            allowed_group_by=reader.optional_group_by_tuple(
+                FunctionContractAttribute.allowed_group_by,
             ),
             runtime_adapter=runtime_adapter_spec_from_callable(projection.func),
-            processing_contract=reader.optional_enum(PROCESSING_CONTRACT_ATTR),
+            processing_contract=reader.optional_enum(
+                FunctionContractAttribute.processing_contract
+            ),
             declared_processing_contract=reader.optional_string(
-                DECLARED_PROCESSING_CONTRACT_ATTR,
+                FunctionContractAttribute.declared_processing_contract,
             ),
             module_artifact_contract=module_artifact_contract_from_namespace(
                 namespace,
                 owner_name=projection.name,
             ),
             raw_processing_function=reader.optional_raw_processing_function(
-                RAW_PROCESSING_FUNCTION_ATTR,
+                FunctionContractAttribute.raw_processing_function,
             ),
             runtime_image_execution_mode=reader.optional_execution_mode(
-                RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
+                FunctionContractAttribute.runtime_image_execution_mode,
             ),
             request_binding=reader.optional_request_binding(
-                CALLABLE_REQUEST_BINDING_ATTR,
+                FunctionContractAttribute.callable_request_binding,
             ),
-            prepare=reader.optional_callable(PROCESSING_PREPARE_ATTR),
+            prepare=reader.optional_callable(
+                FunctionContractAttribute.processing_prepare
+            ),
         )
 
     def without_prepare(self) -> "CallableMetadata":
@@ -147,29 +168,53 @@ class CallableMetadata:
         if self.output_memory_type is not None:
             namespace["output_memory_type"] = self.output_memory_type
         if self.artifact_inputs:
-            namespace["__artifact_inputs__"] = dict(self.artifact_inputs)
+            namespace[FunctionContractAttribute.artifact_inputs] = dict(
+                self.artifact_inputs
+            )
         if self.artifact_outputs:
-            namespace["__artifact_outputs__"] = dict(self.artifact_outputs)
+            namespace[FunctionContractAttribute.artifact_outputs] = dict(
+                self.artifact_outputs
+            )
+        if self.runtime_bound_parameters:
+            namespace[FunctionContractAttribute.runtime_bound_parameters] = (
+                self.runtime_bound_parameters
+            )
+        if self.required_variable_components:
+            namespace[FunctionContractAttribute.required_variable_components] = (
+                self.required_variable_components
+            )
+        if self.variable_component_stack_requirement is not None:
+            namespace[
+                FunctionContractAttribute.variable_component_stack_requirement
+            ] = self.variable_component_stack_requirement
+        if self.allowed_group_by:
+            namespace[FunctionContractAttribute.allowed_group_by] = self.allowed_group_by
         if self.runtime_adapter is not None:
             namespace["__runtime_adapter__"] = self.runtime_adapter
         if self.processing_contract is not None:
-            namespace[PROCESSING_CONTRACT_ATTR] = self.processing_contract
+            namespace[FunctionContractAttribute.processing_contract] = (
+                self.processing_contract
+            )
         if self.declared_processing_contract is not None:
-            namespace[DECLARED_PROCESSING_CONTRACT_ATTR] = (
+            namespace[FunctionContractAttribute.declared_processing_contract] = (
                 self.declared_processing_contract
             )
         if self.module_artifact_contract is not None:
             namespace[MODULE_ARTIFACT_CONTRACT_ATTR] = self.module_artifact_contract
         if self.raw_processing_function is not None:
-            namespace[RAW_PROCESSING_FUNCTION_ATTR] = self.raw_processing_function
+            namespace[FunctionContractAttribute.raw_processing_function] = (
+                self.raw_processing_function
+            )
         if self.runtime_image_execution_mode is not None:
-            namespace[RUNTIME_IMAGE_EXECUTION_MODE_ATTR] = (
+            namespace[FunctionContractAttribute.runtime_image_execution_mode] = (
                 self.runtime_image_execution_mode
             )
         if self.request_binding is not None:
-            namespace[CALLABLE_REQUEST_BINDING_ATTR] = self.request_binding
+            namespace[FunctionContractAttribute.callable_request_binding] = (
+                self.request_binding
+            )
         if self.prepare is not None:
-            namespace[PROCESSING_PREPARE_ATTR] = self.prepare
+            namespace[FunctionContractAttribute.processing_prepare] = self.prepare
         return namespace
 
 
@@ -250,6 +295,46 @@ class CallableContract(ArtifactPlanKeySelector):
     def runtime_adapter(self) -> RuntimeAdapterSpec | None:
         """Declared runtime adapter."""
         return self.metadata.runtime_adapter
+
+    @property
+    def runtime_bound_parameters(self) -> tuple[str, ...]:
+        """Declared parameters supplied by runtime execution infrastructure."""
+        return self.metadata.runtime_bound_parameters
+
+    @property
+    def required_variable_components(self) -> tuple[VariableComponents, ...]:
+        """Declared FunctionStep variable axes required by this callable."""
+        components = (
+            *self.metadata.required_variable_components,
+            *(
+                ()
+                if self.module_artifact_contract is None
+                else self.module_artifact_contract.required_variable_components
+            ),
+        )
+        return tuple(dict.fromkeys(components))
+
+    @property
+    def variable_component_stack_requirement(
+        self,
+    ) -> VariableComponentStackRequirement | None:
+        """Declared requirement for a non-empty variable-component stack axis."""
+        if self.metadata.variable_component_stack_requirement is not None:
+            return self.metadata.variable_component_stack_requirement
+
+        from openhcs.processing.backends.lib_registry.unified_registry import (
+            ProcessingContract,
+        )
+
+        processing_contract = self.processing_contract
+        if not isinstance(processing_contract, ProcessingContract):
+            return None
+        return processing_contract.variable_component_stack_requirement
+
+    @property
+    def allowed_group_by(self) -> tuple[GroupBy, ...]:
+        """Declared FunctionStep group_by values allowed by this callable."""
+        return self.metadata.allowed_group_by
 
     @property
     def processing_contract(self) -> Enum | None:
@@ -528,7 +613,7 @@ def callable_request(
             return func(**binding.implementation_kwargs(bound.arguments))
 
         wrapper_namespace = _mutable_callable_namespace(wrapper)
-        wrapper_namespace[CALLABLE_REQUEST_BINDING_ATTR] = binding
+        wrapper_namespace[FunctionContractAttribute.callable_request_binding] = binding
         wrapper_namespace["__signature__"] = public_signature
         return wrapper
 
@@ -569,7 +654,9 @@ def attach_callable_contract_metadata(
                 "declared_processing_contract must be a non-empty string."
             )
         namespace = _mutable_callable_namespace(func)
-        namespace[DECLARED_PROCESSING_CONTRACT_ATTR] = declared_processing_contract
+        namespace[FunctionContractAttribute.declared_processing_contract] = (
+            declared_processing_contract
+        )
         _attach_nominal_processing_contract_if_supported(
             func,
             declared_processing_contract,
@@ -581,31 +668,38 @@ def attach_callable_contract_metadata(
                 f"got {type(raw_processing_function).__name__}."
             )
         namespace = _mutable_callable_namespace(func)
-        namespace[RAW_PROCESSING_FUNCTION_ATTR] = raw_processing_function
+        namespace[FunctionContractAttribute.raw_processing_function] = (
+            raw_processing_function
+        )
         raw_prepare = CallableMetadata.from_callable(raw_processing_function).prepare
-        if raw_prepare is not None and PROCESSING_PREPARE_ATTR not in namespace:
+        if (
+            raw_prepare is not None
+            and FunctionContractAttribute.processing_prepare not in namespace
+        ):
             if not callable(raw_prepare):
                 raise TypeError(
                     "raw_processing_function prepare hook must be callable, "
                     f"got {type(raw_prepare).__name__}."
                 )
-            namespace[PROCESSING_PREPARE_ATTR] = raw_prepare
+            namespace[FunctionContractAttribute.processing_prepare] = raw_prepare
     if prepare is not None:
         if not callable(prepare):
             raise TypeError(
                 "prepare must be callable, "
                 f"got {type(prepare).__name__}."
             )
-        _mutable_callable_namespace(func)[PROCESSING_PREPARE_ATTR] = prepare
+        _mutable_callable_namespace(func)[
+            FunctionContractAttribute.processing_prepare
+        ] = prepare
     if runtime_image_execution_mode is not None:
         if not isinstance(runtime_image_execution_mode, ImagePayloadExecutionMode):
             raise TypeError(
                 "runtime_image_execution_mode must be ImagePayloadExecutionMode, "
                 f"got {type(runtime_image_execution_mode).__name__}."
             )
-        _mutable_callable_namespace(func)[RUNTIME_IMAGE_EXECUTION_MODE_ATTR] = (
-            runtime_image_execution_mode
-        )
+        _mutable_callable_namespace(func)[
+            FunctionContractAttribute.runtime_image_execution_mode
+        ] = runtime_image_execution_mode
 
 
 def _attach_nominal_processing_contract_if_supported(
@@ -614,14 +708,14 @@ def _attach_nominal_processing_contract_if_supported(
 ) -> None:
     """Coerce declared contract names to nominal metadata at the declaration boundary."""
     namespace = _mutable_callable_namespace(func)
-    if PROCESSING_CONTRACT_ATTR in namespace:
+    if FunctionContractAttribute.processing_contract in namespace:
         return
 
     from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
     contract = ProcessingContract.from_declared_name(declared_processing_contract)
     if contract is not None:
-        namespace[PROCESSING_CONTRACT_ATTR] = contract
+        namespace[FunctionContractAttribute.processing_contract] = contract
 
 
 def processing_prepare(*targets: Any) -> Any:
@@ -665,7 +759,9 @@ def attach_processing_prepare(func: Any, prepare: Any) -> None:
             f"got {type(prepare).__name__}."
         )
     for target in CallableProjection.from_callable(func).prepare_targets():
-        _mutable_callable_namespace(target)[PROCESSING_PREPARE_ATTR] = prepare
+        _mutable_callable_namespace(target)[
+            FunctionContractAttribute.processing_prepare
+        ] = prepare
 
 
 def runtime_image_execution_mode(
@@ -679,7 +775,9 @@ def runtime_image_execution_mode(
         )
 
     def decorator(func: Any) -> Any:
-        _mutable_callable_namespace(func)[RUNTIME_IMAGE_EXECUTION_MODE_ATTR] = mode
+        _mutable_callable_namespace(func)[
+            FunctionContractAttribute.runtime_image_execution_mode
+        ] = mode
         return func
 
     return decorator
@@ -689,15 +787,15 @@ def prepare_processing_callable(func: Any) -> None:
     """Run an optional callable preparation hook before timed data processing."""
     projection = CallableProjection.from_callable(func)
     if projection.module_name is not None:
-        _prepare_module_autoregister_families(projection.module_name)
+        prepare_module_autoregister_families(projection.module_name)
         _prepare_processing_module(projection.module_name)
 
-    prepare = projection.namespace.get(PROCESSING_PREPARE_ATTR)
+    prepare = projection.namespace.get(FunctionContractAttribute.processing_prepare)
     if prepare is None:
         return
     if not callable(prepare):
         raise TypeError(
-            f"{projection.name!r}.{PROCESSING_PREPARE_ATTR} must be "
+            f"{projection.name!r}.{FunctionContractAttribute.processing_prepare} must be "
             f"callable, got {type(prepare).__name__}."
         )
     if projection.module_name is None:
@@ -709,12 +807,22 @@ def prepare_processing_callable(func: Any) -> None:
         f"{module_label}.{projection.name}",
         _prepare_callable_identity(prepare),
     )
-    with _PREPARED_CALLABLE_LOCK:
-        if prepare_key in _PREPARED_CALLABLE_KEYS:
+    with _prepared_callable_lock:
+        if prepare_key in _prepared_callable_keys:
             return
     prepare()
-    with _PREPARED_CALLABLE_LOCK:
-        _PREPARED_CALLABLE_KEYS.add(prepare_key)
+    with _prepared_callable_lock:
+        _prepared_callable_keys.add(prepare_key)
+
+
+def reset_processing_callable_preparation_cache() -> None:
+    """Clear process-local preparation caches for deterministic tests and tooling."""
+    with _prepared_callable_lock:
+        _prepared_callable_keys.clear()
+    prepare_module_autoregister_families.cache_clear()
+    from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
+
+    AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()
 
 
 def _prepare_callable_identity(prepare: Callable[..., Any]) -> tuple[str, str]:
@@ -725,25 +833,26 @@ def _prepare_callable_identity(prepare: Callable[..., Any]) -> tuple[str, str]:
 def _prepare_processing_module(module_name: str) -> None:
     """Run an optional module-level preparation hook exactly once."""
     module = importlib.import_module(module_name)
-    prepare = vars(module).get(PROCESSING_PREPARE_ATTR)
+    prepare = vars(module).get(FunctionContractAttribute.processing_prepare)
     if prepare is None:
         return
     if not callable(prepare):
         raise TypeError(
-            f"Module {module_name!r}.{PROCESSING_PREPARE_ATTR} must be callable, "
+            f"Module {module_name!r}.{FunctionContractAttribute.processing_prepare} "
+            "must be callable, "
             f"got {type(prepare).__name__}."
         )
     prepare_key = ("module", module_name, id(prepare))
-    with _PREPARED_CALLABLE_LOCK:
-        if prepare_key in _PREPARED_CALLABLE_KEYS:
+    with _prepared_callable_lock:
+        if prepare_key in _prepared_callable_keys:
             return
     prepare()
-    with _PREPARED_CALLABLE_LOCK:
-        _PREPARED_CALLABLE_KEYS.add(prepare_key)
+    with _prepared_callable_lock:
+        _prepared_callable_keys.add(prepare_key)
 
 
 @lru_cache(maxsize=None)
-def _prepare_module_autoregister_families(module_name: str) -> None:
+def prepare_module_autoregister_families(module_name: str) -> None:
     """Prepare AutoRegisterMeta families imported by a callable module."""
     module = importlib.import_module(module_name)
     from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
@@ -816,7 +925,7 @@ class CallableProjection:
             seen.add(target_id)
             targets.append(target)
             namespace = _callable_namespace(target)
-            raw = namespace.get(RAW_PROCESSING_FUNCTION_ATTR)
+            raw = namespace.get(FunctionContractAttribute.raw_processing_function)
             if callable(raw):
                 pending.append(raw)
             wrapped = namespace.get("__wrapped__")
@@ -843,6 +952,97 @@ class CallableMetadataReader:
                 f"got {type(value).__name__}."
             )
         return value
+
+    def optional_string_tuple(self, field_name: str) -> tuple[str, ...]:
+        """Return an optional tuple of non-empty string metadata values."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return ()
+        if not isinstance(value, tuple):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be a tuple, "
+                f"got {type(value).__name__}."
+            )
+        normalized = tuple(item.strip() for item in value if isinstance(item, str))
+        if len(normalized) != len(value) or len(normalized) != len(set(normalized)):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must contain unique "
+                "non-empty strings."
+            )
+        if any(not item for item in normalized):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must contain unique "
+                "non-empty strings."
+            )
+        return normalized
+
+    def optional_variable_component_tuple(
+        self,
+        field_name: str,
+    ) -> tuple[VariableComponents, ...]:
+        """Return optional required FunctionStep variable-component metadata."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return ()
+        if not isinstance(value, tuple):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be a tuple, "
+                f"got {type(value).__name__}."
+            )
+        normalized = tuple(
+            component
+            if isinstance(component, VariableComponents)
+            else VariableComponents(component)
+            for component in value
+        )
+        if len(normalized) != len(set(normalized)):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must contain unique "
+                "VariableComponents values."
+            )
+        return normalized
+
+    def optional_variable_component_stack_requirement(
+        self,
+        field_name: str,
+    ) -> VariableComponentStackRequirement | None:
+        """Return an optional variable-component stack requirement declaration."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, VariableComponentStackRequirement):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be "
+                "VariableComponentStackRequirement, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    def optional_group_by_tuple(
+        self,
+        field_name: str,
+    ) -> tuple[GroupBy, ...]:
+        """Return optional allowed FunctionStep group_by metadata."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return ()
+        if not isinstance(value, tuple):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be a tuple, "
+                f"got {type(value).__name__}."
+            )
+        normalized = tuple(
+            group_by
+            if isinstance(group_by, GroupBy)
+            else GroupBy(group_by)
+            for group_by in value
+        )
+        if len(normalized) != len(set(normalized)):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must contain unique "
+                "GroupBy values."
+            )
+        return normalized
 
     def optional_execution_mode(
         self,

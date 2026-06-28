@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 import inspect
 from types import MappingProxyType
 from typing import ClassVar, Generic, TypeVar
@@ -100,6 +101,7 @@ class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
         )
 
 
+@lru_cache(maxsize=1024)
 def runtime_callable_defaults(func: Callable[..., object]) -> Mapping[str, object]:
     """Return callable defaults visible to runtime batch executors."""
     try:

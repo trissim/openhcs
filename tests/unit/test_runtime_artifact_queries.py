@@ -24,6 +24,8 @@ from openhcs.core.runtime_artifact_queries import (
     runtime_relationship,
 )
 from openhcs.core.measurement_feature_queries import (
+    MeasurementObjectFeatureAxisBatchQueryCache,
+    MeasurementObjectFeatureVectorBatchQuery,
     MeasurementTableObjectFeatureSemantics,
     MeasurementTableObjectFeatureSemanticsCache,
     matching_measurement_field,
@@ -465,6 +467,117 @@ def test_batch_label_slice_measurement_lookup_uses_per_object_axis_semantics() -
     assert tuple(value.tolist() for value in batch_values["Nuclei"]) == (
         [1.5],
         [1.9],
+    )
+
+
+def test_axis_batch_cache_rebuilds_partial_object_axes() -> None:
+    np = pytest.importorskip("numpy")
+    cache = MeasurementObjectFeatureAxisBatchQueryCache.process_cache()
+    cache.entries.clear()
+    table = MeasurementTable(
+        name="IntensityMeasurements",
+        rows=MeasurementProjectedColumnarRows(
+            {
+                "slice_index": (0, 0, 1, 1, 2, 2),
+                "image_number": (1, 1, 2, 2, 3, 3),
+                "object_name": (
+                    "Nuclei",
+                    "Nuclei",
+                    "Nuclei",
+                    "Nuclei",
+                    "Nuclei",
+                    "Nuclei",
+                ),
+                "object_label": (1, 2, 1, 2, 1, 2),
+                "mean_intensity": (1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+            }
+        ),
+        source_image_name="CropBlue",
+        object_id_field="object_label",
+    )
+    batch_query = MeasurementObjectFeatureVectorBatchQuery(
+        "Intensity_MeanIntensity_CropBlue",
+        ("Nuclei",),
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+    table_map = {"Nuclei": (table,)}
+    cache.store_value(
+        batch_query.axis_cache_key(table_map, MeasurementRowAxisField.SLICE_INDEX),
+        (
+            batch_query.table_owners(table_map),
+            {
+                0: {"Nuclei": ({1: 1.0, 2: 2.0}, [])},
+                1: {},
+                2: {},
+            },
+        ),
+    )
+    labels = np.array(
+        (
+            ((1, 2),),
+            ((1, 2),),
+            ((1, 2),),
+        ),
+        dtype="int32",
+    )
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "Intensity_MeanIntensity_CropBlue",
+        labels,
+        object_name="Nuclei",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == (
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+    )
+
+
+def test_axis_batch_projection_ignores_other_object_axes_for_singleton_broadcast() -> None:
+    np = pytest.importorskip("numpy")
+    table = MeasurementTable(
+        name="IntensityMeasurements",
+        rows=MeasurementProjectedColumnarRows(
+            {
+                "slice_index": (0, 0, 0, 1, 2),
+                "object_name": (
+                    "Nuclei",
+                    "Nuclei",
+                    "Cytoplasm",
+                    "Cytoplasm",
+                    "Cytoplasm",
+                ),
+                "object_label": (1, 2, 1, 1, 1),
+                "mean_intensity": (1.0, 2.0, 10.0, 20.0, 30.0),
+            }
+        ),
+        source_image_name="CropBlue",
+        object_id_field="object_label",
+    )
+    labels = np.array(
+        (
+            ((1, 2),),
+            ((1, 2),),
+            ((1, 2),),
+        ),
+        dtype="int32",
+    )
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "Intensity_MeanIntensity_CropBlue",
+        labels,
+        object_name="Nuclei",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == (
+        [1.0, 2.0],
+        [1.0, 2.0],
+        [1.0, 2.0],
     )
 
 

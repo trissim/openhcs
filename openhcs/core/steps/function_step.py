@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from enum import Enum
 from typing import Callable
 
 from objectstate import mark_ui_special_fields
 
-from openhcs.constants.constants import AllComponents
-from openhcs.core.component_set import ComponentSet
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_execution import FunctionStepExecutor
@@ -34,8 +30,6 @@ class FunctionStep(AbstractStep):
     def __init__(
         self,
         func: FunctionSpec = [],
-        *,
-        source_identity_stack_axes: Iterable[AllComponents | Enum | str] = (),
         **kwargs,
     ):
         if "name" not in kwargs or kwargs["name"] is None:
@@ -43,9 +37,6 @@ class FunctionStep(AbstractStep):
 
         super().__init__(**kwargs)
         self.func = func
-        self.source_identity_stack_axes = ComponentSet.coerce(
-            source_identity_stack_axes
-        ).as_tuple()
 
     def process(self, context: "ProcessingContext", step_index: int) -> None:
         FunctionStepExecutor.execute(context, step_index)

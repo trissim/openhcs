@@ -53,6 +53,7 @@ from openhcs.core.streaming_config_factory import StreamingViewerSurface
 from openhcs.processing.materialization.core import (
     BackendKwargs,
     MaterializationSpec,
+    MaterializationValue,
     RawBackendKwargs,
     ViewerStreamBackendCallKwargs,
 )
@@ -102,7 +103,7 @@ class ArtifactMaterializationBackendPlan:
     def backend_kwargs(
         self,
         *,
-        artifact_source_identity: SourceImageIdentity | None,
+        source_metadata_items: StreamSourceComponentMetadataItems,
         producer_identity: StreamProducerIdentity,
         context: "ProcessingContext",
         filemanager: "FileManager",
@@ -116,17 +117,9 @@ class ArtifactMaterializationBackendPlan:
                 raise ValueError(
                     "Persistent artifact backend kwargs already define a different "
                     f"'images_dir': {values['images_dir']!r} != {images_dir!r}."
-                )
+            )
             values["images_dir"] = images_dir
             result[backend] = RawBackendKwargs(values)
-        artifact_component_metadata = (
-            artifact_source_identity.component_metadata
-            if artifact_source_identity is not None
-            else None
-        )
-        source_metadata_items = StreamSourceComponentMetadataItems.from_values(
-            (artifact_component_metadata,)
-        )
         producer = ViewerStreamProducer.from_identity(producer_identity)
         for backend, viewer_surface in self.streamable_viewer_surfaces(
             filemanager=filemanager,
@@ -144,6 +137,30 @@ class ArtifactMaterializationBackendPlan:
                 stream_backend_kwargs,
             )
         return result
+
+class ArtifactStreamSourceMetadataAuthority:
+    """Choose source metadata for the viewer request that starts artifact streaming."""
+
+    @staticmethod
+    def metadata_items(
+        *,
+        materialization_spec: MaterializationSpec,
+        data: MaterializationValue,
+        fallback_source_identity: SourceImageIdentity | None,
+    ) -> StreamSourceComponentMetadataItems:
+        emitted_identities = materialization_spec.emitted_source_identities(data)
+        if emitted_identities:
+            return StreamSourceComponentMetadataItems.from_source_identities(
+                emitted_identities,
+                fallback_source_identity=fallback_source_identity,
+            )
+        return StreamSourceComponentMetadataItems.from_values(
+            (
+                fallback_source_identity.component_metadata
+                if fallback_source_identity is not None
+                else None,
+            )
+        )
 
 class ArtifactMaterializationTargetPlan(ABC, metaclass=AutoRegisterMeta):
     """Nominal target policy for artifact materialization destinations."""
@@ -193,6 +210,22 @@ class ArtifactAnalysisOutputDescriptor:
 
     filename: str
     source_identity: SourceImageIdentity | None
+
+@dataclass(frozen=True, slots=True)
+class PlannedArtifactMaterializationPath:
+    """Compile-time preview of paths one materialized artifact group may emit."""
+
+    group_key: str | None
+    base_path: str
+    candidate_paths: tuple[str, ...]
+
+@dataclass(frozen=True, slots=True)
+class PlannedArtifactMaterializationPreview:
+    """Compile-time materialization path preview for an explicit artifact spec."""
+
+    filename_uses_source_identity: bool
+    paths: tuple[PlannedArtifactMaterializationPath, ...]
+    runtime_metadata_can_refine_paths: bool
 
 @dataclass(frozen=True, slots=True)
 class ArtifactRecordSourceDescriptor:
@@ -389,7 +422,7 @@ class AnalysisOutputDescriptorAuthority:
                 parser_context.parser,
                 metadata,
                 fallback_identity_path=record.path,
-                source_identity_stack_axes=plan.source_identity_stack_axes,
+                variable_components=plan.variable_components,
             )
         if identity is not None:
             try:
@@ -441,11 +474,7 @@ class AnalysisOutputDescriptorAuthority:
                 component_metadata = {}
             else:
                 component_metadata = dict(metadata.source_component_metadata)
-            identity_metadata = (
-                identity.filename_component_metadata()
-                if use_filename_identity
-                else identity.component_metadata()
-            )
+            identity_metadata = identity.filename_component_metadata()
             for key, value in identity_metadata.items():
                 component = AllComponents.from_value(str(key))
                 if component is None:
@@ -547,6 +576,63 @@ def actual_materialization_records(
         for _, record in sorted(record_sort_items, key=lambda item: item[0])
     )
 
+def planned_materialization_preview(
+    *,
+    context: "ProcessingContext",
+    plan: FunctionStepExecutionPlan,
+    output_key: str,
+    output_plan: ArtifactOutputPlan,
+) -> PlannedArtifactMaterializationPreview | None:
+    """Return candidate output paths for an explicitly materialized artifact.
+
+    Runtime payload metadata can still refine ROI and source-identity filenames.
+    This preview stays deliberately compile-time: it reports candidates from the
+    declared MaterializationSpec and the compiled analysis output directory.
+    """
+    materialization_spec = output_plan.materialization
+    if not isinstance(materialization_spec, MaterializationSpec):
+        return None
+
+    path_previews = tuple(
+        _planned_materialization_path(
+            context=context,
+            plan=plan,
+            output_key=output_key,
+            output_plan=output_plan.for_group(group_key),
+            materialization_spec=materialization_spec,
+        )
+        for group_key in (output_plan.group_keys or (None,))
+    )
+    return PlannedArtifactMaterializationPreview(
+        filename_uses_source_identity=(
+            output_plan.materialization_uses_source_identity_filename()
+        ),
+        paths=path_previews,
+        runtime_metadata_can_refine_paths=True,
+    )
+
+def _planned_materialization_path(
+    *,
+    context: "ProcessingContext",
+    plan: FunctionStepExecutionPlan,
+    output_key: str,
+    output_plan: ArtifactOutputPlan,
+    materialization_spec: MaterializationSpec,
+) -> PlannedArtifactMaterializationPath:
+    descriptor = AnalysisOutputDescriptorAuthority.build(
+        output_key,
+        plan,
+        context,
+        output_plan.single_group_key,
+        artifact_path=output_plan.path,
+    )
+    base_path = str(plan.artifact_analysis_output_dir / descriptor.filename)
+    return PlannedArtifactMaterializationPath(
+        group_key=output_plan.single_group_key,
+        base_path=base_path,
+        candidate_paths=materialization_spec.candidate_paths(base_path),
+    )
+
 def materialize_artifact_outputs(
     filemanager: "FileManager",
     plan: FunctionStepExecutionPlan,
@@ -609,7 +695,15 @@ def materialize_artifact_outputs(
                 filemanager,
                 backends,
                 backend_plan.backend_kwargs(
-                    artifact_source_identity=output_descriptor.source_identity,
+                    source_metadata_items=(
+                        ArtifactStreamSourceMetadataAuthority.metadata_items(
+                            materialization_spec=mat_spec,
+                            data=data,
+                            fallback_source_identity=(
+                                output_descriptor.source_identity
+                            ),
+                        )
+                    ),
                     producer_identity=(
                         FunctionStepOutputProducerIdentityAuthority.build(
                             FunctionStepOutputProducerIdentityRequest(
@@ -627,5 +721,5 @@ def materialize_artifact_outputs(
                 ),
                 context=context,
                 artifact_source_identity=output_descriptor.source_identity,
-                source_identity_stack_axes=plan.step_source_identity_stack_axes,
+                variable_components=plan.variable_components,
             )

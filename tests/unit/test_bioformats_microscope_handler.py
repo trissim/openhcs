@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import Backend
+from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspaceSourceProjection,
     VirtualWorkspaceSourceProjectionAuthority,
@@ -86,6 +89,26 @@ def test_bioformats_structured_refs_project_inside_pattern_runtime(
     projection = authority.projection_if_available()
 
     assert projection is not None
+    assert (
+        projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
+        == str(tmp_path / "stack.npy")
+    )
+
+
+def test_orchestrator_exposes_prepared_virtual_source_workspace(
+    tmp_path: Path,
+) -> None:
+    write_bioformats_manifest_fixture(tmp_path)
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+
+    orchestrator = PipelineOrchestrator(plate_path=tmp_path).initialize()
+
+    projection = orchestrator.source_workspace_projection()
+
+    assert projection.pipeline_start_files() == (
+        str(tmp_path / "A01_s001_w1_z001_t001.tif"),
+        str(tmp_path / "A01_s001_w2_z001_t001.tif"),
+    )
     assert (
         projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
         == str(tmp_path / "stack.npy")

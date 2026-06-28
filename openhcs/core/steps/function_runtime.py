@@ -10,7 +10,7 @@ import logging
 import os
 import time
 from collections.abc import Sequence as SequenceABC
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from threading import Lock
 from pathlib import Path
 from types import MappingProxyType
@@ -52,6 +52,7 @@ from openhcs.core.aligned_image_payload import (
     flatten_aligned_image_slice_contexts,
     flatten_aligned_image_payload_slices,
     stack_image_payload_context,
+    stack_image_payload_context_from_metadata,
     unstack_image_payload_context,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout, SourceSliceUnstackRequest
@@ -77,6 +78,7 @@ from openhcs.core.runtime_slice_alignment import (
 from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
+    VirtualWorkspaceSourceProjection,
     VirtualWorkspaceSourceProjectionAuthority,
     VirtualWorkspaceSourceProjectionCache,
 )
@@ -84,13 +86,11 @@ from openhcs.core.source_binding_selection import (
     SourceBindingCandidateMatcher,
     SourceBindingMatchedImageSet,
     SourceBindingRuntimeContextRequest,
-    SourceUniverseScope,
-    SourceUniverseStrategy,
+    SourceUniverseRequest,
     SourcePatternResolutionContext,
 )
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
-    SourceBindingOrigin,
     SourceBindingRuntimeContext,
 )
 from openhcs.core.runtime_values import (
@@ -106,12 +106,14 @@ from openhcs.core.runtime_values import (
     is_array_payload,
     normalize_artifact_value,
     with_image_payload_data,
+    with_image_payload_metadata,
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     NominalTypeKeyedStrategyMixin,
 )
 from openhcs.core.runtime_semantics import RuntimePlaneProjection
+from openhcs.core.step_dependencies import StepInputDependencyKind
 from openhcs.core.steps.function_output_manifest import (
     NoStepOutputManifestMatch,
     ProducedOutputSemantics,
@@ -809,12 +811,6 @@ class OutputPathBatchUniqueness:
         )
 
 
-_SOURCE_WORKSPACE_PROJECTION_CACHES: WeakKeyDictionary[
-    ProcessingContext,
-    VirtualWorkspaceSourceProjectionCache,
-] = WeakKeyDictionary()
-
-
 def _save_artifact_value(
     context: ProcessingContext,
     output_plan: ArtifactOutputPlan,
@@ -968,7 +964,8 @@ def compiled_source_binding_context(
     """Build the compile-owned source universe for runtime-adapter preparation."""
     source_projection = (
         VirtualWorkspaceSourceProjectionAuthority.from_context(
-            context
+            context,
+            cache=context.runtime_source_workspace_projection_cache,
         ).projection_if_available()
     )
     return SourceBindingRuntimeContextRequest.from_context(
@@ -999,7 +996,7 @@ def compile_runtime_adapter_request(
         source_binding_plan=execution_plan.source_binding_plan,
         source_binding_context=source_context,
         plane_projection=RuntimePlaneProjection.stack(),
-        source_identity_stack_axes=execution_plan.source_identity_stack_axes,
+        variable_components=tuple(execution_plan.variable_components),
     )
 
 
@@ -1267,7 +1264,10 @@ class FunctionCoreExecutor:
     ) -> RuntimeFunctionOutput:
         logger.info(f"Executing function: {self.function_name}")
         call_started_at = time.perf_counter()
-        raw_output = self.func_callable(main_data_arg, **final_kwargs)
+        raw_output = self.func_callable(
+            image_payload_data(main_data_arg),
+            **final_kwargs,
+        )
         RuntimeProfileSink.record(
             "function_call",
             time.perf_counter() - call_started_at,
@@ -1566,11 +1566,7 @@ class PatternGroupRuntime:
 
     def source_workspace_projection_cache(self) -> VirtualWorkspaceSourceProjectionCache:
         """Return the per-context source-workspace projection cache."""
-        cache = _SOURCE_WORKSPACE_PROJECTION_CACHES.get(self.request.context)
-        if cache is None:
-            cache = VirtualWorkspaceSourceProjectionCache()
-            _SOURCE_WORKSPACE_PROJECTION_CACHES[self.request.context] = cache
-        return cache
+        return self.request.context.runtime_source_workspace_projection_cache
 
     def source_workspace_projection_authority(
         self,
@@ -1677,22 +1673,22 @@ class PatternGroupRuntime:
         if not context.microscope_handler:
             raise RuntimeError("MicroscopeHandler not available in context.")
 
-        matching_files = context.microscope_handler.path_list_from_pattern(
-            str(plan.input_dir),
-            request.pattern_group_info,
-            context.filemanager,
-            Backend.MEMORY.value,
-            VariableComponentNames(plan.variable_components).value,
+        output_manifest = step_output_manifest(context)
+        producer_matching_files = output_manifest.producer_paths_matching_pattern(
+            plan,
+            str(request.pattern_group_info),
+            context.microscope_handler.parser,
         )
+        matching_files = list(producer_matching_files)
         if not matching_files:
-            matching_files = step_output_manifest(
-                context
-            ).producer_paths_matching_pattern(
-                plan,
-                str(request.pattern_group_info),
-                context.microscope_handler.parser,
+            matching_files = context.microscope_handler.path_list_from_pattern(
+                str(plan.input_dir),
+                request.pattern_group_info,
+                context.filemanager,
+                Backend.MEMORY.value,
+                VariableComponentNames(plan.variable_components).value,
             )
-        matching_files = step_output_manifest(context).filter_to_producer_paths(
+        matching_files = output_manifest.filter_to_producer_paths(
             plan,
             matching_files,
             context.microscope_handler.parser,
@@ -1725,6 +1721,15 @@ class PatternGroupRuntime:
         )
 
         full_file_paths = [str(plan.input_dir / f) for f in matching_files]
+        source_projection = (
+            self.source_workspace_projection_authority().projection_if_available()
+        )
+        source_binding_context = SourceBindingRuntimeContextRequest.from_context(
+            context=self.request.context,
+            plan=self.request.execution_plan,
+            matching_files=matching_files,
+            source_projection=source_projection,
+        ).runtime_context()
         cached_stack = context.runtime_image_stack_cache.get(
             tuple(full_file_paths),
             memory_type=plan.input_memory_type,
@@ -1747,6 +1752,8 @@ class PatternGroupRuntime:
                 raw_slices,
                 matching_files,
                 full_file_paths,
+                source_binding_context,
+                source_projection,
             )
 
             if not raw_slices:
@@ -1777,14 +1784,7 @@ class PatternGroupRuntime:
             matching_files=matching_files,
             main_data_stack=main_data_stack,
             source_slice_shapes=source_slice_shapes,
-            source_binding_context=SourceBindingRuntimeContextRequest.from_context(
-                context=self.request.context,
-                plan=self.request.execution_plan,
-                matching_files=matching_files,
-                source_projection=(
-                    self.source_workspace_projection_authority().projection_if_available()
-                ),
-            ).runtime_context(),
+            source_binding_context=source_binding_context,
         )
 
     def _filter_matching_files_for_group(
@@ -1820,11 +1820,15 @@ class PatternGroupRuntime:
     ) -> list[str]:
         """Constrain the loaded main stack to declared image source bindings."""
 
+        if (
+            self.request.execution_plan.main_input_dependency.kind
+            is StepInputDependencyKind.STEP_OUTPUT
+        ):
+            return matching_files
+
         bindings = tuple(
             binding
-            for binding in self.request.execution_plan.source_binding_plan.bindings_for_group(
-                self.request.compiled_group.group_key
-            )
+            for binding in self.request.execution_plan.source_binding_plan.bindings
             if binding.participates_in_execution_anchoring
         )
         selector_bindings = SourceBindingCandidateMatcher.selector_bindings(bindings)
@@ -1837,8 +1841,8 @@ class PatternGroupRuntime:
                 bindings=selector_bindings,
                 match_plan=self.request.execution_plan.source_binding_plan.match_plan,
                 source_context=source_context,
-                source_identity_stack_axes=(
-                    self.request.execution_plan.source_identity_stack_axes
+                plane_member_fields=frozenset(
+                    self.request.execution_plan.variable_component_values
                 ),
             ).expand(
                 matching_files,
@@ -1861,34 +1865,22 @@ class PatternGroupRuntime:
         source_projection = (
             self.source_workspace_projection_authority().projection_if_available()
         )
-        if (
-            source_projection is not None
-            and self._source_binding_plan_uses_pipeline_start()
-        ):
-            return source_projection.pipeline_start_files(
-                axis_id=self.request.execution_plan.axis_id
-            )
         request = SourceBindingRuntimeContextRequest.from_context(
             context=self.request.context,
             plan=self.request.execution_plan,
             matching_files=(),
             source_projection=source_projection,
-        ).source_universe_request(SourceUniverseScope.STEP_INPUT)
-        return SourceUniverseStrategy.universe(request).files
-
-    def _source_binding_plan_uses_pipeline_start(self) -> bool:
-        return any(
-            binding.origin is SourceBindingOrigin.PIPELINE_START
-            for bindings in (
-                self.request.execution_plan.source_binding_plan.bindings_by_group
-            ).values()
-            for binding in bindings
         )
+        return SourceUniverseRequest.runtime_state(request).require_load_universe().files
 
     def _source_binding_candidate_context(self) -> SourcePatternResolutionContext:
+        projection = self.source_workspace_projection_authority().projection_or_empty()
         return SourcePatternResolutionContext.from_projection(
             parser=self.request.context.microscope_handler.parser,
-            projection=self.source_workspace_projection_authority().projection_or_empty(),
+            projection=self.source_workspace_projection_cache().filtered_by_axis(
+                projection,
+                axis_id=self.request.execution_plan.axis_id,
+            ),
             metadata_rules=self.request.execution_plan.source_binding_plan.metadata_rules,
         )
 
@@ -1897,27 +1889,50 @@ class PatternGroupRuntime:
         raw_slices: Sequence[RuntimeArrayData],
         matching_files: Sequence[str],
         full_file_paths: Sequence[str],
+        source_binding_context: SourceBindingRuntimeContext,
+        source_projection: VirtualWorkspaceSourceProjection | None,
     ) -> list[RuntimeArrayData]:
-        source_projection = (
-            self.source_workspace_projection_authority().projection_if_available()
+        if source_projection is not None:
+            return [
+                SourceImagePayloadSemantics.from_source_metadata(
+                    source_projection.source_metadata_for(
+                        VirtualWorkspacePathLookup.from_paths(
+                            virtual_path,
+                            full_virtual_path,
+                        )
+                    ),
+                    source_projection.source_path_for(
+                        VirtualWorkspacePathLookup.from_paths(
+                            virtual_path,
+                            full_virtual_path,
+                        )
+                    ),
+                    Backend.DISK.value,
+                    self.request.context.filemanager,
+                ).apply(payload)
+                for payload, virtual_path, full_virtual_path in zip(
+                    raw_slices,
+                    matching_files,
+                    full_file_paths,
+                )
+            ]
+
+        source_context = SourcePatternResolutionContext.from_sources(
+            parser=self.request.context.microscope_handler.parser,
+            source_paths_by_virtual_path=source_binding_context.step_input_source_paths,
+            source_metadata_by_path=source_binding_context.source_metadata_by_path,
+            metadata_rules=self.request.execution_plan.source_binding_plan.metadata_rules,
         )
-        if source_projection is None:
-            return list(raw_slices)
         return [
             SourceImagePayloadSemantics.from_source_metadata(
-                source_projection.source_metadata_for(
-                    VirtualWorkspacePathLookup.from_paths(
+                source_context.merged_metadata_for_paths(
+                    (
                         virtual_path,
                         full_virtual_path,
                     )
                 ),
-                source_projection.source_path_for(
-                    VirtualWorkspacePathLookup.from_paths(
-                        virtual_path,
-                        full_virtual_path,
-                    )
-                ),
-                Backend.DISK.value,
+                source_context.source_path_for(full_virtual_path),
+                source_binding_context.step_input_source_backend,
                 self.request.context.filemanager,
             ).apply(payload)
             for payload, virtual_path, full_virtual_path in zip(
@@ -1947,12 +1962,20 @@ class PatternGroupRuntime:
             )
         processed_data = image_payload_data(processed_stack)
         try:
+            unstack_started_at = time.perf_counter()
             output_slices = SourceSliceUnstackRequest(
                 array=processed_data,
                 source_slice_shapes=loaded.source_slice_shapes,
                 memory_type=self.request.execution_plan.output_memory_type,
                 gpu_id=self.request.execution_plan.device_id,
             ).slices()
+            RuntimeProfileSink.record(
+                "pattern_source_unstack",
+                time.perf_counter() - unstack_started_at,
+                step=self.request.execution_plan.step_index,
+                step_name=self.request.execution_plan.step_name,
+                slices=len(output_slices),
+            )
         except ValueError as exc:
             output_shape = np.shape(processed_data)
             output_ndim = np.ndim(processed_data)
@@ -1966,8 +1989,17 @@ class PatternGroupRuntime:
                 f"{output_shape}"
             ) from exc
 
+        context_started_at = time.perf_counter()
+        output_payloads = unstack_image_payload_context(processed_stack, output_slices)
+        RuntimeProfileSink.record(
+            "pattern_payload_context_unstack",
+            time.perf_counter() - context_started_at,
+            step=self.request.execution_plan.step_index,
+            step_name=self.request.execution_plan.step_name,
+            slices=len(output_payloads),
+        )
         return PatternGroupOutputData(
-            slices=unstack_image_payload_context(processed_stack, output_slices),
+            slices=output_payloads,
             stack_payload=processed_stack,
         )
 
@@ -1997,9 +2029,15 @@ class PatternGroupRuntime:
             )
 
         output_payloads = []
+        output_payload_metadata = []
         output_paths_batch = []
         output_records = []
 
+        overwritten_output_paths: list[str] = []
+        output_directory_exists = context.filemanager.exists(
+            str(self.request.execution_plan.output_dir),
+            Backend.MEMORY.value,
+        )
         for i, img_slice in enumerate(output_slices):
             input_filename = None
             if i < len(matching_files):
@@ -2009,9 +2047,8 @@ class PatternGroupRuntime:
                 output_dir=self.request.execution_plan.output_dir,
                 output_payload=img_slice,
                 input_path=input_filename,
-                source_identity_stack_axes=(
-                    self.request.execution_plan.source_identity_stack_axes
-                ),
+                variable_components=self.request.execution_plan.variable_components,
+                identity_cache=context.runtime_function_output_identity_cache,
             )
             try:
                 output_identity = FunctionOutputIdentityAuthority.identity(
@@ -2036,19 +2073,15 @@ class PatternGroupRuntime:
             )
             output_path_text = str(output_path)
             output_metadata = image_payload_metadata(img_slice)
-            output_metadata = replace(
-                output_metadata,
-                source_provenance=(
-                    output_metadata.source_provenance.with_source_component_metadata(
-                        output_identity.component_metadata()
-                    )
-                ),
-            )
-            img_slice = with_image_payload_data(
-                img_slice,
-                image_payload_data(img_slice),
-                metadata=output_metadata,
-            )
+            output_component_metadata = output_identity.component_metadata()
+            if output_metadata.source_component_metadata != output_component_metadata:
+                output_metadata = output_metadata.with_source_component_metadata(
+                    output_component_metadata
+                )
+                img_slice = with_image_payload_metadata(
+                    img_slice,
+                    metadata=output_metadata,
+                )
             output_record = ProducedOutputSemantics.from_output(
                 self.request.execution_plan,
                 output_path_text,
@@ -2056,11 +2089,14 @@ class PatternGroupRuntime:
                 output_context=output_context,
             )
 
-            if context.filemanager.exists(output_path_text, Backend.MEMORY.value):
-                context.filemanager.delete(output_path_text, Backend.MEMORY.value)
-                context.runtime_image_stack_cache.discard_paths((output_path_text,))
+            if output_directory_exists and context.filemanager.exists(
+                output_path_text,
+                Backend.MEMORY.value,
+            ):
+                overwritten_output_paths.append(output_path_text)
 
             output_payloads.append(img_slice)
+            output_payload_metadata.append(output_metadata)
             output_paths_batch.append(output_path_text)
             output_records.append(output_record)
 
@@ -2070,6 +2106,13 @@ class PatternGroupRuntime:
             step_name=self.request.execution_plan.step_name,
             pattern_repr=self.pattern_repr,
         ).validate()
+
+        if overwritten_output_paths:
+            for output_path_text in overwritten_output_paths:
+                context.filemanager.delete(output_path_text, Backend.MEMORY.value)
+            context.runtime_image_stack_cache.discard_paths(
+                tuple(overwritten_output_paths)
+            )
 
         context.filemanager.ensure_directory(
             str(self.request.execution_plan.output_dir),
@@ -2093,9 +2136,10 @@ class PatternGroupRuntime:
                 tuple(image_payload_data(payload).shape)
                 for payload in output_payloads
             )
-            stack_payload = stack_image_payload_context(
+            stack_payload = stack_image_payload_context_from_metadata(
                 output_payloads,
                 stack_payload_data,
+                output_payload_metadata,
             )
             context.runtime_image_stack_cache.store(
                 tuple(output_paths_batch),

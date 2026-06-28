@@ -10,6 +10,7 @@ from typing import Generic, TypeVar, Set, List, Optional, Type
 from enum import Enum
 
 T = TypeVar('T', bound=Enum)
+_auto_default_group_by = object()
 
 
 @dataclass(frozen=True)
@@ -119,7 +120,7 @@ class ComponentConfigurationFactory:
         component_enum: Type[T],
         multiprocessing_axis: T,
         default_variable: Optional[List[T]] = None,
-        default_group_by: Optional[T] = None
+        default_group_by: Optional[T] | object = _auto_default_group_by
     ) -> ComponentConfiguration[T]:
         """
         Create a ComponentConfiguration for the given enum with dynamic component resolution.
@@ -131,7 +132,8 @@ class ComponentConfigurationFactory:
             component_enum: The enum class defining all components
             multiprocessing_axis: Component to use for multiprocessing
             default_variable: Default variable components (auto-resolved if None)
-            default_group_by: Default group_by component (auto-resolved if None)
+            default_group_by: Default group_by component. Omit to auto-resolve;
+                pass None for an explicit no-fanout default.
 
         Returns:
             ComponentConfiguration instance
@@ -147,7 +149,7 @@ class ComponentConfigurationFactory:
             default_variable = [list(remaining_components)[0]] if remaining_components else []
 
         # Auto-resolve default_group_by if not specified
-        if default_group_by is None and len(remaining_components) > 1:
+        if default_group_by is _auto_default_group_by and len(remaining_components) > 1:
             # Use the second remaining component as default group_by (if available)
             remaining_list = list(remaining_components)
             # Ensure group_by is not in default_variable
@@ -160,7 +162,11 @@ class ComponentConfigurationFactory:
             all_components=all_components,
             multiprocessing_axis=multiprocessing_axis,
             default_variable=default_variable,
-            default_group_by=default_group_by
+            default_group_by=(
+                default_group_by
+                if default_group_by is not _auto_default_group_by
+                else None
+            )
         )
     
     @staticmethod
@@ -168,10 +174,10 @@ class ComponentConfigurationFactory:
         """
         Create the default OpenHCS configuration.
 
-        This maintains backward compatibility with the current OpenHCS setup:
+        This defines the current OpenHCS setup:
         - Well as multiprocessing axis
         - Site as default variable component
-        - Channel as default group_by
+        - No default fanout/group_by unless a step declares it
         """
         # Import here to avoid circular import with constants.py
         from enum import Enum
@@ -189,5 +195,5 @@ class ComponentConfigurationFactory:
             _ComponentTemplate,
             multiprocessing_axis=_ComponentTemplate.WELL,
             default_variable=[_ComponentTemplate.SITE],
-            default_group_by=_ComponentTemplate.CHANNEL
+            default_group_by=None
         )

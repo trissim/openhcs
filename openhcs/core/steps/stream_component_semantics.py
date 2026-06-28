@@ -26,7 +26,10 @@ from zmqruntime.viewer_protocol import (
 from openhcs.constants.constants import AllComponents, get_multiprocessing_axis
 from openhcs.core.context.processing_context import ProcessingContext
 
-from openhcs.core.source_image_provenance import SourceComponentMetadata
+from openhcs.core.source_image_provenance import (
+    SourceComponentMetadata,
+    SourceImageIdentity,
+)
 from openhcs.core.source_matching import (
     source_component_metadata_raw_value,
     source_metadata_value,
@@ -36,6 +39,7 @@ from openhcs.core.streaming_config_factory import (
 )
 from openhcs.runtime.viewer_component_system import (
     ComponentValue,
+    ViewerComponentMetadataNormalizer,
     ViewerComponentValueParser,
     ViewerComponentAxisSemantics,
     ViewerComponentAxisSemanticsAuthority,
@@ -85,7 +89,19 @@ class StreamViewerComponentMetadataProjector:
                 "Viewer streaming requires source component metadata for "
                 f"item {index}."
             )
-        return self.project(metadata)
+        projected = self.project(metadata)
+        missing = tuple(
+            component
+            for component in self.component_order
+            if component not in projected
+        )
+        if missing:
+            raise ValueError(
+                "Viewer streaming requires complete source component metadata "
+                f"for item {index}; missing {missing!r}. "
+                f"metadata={metadata!r}."
+            )
+        return projected
 
     def project(
         self,
@@ -96,7 +112,7 @@ class StreamViewerComponentMetadataProjector:
             value = self.component_value(metadata, component)
             if value is not None:
                 projected[component] = value
-        return projected
+        return ViewerComponentMetadataNormalizer().normalize(projected)
 
     def component_value(
         self,
@@ -150,6 +166,22 @@ class StreamSourceComponentMetadataItems:
         values: Iterable[StreamComponentMetadata],
     ) -> "StreamSourceComponentMetadataItems":
         return cls(tuple(values))
+
+    @classmethod
+    def from_source_identities(
+        cls,
+        identities: Iterable[SourceImageIdentity],
+        *,
+        fallback_source_identity: SourceImageIdentity | None = None,
+    ) -> "StreamSourceComponentMetadataItems":
+        return cls.from_values(
+            (
+                identity.with_missing_from(fallback_source_identity)
+                if fallback_source_identity is not None
+                else identity
+            ).component_metadata
+            for identity in identities
+        )
 
     def domain_metadata_items(self) -> StreamComponentDomainMetadataItems:
         return tuple(

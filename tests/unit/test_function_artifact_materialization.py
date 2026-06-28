@@ -7,8 +7,9 @@ from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
-from openhcs.core.runtime_semantics import ObjectLabelDomain
+from openhcs.core.runtime_semantics import ObjectLabelDomain, RuntimePlaneAxis
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import (
@@ -34,6 +35,7 @@ from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
+    planned_materialization_preview,
 )
 from openhcs.core.steps.function_runtime import FunctionOutputContextStrategy
 from openhcs.core.streaming_config_factory import (
@@ -53,7 +55,7 @@ from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 class StreamingConfigStub(ViewerDisplayConfigObject):
     backend = SimpleNamespace(value="napari_stream")
-    COMPONENT_ORDER = ("well", "site", "channel", "z_index", "timepoint")
+    COMPONENT_ORDER = AllComponents.ordered_names()
     host = "127.0.0.1"
     transport_mode = "tcp"
 
@@ -119,7 +121,14 @@ class FilenameParserStub:
             Path(filename).name,
         )
         if positional_match is not None:
-            return positional_match.groupdict()
+            parsed = {
+                key: value
+                for key, value in positional_match.groupdict().items()
+                if value is not None
+            }
+            parsed.setdefault("z_index", "1")
+            parsed.setdefault("timepoint", "1")
+            return parsed
 
         match = re.match(
             r"(?P<well>[A-Z]\d{2})_s(?P<site>\d+)_w(?P<channel>\d+)"
@@ -209,9 +218,10 @@ def _plan(
     *,
     streaming_configs=(),
     memory_paths=(),
-    source_identity_stack_axes=frozenset(),
+    variable_components=(),
     group_by_value=None,
 ):
+    variable_components = tuple(variable_components)
     return SimpleNamespace(
         artifact_outputs={output_plan.name: output_plan},
         streaming_configs=streaming_configs,
@@ -228,10 +238,9 @@ def _plan(
         group_by_value=group_by_value,
         group_projects_runtime_plane=(
             group_by_value is not None
-            and group_by_value in source_identity_stack_axes
+            and any(component.value == group_by_value for component in variable_components)
         ),
-        step_source_identity_stack_axes=source_identity_stack_axes,
-        source_identity_stack_axes=source_identity_stack_axes,
+        variable_components=variable_components,
     )
 
 
@@ -253,6 +262,31 @@ def _context(filemanager):
     context.input_dir = Path("/tmp/plate/images")
     context.owned_wells = ["A01"]
     return context
+
+
+def test_planned_materialization_preview_uses_declared_candidate_paths():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/A01_cell_counts_step7.pkl",
+        kind=ArtifactKind.SPECIAL,
+        materialization=csv_only(),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+
+    preview = planned_materialization_preview(
+        context=context,
+        plan=_plan(output_plan),
+        output_key=output_plan.name,
+        output_plan=output_plan,
+    )
+
+    assert preview is not None
+    assert preview.runtime_metadata_can_refine_paths is True
+    assert preview.paths[0].base_path == "/analysis/A01_cell_counts_step7.roi.zip"
+    assert preview.paths[0].candidate_paths == (
+        "/analysis/A01_cell_counts_step7_details.csv",
+    )
 
 
 def test_slice_aligned_object_label_arrays_preserve_source_slice_metadata():
@@ -482,7 +516,13 @@ def test_materialize_artifact_outputs_attaches_image_schema_provenance(monkeypat
 
     materialize_artifact_outputs(
         filemanager,
-        _plan(output_plan, source_identity_stack_axes=frozenset({"z_index", "channel"})),
+        _plan(
+            output_plan,
+            variable_components=(
+                VariableComponents.Z_INDEX,
+                VariableComponents.CHANNEL,
+            ),
+        ),
         PersistentArtifactMaterializationTargetPlan("disk"),
         context,
     )
@@ -1015,10 +1055,10 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
     assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
-            "site": "1",
-            "channel": "1",
-            "z_index": "1",
-            "timepoint": "1",
+            "site": 1,
+            "channel": 1,
+            "z_index": 1,
+            "timepoint": 1,
         },
     )
     assert stream_request.message_extra["component_value_domain"] == {
@@ -1104,10 +1144,10 @@ def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streamin
     assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
-            "site": "2",
-            "channel": "3",
-            "z_index": "1",
-            "timepoint": "1",
+            "site": 2,
+            "channel": 3,
+            "z_index": 1,
+            "timepoint": 1,
         },
     )
     assert stream_request.message_extra == {
@@ -1180,7 +1220,7 @@ def test_materialize_artifact_outputs_streams_payload_component_metadata(
     assert path == "/analysis/01_POS002_D_Nuclei_step7.roi.zip"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.source.metadata.metadata_by_index == (
-        {"well": "01", "site": "POS002", "channel": "D"},
+        {"well": "01", "site": "POS002", "channel": "D", "z_index": 1, "timepoint": 1},
     )
 
 
@@ -1234,7 +1274,7 @@ def test_materialize_artifact_outputs_uses_runtime_plane_group_identity(
         _plan(
             output_plan,
             group_by_value="timepoint",
-            source_identity_stack_axes=frozenset({"timepoint"}),
+            variable_components=(VariableComponents.TIMEPOINT,),
         ),
         PersistentArtifactMaterializationTargetPlan("disk"),
         context,
@@ -1308,15 +1348,15 @@ def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
     assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
-            "site": "2",
-            "channel": "3",
-            "z_index": "1",
-            "timepoint": "1",
+            "site": 2,
+            "channel": 3,
+            "z_index": 1,
+            "timepoint": 1,
         },
     )
 
 
-def test_materialize_artifact_outputs_uses_source_stack_identity_for_streaming(
+def test_materialize_artifact_outputs_uses_variable_components_for_streaming_identity(
     monkeypatch,
 ):
     output_plan = ArtifactOutputPlan(
@@ -1382,7 +1422,7 @@ def test_materialize_artifact_outputs_uses_source_stack_identity_for_streaming(
         _plan(
             output_plan,
             streaming_configs=(streaming_config,),
-            source_identity_stack_axes=frozenset({"z_index"}),
+            variable_components=(VariableComponents.Z_INDEX,),
         ),
         StreamingOnlyArtifactMaterializationTargetPlan(),
         context,
@@ -1394,9 +1434,111 @@ def test_materialize_artifact_outputs_uses_source_stack_identity_for_streaming(
     assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
-            "site": "1",
-            "channel": "1",
-            "timepoint": "1",
+            "site": 1,
+            "channel": 1,
+            "z_index": 1,
+            "timepoint": 1,
+        },
+        {
+            "well": "A01",
+            "site": 1,
+            "channel": 1,
+            "z_index": 2,
+            "timepoint": 1,
+        },
+    )
+
+
+def test_materialize_artifact_outputs_streams_source_binding_roi_plane_metadata(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="segmentation_masks",
+        path="/memory/segmentation_masks.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    streaming_config = streaming_config_stub()
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2, 2), dtype=np.int32),
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s001_w2_z001_t001.TIF",
+            ),
+            component_metadata=(
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "1",
+                    "z_index": "1",
+                    "timepoint": "1",
+                },
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "2",
+                    "z_index": "1",
+                    "timepoint": "1",
+                },
+            ),
+        ),
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, labels, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(
+            output_plan,
+            streaming_configs=(streaming_config,),
+            variable_components=(VariableComponents.CHANNEL,),
+        ),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s001_w1_z001_t001_segmentation_masks_step7.roi.zip"
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": 1,
+            "channel": 1,
+            "z_index": 1,
+            "timepoint": 1,
+        },
+        {
+            "well": "A01",
+            "site": 1,
+            "channel": 2,
+            "z_index": 1,
+            "timepoint": 1,
         },
     )
 
@@ -1477,7 +1619,7 @@ def test_materialize_rgb_artifact_streams_filename_channel_identity(
         _plan(
             output_plan,
             streaming_configs=(streaming_config,),
-            source_identity_stack_axes=frozenset({"channel"}),
+            variable_components=(VariableComponents.CHANNEL,),
         ),
         StreamingOnlyArtifactMaterializationTargetPlan(),
         context,
@@ -1489,10 +1631,10 @@ def test_materialize_rgb_artifact_streams_filename_channel_identity(
     assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
-            "site": "1",
-            "channel": "3",
-            "z_index": "1",
-            "timepoint": "1",
+            "site": 1,
+            "channel": 3,
+            "z_index": 1,
+            "timepoint": 1,
         },
     )
 
@@ -1573,7 +1715,7 @@ def test_materialize_rgb_artifact_keeps_scalar_filename_identity_for_mixed_prove
         _plan(
             output_plan,
             streaming_configs=(streaming_config,),
-            source_identity_stack_axes=frozenset({"site"}),
+            variable_components=(VariableComponents.SITE,),
         ),
         StreamingOnlyArtifactMaterializationTargetPlan(),
         context,
@@ -1585,9 +1727,9 @@ def test_materialize_rgb_artifact_keeps_scalar_filename_identity_for_mixed_prove
     assert stream_request.source.metadata.metadata_by_index == (
         {
             "well": "A01",
-            "site": "1",
-            "channel": "2",
-            "z_index": "1",
-            "timepoint": "1",
+            "site": 1,
+            "channel": 2,
+            "z_index": 1,
+            "timepoint": 1,
         },
     )

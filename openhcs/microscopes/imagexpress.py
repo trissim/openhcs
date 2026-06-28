@@ -327,12 +327,12 @@ class ImageXpressFilenameParser(FilenameParser):
         if match:
             well, site_str, channel_str, z_str, t_str, ext = match.groups()
 
-            #handle {} place holders
+            # Missing MetaXpress site/z/timepoint tokens represent scalar axes.
             parse_comp = lambda s: None if not s or '{' in s else int(s)
-            site = parse_comp(site_str)
+            site = 1 if site_str is None else parse_comp(site_str)
             channel = parse_comp(channel_str)
-            z_index = parse_comp(z_str)
-            timepoint = parse_comp(t_str)
+            z_index = 1 if z_str is None else parse_comp(z_str)
+            timepoint = 1 if t_str is None else parse_comp(t_str)
 
             # Use the parsed components in the result
             result = FilenameParseResult({

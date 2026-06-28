@@ -17,7 +17,6 @@ from benchmark.adapters.openhcs import (
     _cacheable_runtime_records,
 )
 from benchmark.converter.execution_validation import (
-    CPPipeInfrastructureFeature,
     CPPipeInfrastructureProfile,
 )
 from openhcs.core.artifacts import ArtifactKind
@@ -123,7 +122,8 @@ def test_pipeline_generation_policy_preserves_no_export_terminal_images() -> Non
     policy = OpenHCSPipelineGenerationPolicy.from_request(
         request,
         CPPipeInfrastructureProfile(
-            features=frozenset(),
+            exports_tables=False,
+            exports_images=False,
             image_export_specs=(),
         ),
     )
@@ -145,9 +145,8 @@ def test_pipeline_generation_policy_prunes_terminal_images_for_table_exports() -
     policy = OpenHCSPipelineGenerationPolicy.from_request(
         request,
         CPPipeInfrastructureProfile(
-            features=frozenset(
-                (CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET,)
-            ),
+            exports_tables=True,
+            exports_images=False,
             image_export_specs=(),
         ),
     )

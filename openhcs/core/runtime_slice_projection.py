@@ -12,6 +12,7 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 import numpy.typing as npt
 
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
@@ -65,7 +66,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
-    SourceIdentityStackAxisProjection,
+    VariableComponentAxisProjection,
 )
 
 SINGLE_OBSERVED_ROW_LAYOUT_COUNT = 1
@@ -95,13 +96,16 @@ class RuntimeProjectionSourceIdentityRequest:
 
     value: RuntimeProjectionData
     source_description: str
-    source_identity_stack_projection: SourceIdentityStackAxisProjection = field(
-        default_factory=SourceIdentityStackAxisProjection.empty
-    )
+    variable_components: Sequence[VariableComponents] = field(default_factory=tuple)
 
     def value_for_projection(self, slice_count: int) -> RuntimeProjectionData:
         """Return the value with declared source-identity stack axes projected."""
-        if self.source_identity_stack_projection.is_empty:
+        variable_component_projection = VariableComponentAxisProjection.from_axes(
+            component.value
+            for component in self.variable_components
+            if component.value is not None
+        )
+        if variable_component_projection.is_empty:
             return self.value
         metadata = image_payload_metadata(
             self.value
@@ -112,7 +116,7 @@ class RuntimeProjectionSourceIdentityRequest:
                 image_payload_mask(self.value),
                 metadata,
             ).payload()
-        provenance_planes = self.source_identity_stack_projection.provenance_planes(
+        provenance_planes = variable_component_projection.provenance_planes(
             source_path=metadata.source_path,
             source_component_metadata=metadata.source_component_metadata,
             plane_count=slice_count,
@@ -972,14 +976,6 @@ class RuntimeSliceProjection:
         values: Iterable[RuntimeProjectionData],
     ) -> int | None:
         values = tuple(values)
-        tensor_slice_counts = {
-            stack.shape[0]
-            for value in values
-            for stack in RuntimeSliceProjectionStrategy.strategy_for_value(
-                value
-            ).stack_views(value)
-            if stack.shape[0] > 1
-        }
         declared_slice_counts = tuple(
             count
             for value in values
@@ -990,6 +986,24 @@ class RuntimeSliceProjection:
             )
             if count is not None
         )
+        tensor_slice_counts = {
+            count for count in declared_slice_counts if count > 1
+        }
+        tensor_slice_count = cls.compatible_runtime_slice_count(
+            tensor_slice_counts,
+            source_description="declared runtime-slice values",
+        )
+        if tensor_slice_count is not None:
+            return tensor_slice_count
+
+        tensor_slice_counts = {
+            stack.shape[0]
+            for value in values
+            for stack in RuntimeSliceProjectionStrategy.strategy_for_value(
+                value
+            ).stack_views(value)
+            if stack.shape[0] > 1
+        }
         tensor_slice_counts.update(
             count
             for count in declared_slice_counts

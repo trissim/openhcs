@@ -28,7 +28,7 @@ from openhcs.core.registry_strategies import (
     NominalTypeKeyedStrategyMixin,
     str_enum_member_with_payload,
 )
-from openhcs.core.process_local_cache import ProcessLocalBoundedCache
+from openhcs.core.process_local_cache import RegisteredProcessLocalBoundedCache
 
 if TYPE_CHECKING:
     from openhcs.core.runtime_values import (
@@ -726,6 +726,15 @@ class ObjectLabelDomain:
                 self.declared_object_id_domains or declared_object_id_domains
             ),
             scope=self.scope,
+        )
+
+    def with_scope(self, scope: ObjectLabelDomainScope) -> "ObjectLabelDomain":
+        """Return this object-label declaration with the requested domain scope."""
+        return ObjectLabelDomain(
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
+            scope=scope,
         )
 
     @classmethod
@@ -1553,6 +1562,7 @@ class AxisBackedObjectLocationCoordinateProjectionStrategy(
 
     required_ndim: ClassVar[int]
     axis_offset: ClassVar[int]
+    absent_axis_missing_for_unlabeled_objects: ClassVar[bool] = True
 
     def coordinate_values(
         self,
@@ -1566,8 +1576,11 @@ class AxisBackedObjectLocationCoordinateProjectionStrategy(
                 axis_centers[type(self).axis_offset],
                 include_missing=False,
             )
+        values = np.zeros(len(counts))
+        if type(self).absent_axis_missing_for_unlabeled_objects:
+            values = self.missing_for_absent_labels(values, counts)
         return ObjectLocationCoordinateValues(
-            self.missing_for_absent_labels(np.zeros(len(counts)), counts),
+            values,
             include_missing=False,
         )
 
@@ -1598,6 +1611,7 @@ for _coordinate_projection_spec in (
             "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_Z,
             "required_ndim": 3,
             "axis_offset": -3,
+            "absent_axis_missing_for_unlabeled_objects": False,
         },
     ),
 ):
@@ -2236,6 +2250,16 @@ def zernike_shape_feature_names(*, max_order: int) -> tuple[str, ...]:
     return tuple(names)
 
 
+class ObjectShapeZernikeFeatureContract:
+    """CellProfiler AreaShape Zernike descriptor field declaration."""
+
+    max_order: ClassVar[int] = 9
+
+    @classmethod
+    def feature_names(cls) -> tuple[str, ...]:
+        return zernike_shape_feature_names(max_order=cls.max_order)
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectFeatureArrayDomainContext:
     """Feature-array indexing inputs for one object-feature table."""
@@ -2597,16 +2621,15 @@ class ShapeObjectFeatureValueTable(ObjectFeatureValueTable):
 
     table_label = "shape"
     feature_array_domains: ClassVar[Mapping[str, ObjectFeatureArrayDomain]] = {
-        **{
-            feature.value: ObjectFeatureArrayDomain.ROW_ORDINAL
-            for feature in (
-                ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER,
-                ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER,
-            )
-        },
+        ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER.value: (
+            ObjectFeatureArrayDomain.ROW_ORDINAL
+        ),
+        ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value: (
+            ObjectFeatureArrayDomain.ROW_ORDINAL
+        ),
         **{
             field_name: ObjectFeatureArrayDomain.ROW_ORDINAL
-            for field_name in zernike_shape_feature_names(max_order=9)
+            for field_name in ObjectShapeZernikeFeatureContract.feature_names()
         },
     }
     feature_missing_values: ClassVar[Mapping[str, ObjectFeatureMissingValue]] = {
@@ -2619,6 +2642,13 @@ class ShapeObjectFeatureValueTable(ObjectFeatureValueTable):
             ObjectShapeMeasurementFeature.MEDIAN_RADIUS,
         )
     }
+
+    def feature_array_domain(self, feature_name: str) -> ObjectFeatureArrayDomain:
+        """Return feature-specific AreaShape array indexing semantics."""
+        return self.feature_array_domains.get(
+            feature_name,
+            ObjectFeatureArrayDomain.MEASURED_OBJECT_ID,
+        )
 
     def complete_row(self, row: dict[str, float | int]) -> None:
         row[ObjectShapeMeasurementFeature.CENTER_Z.value] = 0.0
@@ -2741,7 +2771,7 @@ def measurement_row_mapping(row: object) -> Mapping[str, object]:
 
 @dataclass(slots=True)
 class MeasurementRowMappingCache(
-    ProcessLocalBoundedCache[int, tuple[object, Mapping[str, object]]]
+    RegisteredProcessLocalBoundedCache[int, tuple[object, Mapping[str, object]]]
 ):
     """Bounded process-local cache for immutable dataclass measurement rows."""
 
@@ -3009,7 +3039,7 @@ def object_shape_measurement_field_names(
         if calculate_advanced:
             fields.extend(_indexed_object_shape_fields(_OBJECT_SHAPE_ADVANCED_2D_SPECS))
         if calculate_zernikes:
-            fields.extend(zernike_shape_feature_names(max_order=9))
+            fields.extend(ObjectShapeZernikeFeatureContract.feature_names())
     else:
         fields.extend(feature.value for feature in _OBJECT_SHAPE_STANDARD_3D_FIELDS)
         if calculate_advanced:

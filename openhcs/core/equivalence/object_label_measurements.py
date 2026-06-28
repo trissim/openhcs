@@ -181,6 +181,15 @@ class ObjectLabelMeasurementContext(ObjectLabelMeasurementState):
             or bool(self.domain.declared_object_id_domains)
         )
 
+    def owns_payload_spatial_location(self) -> bool:
+        """Return whether this payload is authoritative for dimensional locations."""
+        if self.domain.scope is not ObjectLabelDomainScope.PAYLOAD:
+            return False
+        projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
+            self.domain.scope
+        ).projections(self)
+        return any(projection.labels.ndim >= 3 for projection in projections)
+
     def measurement_facts(self) -> RuntimeMeasurementFacts:
         """Project this object-label payload into implicit object measurement facts."""
         if not object_label_measurements_required(
@@ -301,6 +310,7 @@ class RuntimeObjectLabelMeasurementAuthority:
 
     count_subjects: frozenset[RuntimeMeasurementSubjectKey] = frozenset()
     identifier_subjects: frozenset[RuntimeMeasurementSubjectKey] = frozenset()
+    location_subjects: frozenset[RuntimeMeasurementSubjectKey] = frozenset()
 
     @classmethod
     def from_object_label_records(
@@ -310,6 +320,7 @@ class RuntimeObjectLabelMeasurementAuthority:
     ) -> "RuntimeObjectLabelMeasurementAuthority":
         count_subjects: set[RuntimeMeasurementSubjectKey] = set()
         identifier_subjects: set[RuntimeMeasurementSubjectKey] = set()
+        location_subjects: set[RuntimeMeasurementSubjectKey] = set()
         for record in records:
             object_labels = ObjectLabelSet.from_runtime_value(record.value)
             subject = RuntimeMeasurementSubjectKey(
@@ -336,7 +347,13 @@ class RuntimeObjectLabelMeasurementAuthority:
                 context.domain.scope
             ).exports_identifier_domains(context):
                 identifier_subjects.add(subject)
-        return cls(frozenset(count_subjects), frozenset(identifier_subjects))
+            if context.owns_payload_spatial_location():
+                location_subjects.add(subject)
+        return cls(
+            frozenset(count_subjects),
+            frozenset(identifier_subjects),
+            frozenset(location_subjects),
+        )
 
     def primary_row_reserved_count_subjects(
         self,

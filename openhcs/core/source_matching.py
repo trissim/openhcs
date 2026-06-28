@@ -274,8 +274,11 @@ def metadata_from_rules(
     for rule in metadata_rules:
         if not rule_filters_match(filter_candidate, rule.filters):
             continue
-        target = metadata_source_text(file_path, rule.source)
-        match = re.search(rule.pattern, target)
+        match = None
+        for target in metadata_source_texts(file_path, rule.source):
+            match = re.search(rule.pattern, target)
+            if match is not None:
+                break
         if match is None:
             continue
         merge_source_metadata(
@@ -296,10 +299,23 @@ def metadata_source_text(
 ) -> str:
     """Return the path text inspected by one metadata extraction rule."""
 
+    return metadata_source_texts(file_path, source)[0]
+
+
+def metadata_source_texts(
+    file_path: str,
+    source: MetadataSource,
+) -> tuple[str, ...]:
+    """Return ordered path texts inspected by one metadata extraction rule."""
+
     path = Path(file_path)
     if source is MetadataSource.FOLDER_NAME:
-        return str(path.parent)
-    return path.name
+        parent_path = path.parent.as_posix()
+        parent_name = path.parent.name
+        if parent_path == parent_name:
+            return (parent_name,)
+        return (parent_name, parent_path)
+    return (path.name,)
 
 
 def rule_filters_match(
@@ -529,17 +545,32 @@ def merge_source_metadata(
             ).merge_into(target, path=path)
             continue
         existing = target.get(key)
-        normalized_value = str(value)
+        normalized_value = canonical_path_metadata_value(str(value))
         if (
             existing is not None
-            and str(existing) != normalized_value
-            and not path_metadata_values_equivalent(str(existing), normalized_value)
+            and _metadata_equivalence_value(key, str(existing))
+            != _metadata_equivalence_value(key, normalized_value)
+            and not path_metadata_values_equivalent(
+                str(existing),
+                normalized_value,
+            )
         ):
             raise RuntimeError(
                 f"Conflicting metadata field '{key}' while parsing source candidate "
                 f"{path!r}: {existing!r} != {normalized_value!r}."
             )
-        target[key] = canonical_path_metadata_value(normalized_value)
+        target[key] = normalized_value
+
+
+def _metadata_equivalence_value(key: str, value: str) -> str:
+    from openhcs.core.pipeline_image_schema import (
+        SOURCE_IMAGE_TYPE_METADATA_FIELD,
+        image_type_source_role_key,
+    )
+
+    if key == SOURCE_IMAGE_TYPE_METADATA_FIELD:
+        return image_type_source_role_key(value)
+    return canonical_path_metadata_value(value)
 
 
 def with_original_source_metadata(
@@ -566,7 +597,8 @@ def source_metadata_value(
 
     normalized_key = normalize_source_metadata_key(key)
     role_view = SourceMetadataRoleView(metadata)
-    for candidate_key, value in role_view.scalar_items():
+    scalar_items = role_view.scalar_items()
+    for candidate_key, value in scalar_items:
         if str(candidate_key) == key and value is not None:
             return str(value)
     for candidate_key, value in role_view.original_items():
@@ -575,7 +607,7 @@ def source_metadata_value(
             and value is not None
         ):
             return str(value)
-    for candidate_key, value in role_view.scalar_items():
+    for candidate_key, value in scalar_items:
         if (
             normalize_source_metadata_key(str(candidate_key)) == normalized_key
             and value is not None
@@ -591,18 +623,53 @@ def source_component_metadata_value(
     """Return metadata for an OpenHCS component across canonical and alias fields."""
 
     normalized_component_key = normalize_source_metadata_key(component.value)
-    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+    scalar_items = SourceMetadataRoleView(metadata).scalar_items()
+    for field, field_value in scalar_items:
         field_text = str(field)
         if (
             field_value is not None
             and normalize_source_metadata_key(field_text) == normalized_component_key
         ):
             return str(field_value)
-    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+    for field, field_value in scalar_items:
         field_text = str(field)
         if field_value is not None and source_metadata_component(field_text) is component:
             return str(field_value)
     return None
+
+
+def source_component_metadata_items(
+    metadata: SourceMetadataMapping,
+) -> tuple[tuple[AllComponents, SourceMetadataScalar], ...]:
+    """Return OpenHCS component metadata values resolved in one metadata scan."""
+
+    canonical_values: dict[AllComponents, SourceMetadataScalar] = {}
+    alias_values: dict[AllComponents, SourceMetadataScalar] = {}
+    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+        if field_value is None:
+            continue
+        field_text = str(field)
+        component = source_metadata_component(field_text)
+        if component is None:
+            continue
+        if (
+            normalize_source_metadata_key(field_text)
+            == normalize_source_metadata_key(component.value)
+        ):
+            canonical_values.setdefault(component, field_value)
+            continue
+        alias_values.setdefault(component, field_value)
+
+    return tuple(
+        (
+            component,
+            canonical_values[component]
+            if component in canonical_values
+            else alias_values[component],
+        )
+        for component in AllComponents
+        if component in canonical_values or component in alias_values
+    )
 
 
 def source_component_metadata_raw_value(
@@ -612,13 +679,14 @@ def source_component_metadata_raw_value(
     """Return raw metadata for an OpenHCS component across canonical and alias fields."""
 
     normalized_component_key = normalize_source_metadata_key(component.value)
-    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+    scalar_items = SourceMetadataRoleView(metadata).scalar_items()
+    for field, field_value in scalar_items:
         field_text = str(field)
         if (
             normalize_source_metadata_key(field_text) == normalized_component_key
         ) and field_value is not None:
             return field_value
-    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+    for field, field_value in scalar_items:
         field_text = str(field)
         if source_metadata_component(field_text) is component and field_value is not None:
             return field_value
@@ -645,14 +713,15 @@ def source_component_metadata_values(
 
     values: list[str] = []
     normalized_component_key = normalize_source_metadata_key(component.value)
-    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+    scalar_items = SourceMetadataRoleView(metadata).scalar_items()
+    for field, field_value in scalar_items:
         field_text = str(field)
         if (
             normalize_source_metadata_key(field_text) == normalized_component_key
             and field_value is not None
         ):
             values.append(str(field_value))
-    for field, field_value in SourceMetadataRoleView(metadata).scalar_items():
+    for field, field_value in scalar_items:
         field_text = str(field)
         if (
             normalize_source_metadata_key(field_text) != normalized_component_key

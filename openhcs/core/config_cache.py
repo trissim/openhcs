@@ -133,6 +133,13 @@ def _sync_save_config(config: GlobalPipelineConfig, cache_file: Path) -> bool:
         return False
 
 
+def save_global_config_sync(config: GlobalPipelineConfig) -> bool:
+    """Synchronously persist the canonical global config cache."""
+    from openhcs.core.xdg_paths import get_config_file_path
+
+    return _sync_save_config(config, get_config_file_path("global_config.config"))
+
+
 class UnifiedGlobalConfigCache:
     """
     Unified global configuration cache with pluggable execution strategies.

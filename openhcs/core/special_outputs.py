@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.special_output_declarations import SpecialOutputDeclaration
 from openhcs.processing.materialization import (
     CsvOptions,
     MaterializationSpec,
     ROIOptions,
     TiffStackOptions,
+)
+
+SpecialOutputMaterializationOptionType: TypeAlias = (
+    type[CsvOptions] | type[ROIOptions] | type[TiffStackOptions]
 )
 
 SPATIAL_GRID_SPECIAL_OUTPUT_NAMES = frozenset(
@@ -32,7 +37,7 @@ class SpecialOutputKindClassifier(ABC, metaclass=AutoRegisterMeta):
     classifier_name: ClassVar[str | None] = None
 
     @classmethod
-    def kind_for(cls, spec: object) -> ArtifactKind:
+    def kind_for(cls, spec: SpecialOutputDeclaration) -> ArtifactKind:
         matches: list[tuple[type[SpecialOutputKindClassifier], ArtifactKind]] = []
         for classifier_type in cls.classifier_types_by_mro():
             kind = classifier_type().classify(spec)
@@ -72,7 +77,7 @@ class SpecialOutputKindClassifier(ABC, metaclass=AutoRegisterMeta):
         return tuple(ordered)
 
     @abstractmethod
-    def classify(self, spec: object) -> ArtifactKind | None:
+    def classify(self, spec: SpecialOutputDeclaration) -> ArtifactKind | None:
         """Return an artifact kind when this classifier owns the output spec."""
 
 
@@ -81,7 +86,7 @@ class SpatialGridSpecialOutputKindClassifier(SpecialOutputKindClassifier):
 
     classifier_name = "spatial_grid"
 
-    def classify(self, spec: object) -> ArtifactKind | None:
+    def classify(self, spec: SpecialOutputDeclaration) -> ArtifactKind | None:
         normalized = normalize_special_output_name(special_output_name(spec))
         if normalized in SPATIAL_GRID_SPECIAL_OUTPUT_NAMES:
             return ArtifactKind.SPATIAL_GRID
@@ -93,8 +98,12 @@ class RoiSpecialOutputKindClassifier(SpecialOutputKindClassifier):
 
     classifier_name = "roi"
 
-    def classify(self, spec: object) -> ArtifactKind | None:
-        return kind_for_materialization_option(spec, ROIOptions, ArtifactKind.OBJECT_LABELS)
+    def classify(self, spec: SpecialOutputDeclaration) -> ArtifactKind | None:
+        return kind_for_materialization_option(
+            spec,
+            ROIOptions,
+            ArtifactKind.OBJECT_LABELS,
+        )
 
 
 class CsvSpecialOutputKindClassifier(SpecialOutputKindClassifier):
@@ -102,11 +111,15 @@ class CsvSpecialOutputKindClassifier(SpecialOutputKindClassifier):
 
     classifier_name = "csv"
 
-    def classify(self, spec: object) -> ArtifactKind | None:
+    def classify(self, spec: SpecialOutputDeclaration) -> ArtifactKind | None:
         normalized = normalize_special_output_name(special_output_name(spec))
         if normalized in SPATIAL_GRID_SPECIAL_OUTPUT_NAMES:
             return None
-        return kind_for_materialization_option(spec, CsvOptions, ArtifactKind.MEASUREMENTS)
+        return kind_for_materialization_option(
+            spec,
+            CsvOptions,
+            ArtifactKind.MEASUREMENTS,
+        )
 
 
 class TiffSpecialOutputKindClassifier(SpecialOutputKindClassifier):
@@ -114,7 +127,7 @@ class TiffSpecialOutputKindClassifier(SpecialOutputKindClassifier):
 
     classifier_name = "tiff"
 
-    def classify(self, spec: object) -> ArtifactKind | None:
+    def classify(self, spec: SpecialOutputDeclaration) -> ArtifactKind | None:
         return kind_for_materialization_option(spec, TiffStackOptions, ArtifactKind.IMAGE)
 
 
@@ -123,7 +136,7 @@ class NameSpecialOutputKindClassifier(SpecialOutputKindClassifier):
 
     classifier_name = "name"
 
-    def classify(self, spec: object) -> ArtifactKind | None:
+    def classify(self, spec: SpecialOutputDeclaration) -> ArtifactKind | None:
         if special_output_materialization(spec) is not None:
             return None
         normalized = normalize_special_output_name(special_output_name(spec))
@@ -139,8 +152,8 @@ class NameSpecialOutputKindClassifier(SpecialOutputKindClassifier):
 
 
 def kind_for_materialization_option(
-    spec: object,
-    option_type: type[Any],
+    spec: SpecialOutputDeclaration,
+    option_type: SpecialOutputMaterializationOptionType,
     output_kind: ArtifactKind,
 ) -> ArtifactKind | None:
     """Return ``output_kind`` when ``spec`` declares a matching materializer."""
@@ -152,7 +165,7 @@ def kind_for_materialization_option(
     return None
 
 
-def special_output_name(spec: object) -> str:
+def special_output_name(spec: SpecialOutputDeclaration) -> str:
     """Return the declared output name from a callable special-output spec."""
     if isinstance(spec, str):
         return spec
@@ -161,7 +174,9 @@ def special_output_name(spec: object) -> str:
     raise ValueError(f"Invalid special output declaration: {spec!r}.")
 
 
-def special_output_materialization(spec: object) -> MaterializationSpec | None:
+def special_output_materialization(
+    spec: SpecialOutputDeclaration,
+) -> MaterializationSpec | None:
     """Return the declared materialization from a callable special-output spec."""
     if isinstance(spec, tuple) and len(spec) == 2:
         materialization = spec[1]

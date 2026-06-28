@@ -8,6 +8,7 @@ import pytest
 import tifffile
 from PIL import Image
 
+from openhcs.core import source_bindings as source_bindings_module
 from openhcs.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
@@ -37,7 +38,6 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
     SourceSelector,
-    StepSourceBindingsConfig,
 )
 from openhcs.core.source_schema_workspace import (
     ImageSetRecord,
@@ -56,6 +56,7 @@ from openhcs.core.source_binding_selection import (
 )
 from openhcs.core.source_matching import (
     ORIGINAL_SOURCE_METADATA_FIELD,
+    metadata_from_rules,
     source_component_metadata_values,
     source_metadata_value,
 )
@@ -71,6 +72,32 @@ def _source_pattern_context() -> SourcePatternResolutionContext:
         parser=SourceSchemaFilenameParser(),
         source_paths_by_virtual_path={},
     )
+
+
+def test_folder_metadata_rules_support_slash_qualified_folder_patterns() -> None:
+    path = "/source/Sequence1/DrosophilaEmbryo_GFPHistone_0000.tif"
+
+    basename_metadata = metadata_from_rules(
+        path,
+        (
+            MetadataExtractionRule(
+                source=MetadataSource.FOLDER_NAME,
+                pattern=r"(?P<Run>.*)$",
+            ),
+        ),
+    )
+    slash_qualified_metadata = metadata_from_rules(
+        path,
+        (
+            MetadataExtractionRule(
+                source=MetadataSource.FOLDER_NAME,
+                pattern=r".*[\\/](?P<Run>.*)$",
+            ),
+        ),
+    )
+
+    assert basename_metadata["Run"] == "Sequence1"
+    assert slash_qualified_metadata["Run"] == "Sequence1"
 
 
 def _write_tiff_stack(path: Path, values: tuple[int, ...]) -> None:
@@ -197,6 +224,60 @@ def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
     assert candidates[0].metadata["channel_name"] == "DAPI"
     assert candidates[0].metadata["plate"] == "Plate1"
     assert source_metadata_value(candidates[0].metadata, "ChannelNumber") == "2"
+
+
+def test_source_schema_candidate_discovery_folder_metadata_uses_folder_basename_for_imported_join(
+    tmp_path: Path,
+) -> None:
+    source_parent = tmp_path / "visible_sources_20260627"
+    source_root = source_parent / "BBBC022_20585_AE"
+    source_root.mkdir(parents=True)
+    image_path = source_root / "IXMtest_A01_s1_w164FBEEF7-F77C-4892-86F5-72D0160D4FB2.tif"
+    _write_image(image_path, value=1)
+    (source_parent / "20585_AE.csv").write_text(
+        "Image_Metadata_PlateID,Image_Metadata_CPD_WELL_POSITION,Compound\n"
+        "20585,A01,DMSO\n",
+        encoding="utf-8",
+    )
+    schema = PipelineImageSchema(
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=(
+                    r"IXMtest_(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])_w"
+                    r"(?P<ChannelNumber>[0-9])"
+                ),
+            ),
+            MetadataExtractionRule(
+                source=MetadataSource.FOLDER_NAME,
+                pattern=r"(?P<Plate>[0-9]{5})",
+            ),
+        ),
+        imported_metadata_tables=(
+            ImportedMetadataTable(
+                location="20585_AE.csv",
+                joins=(
+                    ImportedMetadataJoin("Plate", "Image_Metadata_PlateID"),
+                    ImportedMetadataJoin(
+                        "Well",
+                        "Image_Metadata_CPD_WELL_POSITION",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    candidates = SourceSchemaCandidateDiscovery(
+        SourceSchemaCandidateDiscoveryRequest(
+            source_root,
+            source_files=(image_path,),
+            schema=schema,
+        )
+    ).candidates()
+
+    assert len(candidates) == 1
+    assert candidates[0].metadata["Plate"] == "20585"
+    assert candidates[0].metadata["Compound"] == "DMSO"
 
 
 def test_source_schema_candidate_discovery_auto_skips_incompatible_metadata_provider(
@@ -353,7 +434,8 @@ def test_materialize_openhcs_workspace_preserves_mapped_source_selector_semantic
 
 def test_source_binding_plan_views_are_registered_nominal_family() -> None:
     assert set(CompiledSourceBindingPlan.registered_plan_types()) == {
-        StepSourceBindingsConfig,
+        source_bindings_module.SourceBindingsConfig,
+        source_bindings_module.StepSourceBindingsConfig,
         CompiledSourceBindingPlan,
     }
 
@@ -380,13 +462,12 @@ def test_source_bound_anchor_filter_uses_declared_A01_selectors() -> None:
         origin=SourceBindingOrigin.PIPELINE_START,
     )
 
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=None,
     )
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         patterns,
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=_source_pattern_context(),
     )
 
@@ -407,8 +488,7 @@ def test_source_bound_anchor_filter_resolves_template_workspace_sources() -> Non
         ),
         origin=SourceBindingOrigin.PIPELINE_START,
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_context = SourcePatternResolutionContext(
@@ -424,7 +504,7 @@ def test_source_bound_anchor_filter_resolves_template_workspace_sources() -> Non
             "A01_s{iii}_w1_z001_t001.tif",
             "A01_s{iii}_w2_z001_t001.tif",
         ],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -463,14 +543,13 @@ def test_order_matched_source_bound_anchor_filter_uses_one_anchor_per_image_set(
             origin=SourceBindingOrigin.PIPELINE_START,
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: bindings},
+    plan = CompiledSourceBindingPlan(bindings=bindings,
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         patterns,
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=_source_pattern_context(),
     )
 
@@ -497,15 +576,14 @@ def test_order_matched_source_bound_anchor_filter_rejects_incomplete_image_sets(
             origin=SourceBindingOrigin.PIPELINE_START,
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: bindings},
+    plan = CompiledSourceBindingPlan(bindings=bindings,
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
 
     with pytest.raises(ValueError, match="incomplete image set"):
         SourceBoundAnchorPatternPolicy.for_plan(plan).select(
             ["A01_s001_w1_z001_t001.tif"],
-            bindings=plan.bindings_for_group(None),
+            bindings=plan.bindings,
             source_context=_source_pattern_context(),
         )
 
@@ -539,8 +617,7 @@ def test_order_matched_source_workspace_anchor_filter_accepts_component_narrowin
             origin=SourceBindingOrigin.PIPELINE_START,
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: bindings},
+    plan = CompiledSourceBindingPlan(bindings=bindings,
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_context = SourcePatternResolutionContext(
@@ -553,7 +630,7 @@ def test_order_matched_source_workspace_anchor_filter_accepts_component_narrowin
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s{iii}_w1_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -589,8 +666,7 @@ def test_metadata_matched_source_workspace_template_uses_image_set_anchor() -> N
             origin=SourceBindingOrigin.PIPELINE_START,
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: bindings},
+    plan = CompiledSourceBindingPlan(bindings=bindings,
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -623,7 +699,7 @@ def test_metadata_matched_source_workspace_template_uses_image_set_anchor() -> N
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s001_w{iii}_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -638,8 +714,7 @@ def test_source_bound_anchor_filter_defers_unavailable_metadata_selector() -> No
         ),
         origin=SourceBindingOrigin.PIPELINE_START,
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_context = SourcePatternResolutionContext(
@@ -656,7 +731,7 @@ def test_source_bound_anchor_filter_defers_unavailable_metadata_selector() -> No
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s001_w{iii}_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -671,8 +746,7 @@ def test_source_bound_anchor_filter_reports_runtime_defer_authority() -> None:
         ),
         origin=SourceBindingOrigin.PIPELINE_START,
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_context = SourcePatternResolutionContext(
@@ -689,7 +763,7 @@ def test_source_bound_anchor_filter_reports_runtime_defer_authority() -> None:
         plan
     )._source_compatible_anchor_selection(
         ["A01_s001_w{iii}_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -705,8 +779,7 @@ def test_source_bound_anchor_filter_does_not_defer_available_metadata_mismatch()
         ),
         origin=SourceBindingOrigin.PIPELINE_START,
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_context = SourcePatternResolutionContext(
@@ -726,7 +799,7 @@ def test_source_bound_anchor_filter_does_not_defer_available_metadata_mismatch()
         plan
     )._source_compatible_anchor_selection(
         ["A01_s001_w{iii}_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -862,7 +935,7 @@ def test_matched_image_set_rebases_single_alias_source_stack_from_source_univers
         bindings=(binding,),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
         source_context=source_context,
-        source_identity_stack_axes=frozenset((AllComponents.Z_INDEX.value,)),
+        plane_member_fields=frozenset((AllComponents.Z_INDEX.value,)),
     ).expand(
         (
             "A01_s001_w2_z001_t001.tif",
@@ -979,8 +1052,7 @@ def test_source_bound_anchor_filter_uses_metadata_rules_for_mapped_source_paths(
             pattern=r"^(?P<Plate>.*)_xy(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         metadata_rules=metadata_rules,
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
@@ -1010,7 +1082,7 @@ def test_source_bound_anchor_filter_uses_metadata_rules_for_mapped_source_paths(
     ) == ("A01_s001_w3_z001_t001.tif",)
     assert SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s001_w{iii}_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     ) == ["A01_s001_w{iii}_z001_t001.tif"]
 
@@ -1094,8 +1166,7 @@ def test_metadata_matched_source_workspace_defers_when_template_matches_no_alias
         ),
         origin=SourceBindingOrigin.PIPELINE_START,
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -1122,7 +1193,7 @@ def test_metadata_matched_source_workspace_defers_when_template_matches_no_alias
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s001_w{iii}_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -1143,8 +1214,7 @@ def test_metadata_matched_source_workspace_ignores_other_step_aliases() -> None:
         ),
         origin=SourceBindingOrigin.PIPELINE_START,
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: (binding,)},
+    plan = CompiledSourceBindingPlan(bindings=(binding,),
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -1175,7 +1245,7 @@ def test_metadata_matched_source_workspace_ignores_other_step_aliases() -> None:
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s001_w1_z001_t001.tif"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -1213,14 +1283,13 @@ def test_order_matched_source_artifact_bindings_do_not_add_execution_anchors() -
             origin=SourceBindingOrigin.PIPELINE_START,
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: bindings},
+    plan = CompiledSourceBindingPlan(bindings=bindings,
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
 
     filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         ["A01_s001_w1_z001_t001_A.png"],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=_source_pattern_context(),
     )
 
@@ -1253,8 +1322,7 @@ def test_order_matched_source_anchor_filter_ignores_non_stack_image_operands() -
             participates_in_image_stack=False,
         ),
     )
-    plan = CompiledSourceBindingPlan(
-        bindings_by_group={None: bindings},
+    plan = CompiledSourceBindingPlan(bindings=bindings,
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_context = SourcePatternResolutionContext(
@@ -1273,7 +1341,7 @@ def test_order_matched_source_anchor_filter_ignores_non_stack_image_operands() -
             "A01_s001_w2_z001_t001.tif",
             "A01_s001_w3_z001_t001.tif",
         ],
-        bindings=plan.bindings_for_group(None),
+        bindings=plan.bindings,
         source_context=source_context,
     )
 
@@ -1592,6 +1660,63 @@ def test_materialize_A01_schema_workspace_uses_single_default_well_for_ordered_s
     assert primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]["site"] == "2"
 
 
+def test_order_matched_source_workspace_applies_bounded_selection_before_incomplete_alias_rejection(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "cho01.png", value=1)
+    _write_image(source_root / "cho02.png", value=2)
+    _write_image(source_root / "cho01_Probabilities.tiff", value=3)
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "phase": ImageAssignment(
+                    alias="phase",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.EXTENSION,
+                                SourceFilterMatchType.EQUALS,
+                                ".png",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "cho": ImageAssignment(
+                    alias="cho",
+                    image_type="Color image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.EXTENSION,
+                                SourceFilterMatchType.IS_TIF,
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+        image_set_selection=SourceSchemaImageSetSelection(max_image_set_count=1),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert primary["workspace_mapping"] == {
+        "A01_s001_w1_z001_t001.png": "../source/cho01.png",
+        "A01_s001_w2_z001_t001.tiff": "../source/cho01_Probabilities.tiff",
+    }
+    assert primary["channels"] == {"1": "phase", "2": "cho"}
+
+
 def test_materialize_A01_schema_workspace_projects_frame_metadata_to_timepoints(
     tmp_path: Path,
 ) -> None:
@@ -1868,7 +1993,8 @@ def test_materialize_A01_schema_workspace_uses_complete_ordered_image_sets(
     source_root.mkdir()
     _write_image(source_root / "field-001.png", value=1)
     _write_image(source_root / "field-002.png", value=2)
-    _write_image(source_root / "shared-probabilities.tiff", value=3)
+    _write_image(source_root / "probabilities-001.tiff", value=3)
+    _write_image(source_root / "probabilities-002.tiff", value=4)
 
     result = materialize_A01_schema_workspace(
         source_root,
@@ -1914,9 +2040,14 @@ def test_materialize_A01_schema_workspace_uses_complete_ordered_image_sets(
     assert set(mapping) == {
         "A01_s001_w1_z001_t001.png",
         "A01_s001_w2_z001_t001.tiff",
+        "A01_s002_w1_z001_t001.png",
+        "A01_s002_w2_z001_t001.tiff",
     }
     assert mapping["A01_s001_w2_z001_t001.tiff"].endswith(
-        "source/shared-probabilities.tiff"
+        "source/probabilities-001.tiff"
+    )
+    assert mapping["A01_s002_w2_z001_t001.tiff"].endswith(
+        "source/probabilities-002.tiff"
     )
 
 
@@ -3094,7 +3225,7 @@ def _grouped_order_A01_schema() -> PipelineImageSchema:
             ),
             MetadataExtractionRule(
                 source=MetadataSource.FOLDER_NAME,
-                pattern=r".*[\\/](?P<Run>.*)$",
+                pattern=r"(?P<Run>.*)$",
             ),
         ),
         assignments_by_alias={

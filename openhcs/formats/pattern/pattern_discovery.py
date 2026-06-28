@@ -252,6 +252,40 @@ class PatternDiscoveryEngine:
         if not files_by_axis:
             return {}
 
+        return self._patterns_for_files_by_axis(
+            files_by_axis,
+            variable_components,
+            group_by,
+        )
+
+    def auto_detect_patterns_from_files(
+        self,
+        image_paths: List[Union[str, Path]],
+        variable_components: List[str],
+        group_by=None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Automatically detect image patterns from an authoritative file list."""
+
+        from openhcs.constants import MULTIPROCESSING_AXIS
+
+        axis_name = MULTIPROCESSING_AXIS.value
+        axis_filter = kwargs.get(f"{axis_name}_filter")
+        files_by_axis = self._filter_images_by_axis(image_paths, axis_filter)
+        if not files_by_axis:
+            return {}
+        return self._patterns_for_files_by_axis(
+            files_by_axis,
+            variable_components,
+            group_by,
+        )
+
+    def _patterns_for_files_by_axis(
+        self,
+        files_by_axis: Dict[str, List[Any]],
+        variable_components: List[str],
+        group_by=None,
+    ) -> Dict[str, Any]:
         result = {}
         for axis_value, files in files_by_axis.items():
             patterns = self._generate_patterns_for_files(files, variable_components, axis_value)
@@ -310,6 +344,15 @@ class PatternDiscoveryEngine:
         extensions = extensions or ['.tif', '.TIF', '.tiff', '.TIFF']
 
         image_paths = self.filemanager.list_image_files(folder_path, backend, extensions=extensions, recursive=recursive)
+        return self._filter_images_by_axis(image_paths, axis_filter)
+
+    def _filter_images_by_axis(
+        self,
+        image_paths: List[Any],
+        axis_filter: List[str],
+    ) -> Dict[str, List[Any]]:
+        if not axis_filter:
+            raise ValueError("axis_filter cannot be empty")
 
         files_by_axis = defaultdict(list)
         for img_path in image_paths:

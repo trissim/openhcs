@@ -12,6 +12,7 @@ from types import FunctionType, ModuleType
 from typing import TYPE_CHECKING, Any
 
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
+from python_introspect import Enableable
 
 if TYPE_CHECKING:
     from openhcs.core.steps.abstract import AbstractStep
@@ -128,16 +129,12 @@ class FunctionReferenceTransportAuthority:
 
             if (
                 isinstance(params, dict)
-                and "enabled" in params
-                and params["enabled"] is False
+                and Enableable.disabled_in(params)
             ):
                 return None
 
-            if isinstance(params, dict) and "enabled" in params:
-                params = {k: v for k, v in params.items() if k != "enabled"}
-
-            if isinstance(params, dict) and "dtype_config" in params:
-                params = {k: v for k, v in params.items() if k != "dtype_config"}
+            if isinstance(params, dict) and Enableable.parameter_in(params):
+                params = Enableable.without_parameter(params)
 
             if callable(func):
                 func_ref = cls.reference_function_spec(func)
