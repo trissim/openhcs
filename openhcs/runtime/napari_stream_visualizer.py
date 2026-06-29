@@ -36,9 +36,11 @@ from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessMan
 from zmqruntime.transport import (
     coerce_transport_mode,
     get_control_url,
+    get_ipc_socket_path,
     get_zmq_transport_url,
     is_port_in_use,
     ping_control_port,
+    remove_ipc_socket,
     wait_for_server_ready,
 )
 
@@ -1565,8 +1567,9 @@ def _napari_viewer_process(
         # Ensure the application DOES quit when the napari window closes
         app.setQuitOnLastWindowClosed(True)
 
-        # Set up a QTimer for message processing
-        timer = QtCore.QTimer()
+        # Set up a QTimer for message processing. Keep a strong reference on
+        # the server object so the detached viewer cannot silently lose polling.
+        timer = QtCore.QTimer(app)
 
         def process_messages():
             # Process control messages (ping/pong handled by ABC)
@@ -1585,6 +1588,7 @@ def _napari_viewer_process(
         # Connect timer to message processing
         timer.timeout.connect(process_messages)
         timer.start(50)  # Process messages every 50ms
+        server._message_timer = timer
 
         logger.info("🔬 NAPARI PROCESS: Starting Qt event loop")
 
@@ -1884,6 +1888,101 @@ class NapariStreamVisualizer(VisualizerProcessManager):
             # Legacy synchronous mode
             self._start_viewer_sync()
 
+    def _cleanup_unresponsive_viewer(self, port: int) -> None:
+        """Kill stale viewer listeners and remove IPC socket files for a restart."""
+        from openhcs.constants.constants import CONTROL_PORT_OFFSET
+        from zmqruntime.server import ZMQServer
+
+        # Keep the existing TCP cleanup path for TCP mode and backwards
+        # compatibility with older viewer launches.
+        ZMQServer.kill_processes_on_port(port)
+        ZMQServer.kill_processes_on_port(port + CONTROL_PORT_OFFSET)
+
+        if coerce_transport_mode(self.transport_mode) != ZMQTransportMode.IPC:
+            return
+
+        socket_ports = (port, port + CONTROL_PORT_OFFSET)
+        pids_to_kill = set()
+
+        for socket_port in socket_ports:
+            socket_path = get_ipc_socket_path(socket_port, config=OPENHCS_ZMQ_CONFIG)
+            if socket_path is None or not socket_path.exists():
+                continue
+
+            try:
+                result = subprocess.run(
+                    ["lsof", "-t", "--", str(socket_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "🔬 VISUALIZER: Failed to inspect IPC socket %s: %s",
+                    socket_path,
+                    exc,
+                )
+                continue
+
+            if result.returncode == 0:
+                for pid_text in result.stdout.splitlines():
+                    try:
+                        pid = int(pid_text.strip())
+                    except ValueError:
+                        continue
+                    if pid != os.getpid():
+                        pids_to_kill.add(pid)
+
+        for pid in sorted(pids_to_kill):
+            try:
+                os.kill(pid, 15)
+                logger.info(
+                    "🔬 VISUALIZER: Terminated stale IPC viewer process %d", pid
+                )
+            except ProcessLookupError:
+                pass
+            except Exception as exc:
+                logger.warning(
+                    "🔬 VISUALIZER: Failed to terminate stale IPC viewer process %d: %s",
+                    pid,
+                    exc,
+                )
+
+        if pids_to_kill:
+            time.sleep(0.5)
+
+        for pid in sorted(pids_to_kill):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            except Exception:
+                continue
+
+            try:
+                os.kill(pid, 9)
+                logger.warning(
+                    "🔬 VISUALIZER: Force killed stale IPC viewer process %d", pid
+                )
+            except ProcessLookupError:
+                pass
+            except Exception as exc:
+                logger.warning(
+                    "🔬 VISUALIZER: Failed to force kill stale IPC viewer process %d: %s",
+                    pid,
+                    exc,
+                )
+
+        for socket_port in socket_ports:
+            try:
+                remove_ipc_socket(socket_port, config=OPENHCS_ZMQ_CONFIG)
+            except Exception as exc:
+                logger.debug(
+                    "🔬 VISUALIZER: Failed to remove IPC socket for port %d: %s",
+                    socket_port,
+                    exc,
+                )
+
     def _start_viewer_sync(self):
         """Internal synchronous viewer startup (called by start_viewer)."""
         global _global_viewer_process, _global_viewer_port
@@ -1914,12 +2013,7 @@ class NapariStreamVisualizer(VisualizerProcessManager):
                     logger.info(
                         f"🔬 VISUALIZER: Existing viewer on port {self.port} is unresponsive, killing and restarting..."
                     )
-                    # Use shared method from ZMQServer ABC
-                    from zmqruntime.server import ZMQServer
-                    from openhcs.constants.constants import CONTROL_PORT_OFFSET
-
-                    ZMQServer.kill_processes_on_port(self.port)
-                    ZMQServer.kill_processes_on_port(self.port + CONTROL_PORT_OFFSET)
+                    self._cleanup_unresponsive_viewer(self.port)
                     # Wait a moment for ports to be freed
                     import time
 
