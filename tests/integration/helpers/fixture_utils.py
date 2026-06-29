@@ -263,9 +263,10 @@ def base_test_dir(microscope_config):
     #     shutil.rmtree(base_dir)
 
 @pytest.fixture
-@pytest.mark.skip(reason="Smell-loop gated — do not run until certified")
 def test_function_dir(base_test_dir, microscope_config, request):
     """Create test directory for a specific test function."""
+    pytest.skip("Smell-loop gated - do not run until certified")
+
     # Get the test function name without the parameter
     test_name = request.node.originalname or request.node.name.split('[')[0]
     # Create a directory for this specific test function
