@@ -760,6 +760,13 @@ def _prepare_identify_primary_objects() -> None:
         original_threshold=0.5,
         proven_unit_interval_scale=65535,
     )
+    cellprofiler_threshold_diagnostics(
+        image,
+        binary,
+        final_threshold=0.5,
+        original_threshold=0.5,
+        proven_unit_interval_scale=None,
+    )
     rectangular_mask = np.zeros_like(binary, dtype=bool)
     rectangular_mask[16:80, 16:80] = True
     cellprofiler_threshold_diagnostics(
@@ -769,6 +776,14 @@ def _prepare_identify_primary_objects() -> None:
         original_threshold=0.5,
         mask=rectangular_mask,
         proven_unit_interval_scale=65535,
+    )
+    cellprofiler_threshold_diagnostics(
+        image,
+        binary,
+        final_threshold=0.5,
+        original_threshold=0.5,
+        mask=rectangular_mask,
+        proven_unit_interval_scale=None,
     )
     identify_primary_objects.__wrapped__(
         image,
