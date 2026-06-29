@@ -32,12 +32,12 @@ class PycodifiedObjectDocumentSpec(Generic[ObjectT]):
     header: str
     expected_type: type[ObjectT]
 
-    def render_source(self, value: ObjectT) -> str:
+    def render_source(self, value: ObjectT, *, clean: bool = True) -> str:
         """Render this document's assigned object as Python source."""
         return generate_python_source(
             Assignment(self.assignment_name, value),
             self.header,
-            True,
+            clean,
         )
 
 
@@ -73,11 +73,11 @@ class PycodifiedObjectCodeDocumentDriver(
         self._apply_object = apply_object
         self._before_read = before_read
 
-    def read_document(self) -> WindowCodeDocument:
+    def read_document(self, clean: bool = True) -> WindowCodeDocument:
         before_read = self._before_read
         if before_read is not None:
             before_read()
-        source = self._spec.render_source(self._current_object())
+        source = self._spec.render_source(self._current_object(), clean=clean)
         return WindowCodeDocument(
             title=self._spec.title,
             source=source,

@@ -335,6 +335,7 @@ class OpenHCSMainWindow(QMainWindow):
             self.plate_manager_widget,
             self.pipeline_editor_widget,
         )
+        self._register_embedded_code_document_windows()
 
         # Set sizes for main splitter (50/50)
         main_splitter.setSizes([500, 500])
@@ -359,6 +360,18 @@ class OpenHCSMainWindow(QMainWindow):
         self.embedded_widgets.left_splitter = left_splitter
 
         self.setCentralWidget(central_widget)
+
+    def _register_embedded_code_document_windows(self) -> None:
+        """Register embedded widgets that expose shared code-mode documents."""
+        from pyqt_reactive.services.window_manager import WindowManager
+        from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+
+        code_document_driver = self.pipeline_editor_widget.code_document_driver()
+        WindowManager.register(
+            OpenHCSUiWindowId.pipeline_editor,
+            self.pipeline_editor_widget,
+            code_document_driver=code_document_driver,
+        )
 
     def zmq_server_manager_ports_to_scan(self) -> list[int]:
         from openhcs.core.config import get_all_streaming_ports

@@ -96,6 +96,19 @@ class UiThreadDispatcher:
             raise call.error
         return call.result
 
+    def post(self, callback: Callable[[], None]) -> None:
+        """Queue bridge work on the Qt UI thread without waiting for completion."""
+        if self._closed:
+            raise UiThreadDispatcherClosed("UI bridge dispatcher is shutting down.")
+
+        if self._proxy is None:
+            if self._is_ui_thread():
+                callback()
+                return
+            raise UiThreadDispatchError("No Qt application is available for UI dispatch.")
+
+        self._proxy.call_requested.emit(UiThreadCall(callback))
+
     @staticmethod
     def _is_ui_thread() -> bool:
         app = QCoreApplication.instance()

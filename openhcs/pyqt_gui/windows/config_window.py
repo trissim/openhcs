@@ -53,6 +53,7 @@ from openhcs.pyqt_gui.services.pycodified_window_code_document import (
     PycodifiedObjectCodeDocumentDriver,
     PycodifiedObjectDocumentSpec,
 )
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 
@@ -66,10 +67,6 @@ logger = logging.getLogger(__name__)
 
 
 ConfigObject = GlobalPipelineConfig | PipelineConfig
-PLACEHOLDER_PREFIX_BY_LAZY_RESOLUTION = {
-    True: "Pipeline default",
-    False: "Default",
-}
 
 
 class ConfigWindowStateResolver:
@@ -86,7 +83,7 @@ class ConfigWindowStateResolver:
         self.scope_id = scope_id
 
     def resolve(self) -> ObjectState:
-        state = ObjectStateRegistry.get_by_scope(self.scope_id)
+        state = self._registered_state()
         if self.config_class is PipelineConfig:
             return self._required_pipeline_config_state(state)
 
@@ -94,7 +91,26 @@ class ConfigWindowStateResolver:
             return state
         return ObjectState(
             object_instance=self.current_config,
-            scope_id=self.scope_id,
+            scope_id=self._canonical_scope_id(),
+        )
+
+    def _registered_state(self) -> ObjectState | None:
+        for scope_id in self._candidate_scope_ids():
+            state = ObjectStateRegistry.get_by_scope(scope_id)
+            if state is not None:
+                return state
+        return None
+
+    def _candidate_scope_ids(self) -> tuple[str | None, ...]:
+        if self.scope_id is None:
+            return (None,)
+        return OpenHCSUiWindowId.manager_scopes_for_agent_window_id(self.scope_id)
+
+    def _canonical_scope_id(self) -> str | None:
+        if self.scope_id is None:
+            return None
+        return OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(
+            self.scope_id
         )
 
     def _required_pipeline_config_state(
@@ -193,7 +209,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         is_lazy_dataclass = FullLazyDefaultPlaceholderService.has_lazy_resolution(
             type(current_config)
         )
-        placeholder_prefix = PLACEHOLDER_PREFIX_BY_LAZY_RESOLUTION[is_lazy_dataclass]
+        placeholder_prefix = (
+            "Pipeline default"
+            if is_lazy_dataclass
+            else "Default"
+        )
 
         # SIMPLIFIED: Use ParameterFormManager with dual-axis resolution
         root_field_id = type(

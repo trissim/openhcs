@@ -3,8 +3,9 @@ from __future__ import annotations
 import pytest
 
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.core.config import PipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.services.window_handlers import (
     OpenHCSWindowCreationAuthority,
     register_openhcs_window_handlers,
@@ -73,6 +74,101 @@ def test_pipeline_config_window_uses_orchestrator_delegate_state() -> None:
     assert resolver.resolve() is state
 
 
+def test_global_config_window_uses_canonical_object_state_scope() -> None:
+    state = ObjectState(GlobalPipelineConfig(num_workers=3), scope_id="")
+    ObjectStateRegistry.register(state)
+    resolver = ConfigWindowStateResolver(
+        config_class=GlobalPipelineConfig,
+        current_config=GlobalPipelineConfig(),
+        scope_id=OpenHCSUiWindowId.global_config,
+    )
+
+    assert resolver.resolve() is state
+
+
+def test_global_config_window_creates_state_at_canonical_scope() -> None:
+    resolver = ConfigWindowStateResolver(
+        config_class=GlobalPipelineConfig,
+        current_config=GlobalPipelineConfig(num_workers=3),
+        scope_id=OpenHCSUiWindowId.global_config,
+    )
+
+    state = resolver.resolve()
+
+    assert state.scope_id == ""
+    assert state.object_instance.num_workers == 3
+
+
+def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:
+    created_windows = []
+    saved_configs = []
+    propagated_configs = []
+
+    class FakeConfigChangedSignal:
+        def emit(self, config: GlobalPipelineConfig) -> None:
+            propagated_configs.append(config)
+
+    class FakeMainWindow:
+        def __init__(self) -> None:
+            self.config_changed = FakeConfigChangedSignal()
+
+    class FakeServiceAdapter:
+        def __init__(self) -> None:
+            self.main_window = FakeMainWindow()
+
+    class FakePlateManager:
+        def __init__(self) -> None:
+            self.service_adapter = FakeServiceAdapter()
+
+    class FakeConfigWindow:
+        def __init__(
+            self,
+            config_class,
+            current_config,
+            on_save_callback,
+            *args,
+            **kwargs,
+        ) -> None:
+            del config_class, current_config, args, kwargs
+            self.on_save_callback = on_save_callback
+            created_windows.append(self)
+
+        def show(self) -> None:
+            pass
+
+        def raise_(self) -> None:
+            pass
+
+        def activateWindow(self) -> None:
+            pass
+
+    def save_global_config(config: GlobalPipelineConfig) -> bool:
+        saved_configs.append(config)
+        return True
+
+    from openhcs.core import config_cache
+    from openhcs.pyqt_gui.windows import config_window
+
+    monkeypatch.setattr(config_window, "ConfigWindow", FakeConfigWindow)
+    monkeypatch.setattr(
+        config_cache,
+        "save_global_config_sync",
+        save_global_config,
+    )
+    window_authority = OpenHCSWindowCreationAuthority()
+    monkeypatch.setattr(window_authority, "_plate_manager", lambda: FakePlateManager())
+    window = window_authority.create_global_config_window(
+        ScopeWindowCreationRequest(scope_id=OpenHCSUiWindowId.global_config)
+    )
+    new_config = GlobalPipelineConfig(num_workers=3)
+
+    window.on_save_callback(new_config)
+
+    assert window is created_windows[0]
+    assert saved_configs == [new_config]
+    assert propagated_configs == [new_config]
+
+
 def test_plate_config_window_factory_rejects_standalone_pipeline_config_scope() -> None:
     scope_id = "/tmp/plate"
     ObjectStateRegistry.register(ObjectState(PipelineConfig(), scope_id=scope_id))
@@ -108,3 +204,25 @@ def test_window_registry_routes_cppipe_step_scope_to_step_editor_factory() -> No
 
     assert handler is not None
     assert handler.handler.__name__ == "create_step_editor_window"
+
+
+def test_window_registry_routes_global_config_to_stable_window_id() -> None:
+    register_openhcs_window_handlers()
+
+    legacy_handler = ScopeWindowRegistry.find_handler("")
+    stable_handler = ScopeWindowRegistry.find_handler(OpenHCSUiWindowId.global_config)
+
+    assert legacy_handler is not None
+    assert stable_handler is not None
+    assert legacy_handler.handler.__name__ == "create_global_config_window"
+    assert stable_handler.handler.__name__ == "create_global_config_window"
+    assert (
+        legacy_handler.navigation_target("").window_scope_id
+        == OpenHCSUiWindowId.global_config
+    )
+    assert (
+        stable_handler.navigation_target(
+            OpenHCSUiWindowId.global_config
+        ).window_scope_id
+        == OpenHCSUiWindowId.global_config
+    )

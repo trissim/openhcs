@@ -12,7 +12,9 @@ from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
     ScopeWindowRegistry,
 )
+from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
 if TYPE_CHECKING:
     from openhcs.config_framework.object_state import ObjectState
@@ -27,6 +29,17 @@ logger = logging.getLogger(__name__)
 ORCHESTRATOR_SCOPE_PATTERN = r"^/(?!.*::).*$"
 
 
+def pipeline_scope_window_id(scope_id: str) -> str:
+    """Resolve a Pipeline ObjectState scope to the embedded pipeline editor."""
+    PipelineScopeIdentity.from_scope_id(scope_id)
+    return OpenHCSUiWindowId.pipeline_editor
+
+
+def global_config_window_scope_id(scope_id: str) -> str:
+    """Resolve legacy global config scope requests to the stable window id."""
+    return OpenHCSUiWindowId.agent_window_id_for_manager_scope(scope_id)
+
+
 class OpenHCSWindowCreationAuthority:
     """Nominal owner for OpenHCS scope-to-window construction."""
 
@@ -37,6 +50,7 @@ class OpenHCSWindowCreationAuthority:
         """Create GlobalPipelineConfig editor window."""
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
         from openhcs.core.config import GlobalPipelineConfig
+        from openhcs.core.config_cache import save_global_config_sync
         from openhcs.config_framework.global_config import (
             get_current_global_config,
             set_global_config_for_editing,
@@ -47,14 +61,17 @@ class OpenHCSWindowCreationAuthority:
         )
 
         def handle_save(new_config):
-            set_global_config_for_editing(GlobalPipelineConfig, new_config)
+            if not self._emit_main_window_global_config_changed(new_config):
+                set_global_config_for_editing(GlobalPipelineConfig, new_config)
+            if not save_global_config_sync(new_config):
+                logger.error("Failed to save global config to cache via window")
             logger.info("Global config saved via window")
 
         window = ConfigWindow(
             config_class=GlobalPipelineConfig,
             current_config=current_config,
             on_save_callback=handle_save,
-            scope_id=request.scope_id,
+            scope_id=OpenHCSUiWindowId.global_config,
         )
         self._show_window(window)
         return window
@@ -180,7 +197,9 @@ class OpenHCSWindowCreationAuthority:
         """Find a step through the pipeline state's declared step scopes."""
         from objectstate import ObjectStateRegistry
 
-        pipeline_state = ObjectStateRegistry.get_by_scope(f"{plate_scope}::pipeline")
+        pipeline_state = ObjectStateRegistry.get_by_scope(
+            PipelineScopeIdentity.from_plate_scope(plate_scope).scope_id
+        )
         if pipeline_state is None:
             logger.debug("No pipeline state for %s", plate_scope)
             return None
@@ -239,6 +258,14 @@ class OpenHCSWindowCreationAuthority:
 
         return ServiceRegistry.get(PlateManagerWidget)
 
+    def _emit_main_window_global_config_changed(self, new_config) -> bool:
+        plate_manager = self._plate_manager()
+        if plate_manager is None:
+            return False
+
+        plate_manager.service_adapter.main_window.config_changed.emit(new_config)
+        return True
+
     def _show_window(self, window: QWidget) -> None:
         window.show()
         window.raise_()
@@ -258,6 +285,13 @@ def register_openhcs_window_handlers():
     ScopeWindowRegistry.register_handler(
         pattern=StepEditorScope.handler_pattern(),
         handler=window_authority.create_step_editor_window,
+        window_scope_resolver=StepEditorScope.window_scope_id_for_scope,
+        field_path_resolver=StepEditorScope.window_field_path_for_scope,
+    )
+
+    ScopeWindowRegistry.register_handler(
+        pattern=PipelineScopeIdentity.handler_pattern(),
+        window_scope_resolver=pipeline_scope_window_id,
     )
 
     # Plate configs. Step/function scopes are registered first; every remaining
@@ -275,7 +309,14 @@ def register_openhcs_window_handlers():
 
     # Global config (empty string)
     ScopeWindowRegistry.register_handler(
-        pattern=r"^$", handler=window_authority.create_global_config_window
+        pattern=r"^$",
+        handler=window_authority.create_global_config_window,
+        window_scope_resolver=global_config_window_scope_id,
+    )
+    ScopeWindowRegistry.register_handler(
+        pattern=rf"^{OpenHCSUiWindowId.global_config}$",
+        handler=window_authority.create_global_config_window,
+        window_scope_resolver=global_config_window_scope_id,
     )
 
     logger.info("[WINDOW_FACTORY] Registered OpenHCS window handlers")
