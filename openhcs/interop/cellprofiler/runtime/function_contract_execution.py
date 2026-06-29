@@ -62,6 +62,7 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerKwargDict,
     CellProfilerKwargs,
     CellProfilerRuntimeValue,
+    CellProfilerRuntimeValueSequence,
 )
 from openhcs.interop.cellprofiler.runtime.processing_contracts import (
     Pure2DSliceCountPolicy,
@@ -476,6 +477,9 @@ class CellProfilerFunctionContractExecutor:
                 )
                 or Pure2DSliceCountPolicy.slice_count_from_kwargs(
                     kwargs,
+                    runtime_slice_sequence_parameter_names=(
+                        self.runtime_slice_sequence_parameter_names
+                    ),
                     measurement_table_parameter_names=(
                         self.measurement_table_parameter_names
                     ),
@@ -491,6 +495,9 @@ class CellProfilerFunctionContractExecutor:
         elif is_color_image_slice(image_data):
             slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(
                 kwargs,
+                runtime_slice_sequence_parameter_names=(
+                    self.runtime_slice_sequence_parameter_names
+                ),
                 measurement_table_parameter_names=self.measurement_table_parameter_names,
             )
             if slice_count is None:

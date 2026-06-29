@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, TypeAlias, cast
+from typing import ClassVar, TypeAlias, cast
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
@@ -21,6 +21,7 @@ from openhcs.core.registry_strategies import (
 from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_OBJECT_NAME_FIELD,
     MeasurementRowsAxisProjection,
+    measurement_table_axis_values,
     measurement_table_object_name,
 )
 from openhcs.core.runtime_artifact_queries import (
@@ -35,10 +36,8 @@ from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     RuntimeSliceIdentityProjectableValue,
     RuntimeSliceProjectableValue,
-    RuntimePlaneAxis,
     RuntimePlaneAxisSliceProjectionPolicy,
     carries_measurement_row_semantics,
-    measurement_table_row_layout,
     measurement_table_row_layouts,
     measurement_table_row_layout_from_fields,
     measurement_row_mapping,
@@ -54,7 +53,6 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     RuntimeArrayData,
     RuntimeImagePayloadContext,
-    SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
     dense_label_stack_reduce_planes,
     dense_label_stack_supports_plane_reduction,
@@ -1448,6 +1446,10 @@ class RuntimeSliceProjection:
         return runtime_measurement_table_slice_indices(value)
 
     @staticmethod
+    def measurement_table_image_numbers(value: MeasurementTable) -> set[int]:
+        return measurement_table_axis_values(value, MeasurementRowAxisField.IMAGE_NUMBER)
+
+    @staticmethod
     def measurement_table_matches_object(
         table: MeasurementTable,
         object_name: str,
@@ -1609,6 +1611,11 @@ class RuntimeSliceProjection:
                 for index in indexes
             ):
                 continue
+            if any(
+                RuntimeSliceProjection.measurement_table_image_numbers(tables[index])
+                for index in indexes
+            ):
+                continue
             for slice_offset, table_index in enumerate(indexes):
                 aligned[table_index] = (
                     RuntimeSliceProjection.measurement_table_with_slice_offset(
@@ -1635,6 +1642,8 @@ class RuntimeSliceProjection:
         if scalar_group_size == 0:
             return table
         if RuntimeSliceProjection.measurement_table_effective_slice_count(table) != 1:
+            return table
+        if RuntimeSliceProjection.measurement_table_image_numbers(table):
             return table
         return RuntimeSliceProjection.measurement_table_with_slice_offset(
             table,

@@ -73,14 +73,14 @@ from openhcs.core.measurement_image_alignment import (
     PreparedMeasurementObjectLabels,
 )
 from openhcs.constants.constants import AllComponents, GroupBy, MemoryType, VariableComponents
-from openhcs.interop.cellprofiler.measurement_dialect import (
-    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-)
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerImageRequest,
     CellProfilerInvocationRequest,
     CellProfilerMeasurementImage,
     CellProfilerSliceAlignedValues,
+)
+from openhcs.interop.cellprofiler.runtime.processing_contracts import (
+    Pure2DSliceCountPolicy,
 )
 from openhcs.interop.cellprofiler.runtime.main_flow import (
     CELLPROFILER_MEASUREMENT_MAIN_FLOW,
@@ -119,7 +119,6 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     RelationshipMeasurementRows,
     RuntimeArtifactBindingScope,
     CellProfilerOutputRecordRequest,
-    CellProfilerOutputRecordingPlan,
     CellProfilerOutputRecorder,
     CellProfilerProcessingContractAuthority,
     CellProfilerPure2DOutputAggregator,
@@ -284,7 +283,6 @@ from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     ObjectLocationMeasurementFeature,
     ObjectLabelDomainScope,
-    ObjectLabelRepresentation,
     ParentChildRelationshipPayload,
     RelationshipSemantics,
     RuntimePlaneAxis,
@@ -293,7 +291,6 @@ from openhcs.core.runtime_semantics import (
     SpatialGridOrdering,
     object_label_parent_child_payload,
     object_shape_measurement_all_field_names,
-    object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
     ColumnarRows,
@@ -2083,9 +2080,6 @@ class _FakeCellProfilerRuntime(RuntimePlaneAxisProjector):
             for tables in self.runtime_measurement_tables.values()
             for table in tables
         )
-
-    def runtime_slice_plane_index(self) -> int | None:
-        return None
 
     def add_measurements(
         self,
@@ -7269,6 +7263,13 @@ def test_runtime_slice_count_treats_sequence_kwargs_as_operands() -> None:
         )
         == 2
     )
+    assert (
+        Pure2DSliceCountPolicy.slice_count_from_kwargs(
+            {"object_labels": (first, second)},
+            runtime_slice_sequence_parameter_names=frozenset({"object_labels"}),
+        )
+        == 2
+    )
 
 
 def test_runtime_slice_projection_offsets_repeated_scalar_measurement_tables() -> None:
@@ -7296,6 +7297,33 @@ def test_runtime_slice_projection_offsets_repeated_scalar_measurement_tables() -
     )["measurement_tables"]
     assert tuple(len(table.rows) for table in sliced) == (0, 1)
     assert list(sliced[1].rows)[0]["std_intensity"] == 0.2
+
+
+def test_runtime_slice_projection_preserves_image_number_measurement_tables() -> None:
+    first = MeasurementTable(
+        name="MeasureImageAreaOccupied_21_measurements",
+        rows=[
+            {"image_number": 1, "area_occupied": 17809.0},
+            {"image_number": 2, "area_occupied": 10723.0},
+        ],
+        source_image_name="ColocalizedRegion",
+    )
+    second = MeasurementTable(
+        name="MeasureImageAreaOccupied_21_measurements",
+        rows=[
+            {"image_number": 1, "area_occupied": 17809.0},
+            {"image_number": 2, "area_occupied": 10723.0},
+        ],
+        source_image_name="ColocalizedRegion",
+    )
+
+    tables = (first, second)
+    aligned = RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
+        tables
+    )
+
+    assert aligned == tables
+    assert RuntimeSliceProjection.slice_count_from_values((aligned,)) is None
 
 
 def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_domain():

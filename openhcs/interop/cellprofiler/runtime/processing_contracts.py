@@ -101,6 +101,7 @@ class Pure2DSliceCountPolicy:
     def slice_count_from_kwargs(
         kwargs: CellProfilerKwargs,
         *,
+        runtime_slice_sequence_parameter_names: frozenset[str] = frozenset(),
         measurement_table_parameter_names: frozenset[str] = frozenset(),
     ) -> int | None:
         if RuntimeProfileLogger.enabled():
@@ -110,6 +111,7 @@ class Pure2DSliceCountPolicy:
                 kwargs,
                 measurement_table_parameter_names=measurement_table_parameter_names,
             ),
+            sequence_kwargs=runtime_slice_sequence_parameter_names,
         )
 
     @staticmethod
