@@ -2216,42 +2216,55 @@ class NapariStreamVisualizer(VisualizerProcessManager):
             f"step_id: {step_id}, axis_id: {axis_id}, shape: {image_data.shape}"
         )
 
+    def _terminate_viewer_process(self) -> None:
+        """Terminate the owned napari viewer process if it is still running."""
+        if not self.process:
+            return
+
+        # Handle both subprocess and multiprocessing process types.
+        if hasattr(self.process, "is_alive"):
+            # multiprocessing.Process
+            if self.process.is_alive():
+                self.process.terminate()
+                self.process.join(timeout=5)
+                if self.process.is_alive():
+                    logger.warning("🔬 VISUALIZER: Force killing napari viewer process")
+                    self.process.kill()
+        else:
+            # subprocess.Popen
+            if self.process.poll() is None:  # Still running
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning("🔬 VISUALIZER: Force killing napari viewer process")
+                    self.process.kill()
+
     def stop_viewer(self):
-        """Stop the napari viewer process (only if not persistent)."""
+        """Stop the napari viewer process unless a persistent viewer is healthy."""
         with self._lock:
             if not self.persistent:
                 logger.info("🔬 VISUALIZER: Stopping non-persistent napari viewer")
                 self._cleanup_zmq()
-                if self.process:
-                    # Handle both subprocess and multiprocessing process types
-                    if hasattr(self.process, "is_alive"):
-                        # multiprocessing.Process
-                        if self.process.is_alive():
-                            self.process.terminate()
-                            self.process.join(timeout=5)
-                            if self.process.is_alive():
-                                logger.warning(
-                                    "🔬 VISUALIZER: Force killing napari viewer process"
-                                )
-                                self.process.kill()
-                    else:
-                        # subprocess.Popen
-                        if self.process.poll() is None:  # Still running
-                            self.process.terminate()
-                            try:
-                                self.process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                logger.warning(
-                                    "🔬 VISUALIZER: Force killing napari viewer process"
-                                )
-                                self.process.kill()
+                self._terminate_viewer_process()
                 self._is_running = False
-            else:
+                return
+
+            if self._quick_ping_check():
                 logger.info("🔬 VISUALIZER: Keeping persistent napari viewer alive")
-                # Just cleanup our ZMQ connection, leave process running
+                # Just cleanup our ZMQ connection, leave process running.
                 self._cleanup_zmq()
                 # DON'T set is_running = False for persistent viewers!
-                # The process is still alive and should be reusable
+                # The process is still alive and should be reusable.
+                return
+
+            logger.info(
+                "🔬 VISUALIZER: Persistent napari viewer is unresponsive; stopping it"
+            )
+            self._cleanup_zmq()
+            self._terminate_viewer_process()
+            self._cleanup_unresponsive_viewer(self.port)
+            self._is_running = False
 
     def _cleanup_zmq(self):
         """Clean up ZeroMQ resources."""
