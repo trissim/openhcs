@@ -1,5 +1,6 @@
 from openhcs.agent.capabilities import (
     AgentCapabilitySpec,
+    CapabilityCliConnectionProfile,
     CapabilityKind,
     get_capability_registry,
     validate_capability_registry,
@@ -38,6 +39,7 @@ def test_mutating_tools_must_declare_side_effects():
         title="Create something",
         description="Mutation without side-effect metadata.",
         service="test",
+        mutating=True,
     )
 
     try:
@@ -98,3 +100,32 @@ def test_viewer_probe_capability_declares_compact_liveness_contract():
     assert probe.runtime_requirements == ("running_openhcs_viewer_server",)
     assert probe.data_exposure == ("viewer_identity", "viewer_layer_counts")
     assert probe.output_type == "ViewerWindowProbeResult"
+
+
+def test_cli_connection_profiles_are_declared_on_capabilities():
+    registry = get_capability_registry()
+    profiles = {
+        capability.name: capability.cli_connection_profile
+        for capability in registry.capabilities
+        if capability.cli_command is not None
+    }
+
+    assert profiles["openhcs_ui_bridge_status"] is (
+        CapabilityCliConnectionProfile.UI_BRIDGE
+    )
+    assert profiles["openhcs_ui_get_widget_tree"] is (
+        CapabilityCliConnectionProfile.UI_BRIDGE
+    )
+    assert profiles["openhcs_get_viewer_window_payloads"] is (
+        CapabilityCliConnectionProfile.VIEWER_WINDOW
+    )
+    assert profiles["openhcs_validate_viewer_window_state"] is (
+        CapabilityCliConnectionProfile.VIEWER_WINDOW
+    )
+    assert profiles["openhcs_get_runtime_server_info"] is (
+        CapabilityCliConnectionProfile.RUNTIME_SERVER
+    )
+    assert profiles["openhcs_scan_runtime_servers"] is (
+        CapabilityCliConnectionProfile.RUNTIME_SERVER
+    )
+    assert profiles["openhcs_health_check"] is CapabilityCliConnectionProfile.DIRECT

@@ -4,181 +4,84 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Sequence
-from dataclasses import dataclass
-import json
+import logging
+import os
 import sys
-from typing import cast
+from collections.abc import Sequence
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.types import CallToolResult, TextContent
+if os.getenv("OPENHCS_MCP_DEV_CLIENT_VERBOSE") is None:
+    logging.disable(logging.WARNING)
+else:
+    logging.getLogger("metaclass_registry.cache").setLevel(logging.WARNING)
 
+from openhcs.agent.serialization import to_jsonable as to_jsonable
+from openhcs.constants.constants import AllComponents as AllComponents
+from openhcs.mcp import dev_client_renderers as dev_client_renderers
+from openhcs.mcp.dev_client_core import (
+    DEFAULT_CALL_TIMEOUT_SECONDS,
+    DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS as DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS,
+    McpDevCliUsageError,
+    McpDevClientPhase as McpDevClientPhase,
+    McpDevServerSpec,
+    McpDevToolBatchResponse,
+    McpDevToolCall,
+    McpDevToolListResponse,
+    McpDevToolResult as McpDevToolResult,
+    McpDevTransportFailure as McpDevTransportFailure,
+    WorkflowPollRowState as WorkflowPollRowState,
+    WorkflowPollSummaryStatus as WorkflowPollSummaryStatus,
+    WorkflowStatePollPolicy as WorkflowStatePollPolicy,
+    _command_failed,
+    call_execute_source_with_submission as call_execute_source_with_submission,
+    call_fresh_mcp_server as call_fresh_mcp_server,
+    call_selected_workflow_with_state_poll as call_selected_workflow_with_state_poll,
+    parse_json_object,
+    plate_manager_state_surface_tool_arguments as plate_manager_state_surface_tool_arguments,
+    require_json_object_payload,
+    workflow_poll_has_reached_terminal_state as workflow_poll_has_reached_terminal_state,
+    workflow_poll_summary_result as workflow_poll_summary_result,
+    workflow_poll_terminal_status as workflow_poll_terminal_status,
+)
+from openhcs.mcp.dev_client_commanding import (
+    GeneratedMcpDevCommandProfile as GeneratedMcpDevCommandProfile,
+    McpDevCommandSpec,
+)
+from openhcs.mcp import dev_client_commands as dev_client_commands
+from openhcs.mcp.dev_client_rendering import (
+    DEFAULT_CODE_DOCUMENT_MAX_CHARS as DEFAULT_CODE_DOCUMENT_MAX_CHARS,
+)
 
-JsonPrimitive = str | int | float | bool | None
-JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
-JsonObject = dict[str, JsonValue]
+_DECLARATION_MODULES = (dev_client_renderers, dev_client_commands)
 
-DEFAULT_CALL_TIMEOUT_SECONDS = 5.0
-
-
-@dataclass(frozen=True, slots=True)
-class McpDevToolCall:
-    """One MCP tool invocation issued against a fresh stdio server."""
-
-    name: str
-    arguments: JsonObject
-
-
-@dataclass(frozen=True, slots=True)
-class McpDevServerSpec:
-    """Command used to launch the active checkout MCP server."""
-
-    python_executable: str
-    module_name: str = "openhcs.mcp"
-
-    def parameters(self) -> StdioServerParameters:
-        return StdioServerParameters(
-            command=self.python_executable,
-            args=("-m", self.module_name),
-        )
-
-
-def parse_json_object(argument_text: str) -> JsonObject:
-    """Parse a JSON object for MCP tool arguments."""
-    value = cast(JsonValue, json.loads(argument_text))
-    if not isinstance(value, dict):
-        raise ValueError("MCP tool arguments must be a JSON object.")
-    return value
-
-
-def _payload_from_text(text: str) -> JsonValue:
-    try:
-        return cast(JsonValue, json.loads(text))
-    except json.JSONDecodeError:
-        return {"text": text}
-
-
-def _content_payloads(result: CallToolResult) -> list[JsonValue]:
-    payloads: list[JsonValue] = []
-    for content in result.content:
-        if not isinstance(content, TextContent):
-            raise RuntimeError(
-                "OpenHCS MCP dev client only supports text tool responses; "
-                f"received {type(content).__name__}."
-            )
-        payloads.append(_payload_from_text(content.text))
-    return payloads
-
-
-def _tool_result_payload(tool_name: str, result: CallToolResult) -> JsonObject:
-    return {
-        "tool": tool_name,
-        "mcp_error": bool(result.isError),
-        "payloads": _content_payloads(result),
-    }
-
-
-def _contains_agent_error(value: JsonValue) -> bool:
-    if isinstance(value, dict):
-        errors = value.get("errors")
-        if isinstance(errors, list) and len(errors) > 0:
-            return True
-        return any(_contains_agent_error(child) for child in value.values())
-    if isinstance(value, list):
-        return any(_contains_agent_error(child) for child in value)
-    return False
-
-
-def _command_failed(payload: JsonObject) -> bool:
-    results = payload.get("results")
-    if isinstance(results, list):
-        for result in results:
-            if isinstance(result, dict):
-                if result.get("mcp_error") is True:
-                    return True
-                if _contains_agent_error(result):
-                    return True
-    return False
-
-
-async def call_fresh_mcp_server(
-    server_spec: McpDevServerSpec,
-    calls: Sequence[McpDevToolCall],
-    timeout_seconds: float,
-) -> JsonObject:
-    """Start a fresh MCP server, issue calls, and return JSON-ready results."""
-    async with stdio_client(server_spec.parameters()) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
-            await asyncio.wait_for(session.initialize(), timeout=timeout_seconds)
-            results: list[JsonValue] = []
-            for call in calls:
-                result = await asyncio.wait_for(
-                    session.call_tool(call.name, call.arguments),
-                    timeout=timeout_seconds,
-                )
-                results.append(_tool_result_payload(call.name, result))
-            return {
-                "server": {
-                    "command": server_spec.python_executable,
-                    "module": server_spec.module_name,
-                },
-                "results": results,
-            }
-
-
-async def list_fresh_mcp_tools(
-    server_spec: McpDevServerSpec,
-    timeout_seconds: float,
-) -> JsonObject:
-    """Start a fresh MCP server and return registered tool metadata."""
-    async with stdio_client(server_spec.parameters()) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
-            await asyncio.wait_for(session.initialize(), timeout=timeout_seconds)
-            result = await asyncio.wait_for(
-                session.list_tools(),
-                timeout=timeout_seconds,
-            )
-            tools: list[JsonValue] = [
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": cast(JsonValue, tool.inputSchema),
-                }
-                for tool in result.tools
-            ]
-            return {
-                "server": {
-                    "command": server_spec.python_executable,
-                    "module": server_spec.module_name,
-                },
-                "tool_count": len(tools),
-                "tools": tools,
-            }
-
-
-def _health_calls() -> tuple[McpDevToolCall, ...]:
-    return (McpDevToolCall("openhcs_health_check", {}),)
-
-
-def _ui_smoke_calls() -> tuple[McpDevToolCall, ...]:
-    return (
-        McpDevToolCall("openhcs_health_check", {}),
-        McpDevToolCall("openhcs_ui_bridge_status", {}),
-        McpDevToolCall("openhcs_ui_list_bridges", {}),
-        McpDevToolCall("openhcs_ui_list_windows", {}),
-    )
-
-
-def _viewer_payload_arguments(args: argparse.Namespace) -> JsonObject:
-    return {
-        "port": args.port,
-        "include_array_values": args.include_array_values,
-        "include_shape_payloads": args.include_shape_payloads,
-        "max_array_elements": args.max_array_elements,
-        "max_shape_payloads": args.max_shape_payloads,
-        "timeout_ms": args.control_timeout_ms,
-    }
+__all__ = (
+    "AllComponents",
+    "DEFAULT_CODE_DOCUMENT_MAX_CHARS",
+    "DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS",
+    "GeneratedMcpDevCommandProfile",
+    "McpDevCliUsageError",
+    "McpDevClientPhase",
+    "McpDevCommandSpec",
+    "McpDevServerSpec",
+    "McpDevToolCall",
+    "McpDevToolResult",
+    "McpDevTransportFailure",
+    "WorkflowPollRowState",
+    "WorkflowPollSummaryStatus",
+    "WorkflowStatePollPolicy",
+    "_build_parser",
+    "_calls_from_args",
+    "_command_failed",
+    "call_execute_source_with_submission",
+    "call_fresh_mcp_server",
+    "call_selected_workflow_with_state_poll",
+    "main",
+    "parse_json_object",
+    "plate_manager_state_surface_tool_arguments",
+    "to_jsonable",
+    "workflow_poll_has_reached_terminal_state",
+    "workflow_poll_summary_result",
+    "workflow_poll_terminal_status",
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -199,74 +102,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser(
-        "health",
-        help="Call openhcs_health_check.",
-        parents=[command_options],
-    )
-    subparsers.add_parser(
-        "tools",
-        help="List current-source MCP tools.",
-        parents=[command_options],
-    )
-
-    call_parser = subparsers.add_parser(
-        "call",
-        help="Call one MCP tool.",
-        parents=[command_options],
-    )
-    call_parser.add_argument("tool_name")
-    call_parser.add_argument(
-        "--arguments",
-        default="{}",
-        help="JSON object passed as the MCP tool arguments.",
-    )
-
-    workflow_parser = subparsers.add_parser(
-        "selected-workflow",
-        help="Run a selected UI plate workflow through the MCP UI bridge.",
-        parents=[command_options],
-    )
-    workflow_parser.add_argument(
-        "workflow",
-        choices=("init_plate", "compile_plate", "run_plate"),
-    )
-
-    widget_parser = subparsers.add_parser(
-        "widget-tree",
-        help="Read a UI window's generic clickable widget tree.",
-        parents=[command_options],
-    )
-    widget_parser.add_argument("window_id")
-    widget_parser.add_argument("--maximum-text-length", type=int, default=120)
-    widget_parser.add_argument("--timeout-ms", type=int, default=750)
-
-    snapshot_parser = subparsers.add_parser(
-        "window-snapshot",
-        help="Capture a UI bridge window screenshot.",
-        parents=[command_options],
-    )
-    snapshot_parser.add_argument("window_id")
-    snapshot_parser.add_argument("--capture-scope", default="window")
-    snapshot_parser.add_argument("--timeout-ms", type=int, default=750)
-
-    viewer_parser = subparsers.add_parser(
-        "viewer-payloads",
-        help="Read viewer-agnostic layer, axis, image, and shape payload records.",
-        parents=[command_options],
-    )
-    viewer_parser.add_argument("port", type=int)
-    viewer_parser.add_argument("--include-array-values", action="store_true")
-    viewer_parser.add_argument("--include-shape-payloads", action="store_true")
-    viewer_parser.add_argument("--max-array-elements", type=int, default=256)
-    viewer_parser.add_argument("--max-shape-payloads", type=int, default=32)
-    viewer_parser.add_argument("--control-timeout-ms", type=int, default=750)
-
-    subparsers.add_parser(
-        "ui-smoke",
-        help="Call health plus UI bridge status, bridge list, and window list.",
-        parents=[command_options],
-    )
+    for command_spec in McpDevCommandSpec.all_specs():
+        command_spec.register_parser(subparsers, command_options)
     return parser
 
 
@@ -312,72 +149,38 @@ def _add_common_options(
 
 
 def _calls_from_args(args: argparse.Namespace) -> tuple[McpDevToolCall, ...]:
-    if args.command == "health":
-        return _health_calls()
-    if args.command == "ui-smoke":
-        return _ui_smoke_calls()
-    if args.command == "call":
-        return (
-            McpDevToolCall(
-                args.tool_name,
-                parse_json_object(args.arguments),
-            ),
-        )
-    if args.command == "selected-workflow":
-        return (
-            McpDevToolCall(
-                "openhcs_ui_selected_plate_workflow",
-                {"workflow": args.workflow},
-            ),
-        )
-    if args.command == "widget-tree":
-        return (
-            McpDevToolCall(
-                "openhcs_ui_get_widget_tree",
-                {
-                    "window_id": args.window_id,
-                    "maximum_text_length": args.maximum_text_length,
-                    "timeout_ms": args.timeout_ms,
-                },
-            ),
-        )
-    if args.command == "window-snapshot":
-        return (
-            McpDevToolCall(
-                "openhcs_ui_snapshot_window",
-                {
-                    "window_id": args.window_id,
-                    "capture_scope": args.capture_scope,
-                    "timeout_ms": args.timeout_ms,
-                },
-            ),
-        )
-    if args.command == "viewer-payloads":
-        return (
-            McpDevToolCall(
-                "openhcs_get_viewer_window_payloads",
-                _viewer_payload_arguments(args),
-            ),
-        )
-    raise ValueError(f"Unsupported MCP dev command: {args.command}")
+    return McpDevCommandSpec.for_name(args.command).calls_from_args(args)
 
 
-async def _run_async(args: argparse.Namespace) -> JsonObject:
+def write_stdout(text: str) -> bool:
+    """Write CLI output without traceback when downstream pipes close early."""
+    try:
+        sys.stdout.write(text)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        sys.stdout = open(os.devnull, "w")
+        return False
+    return True
+
+
+async def _run_async(
+    args: argparse.Namespace,
+) -> McpDevToolBatchResponse | McpDevToolListResponse:
     server_spec = McpDevServerSpec(args.python)
-    if args.command == "tools":
-        return await list_fresh_mcp_tools(server_spec, args.timeout_seconds)
-    return await call_fresh_mcp_server(
-        server_spec,
-        _calls_from_args(args),
-        args.timeout_seconds,
-    )
+    return await McpDevCommandSpec.for_name(args.command).run(server_spec, args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    payload = asyncio.run(_run_async(args))
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    command_spec = McpDevCommandSpec.for_name(args.command)
+    try:
+        payload = require_json_object_payload(to_jsonable(asyncio.run(_run_async(args))))
+    except McpDevCliUsageError as exc:
+        parser.error(str(exc))
+    if not write_stdout(command_spec.render_response(payload, args)):
+        return 0
     if args.allow_error_payloads:
         return 0
     return 1 if _command_failed(payload) else 0

@@ -3,86 +3,113 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from abc import ABC, abstractmethod
+from dataclasses import MISSING, dataclass, fields as dataclass_fields, is_dataclass, replace
 from functools import wraps
-from inspect import getsourcefile
+from inspect import Parameter, Signature, getsourcefile, signature as inspect_signature
 from pathlib import Path
-from typing import ClassVar, Self
+from typing import ClassVar, Generic, Self, TypeVar, get_type_hints
 
-from openhcs.agent.capabilities import get_capability_registry
+from metaclass_registry import AutoRegisterMeta
+from openhcs.agent.capabilities import (
+    AgentCapabilityDeclaration,
+    AgentCapabilitySpec,
+    AgentConfigPatchServiceInvocation,
+    AgentConnectionScalarServiceInvocation,
+    AgentConnectionServiceInvocation,
+    AgentConnectionRequestServiceInvocation,
+    AgentDataclassRequestServiceInvocation,
+    AgentFromFieldsServiceInvocation,
+    CapabilityKind,
+    AgentScalarInputContract,
+    AgentScalarServiceInvocation,
+    AgentViewerWindowRequestServiceInvocation,
+    CapabilityUiBridgeTimeoutProfile,
+    CapabilityViewerControlTimeoutProfile,
+    agent_capabilities,
+    agent_capability_declarations,
+    get_agent_capability_declaration,
+    get_capability_registry,
+)
 from openhcs.agent.dto.common import (
     AgentError,
     JsonValue,
     SCHEMA_VERSION,
 )
 import openhcs.agent.dto.execution as agent_execution_dto
+import openhcs.agent.dto.functions as agent_functions_dto
+import openhcs.agent.dto.knowledge as agent_knowledge_dto
 import openhcs.agent.dto.mcp as agent_mcp_dto
+import openhcs.agent.dto.plate as agent_plate_dto
 import openhcs.agent.dto.ui_bridge as agent_ui_bridge_dto
 import openhcs.agent.dto.viewer as agent_viewer_dto
+import openhcs.agent.services.stdio as agent_stdio
 import openhcs.agent.services.ui_bridge_transport as ui_bridge_transport
+import openhcs.core.viewer_streaming_service as core_viewer_streaming_service
 from openhcs.agent.dto.config import ConfigPatch
-from openhcs.agent.dto.execution import ExecutionConnectionSpec
+from openhcs.agent.dto.execution import (
+    ExecutionConnectionSpec,
+)
 from openhcs.agent.dto.mcp import McpServerHealthResult
+from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.agent.dto.ui_bridge import (
-    UiActionInvokeRequest,
-    UiBranchSwitchRequest,
-    UiBridgeConfirmationRequirement,
     UiBridgeConnectionRequest,
     UiBridgeConnectionSpec,
-    UiCodeDocumentApplyRequest,
-    UiCodeDocumentRequest,
-    UiCodeDocumentValidationRequest,
-    UiMutationRequestToken,
-    UiObjectStateFieldListOptions,
-    UiObjectStateScopeListRequest,
-    UiObjectStateScopeVisibility,
-    UiSelectedPlateWorkflowKind,
-    UiSelectedPlateWorkflowRequest,
-    UiSnapshotListRequest,
-    UiSnapshotRestoreRequest,
-    UiStateSurfaceRequest,
-    UiTimeTravelHeadRequest,
-    UiWindowCloseRequest,
-    UiWindowFocusRequest,
-    UiWindowNavigateRequest,
-    UiWindowOpenPolicy,
-    UiWindowSnapshotRequest,
     UiWidgetTreeRequest,
 )
 from openhcs.agent.dto.viewer import (
+    ViewerWindowControlRequest,
+    ViewerWindowNavigationRequest,
     ViewerWindowPayloadRequest,
-    ViewerWindowSnapshotRequest,
     ViewerWindowStateRequest,
     ViewerWindowValidationPolicy,
     ViewerWindowValidationRequest,
 )
 from openhcs.agent.serialization import to_jsonable
-from openhcs.agent.services.execution_session_service import (
-    PycodifiedPipelineSessionRequest,
-)
-from openhcs.core.selection import SelectedScopeIdsArgument
+from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
+import openhcs.core.plate_image_inventory as core_plate_image_inventory
 from openhcs.mcp.context import (
-    OPENHCS_AGENT_CONTEXT_SOURCE_TYPES,
     OpenHCSAgentContext,
     create_agent_context,
+    openhcs_agent_context_source_types,
 )
+from openhcs.mcp.control_timeout import (
+    McpControlTimeoutPolicy,
+    McpUiBridgeCommandTimeoutPolicy,
+    McpUiBridgeTimeoutPolicy,
+    McpViewerCommandTimeoutPolicy,
+    McpViewerTimeoutPolicy,
+)
+import openhcs.processing.custom_functions.manager as custom_function_manager
 import openhcs.runtime.viewer_protocol as runtime_viewer_protocol
 import openhcs.runtime.window_snapshot as runtime_window_snapshot
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureScope,
-)
 from openhcs.runtime.viewer_protocol import (
+    ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
+    ViewerStateControlOptions,
 )
-from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
+
+RequestT = TypeVar("RequestT")
 
 
-DEFAULT_MCP_WINDOW_SNAPSHOT_DIR = Path("/tmp/openhcs-mcp-window-snapshots")
-DEFAULT_MCP_CONTROL_TIMEOUT_MS = 750
-MAX_MCP_CONTROL_TIMEOUT_MS = 2_000
-MIN_MCP_CONTROL_TIMEOUT_MS = 1
+@dataclass(frozen=True, slots=True)
+class McpSourceSnapshot:
+    exists: bool
+    mtime_ns: int | None
+
+    @classmethod
+    def from_path(cls, source_path: Path) -> "McpSourceSnapshot":
+        try:
+            stat_result = source_path.stat()
+        except FileNotFoundError:
+            return cls(exists=False, mtime_ns=None)
+        return cls(
+            exists=True,
+            mtime_ns=stat_result.st_mtime_ns,
+        )
 
 
 def _source_path_for_type(source_type: type) -> Path:
@@ -103,26 +130,177 @@ MCP_SERVER_SOURCE_PATHS = _deduplicate_source_paths(
         Path(get_capability_registry.__code__.co_filename).resolve(),
         Path(to_jsonable.__code__.co_filename).resolve(),
         Path(agent_execution_dto.__file__).resolve(),
+        Path(agent_functions_dto.__file__).resolve(),
+        Path(agent_knowledge_dto.__file__).resolve(),
         Path(agent_mcp_dto.__file__).resolve(),
+        Path(agent_plate_dto.__file__).resolve(),
         Path(agent_ui_bridge_dto.__file__).resolve(),
         Path(agent_viewer_dto.__file__).resolve(),
+        Path(agent_stdio.__file__).resolve(),
+        Path(core_plate_image_inventory.__file__).resolve(),
+        Path(core_viewer_streaming_service.__file__).resolve(),
+        Path(custom_function_manager.__file__).resolve(),
         Path(ui_bridge_transport.__file__).resolve(),
         Path(runtime_viewer_protocol.__file__).resolve(),
         Path(runtime_window_snapshot.__file__).resolve(),
         *tuple(
             _source_path_for_type(source_type)
-            for source_type in OPENHCS_AGENT_CONTEXT_SOURCE_TYPES
+            for source_type in openhcs_agent_context_source_types()
         ),
+        *KnowledgeBaseService.default_source_paths(),
     )
 )
-MCP_SERVER_IMPORT_SOURCE_MTIMES_NS = {
-    source_path: source_path.stat().st_mtime_ns
+MCP_SERVER_IMPORT_SOURCE_SNAPSHOTS = {
+    source_path: McpSourceSnapshot.from_path(source_path)
     for source_path in MCP_SERVER_SOURCE_PATHS
 }
+MCP_SERVER_IMPORT_SOURCE_MTIMES_NS = {
+    source_path: snapshot.mtime_ns
+    for source_path, snapshot in MCP_SERVER_IMPORT_SOURCE_SNAPSHOTS.items()
+    if snapshot.mtime_ns is not None
+}
 MCP_SERVER_SOURCE_PATH = MCP_SERVER_SOURCE_PATHS[0]
-MCP_SERVER_IMPORT_MTIME_NS = MCP_SERVER_IMPORT_SOURCE_MTIMES_NS[MCP_SERVER_SOURCE_PATH]
+
+
+def _required_mcp_source_mtime_ns(source_path: Path) -> int:
+    snapshot = MCP_SERVER_IMPORT_SOURCE_SNAPSHOTS[source_path]
+    if snapshot.mtime_ns is None:
+        raise RuntimeError(f"MCP source path is missing at import: {source_path}")
+    return snapshot.mtime_ns
+
+
+MCP_SERVER_IMPORT_MTIME_NS = _required_mcp_source_mtime_ns(MCP_SERVER_SOURCE_PATH)
 MCP_SERVER_PROCESS_ID = os.getpid()
 MCP_SERVER_IMPORTED_AT_UNIX = time.time()
+MCP_SERVER_RESTART_HINT = (
+    "Restart the MCP client/server process so it imports the current OpenHCS "
+    "source. For the local stdio server, relaunch with restart_command."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class McpWidgetTreePayloadProjection:
+    """MCP-facing projection for noisy widget-tree action rows."""
+
+    compact_actions: bool = True
+
+    core_action_fields = frozenset(
+        (
+            "path",
+            "path_id",
+            "child_index",
+            "class_name",
+            "label",
+            "visible",
+            "enabled",
+            "geometry",
+            "global_geometry",
+            "action_kinds",
+            "clickable",
+        )
+    )
+    false_boolean_fields = frozenset(("visible", "enabled", "clickable"))
+    value_fields = frozenset(
+        (
+            "raw_value",
+            "resolved_value",
+            "raw_value_preview",
+            "resolved_value_preview",
+        )
+    )
+
+    def project(self, result: agent_ui_bridge_dto.UiWidgetTreeResult) -> dict:
+        payload = to_jsonable(result)
+        if not isinstance(payload, Mapping):
+            raise TypeError("widget tree serialization did not produce a mapping")
+        if not self.compact_actions:
+            return dict(payload)
+        return self.compact_payload(payload)
+
+    @classmethod
+    def compact_payload(cls, payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        actions = payload.get("actionable_widgets")
+        if not isinstance(actions, list):
+            return dict(payload)
+        compact = dict(payload)
+        compact["actionable_widgets"] = [
+            cls.compact_action(action) if isinstance(action, Mapping) else action
+            for action in actions
+        ]
+        return compact
+
+    @classmethod
+    def compact_action(cls, action: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        return {
+            field: value
+            for field, value in action.items()
+            if cls.action_field_carries_information(field, value, action)
+        }
+
+    @classmethod
+    def action_field_carries_information(
+        cls,
+        field: str,
+        value: JsonValue,
+        action: Mapping[str, JsonValue],
+    ) -> bool:
+        if field in cls.core_action_fields:
+            return True
+        if (
+            field in ("raw_value", "resolved_value")
+            and action.get(f"{field}_preview") is not None
+        ):
+            return False
+        if field in cls.value_fields:
+            return value is not None or action.get(f"{field}_is_none") is True
+        if value is None:
+            return False
+        if value == "" or value == [] or value == {}:
+            return False
+        if isinstance(value, bool):
+            if field in cls.false_boolean_fields:
+                return True
+            if field == "checked":
+                return action.get("checkable") is True
+            return value
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class McpUiCatalogPayloadProjection:
+    """MCP-facing projection that exposes nested identity ids as flat fields."""
+
+    item_key: str
+
+    def project(self, result) -> dict:
+        payload = to_jsonable(result)
+        if not isinstance(payload, Mapping):
+            raise TypeError("UI catalog serialization did not produce a mapping")
+        return self.compact_payload(payload)
+
+    def compact_payload(self, payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        items = payload.get(self.item_key)
+        if not isinstance(items, list):
+            return dict(payload)
+        compact = dict(payload)
+        compact[self.item_key] = [
+            self.compact_item(item) if isinstance(item, Mapping) else item
+            for item in items
+        ]
+        return compact
+
+    @staticmethod
+    def compact_item(item: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        compact = dict(item)
+        identity = compact.pop("identity", None)
+        if not isinstance(identity, Mapping):
+            if identity is not None:
+                compact["identity"] = identity
+            return compact
+        for key, value in identity.items():
+            if isinstance(key, str) and value is not None:
+                compact.setdefault(key, value)
+        return compact
 
 
 def _mcp_server_current_source_mtime_ns() -> int:
@@ -132,13 +310,1602 @@ def _mcp_server_current_source_mtime_ns() -> int:
 def _mcp_server_stale_source_paths() -> tuple[Path, ...]:
     return tuple(
         source_path
-        for source_path, import_mtime_ns in MCP_SERVER_IMPORT_SOURCE_MTIMES_NS.items()
-        if source_path.stat().st_mtime_ns != import_mtime_ns
+        for source_path, import_snapshot in MCP_SERVER_IMPORT_SOURCE_SNAPSHOTS.items()
+        if McpSourceSnapshot.from_path(source_path) != import_snapshot
     )
 
 
 def _mcp_server_source_changed_since_import() -> bool:
     return bool(_mcp_server_stale_source_paths())
+
+
+def _mcp_server_restart_command() -> tuple[str, ...]:
+    return (sys.executable, "-m", "openhcs.mcp")
+
+
+class McpNoArgumentToolBindingABC(ABC, metaclass=AutoRegisterMeta):
+    """Declaration-owned FastMCP binding for no-argument agent tools."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpNoArgumentToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+    allow_stale_server: ClassVar[bool] = False
+
+    @classmethod
+    def execute(cls, ctx: OpenHCSAgentContext) -> dict:
+        """Execute the bound capability against the current agent context."""
+        return get_agent_capability_declaration(cls.capability.name).execute_no_argument(
+            ctx
+        )
+
+    @classmethod
+    def bind_no_argument_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        execute,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+        allow_stale_server: bool = False,
+    ) -> None:
+        def tool() -> dict:
+            return to_jsonable(execute(ctx))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {"return": dict}
+        tool.__signature__ = Signature(return_annotation=dict)
+        openhcs_tool(allow_stale_server=allow_stale_server)(tool)
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_no_argument_tool(
+            capability=cls.capability,
+            execute=cls.execute,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+            allow_stale_server=cls.allow_stale_server,
+        )
+
+
+class GeneratedMcpNoArgumentToolBinding:
+    """Generated FastMCP binding for declaration-owned no-argument tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        McpNoArgumentToolBindingABC.bind_no_argument_tool(
+            capability=declaration.to_spec(),
+            execute=declaration.execute_no_argument,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+
+def generated_no_argument_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned no-argument MCP tools without custom bindings."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpNoArgumentToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and declaration.kind is CapabilityKind.TOOL
+        and declaration.no_argument_invocation is not None
+    )
+
+
+def _mcp_resource_function_name(resource_name: str) -> str:
+    return (
+        resource_name.replace("://", "_")
+        .replace("/", "_")
+        .replace("-", "_")
+        .replace(":", "_")
+    )
+
+
+class GeneratedMcpResourceBinding:
+    """Generated FastMCP binding for declaration-owned resources."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        server,
+    ) -> None:
+        def resource() -> dict:
+            if _mcp_server_source_changed_since_import():
+                return _mcp_server_stale_error(declaration.name)
+            return to_jsonable(declaration.execute_no_argument(ctx))
+
+        resource.__name__ = _mcp_resource_function_name(declaration.name)
+        resource.__qualname__ = resource.__name__
+        resource.__doc__ = declaration.description
+        resource.__annotations__ = {"return": dict}
+        resource.__signature__ = Signature(return_annotation=dict)
+        server.resource(declaration.name)(resource)
+
+
+def generated_resource_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned MCP resources."""
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.kind is CapabilityKind.RESOURCE
+        and declaration.no_argument_invocation is not None
+    )
+
+
+class HealthCheckMcpToolBinding(McpNoArgumentToolBindingABC):
+    capability = agent_capabilities.health_check
+    allow_stale_server = True
+
+    @classmethod
+    def execute(cls, ctx: OpenHCSAgentContext) -> dict:
+        del ctx
+        current_source_mtime_ns = _mcp_server_current_source_mtime_ns()
+        stale_source_paths = _mcp_server_stale_source_paths()
+        restart_required = bool(stale_source_paths)
+        restart_command: tuple[str, ...] = ()
+        restart_hint: str | None = None
+        if restart_required:
+            restart_command = _mcp_server_restart_command()
+            restart_hint = MCP_SERVER_RESTART_HINT
+        return McpServerHealthResult(
+            schema_version=SCHEMA_VERSION,
+            status="ok",
+            started_at_unix=MCP_SERVER_IMPORTED_AT_UNIX,
+            service="openhcs.mcp",
+            server_process_id=MCP_SERVER_PROCESS_ID,
+            server_source_path=str(MCP_SERVER_SOURCE_PATH),
+            server_import_mtime_ns=MCP_SERVER_IMPORT_MTIME_NS,
+            server_current_mtime_ns=current_source_mtime_ns,
+            server_source_changed_since_import=restart_required,
+            stale_source_paths=tuple(
+                str(source_path)
+                for source_path in stale_source_paths
+            ),
+            restart_required=restart_required,
+            restart_command=restart_command,
+            restart_hint=restart_hint,
+        )
+
+
+class McpUiConnectionToolBindingABC(ABC, metaclass=AutoRegisterMeta):
+    """Declaration-owned FastMCP binding for UI tools with only connection input."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpUiConnectionToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+
+    @classmethod
+    @abstractmethod
+    def execute(
+        cls,
+        ctx: OpenHCSAgentContext,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        """Execute the bound UI capability against the current agent context."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_connection_tool(
+            capability=cls.capability,
+            execute_connection=lambda context, connection_spec: cls.execute(
+                context,
+                connection_spec,
+            ),
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @classmethod
+    def bind_connection_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        execute_connection,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        def tool(connection: McpUiBridgeConnectionRequest | None = None) -> dict:
+            connection_spec = UiBridgeConnectionToolArgs.from_mapping(
+                connection
+            ).resolve(ctx)
+            return to_jsonable(execute_connection(ctx, connection_spec))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            "connection": McpUiBridgeConnectionRequest | None,
+            "return": dict,
+        }
+        tool.__signature__ = Signature(
+            parameters=[
+                Parameter(
+                    "connection",
+                    Parameter.POSITIONAL_OR_KEYWORD,
+                    default=None,
+                    annotation=McpUiBridgeConnectionRequest | None,
+                )
+            ],
+            return_annotation=dict,
+        )
+        openhcs_tool()(tool)
+
+class GeneratedMcpUiConnectionToolBinding:
+    """Generated FastMCP binding for declaration-owned UI connection tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        McpUiConnectionToolBindingABC.bind_connection_tool(
+            capability=declaration.to_spec(),
+            execute_connection=declaration.execute_connection,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+
+def generated_ui_connection_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned UI connection tools without request DTOs."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpUiConnectionToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.connection_invocation,
+            AgentConnectionServiceInvocation,
+        )
+    )
+
+
+class UiListCodeDocumentsMcpToolBinding(McpUiConnectionToolBindingABC):
+    capability = agent_capabilities.ui_list_code_documents
+
+    @classmethod
+    def execute(
+        cls,
+        ctx: OpenHCSAgentContext,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        return McpUiCatalogPayloadProjection("documents").project(
+            ctx.ui_bridge_service.list_documents(connection)
+        )
+
+
+class UiListStateSurfacesMcpToolBinding(McpUiConnectionToolBindingABC):
+    capability = agent_capabilities.ui_list_state_surfaces
+
+    @classmethod
+    def execute(
+        cls,
+        ctx: OpenHCSAgentContext,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        return McpUiCatalogPayloadProjection("surfaces").project(
+            ctx.ui_bridge_service.list_state_surfaces(connection)
+        )
+
+
+class UiListActionsMcpToolBinding(McpUiConnectionToolBindingABC):
+    capability = agent_capabilities.ui_list_actions
+
+    @classmethod
+    def execute(
+        cls,
+        ctx: OpenHCSAgentContext,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        return McpUiCatalogPayloadProjection("actions").project(
+            ctx.ui_bridge_service.list_actions(connection)
+        )
+
+
+class UiListWindowsMcpToolBinding(McpUiConnectionToolBindingABC):
+    capability = agent_capabilities.ui_list_windows
+
+    @classmethod
+    def execute(
+        cls,
+        ctx: OpenHCSAgentContext,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        return McpUiCatalogPayloadProjection("windows").project(
+            ctx.ui_bridge_service.list_windows(connection)
+        )
+
+
+class McpUiRequestToolBindingABC(
+    Generic[RequestT],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Declaration-owned FastMCP binding for UI request DTOs."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpUiRequestToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+    timeout_policy: ClassVar[type[McpControlTimeoutPolicy]] = McpUiBridgeTimeoutPolicy
+
+    @classmethod
+    def execute_request(
+        cls,
+        ctx: OpenHCSAgentContext,
+        request: RequestT,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        """Execute the bound UI operation with its typed request DTO."""
+        return get_agent_capability_declaration(
+            cls.capability.name
+        ).execute_connection_request(
+            ctx,
+            request,
+            connection,
+        )
+
+    @classmethod
+    def extra_parameters(cls) -> tuple[Parameter, ...]:
+        """Return MCP-only parameters that are not part of the UI bridge request."""
+        return ()
+
+    @classmethod
+    def project_result(
+        cls,
+        result,
+        extra_arguments: Mapping[str, JsonValue],
+    ):
+        """Project a UI bridge result through MCP-only response options."""
+        del extra_arguments
+        return result
+
+    @classmethod
+    def request_type(cls) -> type[RequestT]:
+        contract = cls.capability.input_contract
+        if not isinstance(contract, type):
+            raise TypeError(
+                f"{cls.__name__} requires a request DTO input contract, got {contract!r}."
+            )
+        return contract
+
+    @classmethod
+    def bind_request_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        request_type: type,
+        execute_request,
+        timeout_policy: type[McpControlTimeoutPolicy],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+        extra_parameters: tuple[Parameter, ...] = (),
+        project_result=None,
+    ) -> None:
+        from_fields = request_type.from_fields
+        from_fields_signature = inspect_signature(from_fields)
+        parameter_type_hints = get_type_hints(from_fields)
+        extra_parameter_names = tuple(parameter.name for parameter in extra_parameters)
+        extra_signature = Signature(parameters=extra_parameters)
+        connection_parameter = Parameter(
+            "connection",
+            Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=McpUiBridgeConnectionRequest | None,
+        )
+        request_parameters = tuple(
+            parameter.replace(annotation=parameter_type_hints[parameter.name])
+            for parameter in from_fields_signature.parameters.values()
+        )
+        tool_signature = Signature(
+            parameters=(
+                *request_parameters,
+                *extra_parameters,
+                connection_parameter,
+            ),
+            return_annotation=dict,
+        )
+
+        def tool(**kwargs: JsonValue) -> dict:
+            connection = kwargs.pop("connection", None)
+            extra_bound_arguments = extra_signature.bind_partial(
+                **{
+                    parameter_name: kwargs.pop(parameter_name)
+                    for parameter_name in extra_parameter_names
+                    if parameter_name in kwargs
+                }
+            )
+            extra_bound_arguments.apply_defaults()
+            bound_arguments = from_fields_signature.bind_partial(**kwargs)
+            bound_arguments.apply_defaults()
+            request = from_fields(**bound_arguments.arguments)
+            connection_spec = UiBridgeConnectionToolArgs.from_mapping(
+                connection
+            ).resolve(ctx, timeout_policy=timeout_policy)
+            result = execute_request(ctx, request, connection_spec)
+            result_projector = cls.project_result if project_result is None else project_result
+            return to_jsonable(
+                result_projector(result, extra_bound_arguments.arguments)
+            )
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            parameter.name: parameter.annotation
+            for parameter in tool_signature.parameters.values()
+        } | {"return": dict}
+        tool.__signature__ = tool_signature
+        openhcs_tool()(tool)
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_request_tool(
+            capability=cls.capability,
+            request_type=cls.request_type(),
+            execute_request=cls.execute_request,
+            timeout_policy=cls.timeout_policy,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+            extra_parameters=cls.extra_parameters(),
+            project_result=cls.project_result,
+        )
+
+
+class GeneratedMcpUiRequestToolBinding:
+    """Generated FastMCP binding for declaration-owned UI request tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        request_type = cls.request_type(declaration)
+        McpUiRequestToolBindingABC.bind_request_tool(
+            capability=declaration.to_spec(),
+            request_type=request_type,
+            execute_request=declaration.execute_connection_request,
+            timeout_policy=cls.timeout_policy(declaration),
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @staticmethod
+    def request_type(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> type:
+        contract = declaration.input_contract
+        if not isinstance(contract, type):
+            raise TypeError(
+                f"{declaration.__name__} requires a request DTO input contract, "
+                f"got {contract!r}."
+            )
+        return contract
+
+    @staticmethod
+    def timeout_policy(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> type[McpControlTimeoutPolicy]:
+        invocation = declaration.connection_request_invocation
+        if not isinstance(invocation, AgentConnectionRequestServiceInvocation):
+            raise TypeError(
+                f"{declaration.__name__} requires AgentConnectionRequestServiceInvocation."
+            )
+        if invocation.timeout_profile is CapabilityUiBridgeTimeoutProfile.COMMAND:
+            return McpUiBridgeCommandTimeoutPolicy
+        if invocation.timeout_profile is CapabilityUiBridgeTimeoutProfile.DEFAULT:
+            return McpUiBridgeTimeoutPolicy
+        raise TypeError(
+            f"Unsupported UI bridge timeout profile: {invocation.timeout_profile!r}"
+        )
+
+
+def generated_ui_request_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned UI request tools."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpUiRequestToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.connection_request_invocation,
+            AgentConnectionRequestServiceInvocation,
+        )
+    )
+
+
+class UiGetWidgetTreeMcpToolBinding(
+    McpUiRequestToolBindingABC[UiWidgetTreeRequest]
+):
+    capability = agent_capabilities.ui_get_widget_tree
+
+    @classmethod
+    def extra_parameters(cls) -> tuple[Parameter, ...]:
+        return (
+            Parameter(
+                "compact_actions",
+                Parameter.KEYWORD_ONLY,
+                default=True,
+                annotation=bool,
+            ),
+        )
+
+    @classmethod
+    def execute_request(
+        cls,
+        ctx: OpenHCSAgentContext,
+        request: UiWidgetTreeRequest,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        return ctx.ui_bridge_service.widget_tree(request, connection)
+
+    @classmethod
+    def project_result(
+        cls,
+        result,
+        extra_arguments: Mapping[str, JsonValue],
+    ) -> dict:
+        return McpWidgetTreePayloadProjection(
+            compact_actions=extra_arguments["compact_actions"],
+        ).project(result)
+
+
+class McpScalarInputToolBindingABC(ABC, metaclass=AutoRegisterMeta):
+    """Declaration-owned FastMCP binding for one-string scalar input tools."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpScalarInputToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+
+    @classmethod
+    @abstractmethod
+    def execute(cls, ctx: OpenHCSAgentContext, value: str) -> dict:
+        """Execute the bound scalar capability against the current agent context."""
+
+    @classmethod
+    def input_contract(cls) -> AgentScalarInputContract:
+        contract = cls.capability.input_contract
+        if type(contract) is not AgentScalarInputContract:
+            raise TypeError(
+                f"{cls.__name__} requires AgentScalarInputContract, got {contract!r}."
+            )
+        return contract
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_scalar_tool(
+            capability=cls.capability,
+            input_contract=cls.input_contract(),
+            execute_scalar=cls.execute,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @classmethod
+    def bind_scalar_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        input_contract: AgentScalarInputContract,
+        execute_scalar,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        parameter_name = input_contract.field_name
+        parameter_default = (
+            Signature.empty
+            if input_contract.default_value is None
+            else input_contract.default_value
+        )
+
+        def tool(**kwargs) -> dict:
+            return to_jsonable(execute_scalar(ctx, kwargs[parameter_name]))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {parameter_name: str, "return": dict}
+        tool.__signature__ = Signature(
+            parameters=[
+                Parameter(
+                    parameter_name,
+                    Parameter.KEYWORD_ONLY,
+                    default=parameter_default,
+                    annotation=str,
+                )
+            ],
+            return_annotation=dict,
+        )
+        openhcs_tool()(tool)
+
+
+class GeneratedMcpScalarInputToolBinding:
+    """Generated FastMCP binding for declaration-owned scalar tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        input_contract = cls.input_contract(declaration)
+        McpScalarInputToolBindingABC.bind_scalar_tool(
+            capability=declaration.to_spec(),
+            input_contract=input_contract,
+            execute_scalar=declaration.execute_scalar,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @staticmethod
+    def input_contract(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> AgentScalarInputContract:
+        contract = declaration.input_contract
+        if type(contract) is not AgentScalarInputContract:
+            raise TypeError(
+                f"{declaration.__name__} requires AgentScalarInputContract, "
+                f"got {contract!r}."
+            )
+        return contract
+
+
+def generated_scalar_input_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned one-scalar tools."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpScalarInputToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(declaration.scalar_invocation, AgentScalarServiceInvocation)
+    )
+
+
+class McpUiScalarInputToolBindingABC(ABC, metaclass=AutoRegisterMeta):
+    """Declaration-owned FastMCP binding for one-scalar UI tools."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpUiScalarInputToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+    timeout_policy: ClassVar[type[McpControlTimeoutPolicy]] = McpUiBridgeTimeoutPolicy
+
+    @classmethod
+    @abstractmethod
+    def execute(
+        cls,
+        ctx: OpenHCSAgentContext,
+        value: str,
+        connection: UiBridgeConnectionSpec,
+    ) -> dict:
+        """Execute the bound UI scalar capability."""
+
+    @classmethod
+    def input_contract(cls) -> AgentScalarInputContract:
+        contract = cls.capability.input_contract
+        if type(contract) is not AgentScalarInputContract:
+            raise TypeError(
+                f"{cls.__name__} requires AgentScalarInputContract, got {contract!r}."
+            )
+        return contract
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_ui_scalar_tool(
+            capability=cls.capability,
+            input_contract=cls.input_contract(),
+            execute_connection_scalar=cls.execute,
+            timeout_policy=cls.timeout_policy,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @classmethod
+    def bind_ui_scalar_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        input_contract: AgentScalarInputContract,
+        execute_connection_scalar,
+        timeout_policy: type[McpControlTimeoutPolicy],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        parameter_name = input_contract.field_name
+        parameter_default = (
+            Signature.empty
+            if input_contract.default_value is None
+            else input_contract.default_value
+        )
+        connection_parameter = Parameter(
+            "connection",
+            Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=McpUiBridgeConnectionRequest | None,
+        )
+
+        def tool(**kwargs) -> dict:
+            connection = UiBridgeConnectionToolArgs.from_mapping(
+                kwargs.pop("connection", None)
+            ).resolve(ctx, timeout_policy=timeout_policy)
+            return to_jsonable(
+                execute_connection_scalar(ctx, kwargs[parameter_name], connection)
+            )
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            parameter_name: str,
+            "connection": McpUiBridgeConnectionRequest | None,
+            "return": dict,
+        }
+        tool.__signature__ = Signature(
+            parameters=[
+                Parameter(
+                    parameter_name,
+                    Parameter.KEYWORD_ONLY,
+                    default=parameter_default,
+                    annotation=str,
+                ),
+                connection_parameter,
+            ],
+            return_annotation=dict,
+        )
+        openhcs_tool()(tool)
+
+
+class GeneratedMcpUiScalarInputToolBinding:
+    """Generated FastMCP binding for declaration-owned UI scalar tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        input_contract = cls.input_contract(declaration)
+        McpUiScalarInputToolBindingABC.bind_ui_scalar_tool(
+            capability=declaration.to_spec(),
+            input_contract=input_contract,
+            execute_connection_scalar=declaration.execute_connection_scalar,
+            timeout_policy=McpUiBridgeTimeoutPolicy,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @staticmethod
+    def input_contract(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> AgentScalarInputContract:
+        contract = declaration.input_contract
+        if type(contract) is not AgentScalarInputContract:
+            raise TypeError(
+                f"{declaration.__name__} requires AgentScalarInputContract, "
+                f"got {contract!r}."
+            )
+        return contract
+
+
+def generated_ui_scalar_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned UI scalar tools."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpUiScalarInputToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.connection_scalar_invocation,
+            AgentConnectionScalarServiceInvocation,
+        )
+    )
+
+
+class McpConfigPatchToolBindingABC(ABC, metaclass=AutoRegisterMeta):
+    """Declaration-owned FastMCP binding for ConfigPatch-backed tools."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpConfigPatchToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+
+    @classmethod
+    @abstractmethod
+    def execute_patch(cls, ctx: OpenHCSAgentContext, patch: ConfigPatch) -> dict:
+        """Execute the bound config operation with a typed patch."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_patch_tool(
+            capability=cls.capability,
+            execute_patch=cls.execute_patch,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @classmethod
+    def bind_patch_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        execute_patch,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        config_type_field, values_field = dataclass_fields(ConfigPatch)
+        config_type_name = config_type_field.name
+        values_name = values_field.name
+
+        def tool(**kwargs) -> dict:
+            patch = ConfigPatch(
+                config_type=kwargs[config_type_name],
+                values=_json_object_or_empty(kwargs.get(values_name)),
+            )
+            return to_jsonable(execute_patch(ctx, patch))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            config_type_name: str,
+            values_name: dict | None,
+            "return": dict,
+        }
+        tool.__signature__ = Signature(
+            parameters=[
+                Parameter(
+                    config_type_name,
+                    Parameter.KEYWORD_ONLY,
+                    annotation=str,
+                ),
+                Parameter(
+                    values_name,
+                    Parameter.KEYWORD_ONLY,
+                    default=None,
+                    annotation=dict | None,
+                ),
+            ],
+            return_annotation=dict,
+        )
+        openhcs_tool()(tool)
+
+
+class GeneratedMcpConfigPatchToolBinding:
+    """Generated FastMCP binding for declaration-owned ConfigPatch tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        McpConfigPatchToolBindingABC.bind_patch_tool(
+            capability=declaration.to_spec(),
+            execute_patch=declaration.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+
+def generated_config_patch_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned ConfigPatch tools."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpConfigPatchToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.request_invocation,
+            AgentConfigPatchServiceInvocation,
+        )
+    )
+
+
+class McpFromFieldsToolBindingABC(
+    Generic[RequestT],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Declaration-owned FastMCP binding for request DTOs with from_fields()."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpFromFieldsToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+
+    @classmethod
+    def execute_request(cls, ctx: OpenHCSAgentContext, request: RequestT) -> dict:
+        """Execute the bound capability with its typed request DTO."""
+        return get_agent_capability_declaration(cls.capability.name).execute_request(
+            ctx,
+            request,
+        )
+
+    @classmethod
+    def request_type(cls) -> type[RequestT]:
+        contract = cls.capability.input_contract
+        if not isinstance(contract, type):
+            raise TypeError(
+                f"{cls.__name__} requires a request DTO input contract, got {contract!r}."
+            )
+        return contract
+
+    @classmethod
+    def bind_request_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        request_type: type,
+        execute_request,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        from_fields = request_type.from_fields
+        from_fields_signature = inspect_signature(from_fields)
+        parameter_type_hints = get_type_hints(from_fields)
+
+        def tool(**kwargs: JsonValue) -> dict:
+            bound_arguments = from_fields_signature.bind_partial(**kwargs)
+            bound_arguments.apply_defaults()
+            request = from_fields(**bound_arguments.arguments)
+            return to_jsonable(execute_request(ctx, request))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            parameter_name: parameter_type
+            for parameter_name, parameter_type in parameter_type_hints.items()
+            if parameter_name != "return"
+        } | {"return": dict}
+        tool.__signature__ = Signature(
+            parameters=[
+                parameter.replace(
+                    annotation=parameter_type_hints[parameter.name],
+                )
+                for parameter in from_fields_signature.parameters.values()
+            ],
+            return_annotation=dict,
+        )
+        openhcs_tool()(tool)
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_request_tool(
+            capability=cls.capability,
+            request_type=cls.request_type(),
+            execute_request=cls.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+
+class GeneratedMcpFromFieldsToolBinding:
+    """Generated FastMCP binding for declaration-owned from_fields tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        request_type = cls.request_type(declaration)
+        McpFromFieldsToolBindingABC.bind_request_tool(
+            capability=declaration.to_spec(),
+            request_type=request_type,
+            execute_request=declaration.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @staticmethod
+    def request_type(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> type:
+        contract = declaration.input_contract
+        if not isinstance(contract, type):
+            raise TypeError(
+                f"{declaration.__name__} requires a request DTO input contract, "
+                f"got {contract!r}."
+            )
+        return contract
+
+
+def generated_from_fields_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned from_fields MCP tools without custom bindings."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpFromFieldsToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.request_invocation,
+            AgentFromFieldsServiceInvocation,
+        )
+    )
+
+
+class McpDataclassRequestToolBindingABC(
+    Generic[RequestT],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Declaration-owned FastMCP binding for direct scalar dataclass requests."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpDataclassRequestToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+
+    @classmethod
+    @abstractmethod
+    def execute_request(cls, ctx: OpenHCSAgentContext, request: RequestT) -> dict:
+        """Execute the bound capability with its typed request DTO."""
+
+    @classmethod
+    def request_type(cls) -> type[RequestT]:
+        contract = cls.capability.input_contract
+        if not isinstance(contract, type) or not is_dataclass(contract):
+            raise TypeError(
+                f"{cls.__name__} requires a dataclass request input contract, got {contract!r}."
+            )
+        return contract
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_request_tool(
+            capability=cls.capability,
+            request_type=cls.request_type(),
+            execute_request=cls.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @classmethod
+    def bind_request_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        request_type: type[RequestT],
+        execute_request,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        request_fields = dataclass_fields(request_type)
+        request_type_hints = get_type_hints(request_type)
+        parameters: list[Parameter] = []
+        for request_field in request_fields:
+            if request_field.default_factory is not MISSING:
+                raise TypeError(
+                    f"{cls.__name__} cannot expose default_factory field "
+                    f"{request_field.name!r} as a direct MCP parameter."
+                )
+            default = (
+                Signature.empty
+                if request_field.default is MISSING
+                else request_field.default
+            )
+            parameters.append(
+                Parameter(
+                    request_field.name,
+                    Parameter.KEYWORD_ONLY,
+                    default=default,
+                    annotation=request_type_hints[request_field.name],
+                )
+            )
+
+        request_signature = Signature(
+            parameters=parameters,
+            return_annotation=dict,
+        )
+
+        def tool(**kwargs: JsonValue) -> dict:
+            bound_arguments = request_signature.bind_partial(**kwargs)
+            bound_arguments.apply_defaults()
+            request = request_type(**bound_arguments.arguments)
+            return to_jsonable(execute_request(ctx, request))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            parameter.name: parameter.annotation for parameter in parameters
+        } | {"return": dict}
+        tool.__signature__ = request_signature
+        openhcs_tool()(tool)
+
+
+class GeneratedMcpDataclassRequestToolBinding:
+    """Generated FastMCP binding for declaration-owned dataclass request tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        request_type = cls.request_type(declaration)
+        McpDataclassRequestToolBindingABC.bind_request_tool(
+            capability=declaration.to_spec(),
+            request_type=request_type,
+            execute_request=declaration.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @staticmethod
+    def request_type(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> type:
+        contract = declaration.input_contract
+        if not isinstance(contract, type) or not is_dataclass(contract):
+            raise TypeError(
+                f"{declaration.__name__} requires a dataclass request input "
+                f"contract, got {contract!r}."
+            )
+        return contract
+
+
+def generated_dataclass_request_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned dataclass request tools."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpDataclassRequestToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.request_invocation,
+            AgentDataclassRequestServiceInvocation,
+        )
+    )
+
+
+class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
+    """Generated FastMCP binding for viewer request DTOs."""
+
+    __registry__: ClassVar[
+        dict[AgentCapabilitySpec, type["McpViewerRequestToolBindingABC"]]
+    ] = {}
+    __registry_key__ = "capability"
+    __skip_if_no_key__ = True
+
+    capability: ClassVar[AgentCapabilitySpec]
+
+    @classmethod
+    @abstractmethod
+    def request_signature(cls) -> Signature:
+        """Return the public MCP signature for this viewer request."""
+
+    @classmethod
+    @abstractmethod
+    def request_from_arguments(
+        cls,
+        arguments: Mapping[str, JsonValue],
+    ) -> ViewerWindowControlRequest:
+        """Project MCP arguments into one typed viewer request."""
+
+    @classmethod
+    @abstractmethod
+    def execute_request(
+        cls,
+        ctx: OpenHCSAgentContext,
+        request: ViewerWindowControlRequest,
+    ) -> dict:
+        """Execute the viewer service operation."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        cls.bind_viewer_request_tool(
+            capability=cls.capability,
+            request_signature=cls.request_signature(),
+            request_from_arguments=cls.request_from_arguments,
+            execute_request=cls.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @classmethod
+    def bind_viewer_request_tool(
+        cls,
+        *,
+        capability: AgentCapabilitySpec,
+        request_signature: Signature,
+        request_from_arguments,
+        execute_request,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        def tool(**kwargs: JsonValue) -> dict:
+            bound_arguments = request_signature.bind_partial(**kwargs)
+            bound_arguments.apply_defaults()
+            request = request_from_arguments(bound_arguments.arguments)
+            return to_jsonable(execute_request(ctx, request))
+
+        tool.__name__ = capability.name
+        tool.__qualname__ = capability.name
+        tool.__doc__ = capability.description
+        tool.__annotations__ = {
+            parameter.name: parameter.annotation
+            for parameter in request_signature.parameters.values()
+        } | {"return": dict}
+        tool.__signature__ = request_signature
+        openhcs_tool()(tool)
+
+    @classmethod
+    def connection_parameters(cls) -> tuple[Parameter, ...]:
+        return (
+            Parameter(
+                "port",
+                Parameter.KEYWORD_ONLY,
+                annotation=int,
+            ),
+            Parameter(
+                "host",
+                Parameter.KEYWORD_ONLY,
+                default="localhost",
+                annotation=str,
+            ),
+            Parameter(
+                "transport_mode",
+                Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=str | None,
+            ),
+            Parameter(
+                "timeout_ms",
+                Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=int | None,
+            ),
+        )
+
+    @classmethod
+    def control_args(
+        cls,
+        arguments: Mapping[str, JsonValue],
+        timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
+    ) -> "McpViewerConnectionToolArgs":
+        return McpViewerConnectionToolArgs.from_fields(
+            port=arguments["port"],
+            host=arguments["host"],
+            transport_mode=arguments["transport_mode"],
+            timeout_ms=arguments["timeout_ms"],
+            timeout_policy=timeout_policy,
+        )
+
+    @staticmethod
+    def option_parameters(
+        factory,
+        *,
+        default_overrides: Mapping[str, JsonValue] | None = None,
+    ) -> tuple[Parameter, ...]:
+        factory_signature = inspect_signature(factory)
+        factory_type_hints = get_type_hints(factory)
+        resolved_default_overrides = default_overrides or {}
+        return tuple(
+            parameter.replace(
+                default=(
+                    resolved_default_overrides[parameter.name]
+                    if parameter.name in resolved_default_overrides
+                    else parameter.default
+                ),
+                annotation=factory_type_hints[parameter.name],
+            )
+            for parameter in factory_signature.parameters.values()
+        )
+
+    @staticmethod
+    def option_arguments(
+        arguments: Mapping[str, JsonValue],
+        factory,
+    ) -> dict[str, JsonValue]:
+        factory_signature = inspect_signature(factory)
+        return {
+            parameter_name: arguments[parameter_name]
+            for parameter_name in factory_signature.parameters
+        }
+
+    @classmethod
+    def request_option_parameters(
+        cls,
+        request_type: type[ViewerWindowControlRequest],
+    ) -> tuple[Parameter, ...]:
+        """Return public non-connection parameters from a viewer request DTO."""
+        factory = request_type.from_fields
+        factory_signature = inspect_signature(factory)
+        factory_type_hints = get_type_hints(factory)
+        control_fields = cls.viewer_control_field_names()
+        return tuple(
+            parameter.replace(annotation=factory_type_hints[parameter.name])
+            for parameter in factory_signature.parameters.values()
+            if parameter.name not in control_fields
+        )
+
+    @staticmethod
+    def request_option_arguments(
+        arguments: Mapping[str, JsonValue],
+        request_type: type[ViewerWindowControlRequest],
+    ) -> dict[str, JsonValue]:
+        factory_signature = inspect_signature(request_type.from_fields)
+        control_fields = McpViewerRequestToolBindingABC.viewer_control_field_names()
+        return {
+            parameter_name: arguments[parameter_name]
+            for parameter_name, parameter in factory_signature.parameters.items()
+            if parameter_name not in control_fields
+        }
+
+    @classmethod
+    def request_from_fields_arguments(
+        cls,
+        request_type: type[ViewerWindowControlRequest],
+        arguments: Mapping[str, JsonValue],
+        timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
+    ) -> ViewerWindowControlRequest:
+        control_args = cls.control_args(arguments, timeout_policy)
+        return request_type.from_fields(
+            connection=control_args.connection,
+            timeout_ms=control_args.timeout_ms,
+            **cls.request_option_arguments(arguments, request_type),
+        )
+
+    @staticmethod
+    def viewer_control_field_names() -> frozenset[str]:
+        return ViewerWindowControlRequest.factory_injected_field_names()
+
+
+class GeneratedMcpViewerRequestToolBinding:
+    """Generated FastMCP binding for declaration-owned viewer request tools."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        request_type = cls.request_type(declaration)
+        timeout_policy = cls.timeout_policy(declaration)
+        request_signature = Signature(
+            parameters=(
+                *McpViewerRequestToolBindingABC.connection_parameters(),
+                *McpViewerRequestToolBindingABC.request_option_parameters(request_type),
+            ),
+            return_annotation=dict,
+        )
+
+        def request_from_arguments(
+            arguments: Mapping[str, JsonValue],
+        ) -> ViewerWindowControlRequest:
+            return McpViewerRequestToolBindingABC.request_from_fields_arguments(
+                request_type,
+                arguments,
+                timeout_policy,
+            )
+
+        McpViewerRequestToolBindingABC.bind_viewer_request_tool(
+            capability=declaration.to_spec(),
+            request_signature=request_signature,
+            request_from_arguments=request_from_arguments,
+            execute_request=declaration.execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+    @staticmethod
+    def request_type(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> type[ViewerWindowControlRequest]:
+        contract = declaration.input_contract
+        if not isinstance(contract, type) or not issubclass(
+            contract,
+            ViewerWindowControlRequest,
+        ):
+            raise TypeError(
+                f"{declaration.__name__} requires a ViewerWindowControlRequest "
+                f"input contract, got {contract!r}."
+            )
+        return contract
+
+    @staticmethod
+    def timeout_policy(
+        declaration: type[AgentCapabilityDeclaration],
+    ) -> type[McpControlTimeoutPolicy]:
+        invocation = declaration.request_invocation
+        if not isinstance(invocation, AgentViewerWindowRequestServiceInvocation):
+            raise TypeError(
+                f"{declaration.__name__} requires AgentViewerWindowRequestServiceInvocation."
+            )
+        if (
+            invocation.timeout_profile
+            is CapabilityViewerControlTimeoutProfile.COMMAND
+        ):
+            return McpViewerCommandTimeoutPolicy
+        if (
+            invocation.timeout_profile
+            is CapabilityViewerControlTimeoutProfile.DEFAULT
+        ):
+            return McpViewerTimeoutPolicy
+        raise TypeError(
+            f"Unsupported viewer timeout profile: {invocation.timeout_profile!r}"
+        )
+
+
+def generated_viewer_request_capability_declarations() -> tuple[
+    type[AgentCapabilityDeclaration],
+    ...
+]:
+    """Return declaration-owned viewer request tools."""
+    explicit_capability_names = frozenset(
+        capability.name
+        for capability in McpViewerRequestToolBindingABC.__registry__
+    )
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if declaration.name not in explicit_capability_names
+        and isinstance(
+            declaration.request_invocation,
+            AgentViewerWindowRequestServiceInvocation,
+        )
+    )
+
+
+class ViewerProbeMcpToolBinding(McpViewerRequestToolBindingABC):
+    capability = agent_capabilities.probe_viewer_window
+
+    @classmethod
+    def request_signature(cls) -> Signature:
+        return Signature(
+            parameters=cls.connection_parameters(),
+            return_annotation=dict,
+        )
+
+    @classmethod
+    def request_from_arguments(
+        cls,
+        arguments: Mapping[str, JsonValue],
+    ) -> ViewerWindowStateRequest:
+        return cls.control_args(arguments).state_request()
+
+    @classmethod
+    def execute_request(
+        cls,
+        ctx: OpenHCSAgentContext,
+        request: ViewerWindowControlRequest,
+    ) -> dict:
+        return ctx.viewer_window_service.probe_window(request)
 
 
 def build_server(context: OpenHCSAgentContext | None = None):
@@ -173,893 +1940,83 @@ def build_server(context: OpenHCSAgentContext | None = None):
 
         return decorator
 
-    @server.resource("openhcs://capabilities")
-    def capabilities_resource() -> dict:
-        """Return the canonical OpenHCS agent capability registry."""
-        return to_jsonable(get_capability_registry())
-
-    @server.resource("openhcs://architecture/topics")
-    def architecture_topics_resource() -> dict:
-        """List source-backed architecture topics available to agents."""
-        return to_jsonable(ctx.architecture_service.list_topics())
-
-    @openhcs_tool(allow_stale_server=True)
-    def openhcs_health_check() -> dict:
-        """Report MCP health, process identity, and source freshness."""
-        current_source_mtime_ns = _mcp_server_current_source_mtime_ns()
-        stale_source_paths = _mcp_server_stale_source_paths()
-        return to_jsonable(
-            McpServerHealthResult(
-                schema_version=SCHEMA_VERSION,
-                status="ok",
-                started_at_unix=MCP_SERVER_IMPORTED_AT_UNIX,
-                service="openhcs.mcp",
-                server_process_id=MCP_SERVER_PROCESS_ID,
-                server_source_path=str(MCP_SERVER_SOURCE_PATH),
-                server_import_mtime_ns=MCP_SERVER_IMPORT_MTIME_NS,
-                server_current_mtime_ns=current_source_mtime_ns,
-                server_source_changed_since_import=bool(stale_source_paths),
-                stale_source_paths=tuple(
-                    str(source_path)
-                    for source_path in stale_source_paths
-                ),
-            )
+    for tool_binding_type in McpNoArgumentToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_no_argument_capability_declarations():
+        GeneratedMcpNoArgumentToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-
-    @openhcs_tool()
-    def openhcs_list_capabilities() -> dict:
-        """List MCP resources/tools and their OpenHCS agent API contracts."""
-        return to_jsonable(get_capability_registry())
-
-    @openhcs_tool()
-    def openhcs_search_functions(
-        query: str | None = None,
-        library: str | None = None,
-        limit: int = 50,
-        compact_signatures: bool = True,
-    ) -> dict:
-        """Search registered OpenHCS processing functions by name, library, tag, or docs."""
-        return to_jsonable(
-            ctx.function_catalog.search(
-                query=query,
-                library=library,
-                limit=limit,
-                compact_signatures=compact_signatures,
-            )
+    for tool_binding_type in McpUiConnectionToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_ui_connection_capability_declarations():
+        GeneratedMcpUiConnectionToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-
-    @openhcs_tool()
-    def openhcs_describe_function(function_id: str) -> dict:
-        """Return full signature, parameter, and documentation details for one function."""
-        return to_jsonable(ctx.function_catalog.get(function_id))
-
-    @openhcs_tool()
-    def openhcs_get_authoring_context(kind: str = "pipeline") -> dict:
-        """Return bounded guidance for authoring OpenHCS pipelines or functions."""
-        return to_jsonable(ctx.authoring_context_service.get_authoring_context(kind))
-
-    @openhcs_tool()
-    def openhcs_list_architecture_topics() -> dict:
-        """List architecture topics that explain OpenHCS internals through stable DTOs."""
-        return to_jsonable(ctx.architecture_service.list_topics())
-
-    @openhcs_tool()
-    def openhcs_explain_architecture(
-        topic_id: str = "pipeline_model",
-    ) -> dict:
-        """Explain one OpenHCS architecture topic with source-backed internal symbols."""
-        return to_jsonable(ctx.architecture_service.explain_topic(topic_id))
-
-    @openhcs_tool()
-    def openhcs_describe_internal_symbol(symbol_id: str) -> dict:
-        """Describe a projected internal OpenHCS symbol without exposing live objects."""
-        return to_jsonable(ctx.architecture_service.describe_internal_symbol(symbol_id))
-
-    @openhcs_tool()
-    def openhcs_describe_config_schema(config_type: str) -> dict:
-        """Reflect GlobalPipelineConfig or PipelineConfig fields for safe config patches."""
-        return to_jsonable(ctx.config_service.describe_schema(config_type))
-
-    @openhcs_tool()
-    def openhcs_create_config(
-        config_type: str,
-        values: dict | None = None,
-    ) -> dict:
-        """Create an in-memory OpenHCS config draft from a config patch."""
-        patch = ConfigPatch(
-            config_type=config_type, values=_json_object_or_empty(values)
+    for tool_binding_type in McpUiRequestToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_ui_request_capability_declarations():
+        GeneratedMcpUiRequestToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-        return to_jsonable(ctx.config_service.create(config_type, patch))
-
-    @openhcs_tool()
-    def openhcs_validate_config_patch(
-        config_type: str,
-        values: dict | None = None,
-    ) -> dict:
-        """Validate that values can instantiate the requested OpenHCS config type."""
-        patch = ConfigPatch(
-            config_type=config_type, values=_json_object_or_empty(values)
+    for tool_binding_type in McpScalarInputToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_scalar_input_capability_declarations():
+        GeneratedMcpScalarInputToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-        return to_jsonable(ctx.config_service.validate_patch(config_type, patch))
-
-    @openhcs_tool()
-    def openhcs_render_config_source(
-        config_id: str,
-        clean: bool = True,
-    ) -> dict:
-        """Render an in-memory config draft as reviewable Python source."""
-        return to_jsonable(ctx.config_service.render_source(config_id, clean=clean))
-
-    @openhcs_tool()
-    def openhcs_create_pipeline() -> dict:
-        """Create an empty in-memory OpenHCS pipeline draft."""
-        return to_jsonable(ctx.pipeline_service.create_pipeline())
-
-    @openhcs_tool()
-    def openhcs_add_function_step(
-        pipeline_id: str,
-        function_id: str,
-        name: str | None = None,
-        kwargs: dict | None = None,
-        step_id: str | None = None,
-        description: str | None = None,
-        enabled: bool = True,
-        debug_pause: bool = False,
-        index: int | None = None,
-    ) -> dict:
-        """Add a registry-backed FunctionStep to an in-memory pipeline draft."""
-        step_spec = ctx.pipeline_service.make_step_spec(
-            function_id=function_id,
-            name=name,
-            kwargs=kwargs,
-            step_id=step_id,
-            description=description,
-            enabled=enabled,
-            debug_pause=debug_pause,
+    for tool_binding_type in McpUiScalarInputToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_ui_scalar_capability_declarations():
+        GeneratedMcpUiScalarInputToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-        return to_jsonable(
-            ctx.pipeline_service.add_step(
-                pipeline_id,
-                step_spec,
-                index=index,
-            )
+    for tool_binding_type in McpConfigPatchToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_config_patch_capability_declarations():
+        GeneratedMcpConfigPatchToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-
-    @openhcs_tool()
-    def openhcs_validate_pipeline(pipeline_id: str) -> dict:
-        """Validate an in-memory pipeline draft against OpenHCS FunctionStep semantics."""
-        return to_jsonable(ctx.pipeline_service.validate(pipeline_id))
-
-    @openhcs_tool()
-    def openhcs_render_pipeline_source(
-        pipeline_id: str,
-        clean: bool = True,
-    ) -> dict:
-        """Render an in-memory pipeline draft as reviewable Python source."""
-        return to_jsonable(ctx.pipeline_service.render_source(pipeline_id, clean=clean))
-
-    @openhcs_tool()
-    def openhcs_create_orchestrator_session(
-        plate_path: str,
-        pipeline_id: str,
-        execution_plate_path: str | None = None,
-        selected_pipeline_path: str | None = None,
-        global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
-        host: str = "localhost",
-        port: int | None = None,
-        transport_mode: str | None = None,
-        persistent: bool = True,
-    ) -> dict:
-        """Create an opaque OpenHCS execution session for a plate and pipeline draft."""
-        return to_jsonable(
-            ctx.execution_service.create_session(
-                plate_path=plate_path,
-                pipeline_id=pipeline_id,
-                execution_plate_path=execution_plate_path,
-                selected_pipeline_path=selected_pipeline_path,
-                global_config_id=global_config_id,
-                pipeline_config_id=pipeline_config_id,
-                connection=ExecutionConnectionSpec(
-                    host=host,
-                    port=port,
-                    transport_mode=transport_mode,
-                    persistent=persistent,
-                ),
-            )
+    for tool_binding_type in McpFromFieldsToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_from_fields_capability_declarations():
+        GeneratedMcpFromFieldsToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-
-    @openhcs_tool()
-    def openhcs_create_orchestrator_session_from_pipeline_source(
-        plate_path: str,
-        pipeline_source: str,
-        global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
-        host: str = "localhost",
-        port: int | None = None,
-        transport_mode: str | None = None,
-        persistent: bool = True,
-    ) -> dict:
-        """Create an execution session from pycodified OpenHCS pipeline source."""
-        return to_jsonable(
-            ctx.execution_service.create_session_from_pipeline_source(
-                PycodifiedPipelineSessionRequest(
-                    identity=ZMQExecutionIdentity(
-                        plate_id=plate_path,
-                    ),
-                    pipeline_source=pipeline_source,
-                    global_config_id=global_config_id,
-                    pipeline_config_id=pipeline_config_id,
-                    connection=ExecutionConnectionSpec(
-                        host=host,
-                        port=port,
-                        transport_mode=transport_mode,
-                        persistent=persistent,
-                    ),
-                )
-            )
+    for tool_binding_type in McpDataclassRequestToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_dataclass_request_capability_declarations():
+        GeneratedMcpDataclassRequestToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-
-    @openhcs_tool()
-    def openhcs_get_orchestrator_session(session_id: str) -> dict:
-        """Return one opaque execution session's plate, pipeline, and connection identity."""
-        return to_jsonable(ctx.execution_service.get_session(session_id))
-
-    @openhcs_tool()
-    def openhcs_inspect_pipeline_source_artifact_plan(
-        plate_path: str,
-        pipeline_source: str,
-        axis_filter: list[str] | None = None,
-        well_filter: list[str] | None = None,
-        global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
-    ) -> dict:
-        """Compile pycodified pipeline source and return a bounded artifact plan inspection."""
-        selected_axis_filter = axis_filter if axis_filter is not None else well_filter
-        if selected_axis_filter is None:
-            artifact_axis_filter = ()
-        else:
-            artifact_axis_filter = tuple(selected_axis_filter)
-        return to_jsonable(
-            ctx.execution_service.inspect_pipeline_source_artifact_plan(
-                PycodifiedPipelineSessionRequest(
-                    identity=ZMQExecutionIdentity(
-                        plate_id=plate_path,
-                    ),
-                    pipeline_source=pipeline_source,
-                    global_config_id=global_config_id,
-                    pipeline_config_id=pipeline_config_id,
-                    connection=ExecutionConnectionSpec(),
-                ),
-                axis_filter=artifact_axis_filter,
-            )
+    for tool_binding_type in McpViewerRequestToolBindingABC.__registry__.values():
+        tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in generated_viewer_request_capability_declarations():
+        GeneratedMcpViewerRequestToolBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            openhcs_tool,
         )
-
-    @openhcs_tool()
-    def openhcs_submit_compile(
-        session_id: str,
-        wait: bool = False,
-    ) -> dict:
-        """Submit a compile-only ZMQ job for an OpenHCS execution session."""
-        return to_jsonable(ctx.execution_service.submit_compile(session_id, wait=wait))
-
-    @openhcs_tool()
-    def openhcs_submit_pipeline_execution(
-        session_id: str,
-        compile_artifact_id: str | None = None,
-        wait: bool = False,
-    ) -> dict:
-        """Submit a ZMQ pipeline execution job for an OpenHCS execution session."""
-        return to_jsonable(
-            ctx.execution_service.submit_execution(
-                session_id,
-                compile_artifact_id=compile_artifact_id,
-                wait=wait,
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_get_execution_status(job_id: str) -> dict:
-        """Poll status for one submitted OpenHCS compile or execution job."""
-        return to_jsonable(ctx.execution_service.get_job_status(job_id))
-
-    @openhcs_tool()
-    def openhcs_scan_runtime_servers(
-        ports: list[int] | None = None,
-        host: str = "localhost",
-        transport_mode: str | None = None,
-        timeout_ms: int = 200,
-    ) -> dict:
-        """Scan candidate ports for running OpenHCS ZMQ execution servers."""
-        return to_jsonable(
-            ctx.runtime_server_service.scan(
-                ports=tuple(ports) if ports is not None else None,
-                host=host,
-                transport_mode=transport_mode,
-                timeout_ms=timeout_ms,
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_get_runtime_server_info(
-        host: str = "localhost",
-        port: int | None = None,
-        transport_mode: str | None = None,
-        persistent: bool = True,
-    ) -> dict:
-        """Return a read-only snapshot from a running OpenHCS ZMQ execution server."""
-        return to_jsonable(
-            ctx.runtime_server_service.server_info(
-                host=host,
-                port=port,
-                transport_mode=transport_mode,
-                persistent=persistent,
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_get_runtime_server_execution_status(
-        execution_id: str | None = None,
-        host: str = "localhost",
-        port: int | None = None,
-        transport_mode: str | None = None,
-        persistent: bool = True,
-    ) -> dict:
-        """Return bounded execution status from a running OpenHCS runtime server."""
-        return to_jsonable(
-            ctx.runtime_server_service.execution_status(
-                execution_id=execution_id,
-                host=host,
-                port=port,
-                transport_mode=transport_mode,
-                persistent=persistent,
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_viewer_snapshot_window(
-        port: int,
-        output_dir_path: str | None = None,
-        host: str = "localhost",
-        transport_mode: str | None = None,
-        capture_scope: str = "widget",
-        timeout_ms: int | None = None,
-    ) -> dict:
-        """Capture a running viewer window, such as Napari, to a PNG resource path."""
-        resolved_output_dir = _writable_output_dir(ctx, output_dir_path)
-        viewer_args = McpViewerConnectionToolArgs(
-            port,
-            host,
-            transport_mode,
-            timeout_ms,
-        )
-        return to_jsonable(
-            ctx.viewer_window_service.snapshot_window(
-                viewer_args.snapshot_request(
-                    output_dir_path=str(resolved_output_dir),
-                    capture_scope=WindowSnapshotCaptureScope(capture_scope),
-                )
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_get_viewer_window_state(
-        port: int,
-        host: str = "localhost",
-        transport_mode: str | None = None,
-        timeout_ms: int | None = None,
-    ) -> dict:
-        """Return structured layer, component, and axis state from a running viewer."""
-        viewer_args = McpViewerConnectionToolArgs(
-            port,
-            host,
-            transport_mode,
-            timeout_ms,
-        )
-        return to_jsonable(
-            ctx.viewer_window_service.window_state(viewer_args.state_request())
-        )
-
-    @openhcs_tool()
-    def openhcs_get_viewer_window_payloads(
-        port: int,
-        host: str = "localhost",
-        transport_mode: str | None = None,
-        timeout_ms: int | None = None,
-        route_key: str | None = None,
-        include_array_values: bool | None = None,
-        max_array_elements: int | None = None,
-        include_shape_payloads: bool | None = None,
-        max_shape_payloads: int | None = None,
-    ) -> dict:
-        """Return per-layer, per-axis viewer payload records with optional arrays and shapes."""
-        viewer_args = McpViewerConnectionToolArgs(
-            port,
-            host,
-            transport_mode,
-            timeout_ms,
-        )
-        return to_jsonable(
-            ctx.viewer_window_service.window_payloads(
-                viewer_args.payload_request(
-                    ViewerPayloadControlOptions.from_overrides(
-                        route_key=route_key,
-                        include_array_values=include_array_values,
-                        max_array_elements=max_array_elements,
-                        include_shape_payloads=include_shape_payloads,
-                        max_shape_payloads=max_shape_payloads,
-                    )
-                )
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_probe_viewer_window(
-        port: int,
-        host: str = "localhost",
-        transport_mode: str | None = None,
-        timeout_ms: int | None = None,
-    ) -> dict:
-        """Quickly report whether a viewer control endpoint is reachable."""
-        viewer_args = McpViewerConnectionToolArgs(
-            port,
-            host,
-            transport_mode,
-            timeout_ms,
-        )
-        return to_jsonable(
-            ctx.viewer_window_service.probe_window(viewer_args.state_request())
-        )
-
-    @openhcs_tool()
-    def openhcs_validate_viewer_window_state(
-        port: int,
-        host: str = "localhost",
-        transport_mode: str | None = None,
-        timeout_ms: int | None = None,
-        expected_layer_count: int | None = None,
-        required_axis_labels: tuple[str, ...] = (),
-        require_nonzero_payloads: bool = True,
-    ) -> dict:
-        """Summarize viewer layers, expected axes, and nonzero payloads."""
-        viewer_args = McpViewerConnectionToolArgs(
-            port,
-            host,
-            transport_mode,
-            timeout_ms,
-        )
-        return to_jsonable(
-            ctx.viewer_window_service.validation_summary(
-                viewer_args.validation_request(
-                    ViewerWindowValidationPolicy(
-                        expected_layer_count=expected_layer_count,
-                        required_axis_labels=required_axis_labels,
-                        require_nonzero_payloads=require_nonzero_payloads,
-                    )
-                )
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_bridges() -> dict:
-        """List live local OpenHCS UI bridge descriptors."""
-        return to_jsonable(ctx.ui_bridge_service.list_bridges())
-
-    @openhcs_tool()
-    def openhcs_ui_bridge_status(
-        connection: dict | None = None,
-    ) -> dict:
-        """Report whether a local running OpenHCS UI bridge is reachable."""
-        return to_jsonable(
-            ctx.ui_bridge_service.status(
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx)
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_code_documents(
-        connection: dict | None = None,
-    ) -> dict:
-        """List code documents exposed by a running OpenHCS UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.list_documents(
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx)
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_state_surfaces(
-        connection: dict | None = None,
-    ) -> dict:
-        """List pollable state surfaces exposed by a running OpenHCS UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.list_state_surfaces(
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx)
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_actions(
-        connection: dict | None = None,
-    ) -> dict:
-        """List invokable UI actions exposed by a running OpenHCS UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.list_actions(
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx)
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_invoke_action(
-        widget_id: str,
-        action_id: str,
-        target_scope_ids: list[str] | None = None,
-        observed_selection_revision_token: str | None = None,
-        request_token: str | None = None,
-        require_confirmation: bool = True,
-        connection: dict | None = None,
-    ) -> dict:
-        """Dispatch one UI action using the selection token from openhcs_ui_list_actions."""
-        selected_scope_ids = SelectedScopeIdsArgument.from_optional_iterable(
-            target_scope_ids
-        )
-        return to_jsonable(
-            ctx.ui_bridge_service.invoke_action(
-                UiActionInvokeRequest(
-                    widget_id=widget_id,
-                    action_id=action_id,
-                    selected_scope_ids=selected_scope_ids.selected_scope_ids,
-                    observed_selection_revision_token=observed_selection_revision_token,
-                    request_token=UiMutationRequestToken(request_token),
-                    confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
-                        require_confirmation
-                    ),
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_selected_plate_workflow(
-        workflow: UiSelectedPlateWorkflowKind,
-        target_scope_ids: list[str] | None = None,
-        observed_selection_revision_token: str | None = None,
-        request_token: str | None = None,
-        require_confirmation: bool = True,
-        connection: dict | None = None,
-    ) -> dict:
-        """Dispatch init, compile, or run for the current PlateManager selection."""
-        selected_scope_ids = SelectedScopeIdsArgument.from_optional_iterable(
-            target_scope_ids
-        )
-        return to_jsonable(
-            ctx.ui_bridge_service.selected_plate_workflow(
-                UiSelectedPlateWorkflowRequest(
-                    workflow=workflow,
-                    selected_scope_ids=selected_scope_ids.selected_scope_ids,
-                    observed_selection_revision_token=observed_selection_revision_token,
-                    request_token=UiMutationRequestToken(request_token),
-                    confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
-                        require_confirmation
-                    ),
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_windows(
-        connection: dict | None = None,
-    ) -> dict:
-        """List visible and focusable UI windows exposed by a running OpenHCS UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.list_windows(
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx)
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_focus_window(
-        window_id: str,
-        create_if_missing: bool = True,
-        connection: dict | None = None,
-    ) -> dict:
-        """Focus one UI window by stable window id or open scope id."""
-        return to_jsonable(
-            ctx.ui_bridge_service.focus_window(
-                UiWindowFocusRequest(
-                    window_id=window_id,
-                    open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_navigate_window(
-        window_id: str,
-        field_path: str | None = None,
-        item_id: str | None = None,
-        create_if_missing: bool = True,
-        connection: dict | None = None,
-    ) -> dict:
-        """Open/focus a UI window scope and reveal an optional field or item."""
-        return to_jsonable(
-            ctx.ui_bridge_service.navigate_window(
-                UiWindowNavigateRequest(
-                    window_id=window_id,
-                    field_path=field_path,
-                    item_id=item_id,
-                    open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_close_window(
-        window_id: str,
-        connection: dict | None = None,
-    ) -> dict:
-        """Request a normal close for one visible UI bridge window."""
-        return to_jsonable(
-            ctx.ui_bridge_service.close_window(
-                UiWindowCloseRequest(window_id=window_id),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_snapshot_window(
-        window_id: str,
-        output_dir_path: str | None = None,
-        capture_scope: str = "widget",
-        create_if_missing: bool = False,
-        connection: dict | None = None,
-    ) -> dict:
-        """Capture one UI bridge window to a PNG resource path."""
-        resolved_output_dir = _writable_output_dir(ctx, output_dir_path)
-        return to_jsonable(
-            ctx.ui_bridge_service.snapshot_window(
-                UiWindowSnapshotRequest(
-                    window_id=window_id,
-                    output_dir_path=str(resolved_output_dir),
-                    capture_scope=WindowSnapshotCaptureScope(capture_scope),
-                    open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_get_widget_tree(
-        window_id: str,
-        create_if_missing: bool = False,
-        maximum_text_length: int = UiWidgetTreeRequest.default_maximum_text_length(),
-        truncation_suffix: str = UiWidgetTreeRequest.default_truncation_suffix(),
-        connection: dict | None = None,
-    ) -> dict:
-        """Return a generic Qt widget tree with clickable geometry and action kinds."""
-        return to_jsonable(
-            ctx.ui_bridge_service.widget_tree(
-                UiWidgetTreeRequest(
-                    window_id=window_id,
-                    open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
-                    maximum_text_length=maximum_text_length,
-                    truncation_suffix=truncation_suffix,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_object_state_scopes(
-        scope_visibility: dict | None = None,
-        include_fields: bool = False,
-        field_limit: int = 200,
-        field_offset: int = 0,
-        connection: dict | None = None,
-    ) -> dict:
-        """List ObjectState scopes, optionally including field-level semantic addresses."""
-        visibility = UiObjectStateScopeVisibilityToolArgs.from_mapping(scope_visibility)
-        return to_jsonable(
-            ctx.ui_bridge_service.list_object_state_scopes(
-                visibility.object_state_scope_list_request(
-                    field_options=UiObjectStateFieldListOptions(
-                        include_fields=include_fields,
-                        field_limit=field_limit,
-                        field_offset=field_offset,
-                    ),
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_get_state_surface(
-        surface_id: str = "plate_manager.state",
-        selection_mode: str = "all",
-        revision_token: str | None = None,
-        connection: dict | None = None,
-    ) -> dict:
-        """Read or poll one typed UI state surface from the running OpenHCS UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.get_state_surface(
-                UiStateSurfaceRequest(
-                    surface_id=surface_id,
-                    selection_mode=selection_mode,
-                    base_revision_token=revision_token,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_get_code_document(
-        document_id: str,
-        selection_mode: str = "selected",
-        clean: bool = True,
-        connection: dict | None = None,
-    ) -> dict:
-        """Read a bounded code document from the running OpenHCS UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.get_document(
-                UiCodeDocumentRequest(
-                    document_id=document_id,
-                    selection_mode=selection_mode,
-                    clean=clean,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_validate_code_document(
-        document_id: str,
-        source: str,
-        revision_token: str | None = None,
-        connection: dict | None = None,
-    ) -> dict:
-        """Validate a UI code document without mutating running UI state."""
-        return to_jsonable(
-            ctx.ui_bridge_service.validate_document(
-                UiCodeDocumentValidationRequest(
-                    document_id=document_id,
-                    source=source,
-                    base_revision_token=revision_token,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_apply_code_document(
-        document_id: str,
-        source: str,
-        revision_token: str,
-        require_confirmation: bool = True,
-        snapshot_label: str | None = None,
-        apply_if_time_traveling: bool = False,
-        connection: dict | None = None,
-    ) -> dict:
-        """Apply a UI code document and return revision, snapshot, and undo targets."""
-        return to_jsonable(
-            ctx.ui_bridge_service.apply_document(
-                UiCodeDocumentApplyRequest(
-                    document_id=document_id,
-                    source=source,
-                    base_revision_token=revision_token,
-                    confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
-                        require_confirmation
-                    ),
-                    snapshot_label=snapshot_label,
-                    apply_if_time_traveling=apply_if_time_traveling,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_snapshots(
-        scope_visibility: dict | None = None,
-        connection: dict | None = None,
-    ) -> dict:
-        """List ObjectState snapshots visible to the running UI bridge."""
-        visibility = UiObjectStateScopeVisibilityToolArgs.from_mapping(scope_visibility)
-        return to_jsonable(
-            ctx.ui_bridge_service.list_snapshots(
-                visibility.snapshot_list_request(),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_restore_snapshot(
-        snapshot_id: str | None = None,
-        index: int | None = None,
-        branch: str | None = None,
-        scope_visibility: dict | None = None,
-        require_confirmation: bool = True,
-        allow_auto_branch: bool = False,
-        connection: dict | None = None,
-    ) -> dict:
-        """Restore the running UI to one ObjectState snapshot target."""
-        visibility = UiObjectStateScopeVisibilityToolArgs.from_mapping(scope_visibility)
-        return to_jsonable(
-            ctx.ui_bridge_service.restore_snapshot(
-                visibility.snapshot_restore_request(
-                    snapshot_id=snapshot_id,
-                    index=index,
-                    branch=branch,
-                    confirmation_requirement=(
-                        UiBridgeConfirmationRequirement.from_flag(require_confirmation)
-                    ),
-                    allow_auto_branch=allow_auto_branch,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_time_travel_head(
-        require_confirmation: bool = True,
-        connection: dict | None = None,
-    ) -> dict:
-        """Return the running UI to ObjectState branch head."""
-        return to_jsonable(
-            ctx.ui_bridge_service.time_travel_head(
-                UiTimeTravelHeadRequest(
-                    confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
-                        require_confirmation
-                    )
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_list_branches(
-        connection: dict | None = None,
-    ) -> dict:
-        """List ObjectState branches visible to the running UI bridge."""
-        return to_jsonable(
-            ctx.ui_bridge_service.list_branches(
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx)
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_switch_branch(
-        branch: str,
-        require_confirmation: bool = True,
-        allow_auto_branch: bool = False,
-        connection: dict | None = None,
-    ) -> dict:
-        """Switch the running UI to an ObjectState branch."""
-        return to_jsonable(
-            ctx.ui_bridge_service.switch_branch(
-                UiBranchSwitchRequest(
-                    branch=branch,
-                    confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
-                        require_confirmation
-                    ),
-                    allow_auto_branch=allow_auto_branch,
-                ),
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
-        )
-
-    @openhcs_tool()
-    def openhcs_ui_get_operation_status(
-        operation_id: str,
-        connection: dict | None = None,
-    ) -> dict:
-        """Return status for one running or recent UI bridge operation."""
-        return to_jsonable(
-            ctx.ui_bridge_service.get_operation_status(
-                operation_id,
-                UiBridgeConnectionToolArgs.from_mapping(connection).resolve(ctx),
-            )
+    for capability_declaration in generated_resource_capability_declarations():
+        GeneratedMcpResourceBinding.bind_to_server(
+            capability_declaration,
+            ctx,
+            server,
         )
 
     return server
@@ -1075,20 +2032,40 @@ class McpToolErrorResult:
     errors: tuple[AgentError, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class McpServerStaleErrorResult:
+    """Structured stale-process error with agent-actionable restart metadata."""
+
+    schema_version: str
+    ok: bool
+    tool: str
+    errors: tuple[AgentError, ...]
+    server_process_id: int
+    server_started_at_unix: float
+    stale_source_paths: tuple[str, ...]
+    restart_required: bool
+    restart_command: tuple[str, ...]
+    restart_hint: str
+
+
 def _mcp_tool_error(tool_name: str, exception: Exception) -> JsonValue:
     return to_jsonable(
         McpToolErrorResult(
             schema_version=SCHEMA_VERSION,
             ok=False,
             tool=tool_name,
-            errors=(
-                AgentError.from_exception(
-                    "mcp_tool_failed",
-                    exception,
-                    hint="The MCP server caught this exception at the tool boundary.",
-                ),
-            ),
+            errors=(_mcp_tool_agent_error(exception),),
         )
+    )
+
+
+def _mcp_tool_agent_error(exception: Exception) -> AgentError:
+    if isinstance(exception, AgentFacingErrorMixin):
+        return exception.to_agent_error()
+    return AgentError.from_exception(
+        "mcp_tool_failed",
+        exception,
+        hint="The MCP server caught this exception at the tool boundary.",
     )
 
 
@@ -1099,7 +2076,7 @@ def _mcp_server_stale_error(tool_name: str) -> JsonValue:
     else:
         stale_path = str(MCP_SERVER_SOURCE_PATH)
     return to_jsonable(
-        McpToolErrorResult(
+        McpServerStaleErrorResult(
             schema_version=SCHEMA_VERSION,
             ok=False,
             tool=tool_name,
@@ -1110,10 +2087,16 @@ def _mcp_server_stale_error(tool_name: str) -> JsonValue:
                         "The OpenHCS MCP server source changed after this process "
                         "started. Restart the MCP server before using agent tools."
                     ),
-                    hint="Call openhcs_health_check for source freshness details.",
+                    hint=MCP_SERVER_RESTART_HINT,
                     path=stale_path,
                 ),
             ),
+            server_process_id=MCP_SERVER_PROCESS_ID,
+            server_started_at_unix=MCP_SERVER_IMPORTED_AT_UNIX,
+            stale_source_paths=tuple(str(source_path) for source_path in stale_source_paths),
+            restart_required=True,
+            restart_command=_mcp_server_restart_command(),
+            restart_hint=MCP_SERVER_RESTART_HINT,
         )
     )
 
@@ -1125,63 +2108,133 @@ def _json_object_or_empty(value: dict | None) -> dict:
 
 
 @dataclass(frozen=True, slots=True)
-class McpViewerConnectionToolArgs:
-    """MCP viewer connection fields projected into agent viewer request DTOs."""
+class McpViewerConnectionToolFields:
+    """Raw MCP viewer connection arguments before policy resolution."""
 
     port: int
     host: str
     transport_mode: str | None
     timeout_ms: int | None
 
-    @property
-    def connection(self) -> ExecutionConnectionSpec:
-        return ExecutionConnectionSpec(
-            host=self.host,
-            port=self.port,
-            transport_mode=self.transport_mode,
-        )
-
-    @property
-    def resolved_timeout_ms(self) -> int:
-        return McpViewerTimeoutPolicy.resolve(self.timeout_ms)
-
-    def snapshot_request(
+    def to_control_args(
         self,
-        *,
-        output_dir_path: str,
-        capture_scope: WindowSnapshotCaptureScope,
-    ) -> ViewerWindowSnapshotRequest:
-        return ViewerWindowSnapshotRequest(
-            connection=self.connection,
-            timeout_ms=self.resolved_timeout_ms,
-            output_dir_path=output_dir_path,
-            capture_scope=capture_scope,
+        timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
+    ) -> "McpViewerConnectionToolArgs":
+        return McpViewerConnectionToolArgs.from_fields(
+            port=self.port,
+            host=self.host,
+            transport_mode=self.transport_mode,
+            timeout_ms=self.timeout_ms,
+            timeout_policy=timeout_policy,
         )
 
-    def state_request(self) -> ViewerWindowStateRequest:
+
+@dataclass(frozen=True, slots=True)
+class McpViewerConnectionToolArgs(ViewerWindowControlRequest):
+    """MCP viewer connection fields projected into agent viewer request DTOs."""
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        port: int,
+        host: str,
+        transport_mode: str | None,
+        timeout_ms: int | None,
+        timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
+    ) -> Self:
+        return cls(
+            connection=ExecutionConnectionSpec(
+                host=host,
+                port=port,
+                transport_mode=transport_mode,
+            ),
+            timeout_ms=timeout_policy.resolve(timeout_ms),
+        )
+
+    def state_request(
+        self,
+        state_controls: ViewerStateControlOptions | None = None,
+        *,
+        include_response: bool = True,
+    ) -> ViewerWindowStateRequest:
         return ViewerWindowStateRequest(
             connection=self.connection,
-            timeout_ms=self.resolved_timeout_ms,
+            timeout_ms=self.timeout_ms,
+            include_response=include_response,
+            state_controls=(
+                state_controls
+                if state_controls is not None
+                else ViewerStateControlOptions()
+            ),
         )
 
     def payload_request(
         self,
         payload_controls: ViewerPayloadControlOptions,
+        *,
+        include_response: bool = True,
     ) -> ViewerWindowPayloadRequest:
         return ViewerWindowPayloadRequest(
             connection=self.connection,
-            timeout_ms=self.resolved_timeout_ms,
+            timeout_ms=self.timeout_ms,
             payload_controls=payload_controls,
+            include_response=include_response,
+        )
+
+    def navigation_request(
+        self,
+        navigation: ViewerNavigationControlOptions,
+    ) -> ViewerWindowNavigationRequest:
+        return ViewerWindowNavigationRequest(
+            connection=self.connection,
+            timeout_ms=self.timeout_ms,
+            navigation=navigation,
         )
 
     def validation_request(
         self,
         validation_policy: ViewerWindowValidationPolicy,
+        *,
+        state_controls: ViewerStateControlOptions | None = None,
+        include_state: bool = False,
     ) -> ViewerWindowValidationRequest:
         return ViewerWindowValidationRequest(
             connection=self.connection,
-            timeout_ms=self.resolved_timeout_ms,
+            timeout_ms=self.timeout_ms,
             validation_policy=validation_policy,
+            state_controls=(
+                state_controls
+                if state_controls is not None
+                else ViewerStateControlOptions()
+            ),
+            include_state=include_state,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class McpUiBridgeConnectionRequest:
+    """MCP-facing sparse connection request for a running OpenHCS UI bridge."""
+
+    host: str | None = None
+    port: int | None = None
+    transport_mode: str | None = None
+    persistent: bool | None = None
+    timeout_ms: int | None = None
+    auth_token: str | None = None
+    descriptor_file_path: str | None = None
+    bridge_instance_id: str | None = None
+
+    def to_agent_request(self) -> UiBridgeConnectionRequest:
+        return UiBridgeConnectionRequest.from_values(
+            host=self.host,
+            port=self.port,
+            transport_mode=self.transport_mode,
+            persistent=self.persistent,
+            timeout_ms=self.timeout_ms,
+            auth_token=self.auth_token,
+            descriptor_file_path=self.descriptor_file_path,
+            bridge_instance_id=self.bridge_instance_id,
         )
 
 
@@ -1240,7 +2293,19 @@ class UiBridgeConnectionToolArgs:
         self._request = request
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, JsonValue] | None) -> Self:
+    def from_mapping(
+        cls,
+        value: (
+            McpUiBridgeConnectionRequest
+            | UiBridgeConnectionRequest
+            | Mapping[str, JsonValue]
+            | None
+        ),
+    ) -> Self:
+        if isinstance(value, McpUiBridgeConnectionRequest):
+            return cls(value.to_agent_request())
+        if isinstance(value, UiBridgeConnectionRequest):
+            return cls(value)
         mapping = UiBridgeConnectionToolMapping.from_optional(value)
         return cls(
             UiBridgeConnectionRequest.from_values(
@@ -1255,119 +2320,15 @@ class UiBridgeConnectionToolArgs:
             )
         )
 
-    def resolve(self, context: OpenHCSAgentContext) -> UiBridgeConnectionSpec:
+    def resolve(
+        self,
+        context: OpenHCSAgentContext,
+        *,
+        timeout_policy: type[McpControlTimeoutPolicy] = McpUiBridgeTimeoutPolicy,
+    ) -> UiBridgeConnectionSpec:
         return context.ui_bridge_service.connection_from_fields(
             replace(
                 self._request,
-                timeout_ms=McpUiBridgeTimeoutPolicy.resolve(self._request.timeout_ms),
+                timeout_ms=timeout_policy.resolve(self._request.timeout_ms),
             )
         )
-
-
-@dataclass(frozen=True, slots=True)
-class BoundedMcpTimeoutPolicy:
-    label: str
-    default_ms: int
-    min_ms: int
-    max_ms: int
-
-    def resolve(self, requested_timeout_ms: int | None) -> int:
-        if requested_timeout_ms is None:
-            return self.default_ms
-        if requested_timeout_ms < self.min_ms:
-            raise ValueError(
-                f"{self.label} MCP timeout must be at least {self.min_ms}ms."
-            )
-        if requested_timeout_ms > self.max_ms:
-            raise ValueError(
-                f"{self.label} MCP timeout must not exceed {self.max_ms}ms."
-            )
-        return requested_timeout_ms
-
-
-class McpControlTimeoutPolicy:
-    """Shared fail-fast timeout contract for Codex-facing MCP control tools."""
-
-    label: ClassVar[str]
-
-    @classmethod
-    def resolve(cls, requested_timeout_ms: int | None) -> int:
-        return BoundedMcpTimeoutPolicy(
-            label=cls.label,
-            default_ms=DEFAULT_MCP_CONTROL_TIMEOUT_MS,
-            min_ms=MIN_MCP_CONTROL_TIMEOUT_MS,
-            max_ms=MAX_MCP_CONTROL_TIMEOUT_MS,
-        ).resolve(requested_timeout_ms)
-
-
-class McpUiBridgeTimeoutPolicy(McpControlTimeoutPolicy):
-    """Fail-fast timeout contract for Codex-facing UI bridge tools."""
-
-    label = "UI bridge"
-
-
-class McpViewerTimeoutPolicy(McpControlTimeoutPolicy):
-    """Fail-fast timeout contract for viewer state and snapshot tools."""
-
-    label = "Viewer"
-
-
-class UiObjectStateScopeVisibilityToolArgs:
-    """MCP argument adapter for ObjectState system-scope visibility."""
-
-    def __init__(self, visibility: UiObjectStateScopeVisibility) -> None:
-        self._visibility = visibility
-
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, JsonValue] | None) -> Self:
-        mapping = UiBridgeConnectionToolMapping.from_optional(value)
-        value_from_mapping = mapping.optional_bool("include_system_scopes")
-        if value_from_mapping is None:
-            return cls(UiObjectStateScopeVisibility())
-        return cls(
-            UiObjectStateScopeVisibility(include_system_scopes=value_from_mapping)
-        )
-
-    def object_state_scope_list_request(
-        self,
-        *,
-        field_options: UiObjectStateFieldListOptions = UiObjectStateFieldListOptions(),
-    ) -> UiObjectStateScopeListRequest:
-        return UiObjectStateScopeListRequest.from_visibility_options(
-            self._visibility,
-            field_options,
-        )
-
-    def snapshot_list_request(self) -> UiSnapshotListRequest:
-        return UiSnapshotListRequest(
-            include_system_scopes=self._visibility.include_system_scopes
-        )
-
-    def snapshot_restore_request(
-        self,
-        *,
-        snapshot_id: str | None,
-        index: int | None,
-        branch: str | None,
-        confirmation_requirement: UiBridgeConfirmationRequirement,
-        allow_auto_branch: bool,
-    ) -> UiSnapshotRestoreRequest:
-        return UiSnapshotRestoreRequest(
-            snapshot_id=snapshot_id,
-            index=index,
-            branch=branch,
-            include_system_scopes=self._visibility.include_system_scopes,
-            confirmation_requirement=confirmation_requirement,
-            allow_auto_branch=allow_auto_branch,
-        )
-
-
-def _writable_output_dir(
-    context: OpenHCSAgentContext,
-    output_dir_path: str | None,
-) -> Path:
-    if output_dir_path is None:
-        requested = DEFAULT_MCP_WINDOW_SNAPSHOT_DIR
-    else:
-        requested = Path(output_dir_path)
-    return context.path_policy.assert_writable(requested)
