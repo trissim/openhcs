@@ -64,6 +64,9 @@ Source the active checkout environment, then call the dev client directly:
    . .venv/bin/activate
    python -m openhcs.mcp.dev_client health
    python -m openhcs.mcp.dev_client tools
+   python -m openhcs.mcp.dev_client knowledge
+   python -m openhcs.mcp.dev_client knowledge-document openhcs_agent_mcp_overview --max-chars 4000
+   python -m openhcs.mcp.dev_client knowledge-search "viewer"
    python -m openhcs.mcp.dev_client ui-smoke --allow-error-payloads
    python -m openhcs.mcp.dev_client selected-workflow init_plate
    python -m openhcs.mcp.dev_client widget-tree plate_manager
@@ -72,6 +75,17 @@ Source the active checkout environment, then call the dev client directly:
 Use ``--timeout-seconds`` for the MCP client-side timeout. UI and viewer tools
 also use bounded OpenHCS control timeouts, so a broken bridge or stale viewer
 should fail quickly instead of blocking the development loop.
+
+The knowledge commands call the same MCP tools exposed to agents:
+
+* ``knowledge`` calls ``openhcs_list_knowledge_documents``.
+* ``knowledge-document`` calls ``openhcs_get_knowledge_document`` and accepts an
+  optional ``--section-id`` plus ``--max-chars`` bound.
+* ``knowledge-search`` calls ``openhcs_search_knowledge``.
+
+The server only serves allowlisted repository documentation through
+``openhcs.agent.services.knowledge_base_service``. Clients pass document ids,
+not arbitrary filesystem paths.
 
 What Not To Do
 --------------

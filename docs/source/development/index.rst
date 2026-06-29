@@ -14,6 +14,7 @@ Systematic approaches for OpenHCS development workflows.
    systematic_refactoring_framework
    architectural_refactoring_patterns
    refactoring_principles
+   ast_refactoring_workflow
    respecting_codebase_architecture
    literal_includes_audit_methodology
    compositional_commit_message_generation
@@ -38,6 +39,7 @@ Practical guides for specific development tasks.
    window_manager_usage
    compact_window_patterns
    mcp_development
+   mcp_knowledge_base
    runtime_system_assembly_rules
 
 Testing and CI
