@@ -194,9 +194,6 @@ class AxisCompilationRequest:
             self.pipeline_config.analysis_consolidation_config
         )
         context.plate_metadata_config = self.pipeline_config.plate_metadata_config
-        context.auto_add_output_plate_to_plate_manager = (
-            self.pipeline_config.auto_add_output_plate_to_plate_manager
-        )
         return context
 
 def _refresh_function_objects_in_steps(pipeline_definition: List[AbstractStep]) -> None:

@@ -16,6 +16,7 @@ from openhcs.core.config import (
     ProcessingConfig,
     StepMaterializationConfig,
 )
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.module_artifact_contract import (
     ModuleArtifactContract,
@@ -23,7 +24,7 @@ from openhcs.core.module_artifact_contract import (
 )
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.compilation_session import CompilationSession
-from openhcs.core.pipeline.compiler import PipelineCompiler
+from openhcs.core.pipeline.compiler import AxisCompilationRequest, PipelineCompiler
 from openhcs.core.pipeline.step_config_universe import (
     StepConfigRoot,
     StepConfigUniverse,
@@ -112,6 +113,30 @@ def _context() -> SimpleNamespace:
             )
         },
     )
+
+
+class _EffectiveConfigContextOrchestrator:
+    def create_context(self, axis_id: str) -> ProcessingContext:
+        return ProcessingContext(
+            axis_id=axis_id,
+            auto_add_output_plate_to_plate_manager=True,
+        )
+
+
+def test_axis_compilation_request_preserves_effective_auto_add_flag():
+    request = AxisCompilationRequest(
+        orchestrator=_EffectiveConfigContextOrchestrator(),
+        global_config=GlobalPipelineConfig(auto_add_output_plate_to_plate_manager=True),
+        pipeline_config=PipelineConfig(),
+        pipeline=SimpleNamespace(),
+        global_step_axis_filters={},
+        enable_visualizer_override=False,
+        is_zmq_execution=True,
+    )
+
+    context = request.context_for("A01")
+
+    assert context.auto_add_output_plate_to_plate_manager is True
 
 
 def test_compilation_session_owns_step_snapshot_plan_invariants():
