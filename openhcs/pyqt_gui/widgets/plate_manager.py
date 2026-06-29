@@ -255,26 +255,89 @@ class CellProfilerPlateScopeNormalizer:
         )
 
 
-class PlateManagerAction(str, Enum):
-    """Closed set of PlateManager button actions."""
-
-    ADD_PLATE = "add_plate"
-    DELETE_PLATE = "del_plate"
-    EDIT_CONFIG = "edit_config"
-    INIT_PLATE = "init_plate"
-    COMPILE_PLATE = "compile_plate"
-    RUN_PLATE = "run_plate"
-    CODE_PLATE = "code_plate"
-    VIEW_RESULTS = "view_results"
-    VIEW_METADATA = "view_metadata"
-
-
 class PlateOperation(str, Enum):
     """Closed set of batch operations that validate visible plate rows."""
 
     INIT = "init"
     COMPILE = "compile"
     RUN = "run"
+
+
+class PlateManagerAction(str, Enum):
+    """Closed set of PlateManager button actions and agent-facing semantics."""
+
+    side_effects: tuple[str, ...]
+    confirmation_required: bool
+    plate_operation: PlateOperation | None
+
+    def __new__(
+        cls,
+        value: str,
+        side_effects: tuple[str, ...],
+        confirmation_required: bool,
+        plate_operation: PlateOperation | None,
+    ) -> "PlateManagerAction":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.side_effects = side_effects
+        member.confirmation_required = confirmation_required
+        member.plate_operation = plate_operation
+        return member
+
+    ADD_PLATE = (
+        "add_plate",
+        ("opens_file_dialog", "mutates_plate_collection"),
+        True,
+        None,
+    )
+    DELETE_PLATE = (
+        "del_plate",
+        ("mutates_plate_collection",),
+        True,
+        None,
+    )
+    EDIT_CONFIG = (
+        "edit_config",
+        ("opens_config_window", "may_mutate_plate_config"),
+        True,
+        None,
+    )
+    INIT_PLATE = (
+        "init_plate",
+        ("starts_initialization_workflow",),
+        True,
+        PlateOperation.INIT,
+    )
+    COMPILE_PLATE = (
+        "compile_plate",
+        ("starts_compile_workflow",),
+        True,
+        PlateOperation.COMPILE,
+    )
+    RUN_PLATE = (
+        "run_plate",
+        ("starts_or_stops_execution_workflow",),
+        True,
+        PlateOperation.RUN,
+    )
+    CODE_PLATE = (
+        "code_plate",
+        ("opens_code_document_window",),
+        False,
+        None,
+    )
+    VIEW_RESULTS = (
+        "view_results",
+        ("opens_results_window",),
+        False,
+        None,
+    )
+    VIEW_METADATA = (
+        "view_metadata",
+        ("opens_metadata_window",),
+        False,
+        None,
+    )
 
 
 RUNNABLE_ORCHESTRATOR_STATES = frozenset(

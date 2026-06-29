@@ -23,6 +23,11 @@ class FunctionStepTransportAuthority:
     """Canonicalize FunctionStep callables before process or ZMQ transport."""
 
     @classmethod
+    def approved_code_document_factory_names(cls) -> frozenset[str]:
+        """Return function-step factory helpers allowed in code documents."""
+        return frozenset(("cellprofiler_module_callable",))
+
+    @classmethod
     def normalize_pipeline(cls, definition_pipeline: list[Any]) -> list[Any]:
         return [cls.normalize_step(step) for step in definition_pipeline]
 

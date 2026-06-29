@@ -168,6 +168,10 @@ class CustomFunctionManager:
 
         return registered_functions
 
+    def source_path_for_function(self, func: Callable) -> Path:
+        """Return the persisted source path used for a registered function."""
+        return self.storage_dir / f"{func.__name__}.py"
+
     def load_all_custom_functions(self) -> int:
         """
         Load all .py files from storage directory.

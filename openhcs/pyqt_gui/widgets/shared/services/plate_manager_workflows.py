@@ -44,6 +44,11 @@ class PlateManagerCodeNamespaceField(str, Enum):
     PIPELINE_DATA = "pipeline_data"
     PLATE_PATHS = "plate_paths"
 
+    @classmethod
+    def allowed_assignment_names(cls) -> frozenset[str]:
+        """Return names accepted in plate-manager code-document assignments."""
+        return frozenset(field.value for field in cls)
+
 
 class RemovedPlateManagerCodeNamespaceField(str, Enum):
     """Removed plate-manager code fields with explicit migration messages."""
