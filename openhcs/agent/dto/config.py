@@ -42,6 +42,12 @@ class ConfigPatch(ConfigTypeRef):
 
 
 @dataclass(frozen=True, slots=True)
+class ConfigSourceRenderRequest:
+    config_id: str
+    clean: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class ConfigValidationResult(AgentResultEnvelope):
     valid: bool
     config_ref: ConfigRef | None = None

@@ -6,9 +6,21 @@ from dataclasses import dataclass
 from os import environ
 from pathlib import Path
 
+from openhcs.agent.exceptions import AgentFacingErrorMixin
 
-class AgentPathPolicyError(ValueError):
+
+DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR = Path("/tmp/openhcs-mcp-window-snapshots")
+
+
+class AgentPathPolicyError(AgentFacingErrorMixin, ValueError):
     """Raised when a path is outside the agent policy boundary."""
+
+    agent_error_code = "agent_path_policy_rejected"
+    agent_error_hint = (
+        "Pass a local path under OPENHCS_AGENT_READ_ROOTS or "
+        "OPENHCS_AGENT_WRITE_ROOTS as appropriate. Use openhcs_inspect_plate_path "
+        "first to validate a plate folder."
+    )
 
 
 @dataclass(frozen=True, slots=True)

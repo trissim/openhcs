@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import ClassVar, TYPE_CHECKING
 
 import numpy as np
 
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         FilenameParser,
         MetadataHandler,
     )
+    from polystore.roi import ROI, ROIShape
 
 
 JsonLike = str | int | float | bool | None
@@ -287,11 +288,33 @@ class PlateFileRecord:
 class PlateFileInventoryQuery:
     """Bounded filter over unified plate file records."""
 
+    ALL_KIND_VALUE: ClassVar[str] = "all"
+
     kinds: tuple[PlateFileKind, ...] = ()
     path_contains: str | None = None
     well: str | None = None
     offset: int = 0
     limit: int = 50
+
+    @classmethod
+    def kinds_for(cls, kind: PlateFileKind | str | None) -> tuple[PlateFileKind, ...]:
+        if kind is None:
+            return ()
+        if isinstance(kind, str) and kind == cls.ALL_KIND_VALUE:
+            return ()
+        return (PlateFileKind(kind),)
+
+    @classmethod
+    def kind_choices(cls) -> tuple[str, ...]:
+        return (cls.ALL_KIND_VALUE, *(kind.value for kind in PlateFileKind))
+
+    @classmethod
+    def kind_from_value(cls, value: PlateFileKind | str | None) -> PlateFileKind | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and value == cls.ALL_KIND_VALUE:
+            return None
+        return PlateFileKind(value)
 
     def normalized(self) -> "PlateFileInventoryQuery":
         return PlateFileInventoryQuery(
@@ -422,7 +445,7 @@ class PlateResultFilePreviewReader:
         )
 
     @classmethod
-    def _semantic_rois(cls, rois: Sequence) -> tuple:
+    def _semantic_rois(cls, rois: Sequence["ROI"]) -> tuple["ROI", ...]:
         """Collapse ImageJ archive members that represent one semantic ROI."""
         unique = {}
         for roi in rois:
@@ -430,20 +453,31 @@ class PlateResultFilePreviewReader:
         return tuple(unique.values())
 
     @staticmethod
-    def _semantic_roi_identity(roi):
-        metadata = getattr(roi, "metadata", {})
+    def _semantic_roi_identity(roi: "ROI"):
+        metadata = roi.metadata
         if metadata:
             return semantic_roi_identity_from_metadata(metadata)
         return tuple(
-            _hashable_jsonable_metadata_value(getattr(shape, "__dict__", {}))
-            for shape in (getattr(roi, "shapes", ()) or ())
+            PlateResultFilePreviewReader._roi_shape_identity(shape)
+            for shape in roi.shapes
         )
 
     @staticmethod
-    def _roi_example(roi) -> Mapping[str, JsonValue]:
-        metadata = getattr(roi, "metadata", {})
+    def _roi_shape_identity(shape: "ROIShape"):
+        if not is_dataclass(shape):
+            return _hashable_jsonable_metadata_value(shape.shape_type.value)
+        return _hashable_jsonable_metadata_value(
+            {
+                "shape_type": shape.shape_type.value,
+                "fields": asdict(shape),
+            }
+        )
+
+    @staticmethod
+    def _roi_example(roi: "ROI") -> Mapping[str, JsonValue]:
+        metadata = roi.metadata
         example: dict[str, JsonValue] = {
-            "shape_count": len(getattr(roi, "shapes", ()) or ()),
+            "shape_count": len(roi.shapes),
         }
         for key in ("label", "area", "bbox", "centroid", "plane_indices"):
             if key in metadata:

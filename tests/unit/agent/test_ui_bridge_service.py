@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from openhcs.agent.dto.common import AgentResourceRef, SCHEMA_VERSION
+from openhcs.agent.dto.common import AgentError, AgentResourceRef, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
     UiActionIdentity,
@@ -20,6 +20,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeOperationIdentity,
     UiBridgeOperationRef,
     UiBridgeOperationRoute,
+    UiBridgeOperationStatusRequest,
     UiBridgeStatus,
     UiCodeDocument,
     UiCodeDocumentApplyRequest,
@@ -31,8 +32,17 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
     UiMutationReceipt,
+    UiObjectStateFieldListQuery,
+    UiObjectStateFieldHelpRequest,
+    UiObjectStateFieldHelpResult,
+    UiObjectStateFieldMutationRequest,
+    UiObjectStateFieldMutationResult,
+    UiObjectStateFieldSummary,
     UiObjectStateScopeCatalog,
+    UiObjectStateScopeIdentity,
     UiObjectStateScopeListRequest,
+    UiObjectStateScopeSummary,
+    UiObjectStateValuePreview,
     UiPlateManagerRowState,
     UiPlateManagerState,
     UiSelectedPlateWorkflowKind,
@@ -62,6 +72,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
+    UiSemanticAddress,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
+    UiWidgetActionSummary,
     UiWidgetRect,
     UiWidgetTreeNode,
     UiWidgetTreeRequest,
@@ -70,6 +84,8 @@ from openhcs.agent.dto.ui_bridge import (
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
     UiBridgeGatewayABC,
+    UiBridgeGatewayResponseError,
+    UiBridgeProcessAdvertisedDescriptorCatalog,
     UiBridgeService,
 )
 from openhcs.agent.serialization import to_jsonable
@@ -190,6 +206,8 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
         self.close_requests: list[UiWindowCloseRequest] = []
         self.snapshot_requests: list[UiWindowSnapshotRequest] = []
         self.widget_tree_requests: list[UiWidgetTreeRequest] = []
+        self.widget_action_requests: list[UiWidgetActionInvokeRequest] = []
+        self.field_mutation_requests: list[UiObjectStateFieldMutationRequest] = []
         self.selected_plate_workflow_requests: list[UiSelectedPlateWorkflowRequest] = []
 
     def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
@@ -392,10 +410,33 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWidgetTreeResult:
         self.connections.append(connection)
         self.widget_tree_requests.append(request)
+        compile_action = UiWidgetActionSummary(
+            path=(0,),
+            path_id="0",
+            child_index=0,
+            class_name="QPushButton",
+            object_name="compile_button",
+            accessible_name="Compile",
+            accessible_description="Compile selected plate",
+            label="Compile",
+            visible=True,
+            enabled=True,
+            geometry=UiWidgetRect(x=8, y=160, width=72, height=24),
+            global_geometry=UiWidgetRect(x=18, y=180, width=72, height=24),
+            action_kinds=("button",),
+            clickable=True,
+            checkable=False,
+            checked=False,
+            current_index=None,
+            current_text=None,
+            item_count=None,
+            tool_tip="Compile selected plate",
+        )
         return UiWidgetTreeResult(
             schema_version=SCHEMA_VERSION,
             window_id=request.window_id,
             projected=True,
+            actionable_widgets=(compile_action,),
             root=UiWidgetTreeNode(
                 path=(),
                 path_id="root",
@@ -426,7 +467,7 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
                 children=(
                     UiWidgetTreeNode(
                         path=(0,),
-                        path_id="root/0",
+                        path_id="0",
                         child_index=0,
                         class_name="QPushButton",
                         object_name="compile_button",
@@ -448,7 +489,7 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
                         text="Compile",
                         text_truncated=False,
                         title=None,
-                        action_kinds=("click",),
+                        action_kinds=("button",),
                         clickable=True,
                         actionable=True,
                         checkable=False,
@@ -470,6 +511,8 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             ),
             widget_count=2,
             actionable_count=1,
+            returned_actionable_count=1,
+            include_tree=request.include_tree,
         )
 
     def list_object_state_scopes(
@@ -486,6 +529,51 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             current_snapshot_index=-1,
             active=False,
             scopes=(),
+        )
+
+    def describe_object_state_field(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiObjectStateFieldHelpRequest,
+    ) -> UiObjectStateFieldHelpResult:
+        self.connections.append(connection)
+        return UiObjectStateFieldHelpResult(
+            schema_version=SCHEMA_VERSION,
+            address=request,
+            parameter_name=request.field_path.rsplit(".", 1)[-1],
+            summary="field help",
+            description="field docs",
+        )
+
+    def mutate_object_state_field(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiObjectStateFieldMutationRequest,
+    ) -> UiObjectStateFieldMutationResult:
+        self.connections.append(connection)
+        self.field_mutation_requests.append(request)
+        return UiObjectStateFieldMutationResult(
+            schema_version=SCHEMA_VERSION,
+            address=request,
+            mutated=True,
+            reset=request.reset,
+            receipt=UiMutationReceipt.accepted_for(request.request_token),
+        )
+
+    def invoke_widget_action(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWidgetActionInvokeRequest,
+    ) -> UiWidgetActionInvokeResult:
+        self.connections.append(connection)
+        self.widget_action_requests.append(request)
+        return UiWidgetActionInvokeResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            path_id=request.path_id,
+            action_kind=request.action_kind,
+            invoked=True,
+            receipt=UiMutationReceipt.accepted_for(request.request_token),
         )
 
     def get_document(
@@ -601,6 +689,10 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             document_id=request.document_id,
             applied=True,
             base_revision_token=request.base_revision_token,
+            receipt=UiMutationReceipt.accepted_for(
+                request.request_token,
+                bridge_operation_id="op-1",
+            ),
             outcome="applied",
             operation_id="op-1",
             new_revision_token="rev-2",
@@ -666,13 +758,13 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
     def get_operation_status(
         self,
         connection: UiBridgeConnectionSpec,
-        operation_id: str,
+        request: UiBridgeOperationStatusRequest,
     ) -> UiBridgeOperationRef:
         self.connections.append(connection)
         return UiBridgeOperationRef(
             schema_version=SCHEMA_VERSION,
             identity=UiBridgeOperationIdentity(
-                operation_id=operation_id,
+                operation_id=request.operation_id,
                 route=UiBridgeOperationRoute(operation_name="apply_document"),
             ),
             status="complete",
@@ -689,6 +781,8 @@ def test_default_ui_bridge_service_reports_unavailable(monkeypatch, tmp_path):
 
     assert status.reachable is False
     assert status.errors[0].code == "ui_bridge_unavailable"
+    assert "OPENHCS_UI_BRIDGE_DESCRIPTOR" in status.errors[0].hint
+    assert str(tmp_path) in status.errors[0].hint
 
 
 def test_descriptor_resolution_uses_token_without_exposing_it(monkeypatch, tmp_path):
@@ -719,7 +813,7 @@ def test_descriptor_resolver_rejects_world_readable_file(monkeypatch, tmp_path):
     descriptor.chmod(0o644)
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor))
 
-    status = UiBridgeService(gateway=_FakeUiBridgeGateway()).status()
+    status = UiBridgeService().status()
 
     assert status.reachable is False
     assert status.descriptor_status == "stale_ui_bridge_descriptor"
@@ -742,7 +836,7 @@ def test_descriptor_resolver_reports_ambiguous_live_descriptors(monkeypatch, tmp
     monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", raising=False)
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
 
-    status = UiBridgeService(gateway=_FakeUiBridgeGateway()).status()
+    status = UiBridgeService().status()
 
     assert status.reachable is False
     assert status.descriptor_status == "ambiguous_ui_bridge"
@@ -750,6 +844,103 @@ def test_descriptor_resolver_reports_ambiguous_live_descriptors(monkeypatch, tmp
         first_bridge_id,
         second_bridge_id,
     }
+
+
+def test_descriptor_resolver_reports_live_descriptors_for_missing_instance(
+    monkeypatch,
+    tmp_path,
+):
+    live_bridge_id = "live-bridge"
+    UiBridgeDescriptorFile(
+        tmp_path / "ui_bridge_live.json",
+        live_bridge_id,
+        token=AUTH_TOKEN,
+    ).write()
+    monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", raising=False)
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+
+    status = UiBridgeService(gateway=_FakeUiBridgeGateway()).status(
+        UiBridgeConnectionSpec(bridge_instance_id="stale-bridge")
+    )
+    payload = to_jsonable(status)
+
+    assert status.reachable is False
+    assert status.descriptor_status == "ui_bridge_descriptor_not_found"
+    assert status.errors[0].code == "ui_bridge_descriptor_not_found"
+    assert "bridge_instance_id" in status.errors[0].hint
+    assert [descriptor.bridge_instance_id for descriptor in status.descriptors] == [
+        live_bridge_id,
+    ]
+    assert AUTH_TOKEN not in set(_json_payload_values(payload))
+
+
+def test_descriptor_resolution_uses_process_advertised_descriptor(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor = UiBridgeDescriptorFile(
+        tmp_path / "custom" / "ui_bridge_agent.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    )
+    descriptor.path.parent.mkdir()
+    descriptor_path = descriptor.write()
+    proc_root = tmp_path / "proc"
+    process_dir = proc_root / "1234"
+    process_dir.mkdir(parents=True)
+    process_dir.joinpath("environ").write_bytes(
+        b"OTHER=value\0OPENHCS_UI_BRIDGE_DESCRIPTOR="
+        + os.fsencode(descriptor_path)
+        + b"\0"
+    )
+    monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", raising=False)
+    monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", raising=False)
+    monkeypatch.setattr(
+        UiBridgeProcessAdvertisedDescriptorCatalog,
+        "proc_root",
+        proc_root,
+    )
+    gateway = _FakeUiBridgeGateway()
+
+    status = UiBridgeService(gateway=gateway).status()
+
+    assert status.reachable is True
+    assert status.descriptor_status == "ok"
+    assert status.descriptor_file_path == str(descriptor_path.resolve())
+    assert gateway.connections[0].auth_token == AUTH_TOKEN
+
+
+def test_configured_descriptor_directory_disables_process_advertised_fallback(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor = UiBridgeDescriptorFile(
+        tmp_path / "custom" / "ui_bridge_agent.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    )
+    descriptor.path.parent.mkdir()
+    descriptor.write()
+    proc_root = tmp_path / "proc"
+    process_dir = proc_root / "1234"
+    process_dir.mkdir(parents=True)
+    process_dir.joinpath("environ").write_bytes(
+        b"OPENHCS_UI_BRIDGE_DESCRIPTOR="
+        + os.fsencode(descriptor.path)
+        + b"\0"
+    )
+    monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", raising=False)
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path / "empty"))
+    monkeypatch.setattr(
+        UiBridgeProcessAdvertisedDescriptorCatalog,
+        "proc_root",
+        proc_root,
+    )
+
+    status = UiBridgeService().status()
+
+    assert status.reachable is False
+    assert status.errors[0].code == "ui_bridge_unavailable"
 
 
 def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
@@ -787,6 +978,21 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
         ),
         connection,
     )
+    object_state_field_help = service.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id="global_config",
+            field_path="napari_display_config.colormap",
+        ),
+        connection,
+    )
+    object_state_field_mutation = service.mutate_object_state_field(
+        UiObjectStateFieldMutationRequest(
+            object_state_scope_id="global_config",
+            field_path="napari_display_config.colormap",
+            value="gray",
+        ),
+        connection,
+    )
     validation = service.validate_document(
         UiCodeDocumentValidationRequest(
             document_id=DOCUMENT_ID,
@@ -818,6 +1024,16 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
             window_id=WINDOW_ID,
             open_policy=UiWindowOpenPolicy(create_if_missing=False),
             maximum_text_length=128,
+            include_tree=True,
+        ),
+        connection,
+    )
+    widget_action = service.invoke_widget_action(
+        UiWidgetActionInvokeRequest(
+            window_id=WINDOW_ID,
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            path_id="0",
+            action_kind="button",
         ),
         connection,
     )
@@ -835,8 +1051,21 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
             field_offset=5,
         )
     ]
+    assert object_state_field_help.parameter_name == "colormap"
+    assert object_state_field_help.description == "field docs"
+    assert object_state_field_mutation.mutated is True
+    assert object_state_field_mutation.receipt.accepted is True
+    assert gateway.field_mutation_requests == [
+        UiObjectStateFieldMutationRequest(
+            object_state_scope_id="global_config",
+            field_path="napari_display_config.colormap",
+            value="gray",
+        )
+    ]
     assert validation.valid is True
     assert apply_result.applied is True
+    assert apply_result.receipt.accepted is True
+    assert apply_result.receipt.bridge_operation_id == "op-1"
     assert apply_result.current_revision_token == "rev-2"
     assert apply_result.current_snapshot is not None
     assert apply_result.current_snapshot.snapshot_id == "snap-2"
@@ -856,6 +1085,7 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
         )
     ]
     assert widget_tree.projected is True
+    assert widget_tree.actionable_widgets[0].label == "Compile"
     assert widget_tree.root is not None
     assert widget_tree.root.path_id == "root"
     assert widget_tree.widget_count == 2
@@ -866,7 +1096,7 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
     assert compile_button.text == "Compile"
     assert compile_button.clickable is True
     assert compile_button.actionable is True
-    assert compile_button.action_kinds == ("click",)
+    assert compile_button.action_kinds == ("button",)
     assert compile_button.global_geometry == UiWidgetRect(
         x=18,
         y=180,
@@ -878,10 +1108,221 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
             window_id=WINDOW_ID,
             open_policy=UiWindowOpenPolicy(create_if_missing=False),
             maximum_text_length=128,
+            include_tree=True,
+        )
+    ]
+    assert widget_action.invoked is True
+    assert widget_action.receipt.accepted is True
+    assert gateway.widget_action_requests == [
+        UiWidgetActionInvokeRequest(
+            window_id=WINDOW_ID,
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            path_id="0",
+            action_kind="button",
         )
     ]
     assert operation.status == "complete"
     assert all(sent.auth_token == "token" for sent in gateway.connections)
+
+
+def test_list_object_state_scopes_filters_requested_scope_ids(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+
+    class _ScopeFilteringGateway(_FakeUiBridgeGateway):
+        def list_object_state_scopes(
+            self,
+            connection: UiBridgeConnectionSpec,
+            request: UiObjectStateScopeListRequest,
+        ) -> UiObjectStateScopeCatalog:
+            self.connections.append(connection)
+            self.scope_requests.append(request)
+            return UiObjectStateScopeCatalog(
+                schema_version=SCHEMA_VERSION,
+                object_state_token=1,
+                current_branch="main",
+                current_snapshot_index=-1,
+                active=False,
+                scopes=(
+                    UiObjectStateScopeSummary(
+                        schema_version=SCHEMA_VERSION,
+                        identity=UiObjectStateScopeIdentity(
+                            object_state_scope_id="global_config",
+                        ),
+                        object_type="GlobalPipelineConfig",
+                        parameter_count=1,
+                        dirty_field_count=0,
+                        signature_diff_field_count=0,
+                    ),
+                    UiObjectStateScopeSummary(
+                        schema_version=SCHEMA_VERSION,
+                        identity=UiObjectStateScopeIdentity(
+                            object_state_scope_id=PLATE_SCOPE_ID,
+                        ),
+                        object_type="PipelineOrchestrator",
+                        parameter_count=1,
+                        dirty_field_count=0,
+                        signature_diff_field_count=0,
+                    ),
+                ),
+            )
+
+    gateway = _ScopeFilteringGateway()
+    service = UiBridgeService(gateway=gateway)
+
+    result = service.list_object_state_scopes(
+        UiObjectStateScopeListRequest(scope_ids=(PLATE_SCOPE_ID,)),
+    )
+
+    assert [
+        scope.identity.object_state_scope_id for scope in result.scopes
+    ] == [PLATE_SCOPE_ID]
+    assert gateway.scope_requests[0].scope_ids == (PLATE_SCOPE_ID,)
+
+
+def test_get_object_state_fields_projects_query_from_scope_catalog(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+
+    def field_summary(
+        field_path: str,
+        *,
+        inherited_value: bool = False,
+    ) -> UiObjectStateFieldSummary:
+        return UiObjectStateFieldSummary(
+            schema_version=SCHEMA_VERSION,
+            address=UiSemanticAddress(
+                object_state_scope_id="global_config",
+                field_path=field_path,
+            ),
+            field_name=field_path.rsplit(".", 1)[-1],
+            container_path=(
+                field_path.rsplit(".", 1)[0] if "." in field_path else ""
+            ),
+            object_state_path_type="openhcs.core.config.NapariStreamingConfig",
+            raw_value_type="None" if inherited_value else "bool",
+            resolved_value_type="bool",
+            dirty=False,
+            signature_diff=False,
+            last_changed=False,
+            raw_value_preview=UiObjectStateValuePreview(
+                type_name="None",
+                is_none=True,
+                text="None",
+            ),
+            resolved_value_preview=UiObjectStateValuePreview(
+                type_name="bool",
+                is_none=False,
+                text="False",
+            ),
+            raw_value_is_none=inherited_value,
+            resolved_value_is_none=False,
+            inherited_value=inherited_value,
+        )
+
+    class _FieldProjectionGateway(_FakeUiBridgeGateway):
+        def list_object_state_scopes(
+            self,
+            connection: UiBridgeConnectionSpec,
+            request: UiObjectStateScopeListRequest,
+        ) -> UiObjectStateScopeCatalog:
+            self.connections.append(connection)
+            self.scope_requests.append(request)
+            return UiObjectStateScopeCatalog(
+                schema_version=SCHEMA_VERSION,
+                object_state_token=12,
+                current_branch="main",
+                current_snapshot_index=-1,
+                active=False,
+                scopes=(
+                    UiObjectStateScopeSummary(
+                        schema_version=SCHEMA_VERSION,
+                        identity=UiObjectStateScopeIdentity(
+                            object_state_scope_id="global_config",
+                        ),
+                        object_type="GlobalPipelineConfig",
+                        parameter_count=3,
+                        dirty_field_count=0,
+                        signature_diff_field_count=0,
+                        fields=(
+                            field_summary(
+                                "napari_streaming_config",
+                                inherited_value=True,
+                            ),
+                            field_summary(
+                                "napari_streaming_config.enabled",
+                                inherited_value=True,
+                            ),
+                            field_summary("napari_streaming_config.port"),
+                        ),
+                    ),
+                ),
+            )
+
+    gateway = _FieldProjectionGateway()
+    service = UiBridgeService(gateway=gateway)
+
+    result = service.get_object_state_fields(
+        UiObjectStateFieldListQuery.from_fields(
+            scope_ids=("global_config",),
+            field_path_contains=("napari_streaming_config",),
+            field_filter="semantic",
+        )
+    )
+
+    assert result.field_filter == "semantic"
+    assert result.matched_field_count == 1
+    assert result.returned_field_count == 1
+    assert result.scopes[0].fields[0].field_path == "napari_streaming_config.enabled"
+    assert gateway.scope_requests[0].scope_ids == ("global_config",)
+    assert gateway.scope_requests[0].field_paths == ()
+    assert (
+        gateway.scope_requests[0].field_limit
+        == UiObjectStateFieldListQuery.source_query_scan_limit
+    )
+
+
+def test_unsupported_ui_bridge_operation_error_mentions_restart(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+
+    class _StaleUiBridgeGateway(_FakeUiBridgeGateway):
+        def describe_object_state_field(
+            self,
+            connection: UiBridgeConnectionSpec,
+            request: UiObjectStateFieldHelpRequest,
+        ) -> UiObjectStateFieldHelpResult:
+            del connection, request
+            raise UiBridgeGatewayResponseError(
+                errors=(
+                    AgentError(
+                        code="unsupported_ui_bridge_operation",
+                        message=(
+                            "Unsupported UI bridge operation: "
+                            "describe_object_state_field"
+                        ),
+                        exception_type="UiBridgeUnsupportedOperationError",
+                    ),
+                )
+            )
+
+    service = UiBridgeService(gateway=_StaleUiBridgeGateway())
+    connection = service.connection_from_args(port=9999, auth_token="token")
+
+    result = service.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id="global_config",
+            field_path="napari_display_config.colormap",
+        ),
+        connection,
+    )
+
+    assert result.errors
+    error = result.errors[0]
+    assert error.code == "unsupported_ui_bridge_operation"
+    assert error.hint is not None
+    assert "Restart the UI or UI bridge process" in error.hint
+    assert "current OpenHCS source" in error.hint
 
 
 def test_restore_request_rejects_multiple_selectors(monkeypatch, tmp_path):

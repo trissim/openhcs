@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import ClassVar, Self
+from dataclasses import dataclass, field, fields as dataclass_fields
+from typing import ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -20,11 +20,18 @@ from openhcs.agent.dto.execution import (
     ExecutionConnectionProjection,
     ExecutionConnectionSpec,
 )
+from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
+from openhcs.agent.serialization import to_jsonable
 from openhcs.runtime.viewer_protocol import (
+    ViewerNavigationControlOptions,
     ViewerControlWireValue,
     ViewerPayloadControlOptions,
+    ViewerStateControlOptions,
 )
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureSpec
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 
 
 VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT = 5000
@@ -43,16 +50,168 @@ class ViewerWindowControlRequest(ExecutionConnectionProjection):
     """Shared control-message request fields for running viewer windows."""
 
     timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+    include_response: bool = True
+
+    @classmethod
+    def factory_injected_field_names(cls) -> frozenset[str]:
+        connection_field_names = frozenset(
+            field.name for field in dataclass_fields(ExecutionConnectionProjection)
+        )
+        timeout_field_names = frozenset(
+            field.name
+            for field in dataclass_fields(cls)
+            if field.default == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+        )
+        return connection_field_names | timeout_field_names
+
+    @staticmethod
+    def axis_indices_from_fields(
+        value: tuple[int, ...] | list[int] | dict[str, int] | None,
+    ) -> tuple[int, ...] | dict[str, int] | None:
+        if value is None or isinstance(value, dict):
+            return value
+        if isinstance(value, tuple):
+            return value
+        return tuple(value)
+
+    @staticmethod
+    def axis_indices_to_tool_value(
+        value: tuple[int, ...] | dict[str, int] | None,
+    ) -> list[int] | dict[str, int] | None:
+        if isinstance(value, tuple):
+            return list(value)
+        return value
+
+    @staticmethod
+    def labels_from_fields(
+        value: tuple[str, ...] | list[str],
+    ) -> tuple[str, ...]:
+        return tuple(value)
+
+    def connection_tool_arguments(self) -> dict[str, JsonValue]:
+        payload: dict[str, JsonValue] = {"host": self.connection.host}
+        if self.connection.port is not None:
+            payload["port"] = self.connection.port
+        if self.connection.transport_mode is not None:
+            payload["transport_mode"] = self.connection.transport_mode
+        if self.timeout_ms != VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT:
+            payload["timeout_ms"] = self.timeout_ms
+        return payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ViewerWindowSnapshotRequest(WindowSnapshotCaptureSpec, ViewerWindowControlRequest):
-    pass
+    @classmethod
+    def from_connection(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        output_dir_path: str | None = None,
+        capture_scope: str = WindowSnapshotCaptureScope.WIDGET.value,
+    ) -> "ViewerWindowSnapshotRequest":
+        if output_dir_path is None:
+            output_dir_path = str(DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR)
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            output_dir_path=output_dir_path,
+            capture_scope=WindowSnapshotCaptureScope(capture_scope),
+        )
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        output_dir_path: str | None = None,
+        capture_scope: str = WindowSnapshotCaptureScope.WIDGET.value,
+    ) -> "ViewerWindowSnapshotRequest":
+        return cls.from_connection(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            output_dir_path=output_dir_path,
+            capture_scope=capture_scope,
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            {
+                "output_dir_path": self.output_dir_path,
+                "capture_scope": self.capture_scope.value,
+            }
+        )
+        return payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ViewerWindowStateRequest(ViewerWindowControlRequest):
-    pass
+    state_controls: ViewerStateControlOptions = field(
+        default_factory=ViewerStateControlOptions
+    )
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str | None = None,
+        include_component_values: bool = False,
+        max_component_values_per_layer: int | None = None,
+        include_payload_summaries: bool = False,
+        max_payload_summaries_per_layer: int | None = None,
+        include_response: bool = False,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            include_response=include_response,
+            state_controls=ViewerStateControlOptions.from_overrides(
+                route_key=route_key,
+                include_component_values=include_component_values,
+                max_component_values_per_layer=max_component_values_per_layer,
+                include_payload_summaries=include_payload_summaries,
+                max_payload_summaries_per_layer=max_payload_summaries_per_layer,
+            ),
+        )
+
+    @classmethod
+    def from_cli_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str | None = None,
+        include_component_values: bool = True,
+        max_component_values_per_layer: int | None = 8,
+        include_payload_summaries: bool = True,
+        max_payload_summaries_per_layer: int | None = 8,
+        include_response: bool = False,
+    ) -> Self:
+        return cls.from_fields(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            route_key=route_key,
+            include_component_values=include_component_values,
+            max_component_values_per_layer=max_component_values_per_layer,
+            include_payload_summaries=include_payload_summaries,
+            max_payload_summaries_per_layer=max_payload_summaries_per_layer,
+            include_response=include_response,
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            cast(dict[str, JsonValue], to_jsonable(self.state_controls.to_wire_payload()))
+        )
+        payload["include_response"] = self.include_response
+        return payload
+
+    def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
+        return self.state_controls.to_wire_payload()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -61,8 +220,327 @@ class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
         default_factory=ViewerPayloadControlOptions
     )
 
+    @staticmethod
+    def array_slices_from_fields(
+        value: tuple[tuple[int, int], ...] | list[tuple[int, int]] | list[list[int]] | None,
+    ) -> tuple[tuple[int, int], ...] | None:
+        if value is None:
+            return None
+        return tuple(tuple(slice_pair) for slice_pair in value)
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str | None = None,
+        axis_indices: tuple[int, ...] | list[int] | dict[str, int] | None = None,
+        include_array_values: bool | None = None,
+        max_array_elements: int | None = None,
+        array_slices: (
+            tuple[tuple[int, int], ...] | list[tuple[int, int]] | list[list[int]] | None
+        ) = None,
+        include_shape_payloads: bool | None = None,
+        max_shape_payloads: int | None = None,
+        include_response: bool = False,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            include_response=include_response,
+            payload_controls=ViewerPayloadControlOptions.from_overrides(
+                route_key=route_key,
+                axis_indices=cls.axis_indices_from_fields(axis_indices),
+                include_array_values=include_array_values,
+                max_array_elements=max_array_elements,
+                array_slices=cls.array_slices_from_fields(array_slices),
+                include_shape_payloads=include_shape_payloads,
+                max_shape_payloads=max_shape_payloads,
+            ),
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            cast(
+                dict[str, JsonValue],
+                to_jsonable(self.payload_controls.to_wire_payload()),
+            )
+        )
+        payload["include_response"] = self.include_response
+        return payload
+
     def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
         return self.payload_controls.to_wire_payload()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowNavigationRequest(ViewerWindowControlRequest):
+    navigation: ViewerNavigationControlOptions
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str,
+        axis_indices: dict[str, int] | None = None,
+        visible: bool | None = True,
+        selected: bool | None = True,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            navigation=ViewerNavigationControlOptions.from_overrides(
+                route_key=route_key,
+                axis_indices=axis_indices,
+                visible=visible,
+                selected=selected,
+            ),
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            {
+                "route_key": self.navigation.route_key,
+                "axis_indices": dict(self.navigation.axis_indices),
+                "visible": self.navigation.visible,
+                "selected": self.navigation.selected,
+            }
+        )
+        return payload
+
+    def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
+        return self.navigation.to_wire_payload()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowLayerIsolationRequest(ViewerWindowControlRequest):
+    visible_route_keys: tuple[str, ...]
+    selected_route_key: str | None = None
+    axis_indices: dict[str, int] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.visible_route_keys:
+            raise ValueError("visible_route_keys must contain at least one route key.")
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        visible_route_keys: tuple[str, ...] | list[str],
+        selected_route_key: str | None = None,
+        axis_indices: dict[str, int] | None = None,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            visible_route_keys=tuple(visible_route_keys),
+            selected_route_key=selected_route_key,
+            axis_indices=axis_indices,
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            {
+                "visible_route_keys": list(self.visible_route_keys),
+                "selected_route_key": self.selected_route_key,
+                "axis_indices": self.axis_indices,
+            }
+        )
+        return payload
+
+    @property
+    def requested_visible_route_keys(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.visible_route_keys))
+
+    @property
+    def selected_route(self) -> str:
+        return self.selected_route_key or self.requested_visible_route_keys[-1]
+
+    @property
+    def visible_routes(self) -> frozenset[str]:
+        return frozenset((*self.requested_visible_route_keys, self.selected_route))
+
+    def state_request(self) -> ViewerWindowStateRequest:
+        return ViewerWindowStateRequest(
+            connection=self.connection,
+            timeout_ms=self.timeout_ms,
+            include_response=False,
+            state_controls=ViewerStateControlOptions.from_overrides(
+                include_component_values=False,
+                include_payload_summaries=False,
+            ),
+        )
+
+    def navigation_request(
+        self,
+        *,
+        route_key: str,
+        visible: bool,
+        selected: bool,
+    ) -> ViewerWindowNavigationRequest:
+        return ViewerWindowNavigationRequest(
+            connection=self.connection,
+            timeout_ms=self.timeout_ms,
+            navigation=ViewerNavigationControlOptions.from_overrides(
+                route_key=route_key,
+                axis_indices=self.axis_indices if selected else None,
+                visible=visible,
+                selected=selected,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowImageSampleRequest(ViewerWindowControlRequest):
+    route_key: str | None = None
+    axis_indices: tuple[int, ...] | dict[str, int] | None = None
+    y: int = 0
+    x: int = 0
+    height: int = 32
+    width: int = 32
+    include_array_values: bool = False
+    max_array_elements: int = 4096
+
+    def __post_init__(self) -> None:
+        if self.y < 0 or self.x < 0:
+            raise ValueError("Sample origin y/x must be nonnegative.")
+        if self.height <= 0 or self.width <= 0:
+            raise ValueError("Sample height/width must be positive.")
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str | None = None,
+        axis_indices: tuple[int, ...] | list[int] | dict[str, int] | None = None,
+        y: int = 0,
+        x: int = 0,
+        height: int = 32,
+        width: int = 32,
+        include_array_values: bool = False,
+        max_array_elements: int = 4096,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            route_key=route_key,
+            axis_indices=cls.axis_indices_from_fields(axis_indices),
+            y=y,
+            x=x,
+            height=height,
+            width=width,
+            include_array_values=include_array_values,
+            max_array_elements=max_array_elements,
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            {
+                "route_key": self.route_key,
+                "axis_indices": self.axis_indices_to_tool_value(self.axis_indices),
+                "y": self.y,
+                "x": self.x,
+                "height": self.height,
+                "width": self.width,
+                "include_array_values": self.include_array_values,
+                "max_array_elements": self.max_array_elements,
+            }
+        )
+        return payload
+
+    @property
+    def array_slices(self) -> tuple[tuple[int, int], tuple[int, int]]:
+        return ((self.y, self.y + self.height), (self.x, self.x + self.width))
+
+    @property
+    def protocol_max_array_elements(self) -> int:
+        return self.max_array_elements if self.include_array_values else 0
+
+    def payload_request(self) -> ViewerWindowPayloadRequest:
+        return ViewerWindowPayloadRequest(
+            connection=self.connection,
+            timeout_ms=self.timeout_ms,
+            include_response=False,
+            payload_controls=ViewerPayloadControlOptions.from_overrides(
+                route_key=self.route_key,
+                axis_indices=self.axis_indices,
+                include_array_values=True,
+                max_array_elements=self.protocol_max_array_elements,
+                array_slices=self.array_slices,
+                include_shape_payloads=False,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowRoiSummaryRequest(ViewerWindowControlRequest):
+    route_key: str | None = None
+    axis_indices: tuple[int, ...] | dict[str, int] | None = None
+    max_rois: int = 512
+    max_examples: int = 5
+
+    def __post_init__(self) -> None:
+        if self.max_rois < 0:
+            raise ValueError("max_rois must be nonnegative.")
+        if self.max_examples < 0:
+            raise ValueError("max_examples must be nonnegative.")
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str | None = None,
+        axis_indices: tuple[int, ...] | list[int] | dict[str, int] | None = None,
+        max_rois: int = 512,
+        max_examples: int = 5,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            route_key=route_key,
+            axis_indices=cls.axis_indices_from_fields(axis_indices),
+            max_rois=max_rois,
+            max_examples=max_examples,
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            {
+                "route_key": self.route_key,
+                "axis_indices": self.axis_indices_to_tool_value(self.axis_indices),
+                "max_rois": self.max_rois,
+                "max_examples": self.max_examples,
+            }
+        )
+        return payload
+
+    def payload_request(self) -> ViewerWindowPayloadRequest:
+        return ViewerWindowPayloadRequest(
+            connection=self.connection,
+            timeout_ms=self.timeout_ms,
+            include_response=False,
+            payload_controls=ViewerPayloadControlOptions.from_overrides(
+                route_key=self.route_key,
+                axis_indices=self.axis_indices,
+                include_array_values=False,
+                include_shape_payloads=True,
+                max_shape_payloads=self.max_rois,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +549,7 @@ class ViewerWindowValidationPolicy:
 
     expected_layer_count: int | None = None
     required_axis_labels: tuple[str, ...] = ()
+    required_component_labels: tuple[str, ...] = ()
     require_nonzero_payloads: bool = True
 
 
@@ -79,6 +558,56 @@ class ViewerWindowValidationRequest(ViewerWindowControlRequest):
     validation_policy: ViewerWindowValidationPolicy = field(
         default_factory=ViewerWindowValidationPolicy
     )
+    state_controls: ViewerStateControlOptions = field(
+        default_factory=ViewerStateControlOptions
+    )
+    include_state: bool = False
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        connection: ExecutionConnectionSpec,
+        timeout_ms: int = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
+        route_key: str | None = None,
+        expected_layer_count: int | None = None,
+        required_axis_labels: tuple[str, ...] | list[str] = (),
+        required_component_labels: tuple[str, ...] | list[str] = (),
+        require_nonzero_payloads: bool = True,
+        include_state: bool = False,
+    ) -> Self:
+        return cls(
+            connection=connection,
+            timeout_ms=timeout_ms,
+            validation_policy=ViewerWindowValidationPolicy(
+                expected_layer_count=expected_layer_count,
+                required_axis_labels=cls.labels_from_fields(required_axis_labels),
+                required_component_labels=cls.labels_from_fields(
+                    required_component_labels
+                ),
+                require_nonzero_payloads=require_nonzero_payloads,
+            ),
+            state_controls=ViewerStateControlOptions.from_overrides(
+                route_key=route_key,
+                include_component_values=False,
+                include_payload_summaries=True,
+            ),
+            include_state=include_state,
+        )
+
+    def as_tool_arguments(self) -> dict[str, JsonValue]:
+        payload = self.connection_tool_arguments()
+        payload.update(
+            {
+                "route_key": self.state_controls.route_key,
+                "expected_layer_count": self.expected_layer_count,
+                "required_axis_labels": list(self.required_axis_labels),
+                "required_component_labels": list(self.required_component_labels),
+                "require_nonzero_payloads": self.require_nonzero_payloads,
+                "include_state": self.include_state,
+            }
+        )
+        return payload
 
     @property
     def expected_layer_count(self) -> int | None:
@@ -87,6 +616,10 @@ class ViewerWindowValidationRequest(ViewerWindowControlRequest):
     @property
     def required_axis_labels(self) -> tuple[str, ...]:
         return self.validation_policy.required_axis_labels
+
+    @property
+    def required_component_labels(self) -> tuple[str, ...]:
+        return self.validation_policy.required_component_labels
 
     @property
     def require_nonzero_payloads(self) -> bool:
@@ -120,7 +653,11 @@ class ViewerWindowLayerDescriptor:
 class ViewerWindowLayerState(ViewerWindowLayerDescriptor):
     data_types: tuple[str, ...] = ()
     component_values: tuple[JsonObject, ...] = ()
+    component_value_count: int = 0
+    component_values_truncated: bool = False
     payload_summaries: tuple[JsonObject, ...] = ()
+    payload_summary_count: int = 0
+    payload_summaries_truncated: bool = False
     axis_offsets: tuple[int, ...] = ()
     scalar_labels: tuple[str, ...] = ()
     labels: JsonObject = field(default_factory=dict)
@@ -282,6 +819,7 @@ class ViewerWindowPayloadRecord:
     aggregate_axis_indices: tuple[int, ...] = ()
     summary: JsonObject = field(default_factory=dict)
     array_values: tuple[JsonValue, ...] = ()
+    array_value_summary: JsonObject = field(default_factory=dict)
     shape_payloads: tuple[JsonObject, ...] = ()
 
 
@@ -303,6 +841,89 @@ class ViewerWindowPayloadResult(
     layer_count: int = 0
     layers: tuple[ViewerWindowLayerPayloads, ...] = ()
     response: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerWindowNavigationResult(
+    ViewerWindowObservedErrorResultMixin,
+    AgentResultEnvelope,
+    ExecutionConnectionProjection,
+):
+    registry_key: ClassVar[str] = "navigation"
+
+    observed: bool
+    viewer: ViewerWindowDescriptor | None = None
+    route_key: str | None = None
+    visible: bool | None = None
+    selected: bool | None = None
+    active_dimension_label_route: str | None = None
+    current_step: tuple[int, ...] = ()
+    axis_labels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerWindowLayerVisibilityRecord:
+    route_key: str
+    title: str | None
+    visible: bool
+    selected: bool
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowLayerIsolationResult(AgentResultEnvelope):
+    observed: bool
+    applied: bool
+    selected_route_key: str | None = None
+    visible_route_keys: tuple[str, ...] = ()
+    hidden_route_keys: tuple[str, ...] = ()
+    missing_route_keys: tuple[str, ...] = ()
+    available_layers: tuple[ViewerWindowLayerVisibilityRecord, ...] = ()
+    changed_route_count: int = 0
+    layer_count: int = 0
+    active_dimension_label_route: str | None = None
+    current_step: tuple[int, ...] = ()
+    axis_labels: tuple[str, ...] = ()
+    visible_layers: tuple[ViewerWindowLayerVisibilityRecord, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowImageSampleResult(AgentResultEnvelope):
+    observed: bool
+    route_key: str | None = None
+    requested_route_key: str | None = None
+    auto_selected_route_key: str | None = None
+    candidate_image_route_keys: tuple[str, ...] = ()
+    axis_indices: tuple[int, ...] | dict[str, int] | None = None
+    array_slices: tuple[tuple[int, int], tuple[int, int]] = ((0, 0), (0, 0))
+    record_count: int = 0
+    total_payload_record_count: int = 0
+    raw_image_record_count: int = 0
+    filtered_out_image_record_count: int = 0
+    non_image_record_count: int = 0
+    axis_filter_applied_by_viewer: bool = True
+    client_side_axis_filter_applied: bool = False
+    sample_protocol_supported: bool = False
+    sample_included_count: int = 0
+    sample_omitted_count: int = 0
+    records: tuple[JsonObject, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerWindowRoiSummaryResult(AgentResultEnvelope):
+    observed: bool
+    route_key: str | None = None
+    axis_indices: tuple[int, ...] | dict[str, int] | None = None
+    layer_count: int = 0
+    payload_record_count: int = 0
+    payload_type_counts: dict[str, int] = field(default_factory=dict)
+    roi_payload_count: int = 0
+    total_roi_count: int = 0
+    returned_roi_count: int = 0
+    roi_count_exact: bool = True
+    total_roi_member_count: int = 0
+    returned_roi_member_count: int = 0
+    roi_payloads_truncated: bool = False
+    payloads: tuple[JsonObject, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -330,6 +951,9 @@ class ViewerWindowLayerValidationSummary(
     routed_coordinate_count: int = 0
     payload_coordinate_count: int = 0
     missing_required_axis_labels: tuple[str, ...] = ()
+    component_labels: tuple[str, ...] = ()
+    missing_required_component_labels: tuple[str, ...] = ()
+    axis_labels_present_as_components: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +981,10 @@ class ViewerWindowValidationSummaryResult(
     @property
     def required_axis_labels(self) -> tuple[str, ...]:
         return self.validation_policy.required_axis_labels
+
+    @property
+    def required_component_labels(self) -> tuple[str, ...]:
+        return self.validation_policy.required_component_labels
 
     @property
     def require_nonzero_payloads(self) -> bool:

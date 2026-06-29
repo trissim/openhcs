@@ -31,6 +31,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentRequest,
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
+    UiObjectStateFieldHelpRequest,
+    UiObjectStateFieldHelpResult,
+    UiObjectStateFieldMutationRequest,
+    UiObjectStateFieldMutationResult,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeListRequest,
     UiSelectedPlateWorkflowRequest,
@@ -43,6 +47,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotRestoreRequest,
     UiSnapshotRestoreResult,
     UiTimeTravelHeadRequest,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -56,6 +62,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWidgetTreeResult,
 )
 from openhcs.agent.serialization import to_jsonable
+import openhcs.agent.services.ui_bridge_service as ui_bridge_service
 from openhcs.agent.services.ui_bridge_service import (
     DEFAULT_UI_BRIDGE_TIMEOUT_MS,
     UI_BRIDGE_PROTOCOL_VERSION,
@@ -63,6 +70,7 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeGatewayResponseError,
     UiBridgeGatewayTimeoutError,
     UiBridgeGatewayUnavailableError,
+    UiBridgeOperationContract,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
@@ -70,54 +78,6 @@ from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 DtoT = TypeVar("DtoT")
 UI_BRIDGE_CONTROL_TIMEOUT_MAX_MS = DEFAULT_UI_BRIDGE_TIMEOUT_MS
 UI_BRIDGE_CONTROL_TIMEOUT_MIN_MS = 1
-
-
-class UiBridgeOperationName(str, Enum):
-    STATUS = "status"
-    LIST_DOCUMENTS = "list_documents"
-    GET_DOCUMENT = "get_document"
-    LIST_STATE_SURFACES = "list_state_surfaces"
-    GET_STATE_SURFACE = "get_state_surface"
-    LIST_ACTIONS = "list_actions"
-    INVOKE_ACTION = "invoke_action"
-    LIST_WINDOWS = "list_windows"
-    FOCUS_WINDOW = "focus_window"
-    NAVIGATE_WINDOW = "navigate_window"
-    CLOSE_WINDOW = "close_window"
-    SNAPSHOT_WINDOW = "snapshot_window"
-    WIDGET_TREE = "widget_tree"
-    LIST_OBJECT_STATE_SCOPES = "list_object_state_scopes"
-    VALIDATE_DOCUMENT = "validate_document"
-    APPLY_DOCUMENT = "apply_document"
-    LIST_SNAPSHOTS = "list_snapshots"
-    RESTORE_SNAPSHOT = "restore_snapshot"
-    TIME_TRAVEL_HEAD = "time_travel_head"
-    LIST_BRANCHES = "list_branches"
-    SWITCH_BRANCH = "switch_branch"
-    GET_OPERATION_STATUS = "get_operation_status"
-    SELECTED_PLATE_WORKFLOW = "selected_plate_workflow"
-
-
-UiBridgeOperationRequestPayload = (
-    UiCodeDocumentRequest
-    | UiStateSurfaceRequest
-    | UiActionInvokeRequest
-    | UiWindowFocusRequest
-    | UiWindowNavigateRequest
-    | UiWindowCloseRequest
-    | UiWindowSnapshotRequest
-    | UiWidgetTreeRequest
-    | UiObjectStateScopeListRequest
-    | UiCodeDocumentValidationRequest
-    | UiCodeDocumentApplyRequest
-    | UiSnapshotListRequest
-    | UiSnapshotRestoreRequest
-    | UiTimeTravelHeadRequest
-    | UiBranchSwitchRequest
-    | UiBridgeOperationStatusRequest
-    | UiSelectedPlateWorkflowRequest
-    | None
-)
 
 
 class AgentDtoJsonCodec:
@@ -221,17 +181,18 @@ class UiBridgeControlClient:
     def request(
         self,
         connection: UiBridgeConnectionSpec,
-        operation: UiBridgeOperationName,
-        payload: UiBridgeOperationRequestPayload = None,
+        contract: UiBridgeOperationContract,
+        payload=None,
     ) -> JsonObject:
         if connection.port is None:
             raise UiBridgeGatewayUnavailableError
+        contract.validate_request_payload(payload)
 
         request = UiBridgeRequestEnvelope(
             schema_version=SCHEMA_VERSION,
             bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
             request_id=str(uuid.uuid4()),
-            operation=operation.value,
+            operation=contract.name,
             auth_token=connection.auth_token,
             payload=self._payload_object(payload),
         )
@@ -291,7 +252,7 @@ class UiBridgeControlClient:
         return operation
 
     @staticmethod
-    def _payload_object(payload: UiBridgeOperationRequestPayload) -> JsonObject:
+    def _payload_object(payload) -> JsonObject:
         if payload is None:
             return {}
         json_payload = to_jsonable(payload)
@@ -327,36 +288,44 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
             client = UiBridgeControlClient()
         self._client = client
 
+    def _request(
+        self,
+        connection: UiBridgeConnectionSpec,
+        contract: UiBridgeOperationContract,
+        payload=None,
+    ) -> JsonObject:
+        return self._client.request(connection, contract, payload)
+
     def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
-        payload = self._client.request(connection, UiBridgeOperationName.STATUS)
+        payload = self._request(connection, ui_bridge_service.UiBridgeStatusOperation)
         return AgentDtoJsonCodec.dataclass_from_json(UiBridgeStatus, payload)
 
     def list_documents(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiCodeDocumentCatalog:
-        payload = self._client.request(connection, UiBridgeOperationName.LIST_DOCUMENTS)
+        payload = self._request(connection, ui_bridge_service.UiBridgeListDocumentsOperation)
         return AgentDtoJsonCodec.dataclass_from_json(UiCodeDocumentCatalog, payload)
 
     def list_state_surfaces(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiStateSurfaceCatalog:
-        payload = self._client.request(connection, UiBridgeOperationName.LIST_STATE_SURFACES)
+        payload = self._request(connection, ui_bridge_service.UiBridgeListStateSurfacesOperation)
         return AgentDtoJsonCodec.dataclass_from_json(UiStateSurfaceCatalog, payload)
 
     def list_actions(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiActionCatalog:
-        payload = self._client.request(connection, UiBridgeOperationName.LIST_ACTIONS)
+        payload = self._request(connection, ui_bridge_service.UiBridgeListActionsOperation)
         return AgentDtoJsonCodec.dataclass_from_json(UiActionCatalog, payload)
 
     def list_windows(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiWindowCatalog:
-        payload = self._client.request(connection, UiBridgeOperationName.LIST_WINDOWS)
+        payload = self._request(connection, ui_bridge_service.UiBridgeListWindowsOperation)
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowCatalog, payload)
 
     def list_object_state_scopes(
@@ -366,17 +335,47 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiObjectStateScopeCatalog:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.LIST_OBJECT_STATE_SCOPES,
+            ui_bridge_service.UiBridgeListObjectStateScopesOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiObjectStateScopeCatalog, payload)
+
+    def describe_object_state_field(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiObjectStateFieldHelpRequest,
+    ) -> UiObjectStateFieldHelpResult:
+        payload = self._client.request(
+            connection,
+            ui_bridge_service.UiBridgeDescribeObjectStateFieldOperation,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(
+            UiObjectStateFieldHelpResult,
+            payload,
+        )
+
+    def mutate_object_state_field(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiObjectStateFieldMutationRequest,
+    ) -> UiObjectStateFieldMutationResult:
+        payload = self._client.request(
+            connection,
+            ui_bridge_service.UiBridgeMutateObjectStateFieldOperation,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(
+            UiObjectStateFieldMutationResult,
+            payload,
+        )
 
     def get_document(
         self,
         connection: UiBridgeConnectionSpec,
         request: UiCodeDocumentRequest,
     ) -> UiCodeDocument:
-        payload = self._client.request(connection, UiBridgeOperationName.GET_DOCUMENT, request)
+        payload = self._request(connection, ui_bridge_service.UiBridgeGetDocumentOperation, request)
         return AgentDtoJsonCodec.dataclass_from_json(UiCodeDocument, payload)
 
     def get_state_surface(
@@ -386,7 +385,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiStateSurfaceDocument:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.GET_STATE_SURFACE,
+            ui_bridge_service.UiBridgeGetStateSurfaceOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiStateSurfaceDocument, payload)
@@ -398,7 +397,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiActionInvokeResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.INVOKE_ACTION,
+            ui_bridge_service.UiBridgeInvokeActionOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiActionInvokeResult, payload)
@@ -410,7 +409,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiSelectedPlateWorkflowResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.SELECTED_PLATE_WORKFLOW,
+            ui_bridge_service.UiBridgeSelectedPlateWorkflowOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(
@@ -425,7 +424,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowFocusResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.FOCUS_WINDOW,
+            ui_bridge_service.UiBridgeFocusWindowOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowFocusResult, payload)
@@ -437,7 +436,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowNavigateResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.NAVIGATE_WINDOW,
+            ui_bridge_service.UiBridgeNavigateWindowOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowNavigateResult, payload)
@@ -449,7 +448,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowCloseResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.CLOSE_WINDOW,
+            ui_bridge_service.UiBridgeCloseWindowOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowCloseResult, payload)
@@ -461,7 +460,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWindowSnapshotResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.SNAPSHOT_WINDOW,
+            ui_bridge_service.UiBridgeSnapshotWindowOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowSnapshotResult, payload)
@@ -473,10 +472,25 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiWidgetTreeResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.WIDGET_TREE,
+            ui_bridge_service.UiBridgeWidgetTreeOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiWidgetTreeResult, payload)
+
+    def invoke_widget_action(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiWidgetActionInvokeRequest,
+    ) -> UiWidgetActionInvokeResult:
+        payload = self._client.request(
+            connection,
+            ui_bridge_service.UiBridgeInvokeWidgetActionOperation,
+            request,
+        )
+        return AgentDtoJsonCodec.dataclass_from_json(
+            UiWidgetActionInvokeResult,
+            payload,
+        )
 
     def validate_document(
         self,
@@ -485,7 +499,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiCodeDocumentValidationResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.VALIDATE_DOCUMENT,
+            ui_bridge_service.UiBridgeValidateDocumentOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(
@@ -498,7 +512,11 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         connection: UiBridgeConnectionSpec,
         request: UiCodeDocumentApplyRequest,
     ) -> UiCodeDocumentApplyResult:
-        payload = self._client.request(connection, UiBridgeOperationName.APPLY_DOCUMENT, request)
+        payload = self._request(
+            connection,
+            ui_bridge_service.UiBridgeApplyDocumentOperation,
+            request,
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiCodeDocumentApplyResult, payload)
 
     def list_snapshots(
@@ -506,7 +524,11 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         connection: UiBridgeConnectionSpec,
         request: UiSnapshotListRequest,
     ) -> UiSnapshotCatalog:
-        payload = self._client.request(connection, UiBridgeOperationName.LIST_SNAPSHOTS, request)
+        payload = self._request(
+            connection,
+            ui_bridge_service.UiBridgeListSnapshotsOperation,
+            request,
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiSnapshotCatalog, payload)
 
     def restore_snapshot(
@@ -516,7 +538,7 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiSnapshotRestoreResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.RESTORE_SNAPSHOT,
+            ui_bridge_service.UiBridgeRestoreSnapshotOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiSnapshotRestoreResult, payload)
@@ -528,13 +550,13 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
     ) -> UiSnapshotRestoreResult:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.TIME_TRAVEL_HEAD,
+            ui_bridge_service.UiBridgeTimeTravelHeadOperation,
             request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiSnapshotRestoreResult, payload)
 
     def list_branches(self, connection: UiBridgeConnectionSpec) -> UiBranchCatalog:
-        payload = self._client.request(connection, UiBridgeOperationName.LIST_BRANCHES)
+        payload = self._request(connection, ui_bridge_service.UiBridgeListBranchesOperation)
         return AgentDtoJsonCodec.dataclass_from_json(UiBranchCatalog, payload)
 
     def switch_branch(
@@ -542,17 +564,21 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         connection: UiBridgeConnectionSpec,
         request: UiBranchSwitchRequest,
     ) -> UiSnapshotRestoreResult:
-        payload = self._client.request(connection, UiBridgeOperationName.SWITCH_BRANCH, request)
+        payload = self._request(
+            connection,
+            ui_bridge_service.UiBridgeSwitchBranchOperation,
+            request,
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiSnapshotRestoreResult, payload)
 
     def get_operation_status(
         self,
         connection: UiBridgeConnectionSpec,
-        operation_id: str,
+        request: UiBridgeOperationStatusRequest,
     ) -> UiBridgeOperationRef:
         payload = self._client.request(
             connection,
-            UiBridgeOperationName.GET_OPERATION_STATUS,
-            UiBridgeOperationStatusRequest(operation_id=operation_id),
+            ui_bridge_service.UiBridgeGetOperationStatusOperation,
+            request,
         )
         return AgentDtoJsonCodec.dataclass_from_json(UiBridgeOperationRef, payload)

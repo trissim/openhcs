@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from abc import ABC
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
 from itertools import count
 from types import UnionType
-from typing import Annotated, TypeAlias, Union, get_args, get_origin
+from typing import Annotated, ClassVar, TypeAlias, Union, get_args, get_origin
 
+from metaclass_registry import AutoRegisterMeta
 from objectstate import get_base_type_for_lazy
 
 from openhcs.agent.dto.common import (
@@ -31,33 +33,71 @@ from openhcs.agent.services.source_rendering_service import PythonSourceAssignme
 AgentConfig: TypeAlias = GlobalPipelineConfig | PipelineConfig
 
 
-class AgentConfigKind(Enum):
-    GLOBAL = (
-        "global",
-        GlobalPipelineConfig,
-        ("globalpipelineconfig",),
-    )
-    PIPELINE = (
-        "pipeline",
-        PipelineConfig,
-        ("pipelineconfig",),
-    )
+class AgentConfigDeclaration(ABC, metaclass=AutoRegisterMeta):
+    """Typed agent-facing declaration for one root config class."""
 
-    @property
-    def config_class(self) -> type[AgentConfig]:
-        return self.value[1]
+    __registry_key__ = "config_name"
+    __skip_if_no_key__ = True
+
+    config_name: ClassVar[str | None] = None
+    config_type: ClassVar[type[AgentConfig]]
+    aliases: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
-    def from_request(cls, config_type: str) -> "AgentConfigKind":
-        normalized = config_type.casefold()
-        for kind in cls:
-            primary_name, _config_class, aliases = kind.value
-            if normalized == primary_name or normalized in aliases:
-                return kind
-        raise ValueError(
-            "config_type must be one of: global, GlobalPipelineConfig, "
-            "pipeline, PipelineConfig"
+    def accepted_names(cls) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                (
+                    cls.config_type.__name__,
+                    cls.config_type.__name__.casefold(),
+                    *cls.aliases,
+                )
+            )
         )
+
+    @classmethod
+    def matches(cls, requested: str) -> bool:
+        normalized = requested.casefold()
+        return any(alias.casefold() == normalized for alias in cls.accepted_names())
+
+    @classmethod
+    def display_name(cls) -> str:
+        return cls.config_type.__name__
+
+
+class GlobalPipelineAgentConfigDeclaration(AgentConfigDeclaration):
+    config_name = GlobalPipelineConfig.__name__
+    config_type = GlobalPipelineConfig
+    aliases = ("global",)
+
+
+class PipelineAgentConfigDeclaration(AgentConfigDeclaration):
+    config_name = PipelineConfig.__name__
+    config_type = PipelineConfig
+    aliases = ("pipeline",)
+
+
+def agent_config_declarations() -> tuple[type[AgentConfigDeclaration], ...]:
+    return tuple(AgentConfigDeclaration.__registry__.values())
+
+
+def agent_config_class_from_request(config_type: str) -> type[AgentConfig]:
+    declarations = agent_config_declarations()
+    for declaration in declarations:
+        if declaration.matches(config_type):
+            return declaration.config_type
+    accepted = ", ".join(
+        declaration.display_name() for declaration in declarations
+    )
+    aliases = ", ".join(
+        alias
+        for declaration in declarations
+        for alias in declaration.accepted_names()
+        if alias != declaration.display_name()
+    )
+    raise ValueError(
+        f"config_type must be one of: {accepted}; accepted aliases: {aliases}"
+    )
 
 
 class ConfigService:
@@ -133,7 +173,7 @@ class ConfigService:
         )
 
     def _config_class(self, config_type: str) -> type[AgentConfig]:
-        return AgentConfigKind.from_request(config_type).config_class
+        return agent_config_class_from_request(config_type)
 
 
 def _patch_values(
@@ -144,10 +184,10 @@ def _patch_values(
         return {}
     if not is_dataclass(cls):
         return dict(patch.values)
-    return _coerce_dataclass_patch_values(cls, patch.values)
+    return coerce_dataclass_patch_values(cls, patch.values)
 
 
-def _coerce_dataclass_patch_values(
+def coerce_dataclass_patch_values(
     cls: type,
     values: Mapping[str, JsonValue],
 ) -> dict[str, object]:
@@ -167,15 +207,44 @@ def _coerce_patch_value(field_type, value: JsonValue) -> object:
     if value is None:
         return None
 
+    collection_handled, collection_value = _coerce_collection_patch_value(
+        unwrapped_type,
+        value,
+    )
+    if collection_handled:
+        return collection_value
+
     dataclass_type = _dataclass_type(unwrapped_type)
     if dataclass_type is not None and isinstance(value, Mapping):
-        return dataclass_type(**_coerce_dataclass_patch_values(dataclass_type, value))
+        return dataclass_type(**coerce_dataclass_patch_values(dataclass_type, value))
 
     enum_type = _unwrap_enum(unwrapped_type)
     if enum_type is not None:
         return _coerce_enum_value(enum_type, value)
 
     return value
+
+
+def _coerce_collection_patch_value(field_type, value: JsonValue) -> tuple[bool, object]:
+    field_type = _unwrap_annotated(field_type)
+    origin = get_origin(field_type)
+    if origin in (Union, UnionType):
+        for arg in get_args(field_type):
+            if arg is type(None):
+                continue
+            handled, coerced = _coerce_collection_patch_value(arg, value)
+            if handled:
+                return True, coerced
+        return False, value
+    if origin is list and isinstance(value, list):
+        item_type = get_args(field_type)[0] if get_args(field_type) else object
+        return True, [_coerce_patch_value(item_type, item) for item in value]
+    if origin is tuple and isinstance(value, (list, tuple)):
+        args = get_args(field_type)
+        item_type = args[0] if args and args[0] is not Ellipsis else object
+        coerced = tuple(_coerce_patch_value(item_type, item) for item in value)
+        return True, coerced
+    return False, value
 
 
 def _dataclass_type(field_type) -> type | None:

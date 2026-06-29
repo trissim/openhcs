@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Self, TypeAlias
 
 
 SCHEMA_VERSION = "openhcs.agent.v1"
@@ -12,6 +13,39 @@ SCHEMA_VERSION = "openhcs.agent.v1"
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Mapping[str, "JsonValue"] | tuple["JsonValue", ...] | list["JsonValue"]
 JsonObject: TypeAlias = Mapping[str, JsonValue]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCliArgumentSpec:
+    """CLI argument shape declared by agent request DTOs."""
+
+    field_name: str
+    flags: tuple[str, ...] = ()
+    positional: bool = False
+    nargs: str | int | None = None
+    action: str | None = None
+    help: str | None = None
+
+
+class AgentCliRequest(ABC):
+    """Nominal request DTO that declares generated CLI argument projection."""
+
+    @classmethod
+    @abstractmethod
+    def from_fields(cls, **kwargs) -> Self:
+        raise NotImplementedError
+
+    @classmethod
+    def agent_cli_factory(cls):
+        return cls.from_fields
+
+    @classmethod
+    def agent_cli_argument_specs(cls) -> tuple[AgentCliArgumentSpec, ...]:
+        return ()
+
+    @abstractmethod
+    def as_tool_arguments(self) -> JsonObject:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)

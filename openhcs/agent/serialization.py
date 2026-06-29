@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import inspect
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from functools import singledispatch
 from pathlib import Path
+
+from python_introspect import signature_analysis_target
 
 from openhcs.agent.dto.common import JsonValue
 
@@ -33,6 +36,29 @@ def _jsonable_mapping(value: Mapping) -> JsonValue:
 @to_jsonable.register(frozenset)
 def _jsonable_sequence(value) -> JsonValue:
     return [to_jsonable(item) for item in value]
+
+
+@to_jsonable.register(Callable)
+def _jsonable_callable(value: Callable[..., object]) -> JsonValue:
+    if is_dataclass(value) and not isinstance(value, type):
+        return to_jsonable(asdict(value))
+    target = signature_analysis_target(value)
+    module = inspect.getmodule(target)
+    if module is None:
+        module_name = type(target).__module__
+    else:
+        module_name = module.__name__
+    if inspect.isfunction(target) or inspect.ismethod(target) or inspect.isclass(target):
+        qualname = target.__qualname__
+    else:
+        qualname = type(target).__qualname__
+    return {
+        "kind": "callable",
+        "name": qualname.rsplit(".", 1)[-1],
+        "module": module_name,
+        "qualname": qualname,
+        "import_path": f"{module_name}.{qualname}",
+    }
 
 
 @to_jsonable.register(Enum)

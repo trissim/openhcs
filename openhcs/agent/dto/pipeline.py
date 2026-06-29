@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from openhcs.agent.dto.common import AgentResultEnvelope, JsonObject
@@ -23,13 +24,51 @@ class FunctionStepSpec:
     description: str | None = None
     enabled: bool = True
     debug_pause: bool = False
-    dtype_config: ConfigPatch | None = None
-    processing_config: ConfigPatch | None = None
-    source_bindings: JsonObject | None = None
-    step_well_filter_config: ConfigPatch | None = None
-    step_materialization_config: ConfigPatch | None = None
-    napari_streaming_config: ConfigPatch | None = None
-    fiji_streaming_config: ConfigPatch | None = None
+    step_config_overrides: Mapping[str, ConfigPatch] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionStepAddRequest:
+    """Add one registry-backed FunctionStep to an in-memory pipeline draft."""
+
+    pipeline_id: str
+    function_id: str
+    name: str | None = None
+    kwargs: JsonObject = field(default_factory=dict)
+    step_config_overrides: JsonObject = field(default_factory=dict)
+    step_id: str | None = None
+    description: str | None = None
+    enabled: bool = True
+    debug_pause: bool = False
+    index: int | None = None
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        pipeline_id: str,
+        function_id: str,
+        name: str | None = None,
+        kwargs: dict | None = None,
+        step_config_overrides: dict | None = None,
+        step_id: str | None = None,
+        description: str | None = None,
+        enabled: bool = True,
+        debug_pause: bool = False,
+        index: int | None = None,
+    ) -> "FunctionStepAddRequest":
+        return cls(
+            pipeline_id=pipeline_id,
+            function_id=function_id,
+            name=name,
+            kwargs=dict(kwargs or {}),
+            step_config_overrides=dict(step_config_overrides or {}),
+            step_id=step_id,
+            description=description,
+            enabled=enabled,
+            debug_pause=debug_pause,
+            index=index,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +81,17 @@ class PipelineRef:
 class PipelineConfigRefs:
     global_ref: ConfigRef | None = None
     pipeline_ref: ConfigRef | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineValidationRequest:
+    pipeline_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineSourceRenderRequest:
+    pipeline_id: str
+    clean: bool = True
 
 
 @dataclass(frozen=True, slots=True)

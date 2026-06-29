@@ -11,13 +11,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, ClassVar, Dict, Mapping, Optional, TYPE_CHECKING, Tuple, Union
-from openhcs.constants.constants import Backend, VariableComponents, AllComponents
+from typing import ClassVar, Dict, Mapping, Optional, TYPE_CHECKING, Tuple, Union
+from openhcs.constants.constants import Backend, AllComponents
 from openhcs.core.components.parser_metaprogramming import (
     FilenameParseResult,
     GenericFilenameParser,
 )
-from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
+from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.viewer_transport import (
     ViewerFilenameParserABC,
     ViewerMetadataHandlerABC,
@@ -38,6 +38,28 @@ class MetadataComponentValueSet:
     sites: Optional[Dict[str, Optional[str]]]
     z_indexes: Optional[Dict[str, Optional[str]]]
     timepoints: Optional[Dict[str, Optional[str]]]
+
+    def component_values(
+        self,
+    ) -> tuple[tuple[AllComponents, Optional[Dict[str, Optional[str]]]], ...]:
+        """Return component metadata in the order declared by OpenHCS axes."""
+        return (
+            (AllComponents.CHANNEL, self.channels),
+            (AllComponents.WELL, self.wells),
+            (AllComponents.SITE, self.sites),
+            (AllComponents.Z_INDEX, self.z_indexes),
+            (AllComponents.TIMEPOINT, self.timepoints),
+        )
+
+    def values_for(
+        self,
+        component: AllComponents,
+    ) -> Optional[Dict[str, Optional[str]]]:
+        """Return metadata values for one OpenHCS component declaration."""
+        for declared_component, values in self.component_values():
+            if declared_component == component:
+                return values
+        raise ValueError(f"Unsupported metadata component {component.value!r}.")
 
 
 @dataclass(frozen=True)
@@ -277,19 +299,6 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
     Subclasses must return required metadata from their declared metadata source
     or raise an exception explaining why the contract cannot be satisfied.
     """
-    COMPONENT_VALUE_GETTERS: ClassVar[
-        Dict[AllComponents, Callable[["MetadataHandler", Union[str, Path]], Optional[Dict[str, Optional[str]]]]]
-    ] = {
-        AllComponents.CHANNEL: lambda handler, plate_path: handler.get_channel_values(plate_path),
-        AllComponents.WELL: lambda handler, plate_path: handler.get_well_values(plate_path),
-        AllComponents.SITE: lambda handler, plate_path: handler.get_site_values(plate_path),
-        AllComponents.Z_INDEX: lambda handler, plate_path: handler.get_z_index_values(plate_path),
-        AllComponents.TIMEPOINT: lambda handler, plate_path: handler.get_timepoint_values(plate_path),
-    }
-
-    def __init__(self):
-        """Initialize metadata handler with VariableComponents enum."""
-        self.component_enum = VariableComponents
 
     def source_workspace_metadata_document(
         self,
@@ -438,10 +447,9 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         component_name: str,
     ) -> Optional[Dict[str, Optional[str]]]:
         """Get display values for a named microscope component."""
-        component = AllComponents(component_name)
-        if component not in self.COMPONENT_VALUE_GETTERS:
-            raise ValueError(f"Unsupported metadata component {component_name!r}.")
-        return self.COMPONENT_VALUE_GETTERS[component](self, plate_path)
+        return self.component_value_set(plate_path).values_for(
+            AllComponents(component_name)
+        )
 
     @abstractmethod
     def get_image_files(self, plate_path: Union[str, Path], all_subdirs: bool = False) -> list[str]:
@@ -475,11 +483,10 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
             Example: {"channel": {"1": "HOECHST 33342", "2": "Calcein"}}
         """
         result = {}
-        for component in self.component_enum:
-            component_name = component.value
-            values = self.get_component_values(plate_path, component_name)
+        component_values = self.component_value_set(plate_path)
+        for component, values in component_values.component_values():
             if values:
-                result[component_name] = values
+                result[component.value] = values
         return result
 
     def component_value_set(self, plate_path: Union[str, Path]) -> MetadataComponentValueSet:

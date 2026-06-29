@@ -16,7 +16,7 @@ from enum import Enum
 from functools import lru_cache, wraps
 from threading import Lock
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_type_hints
 
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
@@ -44,6 +44,9 @@ from openhcs.core.runtime_batch_contracts import (
 from openhcs.core.variable_component_stack_requirement import (
     VariableComponentStackRequirement,
 )
+
+if TYPE_CHECKING:
+    from openhcs.core.function_reference import FunctionReference
 
 
 ArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
@@ -417,6 +420,18 @@ class CallableContract(ArtifactPlanKeySelector):
     def input_names(self) -> tuple[str, ...]:
         """Declared artifact input names in declaration order."""
         return tuple(name for name, _ in self.artifact_inputs)
+
+    @property
+    def primary_input_parameter_name(self) -> str | None:
+        """FunctionStep input payload parameter declared by callable signature."""
+        signature = inspect.signature(self.resolve_runtime_callable())
+        for parameter in signature.parameters.values():
+            if parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                return parameter.name
+        return None
 
     artifact_output_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
         AliasProperty("output_names")

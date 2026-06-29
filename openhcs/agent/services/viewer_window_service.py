@@ -5,8 +5,8 @@ from __future__ import annotations
 import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from itertools import product
+from dataclasses import dataclass, replace
+from itertools import combinations, product
 from typing import ClassVar, Generic, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -22,14 +22,23 @@ from openhcs.agent.dto.common import (
 )
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.viewer import (
+    ViewerWindowImageSampleRequest,
+    ViewerWindowImageSampleResult,
+    ViewerWindowLayerIsolationRequest,
+    ViewerWindowLayerIsolationResult,
+    ViewerWindowLayerVisibilityRecord,
     ViewerWindowLayerValidationSummary,
     ViewerWindowLayerState,
     ViewerWindowDescriptor,
     ViewerWindowLayerPayloads,
+    ViewerWindowNavigationRequest,
+    ViewerWindowNavigationResult,
     ViewerWindowProbeResult,
     ViewerWindowPayloadRecord,
     ViewerWindowPayloadRequest,
     ViewerWindowPayloadResult,
+    ViewerWindowRoiSummaryRequest,
+    ViewerWindowRoiSummaryResult,
     ViewerWindowValidationCounters,
     ViewerWindowSnapshotRequest,
     ViewerWindowSnapshotResult,
@@ -41,13 +50,20 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationSummaryResult,
     viewer_window_probe_from_state,
 )
+from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
 from openhcs.core.image_shapes import ArrayShape
+import openhcs.core.plate_image_inventory as core_plate_image_inventory
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureSpec,
     WindowSnapshotWirePayload,
 )
 from openhcs.runtime.viewer_protocol import (
+    ViewerControlField,
     ViewerControlMessageType,
+    ViewerDescriptorField,
+    ViewerLayerField,
+    ViewerPayloadField,
+    ViewerPayloadSummaryField,
 )
 from openhcs.runtime.viewer_component_system import (
     ComponentValue,
@@ -347,6 +363,7 @@ class ViewerWindowValidationTotals(ViewerWindowValidationCounters):
         *,
         state: ViewerWindowStateResult,
         layer_summaries: Sequence[ViewerWindowLayerValidationSummary],
+        cross_layer_spatial_mismatch_count: int = 0,
     ) -> "ViewerWindowValidationTotals":
         return cls(
             mounted_layer_count=sum(1 for layer in state.layers if layer.mounted),
@@ -374,7 +391,8 @@ class ViewerWindowValidationTotals(ViewerWindowValidationCounters):
             ),
             spatial_mismatch_count=sum(
                 layer.spatial_mismatch_count for layer in layer_summaries
-            ),
+            )
+            + cross_layer_spatial_mismatch_count,
         )
 
 
@@ -391,14 +409,6 @@ class ViewerImageSpatialShapeAuthority:
         ):
             return tuple(int(value) for value in shape[-3:-1])
         return tuple(int(value) for value in shape[-2:])
-
-
-class ViewerPayloadSummaryField:
-    """Semantic fields carried by viewer payload summaries."""
-
-    SHAPE = "shape"
-    SOURCE_SPATIAL_SHAPES_YX = "source_spatial_shapes_yx"
-    NONZERO_COUNT = "nonzero_count"
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +506,89 @@ class ViewerPayloadSpatialShapeEvidence:
         return value
 
 
+@dataclass(frozen=True, slots=True)
+class ViewerPayloadSpatialRecord:
+    """One payload spatial domain plus component identity for overlay checks."""
+
+    layer_name: str
+    components: Mapping[str, ComponentValue]
+    spatial_shape: tuple[int, int]
+
+    @classmethod
+    def from_layer(
+        cls,
+        layer: ViewerWindowLayerState,
+    ) -> tuple["ViewerPayloadSpatialRecord", ...]:
+        layer_local_shape = tuple(
+            int(value) for value in layer.data_shape[len(layer.stack_axes) :]
+        )
+        layer_spatial_shape = ViewerImageSpatialShapeAuthority.spatial_shape(
+            layer_local_shape
+        )
+        records: list[ViewerPayloadSpatialRecord] = []
+        for payload_summary in layer.payload_summaries:
+            payload_shape = ViewerPayloadSpatialShapeEvidence.from_summary(
+                payload_summary
+            ).spatial_shape()
+            spatial_shape = payload_shape or layer_spatial_shape
+            if spatial_shape is None:
+                continue
+            try:
+                payload_projection = ViewerPayloadComponentProjection.from_summary(
+                    payload_summary
+                )
+            except (TypeError, ValueError):
+                continue
+            records.append(
+                cls(
+                    layer_name=layer.title or layer.route_key,
+                    components=payload_projection.components,
+                    spatial_shape=spatial_shape,
+                )
+            )
+        return tuple(records)
+
+    def matches_component_context(self, other: "ViewerPayloadSpatialRecord") -> bool:
+        common_components = set(self.components).intersection(other.components)
+        if not common_components:
+            return False
+        return all(
+            self.components[component] == other.components[component]
+            for component in common_components
+        )
+
+    def spatially_matches(self, other: "ViewerPayloadSpatialRecord") -> bool:
+        return self.spatial_shape == other.spatial_shape
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerCrossLayerSpatialMismatchEvidence:
+    """Cross-layer shape mismatches for payloads with matching component metadata."""
+
+    mismatch_count: int
+    compared_payload_pair_count: int
+
+    @classmethod
+    def from_layers(
+        cls,
+        layers: Sequence[ViewerWindowLayerState],
+    ) -> "ViewerCrossLayerSpatialMismatchEvidence":
+        mismatch_count = 0
+        compared_payload_pair_count = 0
+        for first_layer, second_layer in combinations(layers, 2):
+            for first_payload in ViewerPayloadSpatialRecord.from_layer(first_layer):
+                for second_payload in ViewerPayloadSpatialRecord.from_layer(second_layer):
+                    if not first_payload.matches_component_context(second_payload):
+                        continue
+                    compared_payload_pair_count += 1
+                    if not first_payload.spatially_matches(second_payload):
+                        mismatch_count += 1
+        return cls(
+            mismatch_count=mismatch_count,
+            compared_payload_pair_count=compared_payload_pair_count,
+        )
+
+
 class ViewerWindowValidationAuthority:
     """Build validation DTOs from observed viewer state."""
 
@@ -534,9 +627,15 @@ class ViewerWindowValidationAuthority:
             )
             for layer in state.layers
         )
+        cross_layer_spatial_mismatch = (
+            ViewerCrossLayerSpatialMismatchEvidence.from_layers(state.layers)
+        )
         totals = ViewerWindowValidationTotals.from_state_and_layers(
             state=state,
             layer_summaries=layer_summaries,
+            cross_layer_spatial_mismatch_count=(
+                cross_layer_spatial_mismatch.mismatch_count
+            ),
         )
         layer_count_matches = (
             request.expected_layer_count is None
@@ -545,10 +644,15 @@ class ViewerWindowValidationAuthority:
         return ViewerWindowValidationSummaryResult(
             schema_version=SCHEMA_VERSION,
             connection=connection,
-            valid=layer_count_matches and all(layer.valid for layer in layer_summaries),
+            valid=(
+                layer_count_matches
+                and all(layer.valid for layer in layer_summaries)
+                and totals.spatial_mismatch_count == 0
+            ),
             warnings=cls.validation_warnings(
                 validation_context=validation_context,
                 layer_summaries=layer_summaries,
+                cross_layer_spatial_mismatch=cross_layer_spatial_mismatch,
             ),
             observed=True,
             viewer=state.viewer,
@@ -567,7 +671,7 @@ class ViewerWindowValidationAuthority:
             spatial_mismatch_count=totals.spatial_mismatch_count,
             validation_policy=request.validation_policy,
             layer_summaries=layer_summaries,
-            state=state,
+            state=state if request.include_state else None,
         )
 
     @classmethod
@@ -576,10 +680,17 @@ class ViewerWindowValidationAuthority:
         *,
         validation_context: ViewerWindowValidationWarningContext,
         layer_summaries: Sequence[ViewerWindowLayerValidationSummary],
+        cross_layer_spatial_mismatch: ViewerCrossLayerSpatialMismatchEvidence,
     ) -> tuple[AgentWarning, ...]:
         warnings: list[AgentWarning] = []
         warnings.extend(
-            ViewerWindowValidationWarningRule.warnings(validation_context)
+            ViewerWindowValidationWarningRule.warnings(
+                ViewerWindowValidationWarningContext(
+                    validation_policy=validation_context.validation_policy,
+                    observed_layer_count=validation_context.observed_layer_count,
+                    cross_layer_spatial_mismatch=cross_layer_spatial_mismatch,
+                )
+            )
         )
         for layer in layer_summaries:
             warnings.extend(
@@ -630,6 +741,17 @@ class ViewerWindowValidationAuthority:
             for axis_label in validation_policy.required_axis_labels
             if axis_label not in layer.axis_labels
         )
+        component_labels = cls.component_labels(layer)
+        missing_required_component_labels = tuple(
+            component_label
+            for component_label in validation_policy.required_component_labels
+            if component_label not in component_labels
+        )
+        axis_labels_present_as_components = tuple(
+            axis_label
+            for axis_label in missing_required_axis_labels
+            if axis_label in component_labels
+        )
         coordinate_coverage = ViewerLayerCoordinateCoverage.from_layer(layer)
         spatial_mismatch_count = cls.spatial_mismatch_count(layer)
         nonzero_valid = not validation_policy.require_nonzero_payloads or (
@@ -639,6 +761,7 @@ class ViewerWindowValidationAuthority:
             layer.mounted
             and not layer.pending_update
             and not missing_required_axis_labels
+            and not missing_required_component_labels
             and nonzero_valid
             and coordinate_coverage.valid
             and spatial_mismatch_count == 0
@@ -669,9 +792,27 @@ class ViewerWindowValidationAuthority:
             axis_labels=layer.axis_labels,
             stack_axes=layer.stack_axes,
             missing_required_axis_labels=missing_required_axis_labels,
+            component_labels=component_labels,
+            missing_required_component_labels=missing_required_component_labels,
+            axis_labels_present_as_components=axis_labels_present_as_components,
             pending_update=layer.pending_update,
             valid=valid,
         )
+
+    @staticmethod
+    def component_labels(layer: ViewerWindowLayerState) -> tuple[str, ...]:
+        component_labels: set[str] = set(layer.axis_component_values.keys())
+        component_labels.update(layer.routed_component_values.keys())
+        for component_values in layer.component_values:
+            component_labels.update(str(component) for component in component_values.keys())
+        for payload_summary in layer.payload_summaries:
+            components = payload_summary.get("components")
+            if isinstance(components, Mapping):
+                component_labels.update(str(component) for component in components.keys())
+            aggregate_values = payload_summary.get("aggregate_component_values")
+            if isinstance(aggregate_values, Mapping):
+                component_labels.update(str(component) for component in aggregate_values.keys())
+        return tuple(sorted(component_labels))
 
     @classmethod
     def spatial_mismatch_count(cls, layer: ViewerWindowLayerState) -> int:
@@ -685,7 +826,10 @@ class ViewerWindowValidationAuthority:
             ).spatial_shape()
             if candidate is None:
                 continue
-            if candidate != layer_spatial_shape:
+            if (
+                candidate[0] > layer_spatial_shape[0]
+                or candidate[1] > layer_spatial_shape[1]
+            ):
                 mismatch_count += 1
         return mismatch_count
 
@@ -710,66 +854,6 @@ class ViewerWindowValidationAuthority:
         return value
 
 
-class ViewerControlField:
-    """Viewer control payload fields."""
-
-    TYPE = "type"
-    SNAPSHOT = "snapshot"
-    STATUS = "status"
-    MESSAGE = "message"
-    VIEWER = "viewer"
-    RESOURCE = "resource"
-    WIDTH = "width"
-    HEIGHT = "height"
-    LAYERS = "layers"
-    LAYER_COUNT = "layer_count"
-    ACTIVE_DIMENSION_LABEL_ROUTE = "active_dimension_label_route"
-    VIEWER_NDIM = "viewer_ndim"
-    CURRENT_STEP = "current_step"
-    AXIS_LABELS = "axis_labels"
-    COMPONENT_GROUP_COUNT = "component_group_count"
-    COMPONENT_ITEM_COUNT = "component_item_count"
-
-
-class ViewerLayerField:
-    """Viewer layer-state payload fields."""
-
-    ROUTE_KEY = "route_key"
-    TITLE = "title"
-    MOUNTED = "mounted"
-    ITEM_COUNT = "item_count"
-    DATA_TYPES = "data_types"
-    COMPONENT_VALUES = "component_values"
-    PAYLOAD_SUMMARIES = "payload_summaries"
-    AXIS_LABELS = "axis_labels"
-    STACK_AXES = "stack_axes"
-    AXIS_OFFSETS = "axis_offsets"
-    SCALAR_LABELS = "scalar_labels"
-    LABELS = "labels"
-    AXIS_COMPONENT_VALUES = "axis_component_values"
-    ROUTED_COMPONENT_VALUES = "routed_component_values"
-    DATA_SHAPE = "data_shape"
-    TRANSLATE = "translate"
-    VISIBLE = "visible"
-    SELECTED = "selected"
-    PENDING_UPDATE = "pending_update"
-    PAYLOADS = "payloads"
-
-
-class ViewerPayloadField:
-    """Viewer layer payload-record fields."""
-
-    ROUTE_KEY = "route_key"
-    DATA_TYPE = "data_type"
-    PATH = "path"
-    COMPONENTS = "components"
-    AXIS_INDICES = "axis_indices"
-    AGGREGATE_AXIS_INDICES = "aggregate_axis_indices"
-    SUMMARY = "summary"
-    ARRAY_VALUES = "array_values"
-    SHAPE_PAYLOADS = "shape_payloads"
-
-
 class ViewerValidationWarningCode:
     """Warning codes emitted by viewer state validation."""
 
@@ -777,6 +861,7 @@ class ViewerValidationWarningCode:
     LAYER_UNMOUNTED = "viewer_layer_unmounted"
     LAYER_PENDING_UPDATE = "viewer_layer_pending_update"
     REQUIRED_AXIS_LABELS_MISSING = "viewer_required_axis_labels_missing"
+    REQUIRED_COMPONENT_LABELS_MISSING = "viewer_required_component_labels_missing"
     PAYLOAD_NONZERO_METADATA_MISSING = "viewer_payload_nonzero_metadata_missing"
     PAYLOADS_ZERO = "viewer_payloads_zero"
     COORDINATE_GAPS = "viewer_layer_coordinate_gaps"
@@ -784,6 +869,7 @@ class ViewerValidationWarningCode:
     PAYLOAD_COORDINATES_DUPLICATE = "viewer_payload_coordinates_duplicate"
     PAYLOADS_WITHOUT_COORDINATES = "viewer_payloads_without_coordinates"
     SPATIAL_MISMATCH = "viewer_layer_spatial_mismatch"
+    CROSS_LAYER_SPATIAL_MISMATCH = "viewer_cross_layer_spatial_mismatch"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -823,6 +909,12 @@ class ViewerWindowValidationWarningContext(ViewerValidationPolicyCarrier):
     """Validation warning facts that apply to the whole viewer window."""
 
     observed_layer_count: int
+    cross_layer_spatial_mismatch: ViewerCrossLayerSpatialMismatchEvidence = (
+        ViewerCrossLayerSpatialMismatchEvidence(
+            mismatch_count=0,
+            compared_payload_pair_count=0,
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,6 +1001,32 @@ class ViewerLayerCountMismatchWarningRule(ViewerWindowValidationWarningRule):
         )
 
 
+class ViewerCrossLayerSpatialMismatchWarningRule(ViewerWindowValidationWarningRule):
+    """Warn when matching payload metadata is displayed with different y/x shapes."""
+
+    warning_code = ViewerValidationWarningCode.CROSS_LAYER_SPATIAL_MISMATCH
+
+    def warning(
+        self,
+        context: ViewerWindowValidationWarningContext,
+    ) -> AgentWarning | None:
+        evidence = context.cross_layer_spatial_mismatch
+        if not evidence.mismatch_count:
+            return None
+        return AgentWarning(
+            code=self.warning_code,
+            message=(
+                "Viewer layers contain "
+                f"{evidence.mismatch_count} cross-layer spatial shape "
+                "mismatch(es) between payloads with matching component metadata."
+            ),
+            hint=(
+                "Visible layers may not be valid overlays. Compare layer axes and "
+                "spatial shapes, or stream matching output images with the ROI layer."
+            ),
+        )
+
+
 class ViewerLayerUnmountedWarningRule(ViewerLayerValidationWarningRule):
     """Warn when a layer route has no mounted viewer layer."""
 
@@ -955,11 +1073,41 @@ class ViewerRequiredAxisLabelsMissingWarningRule(ViewerLayerValidationWarningRul
         if not context.layer.missing_required_axis_labels:
             return None
         missing = ", ".join(context.layer.missing_required_axis_labels)
+        component_present = ", ".join(context.layer.axis_labels_present_as_components)
+        hint = None
+        if component_present:
+            hint = (
+                "These labels are present as component metadata rather than "
+                f"mounted axes: {component_present}. Use required_component_labels "
+                "when singleton biological components are acceptable."
+            )
         return AgentWarning(
             code=self.warning_code,
             message=(
                 f"Viewer layer {context.layer_name!r} is missing required axis "
                 f"labels: {missing}."
+            ),
+            hint=hint,
+        )
+
+
+class ViewerRequiredComponentLabelsMissingWarningRule(ViewerLayerValidationWarningRule):
+    """Warn when a layer is missing policy-required component labels."""
+
+    warning_code = ViewerValidationWarningCode.REQUIRED_COMPONENT_LABELS_MISSING
+
+    def warning(
+        self,
+        context: ViewerLayerValidationWarningContext,
+    ) -> AgentWarning | None:
+        if not context.layer.missing_required_component_labels:
+            return None
+        missing = ", ".join(context.layer.missing_required_component_labels)
+        return AgentWarning(
+            code=self.warning_code,
+            message=(
+                f"Viewer layer {context.layer_name!r} is missing required "
+                f"component labels: {missing}."
             ),
         )
 
@@ -1124,13 +1272,6 @@ class ViewerSpatialMismatchWarningRule(ViewerLayerValidationWarningRule):
         )
 
 
-class ViewerDescriptorField:
-    """Viewer descriptor payload fields."""
-
-    TYPE = "type"
-    TITLE = "title"
-
-
 class ViewerWindowGatewayABC(ABC):
     """Transport boundary for interacting with running viewer windows."""
 
@@ -1144,6 +1285,10 @@ class ViewerWindowGatewayABC(ABC):
 
     @abstractmethod
     def window_payloads(self, request: ViewerWindowPayloadRequest) -> JsonObject:
+        raise NotImplementedError
+
+    @abstractmethod
+    def navigate_window(self, request: ViewerWindowNavigationRequest) -> JsonObject:
         raise NotImplementedError
 
 
@@ -1163,14 +1308,22 @@ class ZMQViewerWindowGateway(ViewerWindowGatewayABC):
         return self._send_control_message(request, message)
 
     def window_state(self, request: ViewerWindowStateRequest) -> JsonObject:
-        message = {
+        message: dict[str, JsonValue] = {
             ViewerControlField.TYPE: ViewerControlMessageType.STATE.value,
         }
+        message.update(request.to_wire_payload())
         return self._send_control_message(request, message)
 
     def window_payloads(self, request: ViewerWindowPayloadRequest) -> JsonObject:
         message: dict[str, JsonValue] = {
             ViewerControlField.TYPE: ViewerControlMessageType.PAYLOADS.value,
+        }
+        message.update(request.to_wire_payload())
+        return self._send_control_message(request, message)
+
+    def navigate_window(self, request: ViewerWindowNavigationRequest) -> JsonObject:
+        message: dict[str, JsonValue] = {
+            ViewerControlField.TYPE: ViewerControlMessageType.NAVIGATE.value,
         }
         message.update(request.to_wire_payload())
         return self._send_control_message(request, message)
@@ -1181,6 +1334,7 @@ class ZMQViewerWindowGateway(ViewerWindowGatewayABC):
             ViewerWindowSnapshotRequest
             | ViewerWindowStateRequest
             | ViewerWindowPayloadRequest
+            | ViewerWindowNavigationRequest
         ),
         message: JsonObject,
     ) -> JsonObject:
@@ -1218,16 +1372,28 @@ class ViewerWindowService:
 
     SUCCESS_STATUS = "success"
 
-    def __init__(self, gateway: ViewerWindowGatewayABC | None = None) -> None:
+    def __init__(
+        self,
+        gateway: ViewerWindowGatewayABC | None = None,
+        path_policy: AgentPathPolicy | None = None,
+    ) -> None:
         if gateway is None:
             self._gateway = ZMQViewerWindowGateway()
         else:
             self._gateway = gateway
+        self._path_policy = path_policy or AgentPathPolicy.from_environment()
 
     def snapshot_window(
         self,
         request: ViewerWindowSnapshotRequest,
     ) -> ViewerWindowSnapshotResult:
+        try:
+            request = self._writable_snapshot_request(request)
+        except AgentPathPolicyError as exc:
+            return ViewerWindowSnapshotResult.from_request_error(
+                request=request,
+                error=exc.to_agent_error(),
+            )
         connection = request.connection
         try:
             response = self._gateway.snapshot_window(request)
@@ -1250,6 +1416,17 @@ class ViewerWindowService:
                     "viewer_window_snapshot_response_invalid", exc
                 ),
             )
+
+    def _writable_snapshot_request(
+        self,
+        request: ViewerWindowSnapshotRequest,
+    ) -> ViewerWindowSnapshotRequest:
+        return replace(
+            request,
+            output_dir_path=str(
+                self._path_policy.assert_writable(request.output_dir_path)
+            ),
+        )
 
     def _snapshot_result_from_response(
         self,
@@ -1340,6 +1517,7 @@ class ViewerWindowService:
             return self._state_result_from_response(
                 connection=connection,
                 response=response,
+                include_response=request.include_response,
             )
         except Exception as exc:
             return ViewerWindowStateResult.from_error(
@@ -1373,6 +1551,7 @@ class ViewerWindowService:
             return self._payload_result_from_response(
                 connection=connection,
                 response=response,
+                include_response=request.include_response,
             )
         except Exception as exc:
             return ViewerWindowPayloadResult.from_error(
@@ -1381,6 +1560,489 @@ class ViewerWindowService:
                     "viewer_window_payloads_response_invalid", exc
                 ),
             )
+
+    def navigate_window(
+        self,
+        request: ViewerWindowNavigationRequest,
+    ) -> ViewerWindowNavigationResult:
+        connection = request.connection
+        try:
+            response = self._gateway.navigate_window(request)
+        except Exception as exc:
+            return ViewerWindowNavigationResult.from_error(
+                connection=connection,
+                error=AgentError.from_exception("viewer_window_navigation_failed", exc),
+            )
+
+        try:
+            return self._navigation_result_from_response(
+                connection=connection,
+                request=request,
+                response=response,
+            )
+        except Exception as exc:
+            return ViewerWindowNavigationResult.from_error(
+                connection=connection,
+                error=AgentError.from_exception(
+                    "viewer_window_navigation_response_invalid", exc
+                ),
+            )
+
+    def isolate_layers(
+        self,
+        request: ViewerWindowLayerIsolationRequest,
+    ) -> ViewerWindowLayerIsolationResult:
+        state = self.window_state(request.state_request())
+        if state.errors:
+            return ViewerWindowLayerIsolationResult(
+                schema_version=SCHEMA_VERSION,
+                observed=state.observed,
+                applied=False,
+                errors=state.errors,
+                warnings=state.warnings,
+            )
+
+        layer_routes = {layer.route_key for layer in state.layers}
+        missing_routes = tuple(
+            route_key
+            for route_key in request.visible_routes
+            if route_key not in layer_routes
+        )
+        if missing_routes:
+            return ViewerWindowLayerIsolationResult(
+                schema_version=SCHEMA_VERSION,
+                observed=state.observed,
+                applied=False,
+                missing_route_keys=missing_routes,
+                available_layers=tuple(
+                    ViewerWindowLayerVisibilityRecord(
+                        route_key=layer.route_key,
+                        title=layer.title,
+                        visible=layer.visible,
+                        selected=layer.selected,
+                    )
+                    for layer in state.layers
+                ),
+                errors=(
+                    AgentError(
+                        code="viewer_layer_route_missing",
+                        message=(
+                            "Viewer layer route key(s) are not mounted: "
+                            + ", ".join(missing_routes)
+                        ),
+                    ),
+                ),
+                warnings=state.warnings,
+            )
+
+        navigation_errors: list[AgentError] = []
+        changed_routes: list[str] = []
+        for layer in state.layers:
+            route_visible = layer.route_key in request.visible_routes
+            route_selected = layer.route_key == request.selected_route
+            navigation = self.navigate_window(
+                request.navigation_request(
+                    route_key=layer.route_key,
+                    visible=route_visible,
+                    selected=route_selected,
+                )
+            )
+            if navigation.errors:
+                navigation_errors.extend(navigation.errors)
+            else:
+                changed_routes.append(layer.route_key)
+
+        final_state = self.window_state(request.state_request())
+        if final_state.errors:
+            return ViewerWindowLayerIsolationResult(
+                schema_version=SCHEMA_VERSION,
+                observed=final_state.observed,
+                applied=not navigation_errors,
+                selected_route_key=request.selected_route,
+                visible_route_keys=request.requested_visible_route_keys,
+                hidden_route_keys=tuple(
+                    layer.route_key
+                    for layer in state.layers
+                    if layer.route_key not in request.visible_routes
+                ),
+                changed_route_count=len(changed_routes),
+                layer_count=state.layer_count,
+                active_dimension_label_route=None,
+                current_step=(),
+                axis_labels=(),
+                visible_layers=tuple(
+                    ViewerWindowLayerVisibilityRecord(
+                        route_key=layer.route_key,
+                        title=layer.title,
+                        visible=layer.route_key in request.visible_routes,
+                        selected=layer.route_key == request.selected_route,
+                    )
+                    for layer in state.layers
+                    if layer.route_key in request.visible_routes
+                ),
+                errors=tuple((*navigation_errors, *final_state.errors)),
+                warnings=final_state.warnings,
+            )
+
+        return ViewerWindowLayerIsolationResult(
+            schema_version=SCHEMA_VERSION,
+            observed=final_state.observed,
+            applied=not navigation_errors and not final_state.errors,
+            selected_route_key=request.selected_route,
+            visible_route_keys=tuple(
+                layer.route_key for layer in final_state.layers if layer.visible
+            ),
+            hidden_route_keys=tuple(
+                layer.route_key for layer in final_state.layers if not layer.visible
+            ),
+            changed_route_count=len(changed_routes),
+            layer_count=final_state.layer_count,
+            active_dimension_label_route=final_state.active_dimension_label_route,
+            current_step=final_state.current_step,
+            axis_labels=final_state.axis_labels,
+            visible_layers=tuple(
+                ViewerWindowLayerVisibilityRecord(
+                    route_key=layer.route_key,
+                    title=layer.title,
+                    visible=layer.visible,
+                    selected=layer.selected,
+                )
+                for layer in final_state.layers
+                if layer.visible
+            ),
+            errors=tuple((*navigation_errors, *final_state.errors)),
+            warnings=final_state.warnings,
+        )
+
+    def sample_image(
+        self,
+        request: ViewerWindowImageSampleRequest,
+    ) -> ViewerWindowImageSampleResult:
+        result = self.window_payloads(request.payload_request())
+        raw_image_records = tuple(
+            {
+                "layer_route_key": layer.route_key,
+                "layer_title": layer.title,
+                "payload_route_key": payload.route_key,
+                "data_type": payload.data_type,
+                "path": payload.path,
+                "components": payload.components,
+                "axis_indices": payload.axis_indices,
+                "aggregate_axis_indices": payload.aggregate_axis_indices,
+                "summary": payload.summary,
+                "array_value_summary": payload.array_value_summary,
+                "array_values": payload.array_values,
+            }
+            for layer in result.layers
+            for payload in layer.payloads
+            if payload.data_type == "image"
+        )
+        image_layer_route_keys = tuple(
+            dict.fromkeys(
+                record["layer_route_key"]
+                for record in raw_image_records
+                if isinstance(record["layer_route_key"], str)
+            )
+        )
+        requested_route_key = request.route_key
+        resolved_route_key = request.route_key
+        auto_selected_route_key = None
+        route_selection_failed = False
+        local_errors: list[AgentError] = []
+        local_warnings: list[AgentWarning] = []
+
+        if request.route_key is None:
+            if len(image_layer_route_keys) == 1:
+                auto_selected_route_key = image_layer_route_keys[0]
+                resolved_route_key = auto_selected_route_key
+                local_warnings.append(
+                    AgentWarning(
+                        code="viewer_image_route_auto_selected",
+                        message=(
+                            "No route_key was supplied; MCP selected the only "
+                            "viewer layer containing image payloads."
+                        ),
+                        hint=(
+                            f"Pass route_key={auto_selected_route_key!r} to make "
+                            "future sampling explicit."
+                        ),
+                    )
+                )
+            elif len(image_layer_route_keys) > 1:
+                local_errors.append(
+                    AgentError(
+                        code="viewer_image_route_ambiguous",
+                        message=(
+                            "No route_key was supplied and the viewer contains "
+                            "multiple layers with image payloads."
+                        ),
+                        hint="Pass one of candidate_image_route_keys as route_key.",
+                    )
+                )
+                route_selection_failed = True
+            elif not result.errors:
+                local_errors.append(
+                    AgentError(
+                        code="viewer_image_layer_unavailable",
+                        message="Viewer payload query returned no image payload records.",
+                        hint=(
+                            "Use openhcs_get_viewer_window_state or "
+                            "openhcs_get_viewer_window_payloads to inspect available "
+                            "layers, or stream an image layer first."
+                        ),
+                    )
+                )
+                route_selection_failed = True
+
+        if route_selection_failed:
+            image_records = ()
+        elif resolved_route_key is None:
+            image_records = raw_image_records
+        else:
+            image_records = tuple(
+                record
+                for record in raw_image_records
+                if record["layer_route_key"] == resolved_route_key
+            )
+        axis_filter_applied_by_viewer = True
+        client_side_axis_filter_applied = False
+        if isinstance(request.axis_indices, tuple):
+            route_filtered_image_records = image_records
+            image_records = tuple(
+                record
+                for record in route_filtered_image_records
+                if tuple(record["axis_indices"]) == request.axis_indices
+            )
+            axis_filter_applied_by_viewer = len(image_records) == len(
+                route_filtered_image_records
+            )
+            client_side_axis_filter_applied = not axis_filter_applied_by_viewer
+            if client_side_axis_filter_applied:
+                local_warnings.append(
+                    AgentWarning(
+                        code="viewer_payload_axis_filter_not_applied",
+                        message=(
+                            "Viewer returned image payload records outside the "
+                            "requested axis_indices; MCP filtered them client-side."
+                        ),
+                        hint=(
+                            "The viewer process may be stale. Restart and re-stream "
+                            "the viewer if bounded sampling should happen in-process."
+                        ),
+                    )
+                )
+        sample_protocol_supported = any(
+            "requested" in record["array_value_summary"]
+            for record in image_records
+        )
+        if image_records and not sample_protocol_supported:
+            local_warnings.append(
+                AgentWarning(
+                    code="viewer_payload_array_sampling_unavailable",
+                    message=(
+                        "Viewer payload records did not include array_value_summary; "
+                        "bounded array sampling was not applied by the viewer."
+                    ),
+                    hint=(
+                        "Restart the viewer process and re-stream the layer so it "
+                        "loads the current viewer payload protocol."
+                    ),
+                )
+            )
+        sample_included_count = sum(
+            1
+            for record in image_records
+            if record["array_value_summary"].get("included") is True
+        )
+        total_record_count = sum(len(layer.payloads) for layer in result.layers)
+        raw_image_record_count = len(raw_image_records)
+        return ViewerWindowImageSampleResult(
+            schema_version=SCHEMA_VERSION,
+            observed=result.observed,
+            route_key=resolved_route_key,
+            requested_route_key=requested_route_key,
+            auto_selected_route_key=auto_selected_route_key,
+            candidate_image_route_keys=image_layer_route_keys,
+            axis_indices=request.axis_indices,
+            array_slices=request.array_slices,
+            record_count=len(image_records),
+            total_payload_record_count=total_record_count,
+            raw_image_record_count=raw_image_record_count,
+            filtered_out_image_record_count=(
+                raw_image_record_count - len(image_records)
+            ),
+            non_image_record_count=total_record_count - raw_image_record_count,
+            axis_filter_applied_by_viewer=axis_filter_applied_by_viewer,
+            client_side_axis_filter_applied=client_side_axis_filter_applied,
+            sample_protocol_supported=sample_protocol_supported,
+            sample_included_count=sample_included_count,
+            sample_omitted_count=len(image_records) - sample_included_count,
+            records=image_records,
+            errors=(*result.errors, *local_errors),
+            warnings=(*result.warnings, *local_warnings),
+        )
+
+    def summarize_rois(
+        self,
+        request: ViewerWindowRoiSummaryRequest,
+    ) -> ViewerWindowRoiSummaryResult:
+        result = self.window_payloads(request.payload_request())
+
+        payload_summaries = []
+        payload_type_counts: dict[str, int] = {}
+        payload_record_count = 0
+        total_roi_count = 0
+        returned_roi_count = 0
+        total_roi_member_count = 0
+        returned_roi_member_count = 0
+        roi_count_exact = True
+        for layer in result.layers:
+            for payload in layer.payloads:
+                payload_record_count += 1
+                payload_type_counts[payload.data_type] = (
+                    payload_type_counts.get(payload.data_type, 0) + 1
+                )
+                if payload.data_type != "shapes":
+                    continue
+                shape_payload_count = int(
+                    payload.summary.get(
+                        "shape_payload_count",
+                        len(payload.shape_payloads),
+                    )
+                )
+                returned_shape_payload_count = len(payload.shape_payloads)
+                payload_truncated = returned_shape_payload_count < shape_payload_count
+                semantic_payloads = self._semantic_shape_payloads(
+                    payload.shape_payloads
+                )
+                total_roi_count += len(semantic_payloads)
+                returned_roi_count += len(semantic_payloads)
+                total_roi_member_count += shape_payload_count
+                returned_roi_member_count += returned_shape_payload_count
+                roi_count_exact = roi_count_exact and not payload_truncated
+                duplicate_member_count = (
+                    max(0, shape_payload_count - len(semantic_payloads))
+                    if not payload_truncated
+                    else max(0, returned_shape_payload_count - len(semantic_payloads))
+                )
+                areas = self._numeric_metadata(semantic_payloads, "area")
+                perimeters = self._numeric_metadata(semantic_payloads, "perimeter")
+                payload_summaries.append(
+                    {
+                        "layer_route_key": layer.route_key,
+                        "layer_title": layer.title,
+                        "payload_route_key": payload.route_key,
+                        "path": payload.path,
+                        "components": payload.components,
+                        "axis_indices": payload.axis_indices,
+                        "roi_count": len(semantic_payloads),
+                        "returned_roi_count": len(semantic_payloads),
+                        "roi_count_exact": not payload_truncated,
+                        "roi_member_count": shape_payload_count,
+                        "returned_roi_member_count": returned_shape_payload_count,
+                        "roi_duplicate_member_count": duplicate_member_count,
+                        "roi_payloads_truncated": payload_truncated,
+                        "area": self._numeric_stats(areas),
+                        "perimeter": self._numeric_stats(perimeters),
+                        "bounds_yx": payload.summary.get(
+                            "shape_coordinate_bounds_yx"
+                        ),
+                        "coordinate_count": payload.summary.get(
+                            "shape_coordinate_count"
+                        ),
+                        "source_spatial_shapes_yx": payload.summary.get(
+                            "source_spatial_shapes_yx"
+                        ),
+                        "out_of_source_bounds_count": payload.summary.get(
+                            "shape_out_of_source_bounds_count"
+                        ),
+                        "example_rois": tuple(
+                            self._example_roi(shape_payload)
+                            for shape_payload in semantic_payloads[
+                                : request.max_examples
+                            ]
+                        ),
+                    }
+                )
+
+        return ViewerWindowRoiSummaryResult(
+            schema_version=SCHEMA_VERSION,
+            observed=result.observed,
+            route_key=request.route_key,
+            axis_indices=request.axis_indices,
+            layer_count=result.layer_count,
+            payload_record_count=payload_record_count,
+            payload_type_counts=payload_type_counts,
+            roi_payload_count=len(payload_summaries),
+            total_roi_count=total_roi_count,
+            returned_roi_count=returned_roi_count,
+            roi_count_exact=roi_count_exact,
+            total_roi_member_count=total_roi_member_count,
+            returned_roi_member_count=returned_roi_member_count,
+            roi_payloads_truncated=not roi_count_exact,
+            payloads=tuple(payload_summaries),
+            errors=result.errors,
+            warnings=result.warnings,
+        )
+
+    @staticmethod
+    def _numeric_metadata(
+        shape_payloads: tuple[Mapping[str, JsonValue], ...],
+        field_name: str,
+    ) -> tuple[float, ...]:
+        values: list[float] = []
+        for shape_payload in shape_payloads:
+            metadata = shape_payload.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            value = metadata.get(field_name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values.append(float(value))
+        return tuple(values)
+
+    @staticmethod
+    def _semantic_shape_payloads(
+        shape_payloads: tuple[Mapping[str, JsonValue], ...],
+    ) -> tuple[Mapping[str, JsonValue], ...]:
+        unique = {}
+        for shape_payload in shape_payloads:
+            metadata = shape_payload.get("metadata")
+            if isinstance(metadata, Mapping) and metadata:
+                identity = (
+                    core_plate_image_inventory
+                    .semantic_roi_identity_from_metadata(metadata)
+                )
+            else:
+                identity = repr(sorted(shape_payload.items(), key=repr))
+            unique.setdefault(identity, shape_payload)
+        return tuple(unique.values())
+
+    @staticmethod
+    def _numeric_stats(values: tuple[float, ...]) -> dict[str, float] | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        return {
+            "min": ordered[0],
+            "median": ordered[len(ordered) // 2],
+            "mean": sum(ordered) / len(ordered),
+            "max": ordered[-1],
+        }
+
+    @staticmethod
+    def _example_roi(shape_payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        metadata = shape_payload.get("metadata")
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        return {
+            "type": shape_payload.get("type"),
+            "label": metadata.get("label"),
+            "area": metadata.get("area"),
+            "centroid_yx": metadata.get("centroid"),
+            "bbox_yxyx": metadata.get("bbox"),
+            "perimeter": metadata.get("perimeter"),
+            "source_spatial_shape_yx": metadata.get("source_spatial_shape_yx"),
+        }
 
     def validation_summary(
         self,
@@ -1391,6 +2053,8 @@ class ViewerWindowService:
             ViewerWindowStateRequest(
                 connection=connection,
                 timeout_ms=request.timeout_ms,
+                state_controls=request.state_controls,
+                include_response=False,
             )
         )
         return ViewerWindowValidationAuthority.validation_summary(
@@ -1404,6 +2068,7 @@ class ViewerWindowService:
         *,
         connection: ExecutionConnectionSpec,
         response: JsonObject,
+        include_response: bool = True,
     ) -> ViewerWindowStateResult:
         status = self._required_scalar(
             response, ViewerControlField.STATUS, str, "a string"
@@ -1477,7 +2142,53 @@ class ViewerWindowService:
                 int,
                 "an integer",
             ),
+            response=response if include_response else {},
+        )
+
+    def _navigation_result_from_response(
+        self,
+        *,
+        connection: ExecutionConnectionSpec,
+        request: ViewerWindowNavigationRequest,
+        response: JsonObject,
+    ) -> ViewerWindowNavigationResult:
+        status = self._required_scalar(
+            response, ViewerControlField.STATUS, str, "a string"
+        )
+        if status != self.SUCCESS_STATUS:
+            message = self._required_scalar(
+                response, ViewerControlField.MESSAGE, str, "a string"
+            )
+            return ViewerWindowNavigationResult.from_error(
+                connection=connection,
+                error=AgentError(code="viewer_window_navigation_failed", message=message),
+            )
+
+        state = self._state_result_from_response(
+            connection=connection,
             response=response,
+        )
+        target_layer = next(
+            (
+                layer
+                for layer in state.layers
+                if layer.route_key == request.navigation.route_key
+            ),
+            None,
+        )
+        return ViewerWindowNavigationResult(
+            schema_version=SCHEMA_VERSION,
+            connection=connection,
+            observed=state.observed,
+            viewer=state.viewer,
+            route_key=request.navigation.route_key,
+            visible=target_layer.visible if target_layer is not None else None,
+            selected=target_layer.selected if target_layer is not None else None,
+            active_dimension_label_route=state.active_dimension_label_route,
+            current_step=state.current_step,
+            axis_labels=state.axis_labels,
+            errors=state.errors,
+            warnings=state.warnings,
         )
 
     def _payload_result_from_response(
@@ -1485,6 +2196,7 @@ class ViewerWindowService:
         *,
         connection: ExecutionConnectionSpec,
         response: JsonObject,
+        include_response: bool = True,
     ) -> ViewerWindowPayloadResult:
         status = self._required_scalar(
             response, ViewerControlField.STATUS, str, "a string"
@@ -1528,7 +2240,7 @@ class ViewerWindowService:
                 self._layer_payloads_from_payload(layer_payload)
                 for layer_payload in layer_payloads
             ),
-            response=response,
+            response=response if include_response else {},
         )
 
     def _layer_payloads_from_payload(
@@ -1600,6 +2312,10 @@ class ViewerWindowService:
                 payload,
                 ViewerPayloadField.ARRAY_VALUES,
             ),
+            array_value_summary=self._optional_mapping(
+                payload,
+                ViewerPayloadField.ARRAY_VALUE_SUMMARY,
+            ),
             shape_payloads=self._required_mapping_tuple(
                 payload,
                 ViewerPayloadField.SHAPE_PAYLOADS,
@@ -1632,10 +2348,30 @@ class ViewerWindowService:
                 payload,
                 ViewerLayerField.COMPONENT_VALUES,
             ),
+            component_value_count=self._optional_typed(
+                payload,
+                ViewerLayerField.COMPONENT_VALUE_COUNT,
+                int,
+            ) or self._sequence_length(payload, ViewerLayerField.COMPONENT_VALUES),
+            component_values_truncated=self._optional_typed(
+                payload,
+                ViewerLayerField.COMPONENT_VALUES_TRUNCATED,
+                bool,
+            ) or False,
             payload_summaries=self._required_mapping_tuple(
                 payload,
                 ViewerLayerField.PAYLOAD_SUMMARIES,
             ),
+            payload_summary_count=self._optional_typed(
+                payload,
+                ViewerLayerField.PAYLOAD_SUMMARY_COUNT,
+                int,
+            ) or self._sequence_length(payload, ViewerLayerField.PAYLOAD_SUMMARIES),
+            payload_summaries_truncated=self._optional_typed(
+                payload,
+                ViewerLayerField.PAYLOAD_SUMMARIES_TRUNCATED,
+                bool,
+            ) or False,
             axis_labels=self._required_typed_tuple(
                 payload,
                 ViewerLayerField.AXIS_LABELS,
@@ -1698,6 +2434,19 @@ class ViewerWindowService:
         return dict(value)
 
     @staticmethod
+    def _optional_mapping(
+        payload: Mapping[str, JsonValue], field_name: str
+    ) -> JsonObject:
+        if field_name not in payload:
+            return {}
+        value = payload[field_name]
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise TypeError(f"Viewer response field {field_name!r} must be a mapping.")
+        return dict(value)
+
+    @staticmethod
     def _required_str_mapping(
         payload: Mapping[str, JsonValue],
         field_name: str,
@@ -1725,6 +2474,18 @@ class ViewerWindowService:
         if not isinstance(value, (list, tuple)):
             raise TypeError(f"Viewer response field {field_name!r} must be a sequence.")
         return tuple(value)
+
+    @staticmethod
+    def _sequence_length(
+        payload: Mapping[str, JsonValue],
+        field_name: str,
+    ) -> int:
+        if field_name not in payload:
+            return 0
+        value = payload[field_name]
+        if not isinstance(value, (list, tuple)):
+            return 0
+        return len(value)
 
     @staticmethod
     def _required_typed_tuple(

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from enum import Enum
+from typing import ClassVar
 
 from pyqt_reactive.services.widget_tree_projection_config import (
     WidgetNodeIdentity,
@@ -12,8 +14,23 @@ from pyqt_reactive.services.widget_tree_projection_config import (
 
 from openhcs.core.selection import (
     SelectedAllSelectionMode as UiCodeDocumentSelectionMode,
+    SelectedScopeIdsArgument,
     SelectedScopeIdsCarrier,
     SelectionModeCarrier,
+)
+from openhcs.agent.ui_bridge_actions import PlateManagerAction
+from openhcs.agent.ui_bridge_identities import (
+    ManagedWindowWidgetIdentity as ManagedWindowWidgetIdentity,
+    PipelineEditorStateSurfaceIdentityDeclaration as PipelineEditorStateSurfaceIdentityDeclaration,
+    PipelineEditorWidgetIdentity as PipelineEditorWidgetIdentity,
+    PlateManagerOrchestratorCodeDocumentIdentity as PlateManagerOrchestratorCodeDocumentIdentity,
+    PlateManagerStateSurfaceIdentityDeclaration as PlateManagerStateSurfaceIdentityDeclaration,
+    PlateManagerWidgetIdentity as PlateManagerWidgetIdentity,
+    UiBridgeIdentityDeclaration as UiBridgeIdentityDeclaration,
+    UiCodeDocumentIdentityDeclaration as UiCodeDocumentIdentityDeclaration,
+    UiOwnedByWidgetIdentityDeclaration as UiOwnedByWidgetIdentityDeclaration,
+    UiStateSurfaceIdentityDeclarationBase as UiStateSurfaceIdentityDeclarationBase,
+    UiWidgetIdentityDeclaration as UiWidgetIdentityDeclaration,
 )
 from openhcs.agent.dto.common import (
     AgentError,
@@ -24,7 +41,11 @@ from openhcs.agent.dto.common import (
     JsonObject,
     JsonValue,
 )
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureSpec
+from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 from openhcs.agent.dto.execution import (
     ExecutionConnectionProjection,
     ExecutionConnectionSpec,
@@ -36,24 +57,38 @@ UI_BRIDGE_UNKNOWN_OPERATION = "unknown"
 UI_BRIDGE_UNKNOWN_WIDGET = "unknown"
 
 
-class UiCodeDocumentId(str, Enum):
-    PLATE_MANAGER_ORCHESTRATOR = "plate_manager.orchestrator_config"
+def _identity_enum(
+    enum_name: str,
+    identity_type: type[UiBridgeIdentityDeclaration],
+) -> type[Enum]:
+    """Project one public string enum from registered UI identity declarations."""
+    members = {
+        declaration.enum_member_name: declaration.value
+        for declaration in UiBridgeIdentityDeclaration.__registry__.values()
+        if issubclass(declaration, identity_type)
+        and declaration.enum_member_name is not None
+        and declaration.value is not None
+    }
+    return Enum(enum_name, members, type=str)
 
 
-class UiStateSurfaceId(str, Enum):
-    PLATE_MANAGER = "plate_manager.state"
+def _plate_manager_workflow_enum() -> type[Enum]:
+    """Project selected-plate workflows from PlateManager action declarations."""
+    members = {
+        action.plate_operation.name: action.value
+        for action in PlateManagerAction
+        if action.plate_operation is not None
+    }
+    return Enum("UiSelectedPlateWorkflowKind", members, type=str)
 
 
-class UiWidgetId(str, Enum):
-    PLATE_MANAGER = "plate_manager"
-
-
-class UiSelectedPlateWorkflowKind(str, Enum):
-    """Agent-facing workflow commands for the current PlateManager selection."""
-
-    INIT = "init_plate"
-    COMPILE = "compile_plate"
-    RUN = "run_plate"
+UiCodeDocumentId = _identity_enum("UiCodeDocumentId", UiCodeDocumentIdentityDeclaration)
+UiStateSurfaceId = _identity_enum(
+    "UiStateSurfaceId",
+    UiStateSurfaceIdentityDeclarationBase,
+)
+UiWidgetId = _identity_enum("UiWidgetId", UiWidgetIdentityDeclaration)
+UiSelectedPlateWorkflowKind = _plate_manager_workflow_enum()
 
 
 class UiBridgeOperationStatus(str, Enum):
@@ -133,6 +168,11 @@ class UiActionIdentity(UiWidgetIdentity):
 class UiWindowIdentity:
     window_id: str
 
+    def as_identity(self) -> "UiWindowIdentity":
+        if type(self) is UiWindowIdentity:
+            return self
+        return UiWindowIdentity(window_id=self.window_id)
+
 
 @dataclass(frozen=True, kw_only=True)
 class UiObjectStateScopeIdentity:
@@ -143,12 +183,39 @@ class UiObjectStateScopeIdentity:
 class UiObjectStateScopeVisibility:
     include_system_scopes: bool = False
 
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Mapping[str, JsonValue] | None,
+    ) -> "UiObjectStateScopeVisibility":
+        if value is None:
+            return cls()
+        include_system_scopes = value.get("include_system_scopes")
+        if isinstance(include_system_scopes, bool):
+            return cls(include_system_scopes=include_system_scopes)
+        return cls()
+
+
+class UiObjectStateFieldFilter(str, Enum):
+    """Agent-facing filters over existing ObjectState field semantics."""
+
+    ALL = "all"
+    DIRTY = "dirty"
+    DEFAULT_DIFF = "default_diff"
+    INHERITED = "inherited"
+    RAW_RESOLVED = "raw_resolved"
+    SEMANTIC = "semantic"
+
 
 @dataclass(frozen=True, slots=True)
 class UiObjectStateFieldListOptions:
     include_fields: bool = False
     field_limit: int = 200
     field_offset: int = 0
+    include_field_values: bool = False
+    include_field_descriptions: bool = False
+    field_paths: tuple[str, ...] = ()
+    field_filter: UiObjectStateFieldFilter = UiObjectStateFieldFilter.ALL
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -529,6 +596,20 @@ class UiPageRequest:
 class UiCodeDocumentRequest(UiCodeDocumentIdentity, SelectionModeCarrier):
     clean: bool = True
 
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        document_id: str,
+        selection_mode: str = UiCodeDocumentSelectionMode.SELECTED.value,
+        clean: bool = True,
+    ) -> "UiCodeDocumentRequest":
+        return cls(
+            document_id=document_id,
+            selection_mode=selection_mode,
+            clean=clean,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class UiStateSurfaceRequest(
@@ -536,7 +617,19 @@ class UiStateSurfaceRequest(
     SelectionModeCarrier,
     UiCodeDocumentOptionalBaseRevision,
 ):
-    pass
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        surface_id: str = PlateManagerStateSurfaceIdentityDeclaration.require_value(),
+        selection_mode: str = UiCodeDocumentSelectionMode.ALL.value,
+        base_revision_token: str | None = None,
+    ) -> "UiStateSurfaceRequest":
+        return cls(
+            surface_id=surface_id,
+            selection_mode=selection_mode,
+            base_revision_token=base_revision_token,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -574,6 +667,25 @@ class UiPlateManagerRowState:
     runtime_state: str | None
     runtime_percent: float | None
     queue_position: int | None
+    output_plate_scope_id: str | None = None
+    output_plate_root: str | None = None
+    source_plate_scope_id: str | None = None
+    source_plate_root: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiPipelineEditorStepState:
+    step_scope_id: str | None
+    index: int
+    name: str
+    enabled: bool
+    selected: bool
+    dirty: bool
+    default_diff: bool
+    description: str | None = None
+    debug_pause: bool = False
+    function_names: tuple[str, ...] = ()
+    function_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -594,6 +706,19 @@ class UiPlateManagerState(
     object_state_token: int
     manager_execution_state: str
     rows: tuple[UiPlateManagerRowState, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UiPipelineEditorState(
+    UiStateSurfaceEnvelope,
+    UiCodeDocumentCurrentRevision,
+    UiCurrentSnapshotState,
+    SelectedScopeIdsCarrier,
+):
+    object_state_token: int
+    current_plate_scope_id: str | None
+    pipeline_scope_id: str | None
+    steps: tuple[UiPipelineEditorStepState, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -631,6 +756,32 @@ class UiMutationReceipt:
     bridge_operation_id: str | None = None
     accepted: bool = False
 
+    @classmethod
+    def accepted_for(
+        cls,
+        request_token: UiMutationRequestToken,
+        *,
+        bridge_operation_id: str | None = None,
+    ) -> "UiMutationReceipt":
+        return cls(
+            request_token=request_token,
+            bridge_operation_id=bridge_operation_id,
+            accepted=True,
+        )
+
+    @classmethod
+    def rejected_for(
+        cls,
+        request_token: UiMutationRequestToken,
+        *,
+        bridge_operation_id: str | None = None,
+    ) -> "UiMutationReceipt":
+        return cls(
+            request_token=request_token,
+            bridge_operation_id=bridge_operation_id,
+            accepted=False,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class UiActionSummary(SelectionModeCarrier):
@@ -640,6 +791,7 @@ class UiActionSummary(SelectionModeCarrier):
     enabled: bool
     invocation_mode: str
     side_effects: tuple[str, ...] = ()
+    disabled_error: AgentError | None = None
     confirmation_required: bool = False
     current_selection_count: int = 0
     target_scope_ids: tuple[str, ...] = ()
@@ -663,6 +815,31 @@ class UiActionInvokeRequest(
     UiMutationRequestTokenCarrier,
 ):
     observed_selection_revision_token: str | None = None
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        widget_id: str,
+        action_id: str,
+        target_scope_ids: list[str] | None = None,
+        observed_selection_revision_token: str | None = None,
+        request_token: str | None = None,
+        require_confirmation: bool = True,
+    ) -> "UiActionInvokeRequest":
+        selected_scope_ids = SelectedScopeIdsArgument.from_optional_iterable(
+            target_scope_ids
+        )
+        return cls(
+            widget_id=widget_id,
+            action_id=action_id,
+            selected_scope_ids=selected_scope_ids.selected_scope_ids,
+            observed_selection_revision_token=observed_selection_revision_token,
+            request_token=UiMutationRequestToken(value=request_token),
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                require_confirmation
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -699,6 +876,13 @@ class UiWindowSummary:
     visible: bool
     focusable: bool
     manager_scope: UiWindowManagerScope | None = None
+    object_state_scope_id: str | None = None
+    dirty: bool = False
+    signature_diff: bool = False
+    dirty_field_count: int = 0
+    signature_diff_field_count: int = 0
+    semantic_markers: tuple[str, ...] = ()
+    managed_action_ids: tuple[str, ...] = ()
 
     @property
     def window_id(self) -> str:
@@ -723,13 +907,20 @@ class UiWindowOperationRequest(UiWindowIdentity):
 
     open_policy: UiWindowOpenPolicy
 
-    def as_identity(self) -> UiWindowIdentity:
-        return UiWindowIdentity(window_id=self.window_id)
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UiWindowFocusRequest(UiWindowOperationRequest):
-    pass
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        window_id: str,
+        create_if_missing: bool = True,
+    ) -> "UiWindowFocusRequest":
+        return cls(
+            window_id=window_id,
+            open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -742,6 +933,22 @@ class UiWindowFocusResult(AgentResultEnvelope, UiWindowIdentity):
 class UiWindowNavigateRequest(UiWindowOperationRequest):
     item_id: str | None = None
     field_path: str | None = None
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        window_id: str,
+        field_path: str | None = None,
+        item_id: str | None = None,
+        create_if_missing: bool = True,
+    ) -> "UiWindowNavigateRequest":
+        return cls(
+            window_id=window_id,
+            field_path=field_path,
+            item_id=item_id,
+            open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -756,7 +963,13 @@ class UiWindowNavigateResult(AgentResultEnvelope, UiWindowIdentity):
 class UiWindowCloseRequest(UiWindowIdentity):
     """Request a normal close for one currently open UI window."""
 
-    pass
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        window_id: str,
+    ) -> "UiWindowCloseRequest":
+        return cls(window_id=window_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -770,7 +983,23 @@ class UiWindowSnapshotRequest(
     WindowSnapshotCaptureSpec,
     UiWindowOperationRequest,
 ):
-    pass
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        window_id: str,
+        output_dir_path: str | None = None,
+        capture_scope: str = WindowSnapshotCaptureScope.WIDGET.value,
+        create_if_missing: bool = False,
+    ) -> "UiWindowSnapshotRequest":
+        if output_dir_path is None:
+            output_dir_path = str(DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR)
+        return cls(
+            window_id=window_id,
+            output_dir_path=output_dir_path,
+            capture_scope=WindowSnapshotCaptureScope(capture_scope),
+            open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -788,7 +1017,61 @@ class UiWindowSnapshotResult(
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UiWidgetTreeRequest(WidgetTreeProjectionControls, UiWindowOperationRequest):
-    pass
+    actionable_only: bool = True
+    include_tree: bool = False
+    max_depth: int | None = 8
+    max_nodes: int | None = 80
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        window_id: str,
+        create_if_missing: bool = False,
+        maximum_text_length: int = (
+            WidgetTreeProjectionControls.default_maximum_text_length()
+        ),
+        maximum_item_model_nodes: int | None = (
+            WidgetTreeProjectionControls.default_maximum_item_model_nodes()
+        ),
+        truncation_suffix: str = (
+            WidgetTreeProjectionControls.default_truncation_suffix()
+        ),
+        actionable_only: bool = True,
+        include_tree: bool = False,
+        max_depth: int | None = 8,
+        max_nodes: int | None = 80,
+    ) -> "UiWidgetTreeRequest":
+        return cls(
+            window_id=window_id,
+            open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
+            maximum_text_length=maximum_text_length,
+            maximum_item_model_nodes=maximum_item_model_nodes,
+            truncation_suffix=truncation_suffix,
+            actionable_only=actionable_only,
+            include_tree=include_tree,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+        )
+
+    @classmethod
+    def default_include_tree(cls) -> bool:
+        return False
+
+    @classmethod
+    def default_max_depth(cls) -> int:
+        return 8
+
+    @classmethod
+    def default_max_nodes(cls) -> int:
+        return 80
+
+    def __post_init__(self) -> None:
+        WidgetTreeProjectionControls.__post_init__(self)
+        if self.max_depth is not None and self.max_depth < 0:
+            raise ValueError("max_depth must be non-negative or None")
+        if self.max_nodes is not None and self.max_nodes < 1:
+            raise ValueError("max_nodes must be positive or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -797,6 +1080,24 @@ class UiWidgetRect:
     y: int
     width: int
     height: int
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateValuePreview:
+    """Bounded display preview for an ObjectState field value."""
+
+    type_name: str
+    is_none: bool
+    text: str
+    truncated: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class UiObjectStateFieldValuePreviewCarrier:
+    """Shared raw/resolved value previews for ObjectState-aware UI DTOs."""
+
+    raw_value_preview: UiObjectStateValuePreview | None = None
+    resolved_value_preview: UiObjectStateValuePreview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -824,12 +1125,92 @@ class UiWidgetTreeNode(WidgetNodeIdentity):
 
 
 @dataclass(frozen=True, slots=True)
+class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIdentity):
+    label: str | None
+    visible: bool
+    enabled: bool
+    geometry: UiWidgetRect
+    global_geometry: UiWidgetRect
+    action_kinds: tuple[str, ...]
+    clickable: bool
+    checkable: bool | None
+    checked: bool | None
+    current_index: int | None
+    current_text: str | None
+    item_count: int | None
+    tool_tip: str
+    context_label: str | None = None
+    action_role: str | None = None
+    semantic_address: UiSemanticAddress | None = None
+    object_state_scope_id: str | None = None
+    field_path: str | None = None
+    dirty: bool = False
+    signature_diff: bool = False
+    last_changed: bool = False
+    semantic_markers: tuple[str, ...] = ()
+    raw_value: JsonValue | None = None
+    resolved_value: JsonValue | None = None
+    raw_value_is_none: bool = False
+    resolved_value_is_none: bool = False
+    inherited_value: bool = False
+    provenance: "UiObjectStateFieldProvenance | None" = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWidgetActionInvokeRequest(
+    UiWindowOperationRequest,
+    UiMutationRequestTokenCarrier,
+):
+    path_id: str
+    action_kind: str = "auto"
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        window_id: str,
+        path_id: str,
+        action_kind: str = "button",
+        create_if_missing: bool = False,
+        request_token: str | None = None,
+    ) -> "UiWidgetActionInvokeRequest":
+        return cls(
+            window_id=window_id,
+            open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
+            path_id=path_id,
+            action_kind=action_kind,
+            request_token=UiMutationRequestToken(value=request_token),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class UiWidgetActionInvokeResult(
+    AgentResultEnvelope,
+    UiWindowIdentity,
+):
+    path_id: str
+    action_kind: str
+    invoked: bool
+    receipt: UiMutationReceipt
+    summary: UiWidgetActionSummary | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class UiWidgetTreeResult(AgentResultEnvelope, UiWindowIdentity):
     projected: bool
     root: UiWidgetTreeNode | None = None
+    actionable_widgets: tuple[UiWidgetActionSummary, ...] = ()
     summary: UiWindowSummary | None = None
     widget_count: int = 0
     actionable_count: int = 0
+    returned_widget_count: int = 0
+    returned_actionable_count: int = 0
+    tree_truncated: bool = False
+    actionable_widgets_truncated: bool = False
+    actionable_only: bool = True
+    include_tree: bool = False
+    max_depth: int | None = None
+    max_nodes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -849,18 +1230,171 @@ class UiObjectStateFieldProvenanceCarrier:
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateFieldSummary(UiObjectStateFieldProvenanceCarrier):
-    """Field-level ObjectState semantics without exposing raw field values."""
+class UiObjectStateFieldSummary(
+    UiObjectStateFieldProvenanceCarrier,
+    UiObjectStateFieldValuePreviewCarrier,
+):
+    """Field-level ObjectState semantics and bounded raw/resolved values."""
 
     schema_version: str
     address: UiSemanticAddress
     field_name: str
     container_path: str
+    object_state_path_type: str
     raw_value_type: str
     resolved_value_type: str | None
     dirty: bool
     signature_diff: bool
     last_changed: bool
+    parameter_description: str | None = None
+    semantic_markers: tuple[str, ...] = ()
+    raw_value: JsonValue | None = None
+    resolved_value: JsonValue | None = None
+    raw_value_is_none: bool = False
+    resolved_value_is_none: bool = False
+    inherited_value: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldPathIndex:
+    """Field-path relationship index for ObjectState field projections."""
+
+    fields: tuple[UiObjectStateFieldSummary, ...]
+
+    @property
+    def container_field_paths(self) -> frozenset[str]:
+        field_paths = tuple(field.address.field_path for field in self.fields)
+        return frozenset(
+            field_path
+            for field_path in field_paths
+            if any(
+                other_path.startswith(f"{field_path}.")
+                for other_path in field_paths
+                if other_path != field_path
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldHelpRequest(UiSemanticAddress):
+    """Request docs/help for one live ObjectState field address."""
+
+    max_description_chars: int = 4_000
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldHelpQuery:
+    """Public query for field help; scope may be inferred when unique."""
+
+    field_path: str
+    object_state_scope_id: str | None = None
+    window_id: str | None = None
+    max_description_chars: int = 4_000
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        field_path: str,
+        object_state_scope_id: str | None = None,
+        window_id: str | None = None,
+        max_description_chars: int = 4_000,
+    ) -> "UiObjectStateFieldHelpQuery":
+        return cls(
+            field_path=field_path,
+            object_state_scope_id=object_state_scope_id,
+            window_id=window_id,
+            max_description_chars=max_description_chars,
+        )
+
+    def __post_init__(self) -> None:
+        if self.max_description_chars < 0:
+            raise ValueError("max_description_chars must be nonnegative.")
+
+    def concrete_request(
+        self,
+        object_state_scope_id: str,
+    ) -> UiObjectStateFieldHelpRequest:
+        return UiObjectStateFieldHelpRequest(
+            object_state_scope_id=object_state_scope_id,
+            field_path=self.field_path,
+            window_id=self.window_id,
+            max_description_chars=self.max_description_chars,
+        )
+
+    def error_address(self) -> UiSemanticAddress:
+        return UiSemanticAddress(
+            object_state_scope_id=self.object_state_scope_id or "",
+            field_path=self.field_path,
+            window_id=self.window_id,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiObjectStateFieldHelpResult(AgentResultEnvelope):
+    """Display-ready help for one ObjectState field from Python introspection."""
+
+    address: UiSemanticAddress
+    field: UiObjectStateFieldSummary | None = None
+    object_type: str | None = None
+    help_target_type: str | None = None
+    parameter_name: str | None = None
+    target_summary: str | None = None
+    target_description: str | None = None
+    summary: str | None = None
+    description: str | None = None
+    description_truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiObjectStateFieldMutationRequest(
+    UiMutationRequestTokenCarrier,
+    UiSemanticAddress,
+):
+    """Request an ObjectState-owned field update or reset."""
+
+    value: JsonValue | None = None
+    reset: bool = False
+    include_field_values: bool = True
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        object_state_scope_id: str,
+        field_path: str,
+        value: dict | list | str | int | float | bool | None = None,
+        reset: bool = False,
+        window_id: str | None = None,
+        include_field_values: bool = True,
+        request_token: str | None = None,
+    ) -> "UiObjectStateFieldMutationRequest":
+        return cls(
+            object_state_scope_id=object_state_scope_id,
+            field_path=field_path,
+            window_id=window_id,
+            value=value,
+            reset=reset,
+            include_field_values=include_field_values,
+            request_token=UiMutationRequestToken(value=request_token),
+        )
+
+    def __post_init__(self) -> None:
+        if self.reset and self.value is not None:
+            raise ValueError("reset=True cannot be combined with value.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiObjectStateFieldMutationResult(AgentResultEnvelope):
+    """Before/after projection for one ObjectState-owned field mutation."""
+
+    address: UiSemanticAddress
+    mutated: bool
+    reset: bool
+    receipt: UiMutationReceipt
+    before: UiObjectStateFieldSummary | None = None
+    after: UiObjectStateFieldSummary | None = None
+    current_snapshot: "UiSnapshotRef | None" = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -871,6 +1405,10 @@ class UiObjectStateScopeSummary(UiFieldCatalogPageCarrier):
     parameter_count: int
     dirty_field_count: int
     signature_diff_field_count: int
+    has_unsaved_changes: bool = False
+    has_default_overrides: bool = False
+    dirty_marker: str = "*"
+    signature_diff_marker: str = "_"
     last_changed_field: str | None = None
     registered: bool = True
     fields: tuple[UiObjectStateFieldSummary, ...] = ()
@@ -890,21 +1428,243 @@ class UiObjectStateScopeCatalog(
 
 @dataclass(frozen=True, slots=True)
 class UiObjectStateScopeListRequest(UiObjectStateScopeVisibility):
+    scope_ids: tuple[str, ...] = ()
     include_fields: bool = False
     field_limit: int = 200
     field_offset: int = 0
+    include_field_values: bool = False
+    include_field_descriptions: bool = False
+    field_paths: tuple[str, ...] = ()
+    field_filter: UiObjectStateFieldFilter = UiObjectStateFieldFilter.ALL
 
     @classmethod
     def from_visibility_options(
         cls,
         visibility: UiObjectStateScopeVisibility,
         field_options: UiObjectStateFieldListOptions,
+        *,
+        scope_ids: tuple[str, ...] = (),
     ) -> "UiObjectStateScopeListRequest":
         return cls(
+            scope_ids=scope_ids,
             include_system_scopes=visibility.include_system_scopes,
             include_fields=field_options.include_fields,
             field_limit=field_options.field_limit,
             field_offset=field_options.field_offset,
+            include_field_values=field_options.include_field_values,
+            include_field_descriptions=field_options.include_field_descriptions,
+            field_paths=field_options.field_paths,
+            field_filter=field_options.field_filter,
+        )
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        scope_ids: tuple[str, ...] = (),
+        include_system_scopes: bool = False,
+        include_fields: bool = False,
+        include_field_values: bool = False,
+        field_filter: str = UiObjectStateFieldFilter.ALL.value,
+        field_limit: int = 200,
+        field_offset: int = 0,
+    ) -> "UiObjectStateScopeListRequest":
+        return cls.from_visibility_options(
+            UiObjectStateScopeVisibility(
+                include_system_scopes=include_system_scopes,
+            ),
+            UiObjectStateFieldListOptions(
+                include_fields=include_fields,
+                include_field_values=include_field_values,
+                field_limit=field_limit,
+                field_offset=field_offset,
+                field_filter=UiObjectStateFieldFilter(field_filter),
+            ),
+            scope_ids=tuple(scope_ids),
+        )
+
+    def filtered_catalog(
+        self,
+        catalog: UiObjectStateScopeCatalog,
+    ) -> UiObjectStateScopeCatalog:
+        if not self.scope_ids:
+            return catalog
+        requested_scope_ids = set(self.scope_ids)
+        return replace(
+            catalog,
+            scopes=tuple(
+                scope
+                for scope in catalog.scopes
+                if scope.identity.object_state_scope_id in requested_scope_ids
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldProjection:
+    """Compact ObjectState field row for agent-facing field-list queries."""
+
+    field_path: str
+    field_name: str
+    container_path: str
+    object_state_path_type: str
+    dirty: bool
+    signature_diff: bool
+    last_changed: bool
+    semantic_markers: tuple[str, ...]
+    raw_value_type: str
+    resolved_value_type: str | None
+    raw_value_preview: UiObjectStateValuePreview | None
+    resolved_value_preview: UiObjectStateValuePreview | None
+    raw_value: JsonValue | None
+    resolved_value: JsonValue | None
+    raw_value_is_none: bool
+    resolved_value_is_none: bool
+    inherited_value: bool
+    provenance: UiObjectStateFieldProvenance | None
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldScopeProjection:
+    """Compact ObjectState scope row for field-list query results."""
+
+    scope_id: str
+    object_type: str
+    dirty_field_count: int
+    signature_diff_field_count: int
+    has_unsaved_changes: bool
+    has_default_overrides: bool
+    fields: tuple[UiObjectStateFieldProjection, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiObjectStateFieldListResult(AgentResultEnvelope):
+    """Filtered, paged ObjectState field projection for agent tools."""
+
+    object_state_token: int
+    current_branch: str
+    current_snapshot_index: int
+    requested_scope_ids: tuple[str, ...]
+    field_paths: tuple[str, ...]
+    field_path_contains: tuple[str, ...]
+    field_filter: str
+    include_container_fields: bool
+    matched_scope_count: int
+    matched_field_count: int
+    returned_field_count: int
+    field_limit: int
+    field_offset: int
+    next_offset: int | None
+    truncated: bool
+    scopes: tuple[UiObjectStateFieldScopeProjection, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UiObjectStateFieldListQuery:
+    """Public ObjectState field query projected from the scope-list bridge ABI."""
+
+    source_query_scan_limit: ClassVar[int] = 1_000
+
+    scope_ids: tuple[str, ...] = ()
+    field_paths: tuple[str, ...] = ()
+    field_path_contains: tuple[str, ...] = ()
+    include_system_scopes: bool = False
+    include_clean_fields: bool = True
+    include_container_fields: bool = False
+    field_filter: UiObjectStateFieldFilter = UiObjectStateFieldFilter.ALL
+    include_field_values: bool = False
+    field_limit: int = 200
+    field_offset: int = 0
+    max_fields: int = 100
+    max_value_items: int = 20
+    max_value_chars: int = 1000
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        scope_ids: tuple[str, ...] = (),
+        field_paths: tuple[str, ...] = (),
+        field_path_contains: tuple[str, ...] = (),
+        include_system_scopes: bool = False,
+        include_clean_fields: bool = True,
+        include_container_fields: bool = False,
+        field_filter: str = UiObjectStateFieldFilter.ALL.value,
+        include_field_values: bool = False,
+        field_limit: int = 200,
+        field_offset: int = 0,
+        max_fields: int = 100,
+        max_value_items: int = 20,
+        max_value_chars: int = 1000,
+    ) -> "UiObjectStateFieldListQuery":
+        return cls(
+            scope_ids=tuple(scope_ids),
+            field_paths=tuple(field_paths),
+            field_path_contains=tuple(field_path_contains),
+            include_system_scopes=include_system_scopes,
+            include_clean_fields=include_clean_fields,
+            include_container_fields=include_container_fields,
+            field_filter=UiObjectStateFieldFilter(field_filter),
+            include_field_values=include_field_values,
+            field_limit=field_limit,
+            field_offset=field_offset,
+            max_fields=max_fields,
+            max_value_items=max_value_items,
+            max_value_chars=max_value_chars,
+        )
+
+    def __post_init__(self) -> None:
+        if self.field_limit < 0 or self.field_offset < 0:
+            raise ValueError("field_limit and field_offset must be nonnegative.")
+        if self.max_fields < 0 or self.max_value_items < 0 or self.max_value_chars < 0:
+            raise ValueError(
+                "max_fields, max_value_items, and max_value_chars must be nonnegative."
+            )
+
+    @property
+    def contains_terms(self) -> tuple[str, ...]:
+        return tuple(term.lower() for term in self.field_path_contains)
+
+    @property
+    def exact_source_field_paths(self) -> tuple[str, ...]:
+        if (
+            self.field_paths
+            and not self.contains_terms
+            and not self.include_container_fields
+        ):
+            return self.field_paths
+        return ()
+
+    @property
+    def source_field_limit(self) -> int:
+        if self.exact_source_field_paths:
+            return max(1, len(self.exact_source_field_paths))
+        return max(
+            self.source_query_scan_limit,
+            self.field_limit + self.field_offset,
+            self.max_fields,
+        )
+
+    @property
+    def return_limit(self) -> int:
+        if self.max_fields:
+            return min(self.field_limit, self.max_fields)
+        return self.field_limit
+
+    def scope_list_request(self) -> UiObjectStateScopeListRequest:
+        return UiObjectStateScopeListRequest.from_visibility_options(
+            UiObjectStateScopeVisibility(
+                include_system_scopes=self.include_system_scopes,
+            ),
+            UiObjectStateFieldListOptions(
+                include_fields=True,
+                include_field_values=self.include_field_values,
+                field_limit=self.source_field_limit,
+                field_offset=0,
+                field_paths=self.exact_source_field_paths,
+                field_filter=self.field_filter,
+            ),
+            scope_ids=self.scope_ids,
         )
 
 
@@ -914,6 +1674,20 @@ class UiCodeDocumentValidationRequest(
     UiCodeDocumentOptionalBaseRevision,
 ):
     source: str
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        document_id: str,
+        source: str,
+        base_revision_token: str | None = None,
+    ) -> "UiCodeDocumentValidationRequest":
+        return cls(
+            document_id=document_id,
+            source=source,
+            base_revision_token=base_revision_token,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -942,10 +1716,35 @@ class UiCodeDocumentApplyRequest(
     UiCodeDocumentIdentity,
     UiCodeDocumentBaseRevision,
     UiBridgeConfirmationPolicy,
+    UiMutationRequestTokenCarrier,
 ):
     source: str
     snapshot_label: str | None = None
     apply_if_time_traveling: bool = False
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        document_id: str,
+        source: str,
+        base_revision_token: str,
+        require_confirmation: bool = True,
+        snapshot_label: str | None = None,
+        apply_if_time_traveling: bool = False,
+        request_token: str | None = None,
+    ) -> "UiCodeDocumentApplyRequest":
+        return cls(
+            document_id=document_id,
+            source=source,
+            base_revision_token=base_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                require_confirmation
+            ),
+            request_token=UiMutationRequestToken(value=request_token),
+            snapshot_label=snapshot_label,
+            apply_if_time_traveling=apply_if_time_traveling,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -953,6 +1752,7 @@ class UiCodeDocumentApplyResult(UiCodeDocumentIdentity):
     schema_version: str
     applied: bool
     base_revision_token: str
+    receipt: UiMutationReceipt
     outcome: str = "not_applied"
     operation_id: str | None = None
     new_revision_token: str | None = None
@@ -974,13 +1774,36 @@ class UiSelectedPlateWorkflowRequest(
     workflow: UiSelectedPlateWorkflowKind
     observed_selection_revision_token: str | None = None
 
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        workflow: UiSelectedPlateWorkflowKind,
+        target_scope_ids: list[str] | None = None,
+        observed_selection_revision_token: str | None = None,
+        request_token: str | None = None,
+        require_confirmation: bool = False,
+    ) -> "UiSelectedPlateWorkflowRequest":
+        selected_scope_ids = SelectedScopeIdsArgument.from_optional_iterable(
+            target_scope_ids
+        )
+        return cls(
+            workflow=workflow,
+            selected_scope_ids=selected_scope_ids.selected_scope_ids,
+            observed_selection_revision_token=observed_selection_revision_token,
+            request_token=UiMutationRequestToken(value=request_token),
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                require_confirmation
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class UiSelectedPlateWorkflowResult:
     schema_version: str
     workflow: UiSelectedPlateWorkflowKind
     action_result: UiActionInvokeResult
-    state_surface_id: str = UiStateSurfaceId.PLATE_MANAGER.value
+    state_surface_id: str = PlateManagerStateSurfaceIdentityDeclaration.require_value()
     errors: tuple[AgentError, ...] = ()
     warnings: tuple[AgentWarning, ...] = ()
 
@@ -999,7 +1822,14 @@ class UiSnapshotCatalog(UiTimeTravelRuntimeState):
 
 @dataclass(frozen=True, slots=True)
 class UiSnapshotListRequest(UiObjectStateScopeVisibility):
-    pass
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        scope_visibility: dict | None = None,
+    ) -> "UiSnapshotListRequest":
+        visibility = UiObjectStateScopeVisibility.from_mapping(scope_visibility)
+        return cls(include_system_scopes=visibility.include_system_scopes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1011,10 +1841,43 @@ class UiSnapshotRestoreRequest(
     index: int | None = None
     branch: str | None = None
 
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        snapshot_id: str | None = None,
+        index: int | None = None,
+        branch: str | None = None,
+        scope_visibility: dict | None = None,
+        require_confirmation: bool = True,
+        allow_auto_branch: bool = False,
+    ) -> "UiSnapshotRestoreRequest":
+        visibility = UiObjectStateScopeVisibility.from_mapping(scope_visibility)
+        return cls(
+            snapshot_id=snapshot_id,
+            index=index,
+            branch=branch,
+            include_system_scopes=visibility.include_system_scopes,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                require_confirmation
+            ),
+            allow_auto_branch=allow_auto_branch,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class UiTimeTravelHeadRequest(UiBridgeConfirmationPolicy):
-    pass
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        require_confirmation: bool = True,
+    ) -> "UiTimeTravelHeadRequest":
+        return cls(
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                require_confirmation
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1039,6 +1902,22 @@ class UiBranchCatalog:
 @dataclass(frozen=True, slots=True)
 class UiBranchSwitchRequest(UiBridgeBranchMutationPolicy):
     branch: str
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        branch: str,
+        require_confirmation: bool = True,
+        allow_auto_branch: bool = False,
+    ) -> "UiBranchSwitchRequest":
+        return cls(
+            branch=branch,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                require_confirmation
+            ),
+            allow_auto_branch=allow_auto_branch,
+        )
 
     def as_restore_request(self) -> UiSnapshotRestoreRequest:
         return UiSnapshotRestoreRequest(

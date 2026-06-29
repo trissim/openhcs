@@ -26,12 +26,12 @@ from polystore.streaming_constants import StreamingDataType
 from zmqruntime.config import TransportMode as ZMQTransportMode, ZMQConfig
 from zmqruntime.streaming import VisualizerProcessManager
 from zmqruntime.viewer_protocol import (
-    ViewerBatchMessageType,
-    ViewerBatchContextWireField,
-    ViewerBatchWireField,
+    ViewerBatchMessageType as ViewerBatchMessageType,
+    ViewerBatchContextWireField as ViewerBatchContextWireField,
+    ViewerBatchWireField as ViewerBatchWireField,
     ViewerControlResponseField,
-    ViewerControlReplyHeader,
-    ViewerControlReplyPayload,
+    ViewerControlReplyHeader as ViewerControlReplyHeader,
+    ViewerControlReplyPayload as ViewerControlReplyPayload,
     ViewerProtocolStatus,
     ViewerTransportEndpoint,
 )
@@ -101,6 +101,86 @@ class ViewerNavigationControlField(Enum):
     AXIS_INDICES = "axis_indices"
     VISIBLE = "visible"
     SELECTED = "selected"
+
+
+class ViewerPayloadSummaryField(str, Enum):
+    """Viewer payload-summary response fields."""
+
+    SHAPE = "shape"
+    SOURCE_SPATIAL_SHAPES_YX = "source_spatial_shapes_yx"
+    NONZERO_COUNT = "nonzero_count"
+
+
+class ViewerControlField(str, Enum):
+    """Viewer control response payload fields."""
+
+    TYPE = "type"
+    SNAPSHOT = "snapshot"
+    STATUS = "status"
+    MESSAGE = "message"
+    VIEWER = "viewer"
+    RESOURCE = "resource"
+    WIDTH = "width"
+    HEIGHT = "height"
+    LAYERS = "layers"
+    LAYER_COUNT = "layer_count"
+    ACTIVE_DIMENSION_LABEL_ROUTE = "active_dimension_label_route"
+    VIEWER_NDIM = "viewer_ndim"
+    CURRENT_STEP = "current_step"
+    AXIS_LABELS = "axis_labels"
+    COMPONENT_GROUP_COUNT = "component_group_count"
+    COMPONENT_ITEM_COUNT = "component_item_count"
+
+
+class ViewerLayerField(str, Enum):
+    """Viewer layer-state response payload fields."""
+
+    ROUTE_KEY = "route_key"
+    TITLE = "title"
+    MOUNTED = "mounted"
+    ITEM_COUNT = "item_count"
+    DATA_TYPES = "data_types"
+    COMPONENT_VALUES = "component_values"
+    PAYLOAD_SUMMARIES = "payload_summaries"
+    AXIS_LABELS = "axis_labels"
+    STACK_AXES = "stack_axes"
+    AXIS_OFFSETS = "axis_offsets"
+    SCALAR_LABELS = "scalar_labels"
+    LABELS = "labels"
+    COMPONENT_VALUE_COUNT = "component_value_count"
+    COMPONENT_VALUES_TRUNCATED = "component_values_truncated"
+    PAYLOAD_SUMMARY_COUNT = "payload_summary_count"
+    PAYLOAD_SUMMARIES_TRUNCATED = "payload_summaries_truncated"
+    AXIS_COMPONENT_VALUES = "axis_component_values"
+    ROUTED_COMPONENT_VALUES = "routed_component_values"
+    DATA_SHAPE = "data_shape"
+    TRANSLATE = "translate"
+    VISIBLE = "visible"
+    SELECTED = "selected"
+    PENDING_UPDATE = "pending_update"
+    PAYLOADS = "payloads"
+
+
+class ViewerPayloadField(str, Enum):
+    """Viewer layer payload-record response fields."""
+
+    ROUTE_KEY = "route_key"
+    DATA_TYPE = "data_type"
+    PATH = "path"
+    COMPONENTS = "components"
+    AXIS_INDICES = "axis_indices"
+    AGGREGATE_AXIS_INDICES = "aggregate_axis_indices"
+    SUMMARY = "summary"
+    ARRAY_VALUES = "array_values"
+    ARRAY_VALUE_SUMMARY = "array_value_summary"
+    SHAPE_PAYLOADS = "shape_payloads"
+
+
+class ViewerDescriptorField(str, Enum):
+    """Viewer descriptor payload fields."""
+
+    TYPE = "type"
+    TITLE = "title"
 
 
 VIEWER_PAYLOAD_INCLUDE_ARRAY_VALUES_DEFAULT = False
@@ -937,14 +1017,10 @@ class FijiPayloadKind(Enum):
         if payload is None:
             return None
         wire_value = str(payload)
-        if wire_value in FIJI_PAYLOAD_KIND_BY_WIRE_VALUE:
-            return FIJI_PAYLOAD_KIND_BY_WIRE_VALUE[wire_value]
+        for kind in cls:
+            if kind.wire_value == wire_value:
+                return kind
         return None
-
-
-FIJI_PAYLOAD_KIND_BY_WIRE_VALUE: Mapping[str, FijiPayloadKind] = {
-    kind.wire_value: kind for kind in FijiPayloadKind
-}
 
 
 class ViewerHeartbeatField(Enum):
@@ -1028,12 +1104,16 @@ def viewer_lifecycle_registry_key(
 ) -> str:
     """Derive the lifecycle registry key from the declared detached entrypoint."""
     del name
-    if "detached_server_entrypoint" not in cls.__dict__:
+    try:
+        entrypoint = cast(
+            DetachedViewerServerEntrypointSpec,
+            cls.detached_server_entrypoint,
+        )
+    except AttributeError as exc:
         raise TypeError(
             f"{cls.__name__} must declare detached_server_entrypoint to register "
             "as a managed viewer lifecycle."
-        )
-    entrypoint = cls.__dict__["detached_server_entrypoint"]
+        ) from exc
     return entrypoint.viewer_type.value
 
 
