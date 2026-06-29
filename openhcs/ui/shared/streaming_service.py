@@ -7,6 +7,7 @@ on viewer_type. All heavy operations run in background threads.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
@@ -25,6 +26,7 @@ CHUNK_SIZE = 50
 # ViewerType is now the registry key (e.g., 'napari_streaming_config', 'fiji_streaming_config')
 # This provides type safety and consistency throughout the codebase
 ViewerType = str  # Registry key from StreamingConfig.__registry__
+_BACKEND_REGISTRATION_LOCK = threading.RLock()
 
 
 class StreamingService:
@@ -85,6 +87,32 @@ class StreamingService:
             if "napari" in viewer_type
             else BackendEnum.FIJI_STREAM
         )
+
+    def _ensure_streaming_backend_registered(self, backend_name: str) -> None:
+        """Ensure this service's FileManager registry has the streaming backend."""
+        import importlib
+
+        from polystore.backend_registry import get_backend_instance
+
+        modules_by_backend = {
+            "napari_stream": "polystore.napari_stream",
+            "fiji_stream": "polystore.fiji_stream",
+        }
+
+        module_name = modules_by_backend.get(backend_name)
+        if not module_name:
+            raise ValueError(f"Unsupported streaming backend: {backend_name}")
+
+        with _BACKEND_REGISTRATION_LOCK:
+            if backend_name in self.filemanager.registry:
+                return
+
+            importlib.import_module(module_name)
+            self.filemanager.registry[backend_name] = get_backend_instance(backend_name)
+            logger.info(
+                "Registered streaming backend '%s' for image-browser streaming",
+                backend_name,
+            )
 
     def _wait_for_viewer_ready(
         self,
@@ -153,6 +181,7 @@ class StreamingService:
 
         def _worker():
             try:
+                self._ensure_streaming_backend_registered(backend_enum.value)
                 self._wait_for_viewer_ready(viewer, viewer_type, len(filenames))
 
                 total_images = len(filenames)
@@ -232,6 +261,8 @@ class StreamingService:
         def _worker():
             try:
                 from polystore.roi import load_rois_from_zip
+
+                self._ensure_streaming_backend_registered(backend_enum.value)
 
                 total = len(roi_filenames)
                 if total == 0:

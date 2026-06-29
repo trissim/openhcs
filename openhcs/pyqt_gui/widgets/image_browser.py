@@ -1444,7 +1444,7 @@ class ImageBrowserWidget(QWidget):
             viewer_type=viewer_type,
             status_callback=self._status_update_signal.emit,
             error_callback=lambda e: self._show_streaming_error(e)
-            if viewer_type == "napari"
+            if "napari" in viewer_type
             else self._show_fiji_streaming_error(e),
         )
         logger.info(f"Streaming {len(filenames)} images to {viewer_type}...")
@@ -1477,7 +1477,7 @@ class ImageBrowserWidget(QWidget):
             viewer_type=viewer_type,
             status_callback=self._status_update_signal.emit,
             error_callback=lambda e: self._show_streaming_error(e)
-            if viewer_type == "napari"
+            if "napari" in viewer_type
             else self._show_fiji_streaming_error(e),
         )
         logger.info(f"Streaming {len(roi_filenames)} ROI files to {viewer_type}...")

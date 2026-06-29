@@ -20,14 +20,14 @@ from setuptools import setup
 
 # External module versions for PyPI releases
 PYPI_DEPENDENCIES = [
-    "zmqruntime>=0.1.0",
+    "zmqruntime>=0.1.8",
     "pycodify>=0.1.0",
-    "objectstate>=0.1.0",
+    "objectstate>=1.0.17",
     "python-introspect>=0.1.1",
-    "metaclass-registry>=0.1.0",
-    "arraybridge>=0.1.0",
-    "polystore>=0.1.0",
-    "pyqt-reactive>=0.1.0",
+    "metaclass-registry>=0.1.4",
+    "arraybridge>=0.2.10",
+    "polystore>=0.1.9",
+    "pyqt-reactive>=0.1.21",
 ]
 
 # Local external modules for development
