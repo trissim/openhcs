@@ -132,7 +132,6 @@ jobs:
 
                 console.log(`Extracted ${artifact.name} to ${artifactDir}`);
               }
-            }
 
       - name: Combine coverage reports
         run: |
