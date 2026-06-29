@@ -8,7 +8,6 @@ to the Textual TUI version. Uses hybrid approach: extracted business logic + cle
 import logging
 import os
 import asyncio
-import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from enum import Enum
@@ -17,10 +16,11 @@ from typing import TYPE_CHECKING, ClassVar, List, Dict, Optional, Callable, Tupl
 from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from metaclass_registry import AutoRegisterMeta
 from typing_extensions import override
 
+from openhcs.agent.ui_bridge_actions import PlateManagerAction, PlateOperation
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.input_workspace import (
     InputWorkspacePreparationRequest,
@@ -37,18 +37,12 @@ from openhcs.core.selection import (
     SelectedAllSelectionMode as PlateManagerCodeSelectionMode,
     SelectedScopeIdsCarrier,
 )
-from polystore.filemanager import FileManager
 from polystore.base import _create_storage_registry
-from openhcs.config_framework import LiveContextResolver
 from openhcs.config_framework.lazy_factory import (
     ensure_global_config_context,
     rebuild_lazy_config_with_new_global_reference,
 )
-from openhcs.config_framework.global_config import (
-    set_global_config_for_editing,
-    get_current_global_config,
-)
-from openhcs.config_framework.context_manager import config_context
+from openhcs.config_framework.global_config import set_saved_global_config
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from objectstate import DataclassFieldAccess
 from openhcs.config_framework.collection_containers import RootState
@@ -76,7 +70,6 @@ from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
 from pyqt_reactive.widgets.shared.manager_selection_controller import (
     ItemIdSelectionPayloadProjection,
 )
-from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.services.zmq_server_info_parser import ExecutionServerInfo
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     PlateManagerBatchWorkflow,
@@ -136,7 +129,6 @@ from openhcs.core.debug import (
 )
 from openhcs.interop.cellprofiler.plate_workspace import (
     CellProfilerPlateWorkspacePreparer,
-    CellProfilerPlateWorkspaceRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -253,91 +245,6 @@ class CellProfilerPlateScopeNormalizer:
             scope_ids=tuple(normalized_scope_ids),
             registrations_to_create=tuple(registrations_to_create),
         )
-
-
-class PlateOperation(str, Enum):
-    """Closed set of batch operations that validate visible plate rows."""
-
-    INIT = "init"
-    COMPILE = "compile"
-    RUN = "run"
-
-
-class PlateManagerAction(str, Enum):
-    """Closed set of PlateManager button actions and agent-facing semantics."""
-
-    side_effects: tuple[str, ...]
-    confirmation_required: bool
-    plate_operation: PlateOperation | None
-
-    def __new__(
-        cls,
-        value: str,
-        side_effects: tuple[str, ...],
-        confirmation_required: bool,
-        plate_operation: PlateOperation | None,
-    ) -> "PlateManagerAction":
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.side_effects = side_effects
-        member.confirmation_required = confirmation_required
-        member.plate_operation = plate_operation
-        return member
-
-    ADD_PLATE = (
-        "add_plate",
-        ("opens_file_dialog", "mutates_plate_collection"),
-        True,
-        None,
-    )
-    DELETE_PLATE = (
-        "del_plate",
-        ("mutates_plate_collection",),
-        True,
-        None,
-    )
-    EDIT_CONFIG = (
-        "edit_config",
-        ("opens_config_window", "may_mutate_plate_config"),
-        True,
-        None,
-    )
-    INIT_PLATE = (
-        "init_plate",
-        ("starts_initialization_workflow",),
-        True,
-        PlateOperation.INIT,
-    )
-    COMPILE_PLATE = (
-        "compile_plate",
-        ("starts_compile_workflow",),
-        True,
-        PlateOperation.COMPILE,
-    )
-    RUN_PLATE = (
-        "run_plate",
-        ("starts_or_stops_execution_workflow",),
-        True,
-        PlateOperation.RUN,
-    )
-    CODE_PLATE = (
-        "code_plate",
-        ("opens_code_document_window",),
-        False,
-        None,
-    )
-    VIEW_RESULTS = (
-        "view_results",
-        ("opens_results_window",),
-        False,
-        None,
-    )
-    VIEW_METADATA = (
-        "view_metadata",
-        ("opens_metadata_window",),
-        False,
-        None,
-    )
 
 
 RUNNABLE_ORCHESTRATOR_STATES = frozenset(

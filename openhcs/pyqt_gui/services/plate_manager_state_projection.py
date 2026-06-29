@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openhcs.agent.dto.ui_bridge import (
@@ -11,12 +12,15 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceSummary,
 )
 from openhcs.config_framework.object_state import ObjectStateRegistry
+from openhcs.core.config import PathPlanningConfig
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline.path_planner import PipelinePathPlanner
 from openhcs.core.progress.projection import PlateRuntimeProjection
 from openhcs.core.selection import SelectedAllSelectionMode
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     TerminalExecutionStatus,
+    terminal_ui_policy,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
     PlateStatusPresenter,
@@ -42,8 +46,105 @@ class PlateManagerStateSelectionAuthority:
         return rows_by_mode[mode]
 
 
+@dataclass(frozen=True, slots=True)
+class PlateManagerOutputPlateRelation:
+    """Input/output plate relationship projected from path-planning config."""
+
+    output_plate_scope_id: str | None = None
+    output_plate_root: str | None = None
+    source_plate_scope_id: str | None = None
+    source_plate_root: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlateManagerOutputPlateRelationAuthority:
+    """Build source/output plate relationships from visible PlateManager rows."""
+
+    relations: dict[str, PlateManagerOutputPlateRelation]
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: tuple[PlateManagerRow, ...],
+        default_path_config: PathPlanningConfig,
+    ) -> "PlateManagerOutputPlateRelationAuthority":
+        row_by_root = {row.plate_root: row for row in rows}
+        output_root_by_source: dict[str, str] = {}
+        source_by_output_root: dict[str, PlateManagerRow] = {}
+        for row in rows:
+            output_root = cls._output_plate_root(
+                row,
+                cls._path_config_for_row(row, default_path_config),
+            )
+            if output_root is None or output_root == row.plate_root:
+                continue
+            output_root_by_source[row.scope_id] = output_root
+            if output_root in row_by_root:
+                source_by_output_root[output_root] = row
+
+        relations: dict[str, PlateManagerOutputPlateRelation] = {}
+        for row in rows:
+            source_row = source_by_output_root.get(row.plate_root)
+            if source_row is not None:
+                relations[row.scope_id] = PlateManagerOutputPlateRelation(
+                    source_plate_scope_id=source_row.scope_id,
+                    source_plate_root=source_row.plate_root,
+                )
+                continue
+
+            output_root = output_root_by_source.get(row.scope_id)
+            if output_root is None:
+                continue
+            output_row = row_by_root.get(output_root)
+            relations[row.scope_id] = PlateManagerOutputPlateRelation(
+                output_plate_scope_id=(
+                    output_root if output_row is None else output_row.scope_id
+                ),
+                output_plate_root=(
+                    output_root if output_row is None else output_row.plate_root
+                ),
+            )
+        return cls(relations=relations)
+
+    def relation_for(self, row: PlateManagerRow) -> PlateManagerOutputPlateRelation:
+        return self.relations.get(row.scope_id, PlateManagerOutputPlateRelation())
+
+    @staticmethod
+    def _output_plate_root(
+        row: PlateManagerRow,
+        path_config: PathPlanningConfig,
+    ) -> str | None:
+        return str(
+            PipelinePathPlanner.build_output_plate_root(
+                Path(row.plate_root),
+                path_config,
+            )
+        )
+
+    @staticmethod
+    def _path_config_for_row(
+        row: PlateManagerRow,
+        default_path_config: PathPlanningConfig,
+    ) -> PathPlanningConfig:
+        orchestrator = ObjectStateRegistry.get_object(row.scope_id)
+        if isinstance(orchestrator, PipelineOrchestrator):
+            return orchestrator.get_effective_config().path_planning_config
+        return default_path_config
+
+
 class PlateManagerStateProjectionService:
     """Build the single PlateManager state projection used by UI and bridge code."""
+
+    def output_relation_for(
+        self,
+        manager: "PlateManagerWidget",
+        row: PlateManagerRow,
+    ) -> PlateManagerOutputPlateRelation:
+        """Return the source/output relation for one visible PlateManager row."""
+        return PlateManagerOutputPlateRelationAuthority.from_rows(
+            tuple(manager.plates),
+            manager.global_config.path_planning_config,
+        ).relation_for(row)
 
     def project(
         self,
@@ -57,6 +158,10 @@ class PlateManagerStateProjectionService:
         selected_rows = tuple(manager.get_selected_items())
         selected_scope_ids = tuple(row.scope_id for row in selected_rows)
         selected_scope_set = set(selected_scope_ids)
+        output_relations = PlateManagerOutputPlateRelationAuthority.from_rows(
+            all_rows,
+            manager.global_config.path_planning_config,
+        )
         rows = PlateManagerStateSelectionAuthority(
             all_rows=all_rows,
             selected_rows=selected_rows,
@@ -70,6 +175,7 @@ class PlateManagerStateProjectionService:
                     manager,
                     row,
                     selected_scope_ids=selected_scope_set,
+                    output_relation=output_relations.relation_for(row),
                 )
                 for row in rows
             ),
@@ -84,6 +190,7 @@ class PlateManagerStateProjectionService:
         row: PlateManagerRow,
         *,
         selected_scope_ids: set[str],
+        output_relation: PlateManagerOutputPlateRelation,
     ) -> UiPlateManagerRowState:
         plate_key = row.scope_id
         orchestrator = ObjectStateRegistry.get_object(plate_key)
@@ -94,11 +201,17 @@ class PlateManagerStateProjectionService:
             initialized = orchestrator_state.has_completed_initialization
 
         execution_id = manager.plate_execution_ids.get(plate_key)
-        runtime_projection = manager.runtime_progress_projection.get_plate(
-            plate_id=plate_key,
-            execution_id=execution_id,
-        )
+        runtime_projection = None
+        if execution_id is not None:
+            runtime_projection = manager.runtime_progress_projection.get_plate(
+                plate_id=plate_key,
+                execution_id=execution_id,
+            )
         terminal_status = manager.plate_terminal_activity_status.terminal_status(plate_key)
+        effective_orchestrator_state = self._effective_orchestrator_state(
+            orchestrator_state,
+            terminal_status,
+        )
         status_runtime_projection = self._status_runtime_projection(
             runtime_projection,
             terminal_status,
@@ -112,7 +225,7 @@ class PlateManagerStateProjectionService:
         )
         queue_position = self._queued_execution_position_for_plate(manager, plate_key)
         status_prefix = PlateStatusPresenter.build_status_prefix(
-            orchestrator_state=orchestrator_state,
+            orchestrator_state=effective_orchestrator_state,
             is_init_pending=plate_key in manager.plate_init_pending,
             is_compile_pending=plate_key in manager.plate_compile_pending,
             is_execution_active=execution_active,
@@ -133,12 +246,16 @@ class PlateManagerStateProjectionService:
             compile_pending=plate_key in manager.plate_compile_pending,
             execution_active=execution_active,
             status_prefix=status_prefix,
-            orchestrator_state=self._orchestrator_state_value(orchestrator_state),
+            orchestrator_state=self._orchestrator_state_value(effective_orchestrator_state),
             execution_id=execution_id,
             terminal_status=self._terminal_status_value(terminal_status),
             runtime_state=self._runtime_state_value(status_runtime_projection),
             runtime_percent=self._runtime_percent(status_runtime_projection),
             queue_position=queue_position,
+            output_plate_scope_id=output_relation.output_plate_scope_id,
+            output_plate_root=output_relation.output_plate_root,
+            source_plate_scope_id=output_relation.source_plate_scope_id,
+            source_plate_root=output_relation.source_plate_root,
         )
 
     @staticmethod
@@ -157,6 +274,15 @@ class PlateManagerStateProjectionService:
         if runtime_projection is None:
             return False
         return not runtime_projection.state.is_terminal
+
+    @staticmethod
+    def _effective_orchestrator_state(
+        orchestrator_state,
+        terminal_status: TerminalExecutionStatus | None,
+    ):
+        if terminal_status is None:
+            return orchestrator_state
+        return terminal_ui_policy(terminal_status).orchestrator_state
 
     @staticmethod
     def _queued_execution_position_for_plate(

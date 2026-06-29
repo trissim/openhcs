@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPushButton, QWidget
+from PyQt6.QtWidgets import QVBoxLayout
 
 from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeRequest,
@@ -18,38 +19,120 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentSelectionMode,
     UiCodeDocumentRequest,
     UiCodeDocumentValidationRequest,
+    UiObjectStateFieldFilter,
+    UiObjectStateFieldHelpRequest,
+    UiObjectStateScopeListRequest,
+    UiSelectedPlateWorkflowKind,
+    UiSelectedPlateWorkflowRequest,
     UiStateSurfaceId,
     UiStateSurfaceRequest,
     UiSnapshotListRequest,
     UiSnapshotRestoreRequest,
+    UiWidgetActionInvokeRequest,
     UiWidgetTreeRequest,
+    UiWindowIdentity,
+    UiWindowManagerScope,
+    UiWindowSummary,
+    UiWindowCloseRequest,
+    UiWindowFocusRequest,
     UiWindowOpenPolicy,
+    UiWindowSnapshotRequest,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
     UiBridgeConnectionResolution,
     UiBridgeService,
 )
+from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from openhcs.constants.constants import OrchestratorState
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyPathPlanningConfig,
+    PipelineConfig,
+)
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
     UiAgentBridgeService,
+    UiCodeDocumentSourcePolicy,
     UiObjectStateSnapshotProvider,
 )
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig
+from openhcs.pyqt_gui.services.reactor_providers import OpenHCSCodegenProvider
+from openhcs.pyqt_gui.services.ui_bridge_object_state import (
+    OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX,
+    WINDOW_CODE_DOCUMENT_PREFIX,
+    ObjectStateScopeCodeDocumentProvider,
+    ObjectStateBridgeProviderSet,
+    ObjectStateScopeProjectionService,
+)
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeRegistrationContext,
     UiBridgeSurfaceRegistry,
 )
 from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
-from openhcs.pyqt_gui.services.ui_bridge_windows import MainWindowBridgeProviderSet
-from openhcs.core.progress.projection import ExecutionRuntimeProjection
+from openhcs.pyqt_gui.services.pycodified_window_code_document import (
+    PycodifiedObjectCodeDocumentDriver,
+    PycodifiedObjectDocumentSpec,
+)
+from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
+from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
+    PipelineEditorBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_windows import (
+    MainWindowBridgeProviderSet,
+    ManagedWindowAction,
+    UiWidgetTreeResultFactory,
+)
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
+from openhcs.core.progress.projection import (
+    ExecutionRuntimeProjection,
+    PlateRuntimeIdentity,
+    PlateRuntimeProjection,
+    PlateRuntimeState,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
     ManagerExecutionState,
 )
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerAction
+from openhcs.pyqt_gui.widgets.pipeline_editor import (
+    PipelineEditorAction,
+    PipelineEditorWidget,
+)
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
+)
+from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
+from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.protocols import register_codegen_provider
+from pyqt_reactive.services.pattern_data_manager import (
+    FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
+)
+from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.services.window_code_document import (
+    WindowCodeDocument,
+    WindowCodeDocumentDriver,
+)
+from pyqt_reactive.services.widget_tree_projection import (
+    WidgetActionKind,
+    WidgetDescriptor,
+    WidgetRect,
+    WidgetTreeProjection,
+)
+from pyqt_reactive.widgets.editors import simple_code_editor
+from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
+from pyqt_reactive.widgets.shared import (
+    BaseFormDialog,
+    ManagedWindowActionCapabilities,
+)
+from pyqt_reactive.widgets.shared.list_item_delegate import (
+    DIRTY_FIELDS_ROLE,
+    FLASH_KEY_ROLE,
+    SIG_DIFF_FIELDS_ROLE,
 )
 
 
@@ -94,6 +177,56 @@ def _json_payload_values(payload):
 @dataclass
 class Dummy:
     x: int = 1
+
+
+@dataclass
+class FakeOrchestrator:
+    state: OrchestratorState
+
+
+class FakeWindowCodeDocumentDriver(WindowCodeDocumentDriver):
+    def __init__(self, source: str) -> None:
+        self.source = source
+
+    def read_document(self, clean: bool = True) -> WindowCodeDocument:
+        del clean
+        return WindowCodeDocument(
+            title="View/Edit GlobalPipelineConfig",
+            source=self.source,
+        )
+
+    def validate_source(self, source: str) -> None:
+        compile(source, "<fake-window-code-document>", "exec")
+
+    def apply_source(self, source: str) -> None:
+        self.source = source
+
+
+def adjustable_function(image, threshold: int = 1, enabled: bool = True):
+    return image
+
+
+def replacement_function(image, threshold: int = 2):
+    return image
+
+
+def test_pycodified_window_code_document_honors_clean_flag() -> None:
+    driver = PycodifiedObjectCodeDocumentDriver(
+        spec=PycodifiedObjectDocumentSpec(
+            assignment_name="config",
+            title="View/Edit Dummy",
+            header="# Dummy",
+            expected_type=Dummy,
+        ),
+        current_object=lambda: Dummy(),
+        apply_object=lambda _value: None,
+    )
+
+    clean_source = driver.read_document(clean=True).source
+    full_source = driver.read_document(clean=False).source
+
+    assert "config = Dummy()" in clean_source
+    assert "x=1" in full_source
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,10 +285,51 @@ class FakeServiceAdapter:
         raise AssertionError(f"Unexpected async operation in test: {operation!r}")
 
 
+class EmbeddedManagerServiceStub:
+    """Minimal service adapter surface needed by AbstractManagerWidget subclasses."""
+
+    def __init__(self) -> None:
+        self.global_config = GlobalPipelineConfig()
+        self.color_scheme = ColorScheme()
+        self.event_bus = GlobalEventBus()
+
+    def get_global_config(self) -> GlobalPipelineConfig:
+        return self.global_config
+
+    def get_current_color_scheme(self) -> ColorScheme:
+        return self.color_scheme
+
+    def get_event_bus(self) -> GlobalEventBus:
+        return self.event_bus
+
+    def get_file_manager(self):
+        return None
+
+    def execute_async_operation(self, operation):
+        return operation()
+
+    def show_error_dialog(self, message: str) -> None:
+        self.last_error_message = message
+
+
 class InlineDispatcher:
     def call(self, callback, *, timeout_ms: int = 5000):
         del timeout_ms
         return callback()
+
+    def post(self, callback) -> None:
+        callback()
+
+
+class QueuedPostDispatcher(InlineDispatcher):
+    def __init__(self) -> None:
+        self.callbacks = []
+
+    def post(self, callback) -> None:
+        self.callbacks.append(callback)
+
+    def run_next(self) -> None:
+        self.callbacks.pop(0)()
 
 
 class QtApplicationAuthority:
@@ -198,6 +372,28 @@ class FakeMainWindow:
         self.window_specs = {}
 
 
+class FakeManagedFormWindow(BaseFormDialog):
+    def __init__(self, scope_id: str) -> None:
+        super().__init__()
+        self.scope_id = scope_id
+        self.save_count = 0
+        self.saved_close_window: bool | None = None
+
+    def managed_window_action_capabilities(
+        self,
+    ) -> ManagedWindowActionCapabilities:
+        return ManagedWindowActionCapabilities(
+            save_and_close=True,
+            save_without_close=True,
+            discard_and_close=True,
+        )
+
+    def agent_save_managed_window(self, *, close_window: bool) -> None:
+        self.save_count += 1
+        self.saved_close_window = close_window
+        self.finish_managed_save(close_window=close_window)
+
+
 class FakePlateManager:
     BUTTON_CONFIGS = [
         ("Code", PlateManagerAction.CODE_PLATE.value, "Generate Python code"),
@@ -215,10 +411,12 @@ class FakePlateManager:
         selected: tuple[FakeRow, ...] = (),
         plates: tuple[FakeRow, ...] = (FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
         operations: FakeOperations | None = None,
+        pipeline_steps: tuple[FunctionStep, ...] = (),
     ) -> None:
         self.selected = list(selected)
         self.plates = list(plates)
         self.operations = operations or FakeOperations()
+        self.pipeline_steps = pipeline_steps
         self.execution_state = ManagerExecutionState.IDLE
         self.plate_execution_ids = {}
         self.runtime_progress_projection = ExecutionRuntimeProjection()
@@ -227,6 +425,7 @@ class FakePlateManager:
         self.plate_compile_pending = set()
         self.plate_compiled_data = {}
         self.execution_server_info = None
+        self.global_config = GlobalPipelineConfig()
         self.service_adapter = FakeServiceAdapter()
         self.buttons = {
             PlateManagerAction.CODE_PLATE.value: FakeButton(),
@@ -261,8 +460,92 @@ class FakePlateManager:
     def code_document_execution_operations(self) -> FakeOperations:
         return self.operations
 
+    def _get_current_pipeline_definition(self, plate_path: str):
+        del plate_path
+        return list(self.pipeline_steps)
+
     def action_code_plate(self) -> None:
         self.code_action_count += 1
+
+
+class FakePipelineEditor:
+    BUTTON_CONFIGS = PipelineEditorWidget.BUTTON_CONFIGS
+    STATE_BINDING = PipelineEditorWidget.STATE_BINDING
+    ACTION_ROUTES = {
+        PipelineEditorAction.ADD_STEP: WidgetActionRoute(
+            PipelineEditorAction.ADD_STEP,
+            lambda widget: widget.action_add,
+        ),
+        PipelineEditorAction.DELETE_STEP: WidgetActionRoute(
+            PipelineEditorAction.DELETE_STEP,
+            lambda widget: widget.action_delete,
+        ),
+        PipelineEditorAction.EDIT_STEP: WidgetActionRoute(
+            PipelineEditorAction.EDIT_STEP,
+            lambda widget: widget.action_edit,
+        ),
+        PipelineEditorAction.AUTO_LOAD_PIPELINE: WidgetActionRoute(
+            PipelineEditorAction.AUTO_LOAD_PIPELINE,
+            lambda widget: widget.action_auto_load_pipeline,
+        ),
+        PipelineEditorAction.CODE_PIPELINE: WidgetActionRoute(
+            PipelineEditorAction.CODE_PIPELINE,
+            lambda widget: widget.action_code_pipeline,
+        ),
+    }
+
+    def __init__(
+        self,
+        *,
+        current_plate: str = PLATE_SCOPE_ID,
+        selected_indices: tuple[int, ...] = (0,),
+    ) -> None:
+        self.current_plate = current_plate
+        self.pipeline_steps = [
+            FunctionStep(func=lambda image: image, name="step_one"),
+            FunctionStep(func=lambda image: image, name="step_two"),
+        ]
+        self.selected_indices = selected_indices
+        self.service_adapter = FakeServiceAdapter()
+        self.buttons = {
+            action.value: FakeButton(enabled=True)
+            for action in self.ACTION_ROUTES
+        }
+        self.add_count = 0
+        self.delete_count = 0
+        self.edit_count = 0
+        self.auto_count = 0
+        self.code_count = 0
+
+    def get_selected_items(self):
+        return [self.pipeline_steps[index] for index in self.selected_indices]
+
+    def _get_item_scope_id(self, item: FunctionStep, index: int) -> str:
+        del item
+        return f"scope-from-manager-hook-{index}"
+
+    def selected_step_scope_ids(self) -> tuple[str, ...]:
+        selected = set(self.selected_indices)
+        return tuple(
+            self._get_item_scope_id(step, index)
+            for index, step in enumerate(self.pipeline_steps)
+            if index in selected
+        )
+
+    def action_add(self) -> None:
+        self.add_count += 1
+
+    def action_delete(self) -> None:
+        self.delete_count += 1
+
+    def action_edit(self) -> None:
+        self.edit_count += 1
+
+    def action_auto_load_pipeline(self) -> None:
+        self.auto_count += 1
+
+    def action_code_pipeline(self) -> None:
+        self.code_count += 1
 
 
 @pytest.fixture(autouse=True)
@@ -307,6 +590,169 @@ def test_selected_read_fails_loudly_when_no_plate_is_selected() -> None:
     assert document.errors[0].code == "ui_code_document_read_failed"
 
 
+def test_object_state_provider_reads_and_applies_child_function_scope() -> None:
+    register_codegen_provider(OpenHCSCodegenProvider())
+    parent_scope = "plate::functionstep_0"
+    child_token = "runtimecallable_0"
+    child_scope = f"{parent_scope}::{child_token}"
+    parent_state = ObjectState(
+        FunctionStep(
+            func=(adjustable_function, {"threshold": 3, "enabled": True}),
+            name="Adjust",
+        ),
+        scope_id=parent_scope,
+    )
+    parent_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = [child_token]
+    child_state = ObjectState(
+        object_instance=adjustable_function,
+        scope_id=child_scope,
+        parent_state=parent_state,
+        exclude_params=["image"],
+        initial_values={"threshold": 3, "enabled": True},
+    )
+    ObjectStateRegistry.register(parent_state, _skip_snapshot=True)
+    ObjectStateRegistry.register(child_state, _skip_snapshot=True)
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    provider = ObjectStateScopeCodeDocumentProvider(snapshot_provider)
+    document_id = f"{OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX}{child_scope}"
+
+    document = provider.read(UiCodeDocumentRequest(document_id=document_id))
+    full_document = provider.read(
+        UiCodeDocumentRequest(document_id=document_id, clean=False)
+    )
+
+    assert document.errors == ()
+    assert "pattern" in document.source
+    assert "adjustable_function" in document.source
+    assert "'threshold': 3" in document.source
+    assert "'enabled': True" not in document.source
+    assert "'threshold': 3" in full_document.source
+    assert "'enabled': True" in full_document.source
+
+    source = (
+        f"from {adjustable_function.__module__} import adjustable_function\n"
+        "pattern = (adjustable_function, "
+        "{'threshold': 9, 'enabled': False})\n"
+    )
+    result = provider.apply(
+        UiCodeDocumentApplyRequest(
+            document_id=document_id,
+            source=source,
+            base_revision_token=document.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    updated_child = ObjectStateRegistry.get_by_scope(child_scope)
+    assert result.applied
+    assert result.receipt.accepted
+    assert result.receipt.bridge_operation_id is None
+    assert updated_child is not None
+    assert updated_child.parameters["threshold"] == 9
+    assert updated_child.parameters["enabled"] is False
+    assert parent_state.parameters["func"][1] == {
+        "threshold": 9,
+        "enabled": False,
+    }
+
+    threshold_only_source = (
+        f"from {adjustable_function.__module__} import adjustable_function\n"
+        "pattern = (adjustable_function, {'threshold': 10})\n"
+    )
+    threshold_only_result = provider.apply(
+        UiCodeDocumentApplyRequest(
+            document_id=document_id,
+            source=threshold_only_source,
+            base_revision_token=result.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    threshold_only_child = ObjectStateRegistry.get_by_scope(child_scope)
+    threshold_only_document = provider.read(UiCodeDocumentRequest(document_id=document_id))
+    assert threshold_only_result.applied
+    assert threshold_only_child is not None
+    assert threshold_only_child.parameters["threshold"] == 10
+    assert threshold_only_child.parameters["enabled"] is True
+    assert parent_state.parameters["func"][1] == {"threshold": 10}
+    assert "'enabled': None" not in threshold_only_document.source
+    assert "'enabled': True" not in threshold_only_document.source
+
+    replacement_source = (
+        f"from {replacement_function.__module__} import replacement_function\n"
+        "pattern = (replacement_function, {'threshold': 12})\n"
+    )
+    replacement_result = provider.apply(
+        UiCodeDocumentApplyRequest(
+            document_id=document_id,
+            source=replacement_source,
+            base_revision_token=threshold_only_result.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    replacement_child = ObjectStateRegistry.get_by_scope(child_scope)
+    assert replacement_result.applied
+    assert replacement_result.receipt.accepted
+    assert replacement_child is not None
+    assert replacement_child.object_instance is replacement_function
+    assert replacement_child.parameters["threshold"] == 12
+    assert parent_state.parameters["func"][0] is replacement_function
+    assert parent_state.parameters["func"][1] == {"threshold": 12}
+    assert [snapshot.label for snapshot in ObjectStateRegistry.get_branch_history()] == [
+        "init",
+        f"edit {document_id} via MCP [{child_scope}]",
+        f"edit {document_id} via MCP [{child_scope}]",
+        f"edit {document_id} via MCP [{child_scope}]",
+    ]
+
+
+def test_object_state_code_document_noop_apply_does_not_record_snapshot() -> None:
+    register_codegen_provider(OpenHCSCodegenProvider())
+    parent_scope = "plate::functionstep_0"
+    child_token = "runtimecallable_0"
+    child_scope = f"{parent_scope}::{child_token}"
+    parent_state = ObjectState(
+        FunctionStep(
+            func=(adjustable_function, {"threshold": 3}),
+            name="Adjust",
+        ),
+        scope_id=parent_scope,
+    )
+    parent_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = [child_token]
+    child_state = ObjectState(
+        object_instance=adjustable_function,
+        scope_id=child_scope,
+        parent_state=parent_state,
+        exclude_params=["image"],
+        initial_values={"threshold": 3},
+    )
+    ObjectStateRegistry.register(parent_state, _skip_snapshot=True)
+    ObjectStateRegistry.register(child_state, _skip_snapshot=True)
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    provider = ObjectStateScopeCodeDocumentProvider(snapshot_provider)
+    document_id = f"{OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX}{child_scope}"
+
+    document = provider.read(UiCodeDocumentRequest(document_id=document_id))
+    result = provider.apply(
+        UiCodeDocumentApplyRequest(
+            document_id=document_id,
+            source=document.source,
+            base_revision_token=document.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert not result.applied
+    assert result.outcome == "unchanged"
+    assert result.receipt.accepted
+    assert result.current_revision_token == document.current_revision_token
+    assert result.new_revision_token == document.current_revision_token
+    assert result.current_snapshot == document.current_snapshot
+    assert ObjectStateRegistry.get_branch_history() == []
+    assert parent_state.parameters["func"][1] == {"threshold": 3}
+
+
 def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
     QtApplicationAuthority.app()
     main_window = FakeMainWindow()
@@ -335,6 +781,7 @@ def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
         UiWidgetTreeRequest(
             window_id="plate_manager",
             open_policy=UiWindowOpenPolicy(),
+            include_tree=True,
         )
     )
 
@@ -342,6 +789,1265 @@ def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
     assert widget_tree.projected is True
     assert widget_tree.root is not None
     assert widget_tree.root.object_name == "plate_manager"
+    assert widget_tree.include_tree is True
+
+
+def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:
+    app = QtApplicationAuthority.app()
+    main_window = FakeMainWindow()
+    pipeline_editor = QWidget()
+    pipeline_editor.setObjectName("pipeline_editor")
+    layout = QVBoxLayout(pipeline_editor)
+    steps = QListWidget(pipeline_editor)
+    item = QListWidgetItem("1. Normalize")
+    item.setData(FLASH_KEY_ROLE, "plate-1::functionstep_0")
+    item.setData(DIRTY_FIELDS_ROLE, {"name"})
+    item.setData(SIG_DIFF_FIELDS_ROLE, {"func"})
+    steps.addItem(item)
+    layout.addWidget(steps)
+    pipeline_editor.show()
+    app.processEvents()
+    main_window.embedded_widgets.pipeline_editor = pipeline_editor
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        widget_tree = bridge.widget_tree(
+            UiWidgetTreeRequest(
+                window_id="pipeline_editor",
+                open_policy=UiWindowOpenPolicy(),
+                max_nodes=10,
+            )
+        )
+
+        step_action = next(
+            action
+            for action in widget_tree.actionable_widgets
+            if action.label == "1. Normalize"
+        )
+        assert step_action.action_role == "item_select"
+        assert step_action.object_state_scope_id == "plate-1::functionstep_0"
+        assert step_action.field_path is None
+        assert step_action.dirty is True
+        assert step_action.signature_diff is True
+        assert step_action.semantic_markers == ("*", "_")
+    finally:
+        pipeline_editor.close()
+
+
+def test_embedded_manager_window_summary_carries_shared_row_semantics() -> None:
+    app = QtApplicationAuthority.app()
+    main_window = FakeMainWindow()
+    pipeline_editor = PipelineEditorWidget(EmbeddedManagerServiceStub())
+    pipeline_editor.setObjectName("pipeline_editor")
+    row = QListWidgetItem("1. Normalize")
+    row.setData(FLASH_KEY_ROLE, "plate-1::functionstep_0")
+    row.setData(DIRTY_FIELDS_ROLE, {"name", "napari_streaming_config.enabled"})
+    row.setData(SIG_DIFF_FIELDS_ROLE, {"func"})
+    assert pipeline_editor.item_list is not None
+    pipeline_editor.item_list.addItem(row)
+    pipeline_editor.show()
+    app.processEvents()
+    main_window.embedded_widgets.pipeline_editor = pipeline_editor
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        windows = bridge.list_windows()
+        summary = next(
+            window
+            for window in windows.windows
+            if window.window_id == "pipeline_editor"
+        )
+
+        assert summary.dirty is True
+        assert summary.signature_diff is True
+        assert summary.dirty_field_count == 2
+        assert summary.signature_diff_field_count == 1
+        assert summary.semantic_markers == ("*", "_")
+    finally:
+        pipeline_editor.close()
+
+
+def test_widget_tree_projection_defaults_bound_actionable_paths() -> None:
+    def descriptor(
+        path,
+        *,
+        class_name: str,
+        text: str | None = None,
+        actionable: bool = False,
+        children: tuple[WidgetDescriptor, ...] = (),
+    ) -> WidgetDescriptor:
+        return WidgetDescriptor(
+            path=path,
+            path_id="root" if not path else ".".join(str(index) for index in path),
+            child_index=None if not path else path[-1],
+            class_name=class_name,
+            object_name="",
+            accessible_name="",
+            accessible_description="",
+            visible=True,
+            enabled=True,
+            geometry=WidgetRect(0, 0, 10, 10),
+            global_geometry=WidgetRect(0, 0, 10, 10),
+            tool_tip="",
+            status_tip="",
+            whats_this="",
+            window_title="",
+            text=text,
+            text_truncated=False,
+            title=None,
+            action_kinds=(WidgetActionKind.BUTTON,) if actionable else (),
+            clickable=actionable,
+            actionable=actionable,
+            checkable=False if actionable else None,
+            checked=None,
+            current_index=None,
+            current_text=None,
+            item_count=None,
+            children=children,
+        )
+
+    root = descriptor(
+        (),
+        class_name="ConfigWindow",
+        children=(
+            descriptor((0,), class_name="QLabel", text="noise"),
+            descriptor(
+                (1,),
+                class_name="QWidget",
+                children=(
+                    descriptor((1, 0), class_name="QPushButton", text="Save", actionable=True),
+                    descriptor((1, 1), class_name="QPushButton", text="Cancel", actionable=True),
+                ),
+            ),
+            descriptor((2,), class_name="QScrollBar"),
+        ),
+    )
+
+    result = UiWidgetTreeResultFactory.from_projection(
+        UiWidgetTreeRequest(
+            window_id="global_config",
+            open_policy=UiWindowOpenPolicy(),
+            max_nodes=3,
+        ),
+        UiWindowSummary(
+            schema_version="openhcs.agent.v1",
+            identity=UiWindowIdentity(window_id="global_config"),
+            window_kind="scope",
+            title="Configuration - GlobalPipelineConfig",
+            visible=True,
+            focusable=True,
+            manager_scope=UiWindowManagerScope(""),
+        ),
+        WidgetTreeProjection(root=root, widget_count=6, actionable_count=2),
+    )
+
+    assert result.widget_count == 6
+    assert result.actionable_count == 2
+    assert result.include_tree is False
+    assert result.root is None
+    assert result.returned_widget_count == 0
+    assert result.returned_actionable_count == 2
+    assert result.actionable_widgets_truncated is False
+    assert [widget.label for widget in result.actionable_widgets] == ["Save", "Cancel"]
+
+    tree_result = UiWidgetTreeResultFactory.from_projection(
+        UiWidgetTreeRequest(
+            window_id="global_config",
+            open_policy=UiWindowOpenPolicy(),
+            include_tree=True,
+            max_nodes=3,
+        ),
+        UiWindowSummary(
+            schema_version="openhcs.agent.v1",
+            identity=UiWindowIdentity(window_id="global_config"),
+            window_kind="scope",
+            title="Configuration - GlobalPipelineConfig",
+            visible=True,
+            focusable=True,
+            manager_scope=UiWindowManagerScope(""),
+        ),
+        WidgetTreeProjection(root=root, widget_count=6, actionable_count=2),
+    )
+
+    assert tree_result.returned_widget_count == 3
+    assert tree_result.tree_truncated is True
+    assert tree_result.root is not None
+    assert [child.class_name for child in tree_result.root.children] == ["QWidget"]
+    assert [child.text for child in tree_result.root.children[0].children] == ["Save"]
+
+
+def test_widget_tree_action_summaries_keep_reset_actions_with_field_context() -> None:
+    def descriptor(
+        path,
+        *,
+        class_name: str,
+        text: str | None = None,
+        object_name: str = "",
+        action_kinds: tuple[WidgetActionKind, ...] = (),
+        children: tuple[WidgetDescriptor, ...] = (),
+    ) -> WidgetDescriptor:
+        actionable = bool(action_kinds)
+        return WidgetDescriptor(
+            path=path,
+            path_id="root" if not path else ".".join(str(index) for index in path),
+            child_index=None if not path else path[-1],
+            class_name=class_name,
+            object_name=object_name,
+            accessible_name="",
+            accessible_description="",
+            visible=True,
+            enabled=True,
+            geometry=WidgetRect(0, 0, 10, 10),
+            global_geometry=WidgetRect(0, 0, 10, 10),
+            tool_tip="",
+            status_tip="",
+            whats_this="",
+            window_title="",
+            text=text,
+            text_truncated=False,
+            title=None,
+            action_kinds=action_kinds,
+            clickable=actionable,
+            actionable=actionable,
+            checkable=False if WidgetActionKind.BUTTON in action_kinds else None,
+            checked=None,
+            current_index=None,
+            current_text=None,
+            item_count=None,
+            children=children,
+        )
+
+    root = descriptor(
+        (),
+        class_name="ConfigWindow",
+        children=(
+            descriptor(
+                (0,),
+                class_name="ResponsiveParameterRow",
+                children=(
+                    descriptor((0, 0), class_name="QLabel", text="Microscope"),
+                    descriptor(
+                        (0, 1),
+                        class_name="NoScrollComboBox",
+                        text="auto",
+                        action_kinds=(WidgetActionKind.CHOICE,),
+                    ),
+                    descriptor(
+                        (0, 2),
+                        class_name="QPushButton",
+                        text="Reset",
+                        object_name="well_filter_config_reset",
+                        action_kinds=(WidgetActionKind.BUTTON,),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    result = UiWidgetTreeResultFactory.from_projection(
+        UiWidgetTreeRequest(
+            window_id="global_config",
+            open_policy=UiWindowOpenPolicy(),
+            max_nodes=10,
+        ),
+        UiWindowSummary(
+            schema_version="openhcs.agent.v1",
+            identity=UiWindowIdentity(window_id="global_config"),
+            window_kind="scope",
+            title="Configuration - GlobalPipelineConfig",
+            visible=True,
+            focusable=True,
+            manager_scope=UiWindowManagerScope(""),
+        ),
+        WidgetTreeProjection(root=root, widget_count=4, actionable_count=2),
+    )
+
+    assert result.actionable_count == 2
+    assert result.returned_actionable_count == 2
+    assert [widget.label for widget in result.actionable_widgets] == ["auto", "Reset"]
+    assert [widget.context_label for widget in result.actionable_widgets] == [
+        "Microscope",
+        "Microscope",
+    ]
+    assert result.actionable_widgets[1].action_role == "field_reset"
+
+
+def test_widget_tree_action_context_skips_disabled_action_siblings() -> None:
+    def descriptor(
+        path,
+        *,
+        class_name: str,
+        text: str | None = None,
+        action_kinds: tuple[WidgetActionKind, ...] = (),
+        actionable: bool | None = None,
+        children: tuple[WidgetDescriptor, ...] = (),
+    ) -> WidgetDescriptor:
+        resolved_actionable = bool(action_kinds) if actionable is None else actionable
+        return WidgetDescriptor(
+            path=path,
+            path_id="root" if not path else ".".join(str(index) for index in path),
+            child_index=None if not path else path[-1],
+            class_name=class_name,
+            object_name="",
+            accessible_name="",
+            accessible_description="",
+            visible=True,
+            enabled=resolved_actionable,
+            geometry=WidgetRect(0, 0, 10, 10),
+            global_geometry=WidgetRect(0, 0, 10, 10),
+            tool_tip="",
+            status_tip="",
+            whats_this="",
+            window_title="",
+            text=text,
+            text_truncated=False,
+            title=None,
+            action_kinds=action_kinds,
+            clickable=resolved_actionable,
+            actionable=resolved_actionable,
+            checkable=False if WidgetActionKind.BUTTON in action_kinds else None,
+            checked=None,
+            current_index=None,
+            current_text=None,
+            item_count=None,
+            children=children,
+        )
+
+    root = descriptor(
+        (),
+        class_name="PipelineEditorWidget",
+        children=(
+            descriptor(
+                (0,),
+                class_name="ButtonPanel",
+                children=(
+                    descriptor(
+                        (0, 0),
+                        class_name="QPushButton",
+                        text="Add",
+                        action_kinds=(WidgetActionKind.BUTTON,),
+                        actionable=False,
+                    ),
+                    descriptor(
+                        (0, 1),
+                        class_name="QPushButton",
+                        text="Del",
+                        action_kinds=(WidgetActionKind.BUTTON,),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    result = UiWidgetTreeResultFactory.from_projection(
+        UiWidgetTreeRequest(
+            window_id="pipeline_editor",
+            open_policy=UiWindowOpenPolicy(),
+            max_nodes=10,
+        ),
+        UiWindowSummary(
+            schema_version="openhcs.agent.v1",
+            identity=UiWindowIdentity(window_id="pipeline_editor"),
+            window_kind="embedded",
+            title="Pipeline Editor",
+            visible=True,
+            focusable=True,
+            manager_scope=UiWindowManagerScope("pipeline_editor"),
+        ),
+        WidgetTreeProjection(root=root, widget_count=3, actionable_count=1),
+    )
+
+    assert len(result.actionable_widgets) == 1
+    assert result.actionable_widgets[0].label == "Del"
+    assert result.actionable_widgets[0].context_label is None
+
+
+def test_listed_qt_top_level_window_supports_operation_request_resolution() -> None:
+    app = QtApplicationAuthority.app()
+    top_level = QWidget()
+    top_level.setWindowTitle("Agent visible top-level")
+    top_level.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        windows = bridge.list_windows()
+        summaries = tuple(
+            summary
+            for summary in windows.windows
+            if summary.title == "Agent visible top-level"
+        )
+        assert len(summaries) == 1
+        window_id = summaries[0].window_id
+
+        widget_tree = bridge.widget_tree(
+            UiWidgetTreeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                include_tree=True,
+            )
+        )
+        close_result = bridge.close_window(
+            UiWindowCloseRequest(window_id=window_id)
+        )
+
+        assert widget_tree.errors == ()
+        assert widget_tree.projected is True
+        assert widget_tree.root is not None
+        assert widget_tree.root.class_name == "QWidget"
+        assert widget_tree.include_tree is True
+        assert close_result.errors == ()
+        assert close_result.closed is True
+    finally:
+        top_level.close()
+
+
+def test_projected_widget_action_invokes_live_button_by_path_id() -> None:
+    app = QtApplicationAuthority.app()
+    top_level = QWidget()
+    top_level.setWindowTitle("Agent actionable top-level")
+    button = QPushButton("Generate", top_level)
+    button.setObjectName("generate_button")
+    button.resize(120, 32)
+    clicked: list[bool] = []
+    button.clicked.connect(lambda: clicked.append(True))
+    top_level.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        windows = bridge.list_windows()
+        summaries = tuple(
+            summary
+            for summary in windows.windows
+            if summary.title == "Agent actionable top-level"
+        )
+        assert len(summaries) == 1
+        window_id = summaries[0].window_id
+
+        widget_tree = bridge.widget_tree(
+            UiWidgetTreeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                include_tree=True,
+            )
+        )
+        action_summary = next(
+            action
+            for action in widget_tree.actionable_widgets
+            if action.object_name == "generate_button"
+        )
+
+        result = bridge.invoke_widget_action(
+            UiWidgetActionInvokeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                path_id=action_summary.path_id,
+                action_kind="button",
+            )
+        )
+        app.processEvents()
+
+        assert result.errors == ()
+        assert result.invoked is True
+        assert result.receipt.accepted is True
+        assert result.receipt.bridge_operation_id is not None
+        assert result.summary is not None
+        assert result.summary.object_name == "generate_button"
+        assert clicked == [True]
+    finally:
+        top_level.close()
+
+
+def test_projected_widget_action_selects_live_item_view_row_by_path_id() -> None:
+    app = QtApplicationAuthority.app()
+    top_level = QWidget()
+    top_level.setWindowTitle("Agent selectable list")
+    list_widget = QListWidget(top_level)
+    list_widget.setObjectName("pipeline_steps")
+    list_widget.resize(240, 80)
+    list_widget.addItem(QListWidgetItem("segment_cells"))
+    list_widget.addItem(QListWidgetItem("measure_intensity"))
+    top_level.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        windows = bridge.list_windows()
+        window_id = next(
+            summary.window_id
+            for summary in windows.windows
+            if summary.title == "Agent selectable list"
+        )
+
+        widget_tree = bridge.widget_tree(
+            UiWidgetTreeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                include_tree=True,
+                max_nodes=20,
+            )
+        )
+        action_summary = next(
+            action
+            for action in widget_tree.actionable_widgets
+            if action.label == "measure_intensity"
+        )
+
+        result = bridge.invoke_widget_action(
+            UiWidgetActionInvokeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                path_id=action_summary.path_id,
+            )
+        )
+        app.processEvents()
+
+        assert result.errors == ()
+        assert result.invoked is True
+        assert result.action_kind == WidgetActionKind.ITEM_SELECT.value
+        assert result.summary is not None
+        assert result.summary.action_kinds == (WidgetActionKind.ITEM_SELECT.value,)
+        assert list_widget.currentRow() == 1
+        assert list_widget.currentItem().text() == "measure_intensity"
+
+        unavailable = bridge.invoke_widget_action(
+            UiWidgetActionInvokeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                path_id=action_summary.path_id,
+                action_kind=WidgetActionKind.BUTTON.value,
+            )
+        )
+
+        assert unavailable.invoked is False
+        assert unavailable.summary is not None
+        assert unavailable.errors[0].code == "ui_widget_action_kind_unavailable"
+        assert "item_select" in (unavailable.errors[0].hint or "")
+    finally:
+        top_level.close()
+
+
+def test_legacy_empty_scope_window_catalogs_as_global_config(tmp_path: Path) -> None:
+    app = QtApplicationAuthority.app()
+    global_window = QWidget()
+    global_window.setWindowTitle("Configuration - GlobalPipelineConfig")
+    WindowManager.register("", global_window)
+    global_window.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        windows = bridge.list_windows()
+        summaries = tuple(
+            summary
+            for summary in windows.windows
+            if summary.title == "Configuration - GlobalPipelineConfig"
+        )
+
+        assert len(summaries) == 1
+        assert summaries[0].window_id == OpenHCSUiWindowId.global_config
+        assert summaries[0].manager_scope is not None
+        assert summaries[0].manager_scope.value == ""
+
+        focus_result = bridge.focus_window(
+            UiWindowFocusRequest(
+                window_id=OpenHCSUiWindowId.global_config,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            )
+        )
+        widget_tree = bridge.widget_tree(
+            UiWidgetTreeRequest(
+                window_id=OpenHCSUiWindowId.global_config,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                include_tree=True,
+            )
+        )
+        snapshot = bridge.snapshot_window(
+            UiWindowSnapshotRequest(
+                window_id=OpenHCSUiWindowId.global_config,
+                output_dir_path=str(tmp_path),
+                capture_scope=WindowSnapshotCaptureScope.WINDOW,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            )
+        )
+        close_result = bridge.close_window(
+            UiWindowCloseRequest(window_id=OpenHCSUiWindowId.global_config)
+        )
+
+        assert focus_result.errors == ()
+        assert focus_result.focused is True
+        assert focus_result.summary is not None
+        assert focus_result.summary.manager_scope is not None
+        assert focus_result.summary.manager_scope.value == ""
+        assert widget_tree.errors == ()
+        assert widget_tree.projected is True
+        assert widget_tree.summary is not None
+        assert widget_tree.summary.manager_scope is not None
+        assert widget_tree.summary.manager_scope.value == ""
+        assert snapshot.errors == ()
+        assert snapshot.captured is True
+        assert snapshot.resource is not None
+        assert snapshot.summary is not None
+        assert snapshot.summary.window_id == OpenHCSUiWindowId.global_config
+        assert snapshot.summary.manager_scope is not None
+        assert snapshot.summary.manager_scope.value == ""
+        assert snapshot.capture_scope is WindowSnapshotCaptureScope.WINDOW
+        assert snapshot.width is not None
+        assert snapshot.width > 0
+        assert snapshot.height is not None
+        assert snapshot.height > 0
+        assert close_result.closed is True
+        assert close_result.summary is not None
+        assert close_result.summary.window_id == OpenHCSUiWindowId.global_config
+    finally:
+        WindowManager.unregister("")
+        global_window.close()
+
+
+def test_managed_window_catalog_projects_object_state_status() -> None:
+    app = QtApplicationAuthority.app()
+    state = ObjectState(Dummy(), scope_id="managed-scope")
+    state.update_parameter("x", 2)
+    window = FakeManagedFormWindow("managed-scope")
+    window.state = state
+    window.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        windows = bridge.list_windows()
+        summary = next(
+            window_summary
+            for window_summary in windows.windows
+            if window_summary.window_id == "managed-scope"
+        )
+
+        assert summary.object_state_scope_id == "managed-scope"
+        assert summary.dirty is True
+        assert summary.signature_diff is True
+        assert summary.dirty_field_count == 1
+        assert summary.signature_diff_field_count == 1
+        assert summary.semantic_markers == ("*", "_")
+        assert ManagedWindowAction.SAVE_WITHOUT_CLOSE.value in summary.managed_action_ids
+    finally:
+        WindowManager.unregister("managed-scope")
+        window.close()
+
+
+def test_open_window_code_mode_documents_are_discoverable_by_window_id() -> None:
+    app = QtApplicationAuthority.app()
+    source = "config = GlobalPipelineConfig(num_workers=2)\n"
+    global_window = QWidget()
+    global_window.setWindowTitle("Configuration - GlobalPipelineConfig")
+    WindowManager.register(
+        "",
+        global_window,
+        code_document_driver=FakeWindowCodeDocumentDriver(source),
+    )
+    global_window.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    ObjectStateBridgeProviderSet().register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        document_id = f"{WINDOW_CODE_DOCUMENT_PREFIX}{OpenHCSUiWindowId.global_config}"
+        documents = bridge.list_documents().documents
+        summaries = tuple(
+            summary
+            for summary in documents
+            if summary.document_id == document_id
+        )
+        document = bridge.get_document(
+            UiCodeDocumentRequest(document_id=document_id)
+        )
+
+        assert len(summaries) == 1
+        assert summaries[0].widget_id == OpenHCSUiWindowId.global_config
+        assert summaries[0].readable is True
+        assert summaries[0].writable is True
+        assert document.source == source
+        assert document.summary.title == "View/Edit GlobalPipelineConfig"
+        assert document.selected_scope_ids == ("",)
+    finally:
+        WindowManager.unregister("")
+        global_window.close()
+
+
+def test_open_window_code_mode_summary_uses_driver_title_when_window_title_empty() -> None:
+    app = QtApplicationAuthority.app()
+    source = "pipeline_steps = []\n"
+    embedded_widget = QWidget()
+    WindowManager.register(
+        "embedded-code",
+        embedded_widget,
+        code_document_driver=FakeWindowCodeDocumentDriver(source),
+    )
+    embedded_widget.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    ObjectStateBridgeProviderSet().register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        document_id = f"{WINDOW_CODE_DOCUMENT_PREFIX}embedded-code"
+        summary = next(
+            summary
+            for summary in bridge.list_documents().documents
+            if summary.document_id == document_id
+        )
+
+        assert summary.title == "Code mode - View/Edit GlobalPipelineConfig"
+    finally:
+        WindowManager.unregister("embedded-code")
+        embedded_widget.close()
+
+
+def test_simple_code_editor_windows_register_code_documents(monkeypatch) -> None:
+    app = QtApplicationAuthority.app()
+    parent = QWidget()
+    applied_sources: list[str] = []
+    before_scopes = set(WindowManager.get_code_document_scopes())
+    service = SimpleCodeEditorService(parent)
+    monkeypatch.setattr(simple_code_editor, "QSCINTILLA_AVAILABLE", False)
+
+    service.edit_code(
+        "pipeline_steps = []\n",
+        title="Edit Pipeline Steps",
+        callback=applied_sources.append,
+        code_type="pipeline",
+        code_data={"clean_mode": True},
+    )
+    app.processEvents()
+
+    try:
+        new_scopes = set(WindowManager.get_code_document_scopes()) - before_scopes
+        assert len(new_scopes) == 1
+        scope_id = new_scopes.pop()
+        document_id = f"{WINDOW_CODE_DOCUMENT_PREFIX}{scope_id}"
+
+        registry = UiBridgeSurfaceRegistry()
+        snapshot_provider = UiObjectStateSnapshotProvider()
+        ObjectStateBridgeProviderSet().register(
+            UiBridgeRegistrationContext(
+                registry=registry,
+                snapshot_provider=snapshot_provider,
+            )
+        )
+        bridge = UiAgentBridgeService(
+            registry=registry,
+            dispatcher=InlineDispatcher(),
+            snapshot_provider=snapshot_provider,
+        )
+
+        summaries = bridge.list_documents().documents
+        document = bridge.get_document(UiCodeDocumentRequest(document_id=document_id))
+        bridge.validate_document(
+            UiCodeDocumentValidationRequest(
+                document_id=document_id,
+                source="pipeline_steps = [\n",
+            )
+        )
+        apply_result = bridge.apply_document(
+            UiCodeDocumentApplyRequest(
+                document_id=document_id,
+                source="pipeline_steps = ['edited']\n",
+                base_revision_token=document.current_revision_token,
+                confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                    False
+                ),
+            )
+        )
+        updated = bridge.get_document(UiCodeDocumentRequest(document_id=document_id))
+
+        matching_summaries = tuple(
+            summary
+            for summary in summaries
+            if summary.document_id == document_id
+        )
+        assert len(matching_summaries) == 1
+        assert matching_summaries[0].title == "Code mode - Edit Pipeline Steps"
+        assert document.source == "pipeline_steps = []\n"
+        assert document.summary.title == "Edit Pipeline Steps"
+        assert apply_result.applied is True
+        assert applied_sources == ["pipeline_steps = ['edited']\n"]
+        assert updated.source == "pipeline_steps = ['edited']\n"
+    finally:
+        for scope_id in set(WindowManager.get_code_document_scopes()) - before_scopes:
+            window = WindowManager.get_window(scope_id)
+            WindowManager.unregister(scope_id)
+            if window is not None:
+                window.close()
+        parent.close()
+
+
+def test_object_state_code_mode_documents_are_discoverable_by_scope_id() -> None:
+    app = QtApplicationAuthority.app()
+    source = "config = GlobalPipelineConfig(num_workers=2)\n"
+    state = ObjectState(Dummy(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    global_window = QWidget()
+    global_window.setWindowTitle("Configuration - GlobalPipelineConfig")
+    WindowManager.register(
+        "",
+        global_window,
+        code_document_driver=FakeWindowCodeDocumentDriver(source),
+    )
+    global_window.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    ObjectStateBridgeProviderSet().register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        document_id = (
+            f"{OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX}"
+            f"{OpenHCSUiWindowId.global_config}"
+        )
+        documents = bridge.list_documents().documents
+        summaries = tuple(
+            summary
+            for summary in documents
+            if summary.document_id == document_id
+        )
+        generic_summaries = tuple(
+            summary
+            for summary in documents
+            if summary.document_id == ObjectStateScopeCodeDocumentProvider.identity.document_id
+        )
+        document = bridge.get_document(
+            UiCodeDocumentRequest(document_id=document_id)
+        )
+
+        assert len(summaries) == 1
+        assert not generic_summaries
+        assert summaries[0].widget_id == "object_state_scope"
+        assert summaries[0].readable is True
+        assert summaries[0].writable is True
+        assert document.source == source
+        assert document.selected_scope_ids == (OpenHCSUiWindowId.global_config,)
+    finally:
+        WindowManager.unregister("")
+        global_window.close()
+
+
+def test_global_config_object_state_fields_use_stable_window_id() -> None:
+    state = ObjectState(Dummy(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    state.update_parameter("x", 2)
+
+    catalog = ObjectStateScopeProjectionService().catalog(
+        UiObjectStateScopeListRequest(
+            include_system_scopes=True,
+            include_fields=True,
+            field_limit=1,
+        )
+    )
+
+    global_scope = next(
+        scope
+        for scope in catalog.scopes
+        if scope.identity.object_state_scope_id == OpenHCSUiWindowId.global_config
+    )
+
+    assert global_scope.fields
+    field = global_scope.fields[0]
+    assert global_scope.has_unsaved_changes is True
+    assert global_scope.has_default_overrides is True
+    assert global_scope.dirty_marker == "*"
+    assert global_scope.signature_diff_marker == "_"
+    assert field.address.object_state_scope_id == OpenHCSUiWindowId.global_config
+    assert field.address.window_id == OpenHCSUiWindowId.global_config
+    assert field.raw_value is None
+    assert field.resolved_value is None
+    assert field.raw_value_preview is not None
+    assert field.resolved_value_preview is not None
+    assert field.raw_value_preview.text == "2"
+    assert field.resolved_value_preview.text == "2"
+    assert field.raw_value_is_none is False
+    assert field.resolved_value_is_none is False
+    assert field.semantic_markers == ("*", "_")
+
+
+def test_object_state_default_visibility_includes_global_config_without_plate_root() -> None:
+    ObjectStateRegistry.register(ObjectState(Dummy(), scope_id=""), _skip_snapshot=True)
+    ObjectStateRegistry.register(
+        ObjectState(Dummy(), scope_id="__plates__"),
+        _skip_snapshot=True,
+    )
+    ObjectStateRegistry.register(
+        ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID),
+        _skip_snapshot=True,
+    )
+
+    catalog = ObjectStateScopeProjectionService().catalog(
+        UiObjectStateScopeListRequest()
+    )
+    scope_ids = {
+        scope.identity.object_state_scope_id
+        for scope in catalog.scopes
+    }
+
+    assert OpenHCSUiWindowId.global_config in scope_ids
+    assert PLATE_SCOPE_ID in scope_ids
+    assert "__plates__" not in scope_ids
+
+    system_catalog = ObjectStateScopeProjectionService().catalog(
+        UiObjectStateScopeListRequest(include_system_scopes=True)
+    )
+    system_scope_ids = {
+        scope.identity.object_state_scope_id
+        for scope in system_catalog.scopes
+    }
+
+    assert OpenHCSUiWindowId.global_config in system_scope_ids
+    assert "__plates__" in system_scope_ids
+
+
+def test_object_state_fields_can_include_full_values_on_request() -> None:
+    state = ObjectState(Dummy(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    state.update_parameter("x", 2)
+
+    catalog = ObjectStateScopeProjectionService().catalog(
+        UiObjectStateScopeListRequest(
+            include_system_scopes=True,
+            include_fields=True,
+            include_field_values=True,
+            field_limit=1,
+        )
+    )
+
+    global_scope = next(
+        scope
+        for scope in catalog.scopes
+        if scope.identity.object_state_scope_id == OpenHCSUiWindowId.global_config
+    )
+
+    field = global_scope.fields[0]
+    assert field.raw_value == 2
+    assert field.resolved_value == 2
+    assert field.raw_value_preview is not None
+    assert field.resolved_value_preview is not None
+
+
+def test_object_state_scope_fields_filter_before_pagination() -> None:
+    @dataclass
+    class MultiFieldDummy:
+        alpha: int = 1
+        beta: int = 2
+        zeta: int = 3
+
+    state = ObjectState(MultiFieldDummy(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    state.update_parameter("zeta", 4)
+
+    catalog = ObjectStateScopeProjectionService().catalog(
+        UiObjectStateScopeListRequest(
+            include_system_scopes=True,
+            include_fields=True,
+            field_filter=UiObjectStateFieldFilter.DIRTY,
+            field_limit=1,
+        )
+    )
+
+    global_scope = next(
+        scope
+        for scope in catalog.scopes
+        if scope.identity.object_state_scope_id == OpenHCSUiWindowId.global_config
+    )
+
+    assert [field.address.field_path for field in global_scope.fields] == ["zeta"]
+    assert global_scope.field_page is not None
+    assert global_scope.field_page.total_count == 1
+    assert global_scope.field_page.truncated is False
+
+
+def test_object_state_exact_field_paths_include_path_type_and_description() -> None:
+    state = ObjectState(GlobalPipelineConfig(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+
+    catalog = ObjectStateScopeProjectionService().catalog(
+        UiObjectStateScopeListRequest(
+            include_fields=True,
+            include_field_descriptions=True,
+            field_paths=("napari_display_config",),
+            field_limit=1,
+        )
+    )
+
+    global_scope = next(
+        scope
+        for scope in catalog.scopes
+        if scope.identity.object_state_scope_id == OpenHCSUiWindowId.global_config
+    )
+    assert len(global_scope.fields) == 1
+    field = global_scope.fields[0]
+    assert field.address.field_path == "napari_display_config"
+    assert field.object_state_path_type == "openhcs.core.config.NapariDisplayConfig"
+    assert field.parameter_description is not None
+    assert "napari display behavior" in field.parameter_description
+
+
+def test_object_state_field_help_uses_object_state_path_types() -> None:
+    state = ObjectState(GlobalPipelineConfig(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    bridge = UiAgentBridgeService()
+
+    section = bridge.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id=OpenHCSUiWindowId.global_config,
+            field_path="napari_display_config",
+            max_description_chars=500,
+        )
+    )
+    child = bridge.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id=OpenHCSUiWindowId.global_config,
+            field_path="napari_display_config.colormap",
+            max_description_chars=500,
+        )
+    )
+
+    assert section.errors == ()
+    assert section.help_target_type == "openhcs.core.config.NapariDisplayConfig"
+    assert section.parameter_name == "napari_display_config"
+    assert section.description is not None
+    assert "napari display behavior" in section.description
+
+    assert child.errors == ()
+    assert child.help_target_type == "openhcs.core.config.NapariDisplayConfig"
+    assert child.parameter_name == "colormap"
+    assert child.summary == "• colormap (NapariColormap)"
+    assert child.description == "No description available"
+
+
+def test_object_state_field_help_uses_source_binding_field_docstrings() -> None:
+    state = ObjectState(GlobalPipelineConfig(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    bridge = UiAgentBridgeService()
+
+    source_defaults = bridge.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id=OpenHCSUiWindowId.global_config,
+            field_path="source_bindings_config.metadata_rules",
+            max_description_chars=500,
+        )
+    )
+    step_bindings = bridge.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id=OpenHCSUiWindowId.global_config,
+            field_path="step_source_bindings_config.bindings",
+            max_description_chars=500,
+        )
+    )
+
+    assert source_defaults.errors == ()
+    assert source_defaults.help_target_type == "openhcs.core.source_bindings.SourceBindingsConfig"
+    assert source_defaults.description == (
+        "Regex/metadata extraction rules that add semantic fields for matching sources."
+    )
+
+    assert step_bindings.errors == ()
+    assert step_bindings.help_target_type == "openhcs.core.source_bindings.StepSourceBindingsConfig"
+    assert step_bindings.description == (
+        "Step-local named source bindings; None inherits pipeline/plate bindings."
+    )
+
+
+def test_managed_window_save_action_returns_before_deferred_save_runs() -> None:
+    app = QtApplicationAuthority.app()
+    dispatcher = QueuedPostDispatcher()
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=dispatcher,
+        snapshot_provider=snapshot_provider,
+    )
+    window = FakeManagedFormWindow("managed-scope")
+    other_window = FakeManagedFormWindow("other-managed-scope")
+    window.show()
+    other_window.show()
+    app.processEvents()
+
+    try:
+        action = next(
+            action
+            for action in bridge.list_actions().actions
+            if action.identity.action_id == ManagedWindowAction.SAVE_WITHOUT_CLOSE.value
+        )
+        result = bridge.invoke_action(
+            UiActionInvokeRequest(
+                widget_id=action.identity.widget_id,
+                action_id=action.identity.action_id,
+                selected_scope_ids=(window.scope_id,),
+                confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+            )
+        )
+
+        assert action.invocation_mode == "async"
+        assert result.status == "accepted"
+        assert result.receipt.bridge_operation_id is not None
+        assert result.target_scope_ids == (window.scope_id,)
+        assert window.save_count == 0
+        assert len(action.target_scope_ids) == 2
+        assert len(dispatcher.callbacks) == 1
+        assert bridge.get_operation_status(result.receipt.bridge_operation_id).status == "running"
+
+        dispatcher.run_next()
+
+        operation = bridge.get_operation_status(result.receipt.bridge_operation_id)
+        assert window.save_count == 1
+        assert window.saved_close_window is False
+        assert operation.status == "completed"
+        assert operation.outcome == "accepted"
+    finally:
+        window.close()
+        other_window.close()
 
 
 def test_all_read_returns_source_hash_and_revision() -> None:
@@ -389,6 +2095,147 @@ def test_plate_manager_state_surface_projects_runtime_row_status() -> None:
     assert poll_state.unchanged is True
 
 
+def test_plate_manager_state_surface_links_source_and_output_plate_rows() -> None:
+    source_row = FakeRow(
+        PLATE_SCOPE_ID,
+        PLATE_NAME,
+        plate_root="/tmp/source-plate",
+    )
+    output_row = FakeRow(
+        "/tmp/source-plate_openhcs",
+        "source-plate_openhcs",
+        plate_root="/tmp/source-plate_openhcs",
+    )
+    manager = FakePlateManager(
+        selected=(source_row,),
+        plates=(source_row, output_row),
+    )
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PLATE_MANAGER.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    source_payload, output_payload = state.payload["rows"]
+    assert source_payload["output_plate_scope_id"] == output_row.scope_id
+    assert source_payload["output_plate_root"] == output_row.plate_root
+    assert source_payload["source_plate_scope_id"] is None
+    assert output_payload["source_plate_scope_id"] == source_row.scope_id
+    assert output_payload["source_plate_root"] == source_row.plate_root
+    assert output_payload["output_plate_scope_id"] is None
+
+
+def test_plate_manager_state_surface_uses_row_effective_path_config(
+    tmp_path: Path,
+) -> None:
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    source_root = tmp_path / "source-plate"
+    source_root.mkdir()
+    output_root = tmp_path / "source-plate_custom"
+    source_row = FakeRow(
+        PLATE_SCOPE_ID,
+        PLATE_NAME,
+        plate_root=str(source_root),
+    )
+    output_row = FakeRow(
+        str(output_root),
+        "source-plate_custom",
+        plate_root=str(output_root),
+    )
+    orchestrator = PipelineOrchestrator(
+        source_root,
+        pipeline_config=PipelineConfig(
+            path_planning_config=LazyPathPlanningConfig(
+                output_dir_suffix="_custom",
+            ),
+        ),
+    )
+    ObjectStateRegistry.register(
+        ObjectState(orchestrator, scope_id=source_row.scope_id),
+        _skip_snapshot=True,
+    )
+    manager = FakePlateManager(
+        selected=(source_row,),
+        plates=(source_row, output_row),
+    )
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PLATE_MANAGER.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    source_payload, output_payload = state.payload["rows"]
+    assert source_payload["output_plate_scope_id"] == output_row.scope_id
+    assert source_payload["output_plate_root"] == output_row.plate_root
+    assert output_payload["source_plate_scope_id"] == source_row.scope_id
+    assert output_payload["source_plate_root"] == source_row.plate_root
+
+
+def test_plate_manager_state_ignores_stale_runtime_without_current_execution_id() -> None:
+    manager = FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))
+    stale_projection = PlateRuntimeProjection(
+        identity=PlateRuntimeIdentity(
+            execution_id="old-execution",
+            plate_id=PLATE_SCOPE_ID,
+        ),
+        state=PlateRuntimeState.EXECUTING,
+        percent=0.0,
+        axis_progress=(),
+        latest_timestamp=1.0,
+    )
+    manager.runtime_progress_projection.add_plate(stale_projection)
+    manager.runtime_progress_projection.mark_latest(stale_projection.identity)
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PLATE_MANAGER.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    row = state.payload["rows"][0]
+    assert row["execution_id"] is None
+    assert row["execution_active"] is False
+    assert row["runtime_state"] is None
+    assert row["runtime_percent"] is None
+    assert row["status_prefix"] == ""
+
+
+def test_plate_manager_state_terminal_status_overrides_stale_executing_state() -> None:
+    ObjectStateRegistry.register(
+        ObjectState(
+            FakeOrchestrator(state=OrchestratorState.EXECUTING),
+            scope_id=PLATE_SCOPE_ID,
+        ),
+        _skip_snapshot=True,
+    )
+    manager = FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))
+    manager.plate_execution_ids[PLATE_SCOPE_ID] = "failed-execution"
+    manager.plate_terminal_activity_status.mark_terminal(PLATE_SCOPE_ID, "failed")
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PLATE_MANAGER.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    row = state.payload["rows"][0]
+    assert row["execution_id"] == "failed-execution"
+    assert row["terminal_status"] == "failed"
+    assert row["orchestrator_state"] == "exec_failed"
+    assert row["execution_active"] is False
+    assert row["status_prefix"] == "❌ Exec Failed"
+
+
 def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
     QtApplicationAuthority.app()
     manager = FakePlateManager(
@@ -425,6 +2272,284 @@ def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
     assert stale.errors[0].code == "stale_ui_action_revision"
 
 
+def _pipeline_editor_bridge(manager: FakePipelineEditor) -> UiAgentBridgeService:
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    registry = UiBridgeSurfaceRegistry()
+    PipelineEditorBridgeProviderSet(manager).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    return UiAgentBridgeService(
+        registry=registry,
+        snapshot_provider=snapshot_provider,
+    )
+
+
+def test_pipeline_editor_action_catalog_uses_declared_routes_and_scope_hooks() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor(selected_indices=(1,))
+    manager.buttons[PipelineEditorAction.EDIT_STEP.value] = FakeButton(enabled=False)
+    bridge = _pipeline_editor_bridge(manager)
+
+    actions = {
+        action.identity.action_id: action
+        for action in bridge.list_actions().actions
+    }
+    code_action = actions[PipelineEditorAction.CODE_PIPELINE.value]
+    edit_action = actions[PipelineEditorAction.EDIT_STEP.value]
+    auto_action = actions[PipelineEditorAction.AUTO_LOAD_PIPELINE.value]
+
+    assert set(actions) == {action.value for action in PipelineEditorAction}
+    assert code_action.identity.widget_id == OpenHCSUiWindowId.pipeline_editor
+    assert code_action.confirmation_required is False
+    assert code_action.side_effects == ("opens_code_document_window",)
+    assert code_action.target_scope_ids == (
+        PipelineScopeIdentity.from_plate_scope(PLATE_SCOPE_ID).scope_id,
+    )
+    assert code_action.selection_mode == "current_pipeline"
+    assert edit_action.target_scope_ids == ("scope-from-manager-hook-1",)
+    assert edit_action.selection_mode == "selected_steps"
+    assert edit_action.disabled_error is not None
+    assert edit_action.disabled_error.hint is not None
+    assert "selected step" in edit_action.disabled_error.hint
+    assert auto_action.confirmation_required is True
+    assert auto_action.side_effects == ("loads_basic_pipeline", "mutates_pipeline")
+
+
+def test_pipeline_editor_state_surface_projects_steps_and_selection(monkeypatch) -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor(selected_indices=(1,))
+    bridge = _pipeline_editor_bridge(manager)
+    reference_indexes: dict[int, int] = {}
+
+    @dataclass(frozen=True)
+    class _FunctionReference:
+        composite_key: str
+
+    def function_reference(function):
+        index = reference_indexes.setdefault(id(function), len(reference_indexes))
+        return _FunctionReference(f"test:function_{index}")
+
+    monkeypatch.setattr(
+        FunctionReferenceTransportAuthority,
+        "function_reference",
+        staticmethod(function_reference),
+    )
+
+    catalog = bridge.list_state_surfaces()
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PIPELINE_EDITOR.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+    selected_state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PIPELINE_EDITOR.value,
+            selection_mode=SELECTED_SELECTION_MODE,
+            base_revision_token=state.current_revision_token,
+        )
+    )
+
+    assert catalog.surfaces[0].surface_id == UiStateSurfaceId.PIPELINE_EDITOR.value
+    assert state.summary.surface_id == UiStateSurfaceId.PIPELINE_EDITOR.value
+    assert state.summary.current_selection_count == 1
+    assert state.summary.total_scope_count == 2
+    assert state.payload["pipeline_scope_id"] == (
+        PipelineScopeIdentity.from_plate_scope(PLATE_SCOPE_ID).scope_id
+    )
+    assert state.payload["selected_scope_ids"] == ["scope-from-manager-hook-1"]
+    assert [step["name"] for step in state.payload["steps"]] == [
+        "step_one",
+        "step_two",
+    ]
+    assert state.payload["steps"][0]["selected"] is False
+    assert state.payload["steps"][1]["selected"] is True
+    assert state.payload["steps"][1]["step_scope_id"] == "scope-from-manager-hook-1"
+    assert state.payload["steps"][0]["function_ids"] == ["test:function_0"]
+    assert state.payload["steps"][1]["function_ids"] == ["test:function_1"]
+    assert selected_state.payload["steps"][0]["name"] == "step_two"
+    assert selected_state.payload["steps"][0]["function_ids"] == ["test:function_1"]
+    assert selected_state.unchanged is False
+
+
+def test_pipeline_editor_action_invoke_uses_selection_token_and_confirmation() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor(selected_indices=(0,))
+    bridge = _pipeline_editor_bridge(manager)
+
+    actions = {
+        action.identity.action_id: action
+        for action in bridge.list_actions().actions
+    }
+    code_action = actions[PipelineEditorAction.CODE_PIPELINE.value]
+    edit_action = actions[PipelineEditorAction.EDIT_STEP.value]
+
+    code_result = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=code_action.identity.widget_id,
+            action_id=code_action.identity.action_id,
+            selected_scope_ids=code_action.target_scope_ids,
+            observed_selection_revision_token=code_action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(True),
+        )
+    )
+    edit_result = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=edit_action.identity.widget_id,
+            action_id=edit_action.identity.action_id,
+            selected_scope_ids=edit_action.target_scope_ids,
+            observed_selection_revision_token=edit_action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(True),
+        )
+    )
+    stale_result = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=edit_action.identity.widget_id,
+            action_id=edit_action.identity.action_id,
+            selected_scope_ids=("wrong-target",),
+            observed_selection_revision_token=edit_action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert code_result.status == "accepted"
+    assert manager.code_count == 1
+    assert edit_result.status == "rejected"
+    assert edit_result.errors
+    assert edit_result.errors[0].code == "confirmation_required"
+    assert manager.edit_count == 0
+    assert stale_result.status == "rejected"
+    assert stale_result.errors
+    assert stale_result.errors[0].code == "stale_ui_action_selection"
+
+
+def test_selected_workflow_rejection_includes_selection_recovery_hint() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePlateManager(selected=(), plates=())
+    manager.ACTION_ROUTES = {
+        PlateManagerAction.COMPILE_PLATE: WidgetActionRoute(
+            PlateManagerAction.COMPILE_PLATE,
+            lambda widget: widget.action_code_plate,
+        ),
+    }
+    manager.BUTTON_CONFIGS = [
+        ("Compile", PlateManagerAction.COMPILE_PLATE.value, "Compile plate pipelines"),
+    ]
+    manager.buttons[PlateManagerAction.COMPILE_PLATE.value] = FakeButton(enabled=True)
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    catalog = bridge.list_actions()
+    action = catalog.actions[0]
+    result = bridge.selected_plate_workflow(
+        UiSelectedPlateWorkflowRequest(
+            workflow=UiSelectedPlateWorkflowKind.COMPILE,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert not action.enabled
+    assert action.disabled_error is not None
+    assert action.disabled_error.code == "plate_selection_required"
+    assert action.disabled_error.hint is not None
+    assert "plate_manager.state" in action.disabled_error.hint
+    assert "plate_manager.orchestrator_config" in action.disabled_error.hint
+    assert "openhcs_ui_apply_code_document" in action.disabled_error.hint
+    assert catalog.warnings
+    assert catalog.warnings[0].code == "plate_path_setup_uses_code_document"
+    assert "plate_paths" in catalog.warnings[0].message
+    assert result.errors
+    assert result.errors[0].code == "plate_selection_required"
+    assert result.errors[0].hint is not None
+    assert "plate_manager.orchestrator_config" in result.errors[0].hint
+
+
+def test_selected_compile_reports_init_precondition_when_plate_is_created() -> None:
+    QtApplicationAuthority.app()
+    ObjectStateRegistry.register(
+        ObjectState(
+            FakeOrchestrator(state=OrchestratorState.CREATED),
+            scope_id=PLATE_SCOPE_ID,
+        ),
+        _skip_snapshot=True,
+    )
+    manager = FakePlateManager(
+        selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+        pipeline_steps=(FunctionStep(func=lambda image: image, name="Defined"),),
+    )
+    manager.ACTION_ROUTES = {
+        PlateManagerAction.COMPILE_PLATE: WidgetActionRoute(
+            PlateManagerAction.COMPILE_PLATE,
+            lambda widget: widget.action_code_plate,
+        ),
+    }
+    manager.BUTTON_CONFIGS = [
+        ("Compile", PlateManagerAction.COMPILE_PLATE.value, "Compile plate pipelines"),
+    ]
+    manager.buttons[PlateManagerAction.COMPILE_PLATE.value] = FakeButton(enabled=True)
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    action = bridge.list_actions().actions[0]
+    assert not action.enabled
+    assert action.disabled_error is not None
+    assert action.disabled_error.code == "orchestrator_not_initialized"
+    assert "init_plate" in action.disabled_error.message
+
+    result = bridge.selected_plate_workflow(
+        UiSelectedPlateWorkflowRequest(
+            workflow=UiSelectedPlateWorkflowKind.COMPILE,
+            selected_scope_ids=(PLATE_SCOPE_ID,),
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert result.action_result.status == "rejected"
+    assert result.errors
+    assert result.errors[0].code == "orchestrator_not_initialized"
+    assert "init_plate" in result.errors[0].message
+
+
+def test_selected_workflow_confirmation_rejection_preserves_current_selection() -> None:
+    QtApplicationAuthority.app()
+    ObjectStateRegistry.register(
+        ObjectState(
+            FakeOrchestrator(state=OrchestratorState.READY),
+            scope_id=PLATE_SCOPE_ID,
+        ),
+        _skip_snapshot=True,
+    )
+    manager = FakePlateManager(
+        selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+        pipeline_steps=(FunctionStep(func=lambda image: image, name="Defined"),),
+    )
+    manager.ACTION_ROUTES = {
+        PlateManagerAction.COMPILE_PLATE: WidgetActionRoute(
+            PlateManagerAction.COMPILE_PLATE,
+            lambda widget: widget.action_code_plate,
+        ),
+    }
+    manager.BUTTON_CONFIGS = [
+        ("Compile", PlateManagerAction.COMPILE_PLATE.value, "Compile plate pipelines"),
+    ]
+    manager.buttons[PlateManagerAction.COMPILE_PLATE.value] = FakeButton(enabled=True)
+    bridge = UiAgentBridgeService(plate_manager=manager)
+
+    result = bridge.selected_plate_workflow(
+        UiSelectedPlateWorkflowRequest(
+            workflow=UiSelectedPlateWorkflowKind.COMPILE,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(True),
+        )
+    )
+
+    assert result.action_result.status == "rejected"
+    assert result.errors[0].code == "confirmation_required"
+    assert result.action_result.target_scope_ids == (PLATE_SCOPE_ID,)
+    assert result.action_result.selection_revision_token is not None
+    assert result.action_result.workflow_status_surface_ids == ("plate_manager.state",)
+
+
 def test_validation_rejects_side_effecting_source_before_execution() -> None:
     bridge = UiAgentBridgeService(plate_manager=FakePlateManager())
 
@@ -459,6 +2584,148 @@ def test_validation_rejects_legacy_pipeline_config_assignment() -> None:
     assert any(error.code == "unexpected_assignment" for error in result.errors)
 
 
+def test_validation_reports_orchestrator_payload_hint() -> None:
+    bridge = UiAgentBridgeService(plate_manager=FakePlateManager())
+
+    result = bridge.validate_document(
+        UiCodeDocumentValidationRequest(
+            document_id=DOCUMENT_ID,
+            source=(
+                f"plate_paths = ['{PLATE_SCOPE_ID}']\n"
+                "global_config = None\n"
+                f"pipeline_data = {{'{PLATE_SCOPE_ID}': []}}\n"
+            ),
+        )
+    )
+
+    assert not result.valid
+    assert result.errors
+    assert result.errors[0].code == "invalid_orchestrator_code_payload"
+    assert "global_config must be a GlobalPipelineConfig" in result.errors[0].message
+    assert result.errors[0].hint is not None
+    assert "plate_paths" in result.errors[0].hint
+    assert "pipeline_data" in result.errors[0].hint
+
+
+def test_apply_rejection_reports_current_revision_and_snapshot() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    ObjectStateRegistry.record_snapshot("before edit", scope_id=PLATE_SCOPE_ID)
+    bridge = UiAgentBridgeService(
+        plate_manager=FakePlateManager(
+            selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+            operations=FakeOperations(state),
+        )
+    )
+    document = bridge.get_document(
+        UiCodeDocumentRequest(
+            document_id=DOCUMENT_ID,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    result = bridge.apply_document(
+        UiCodeDocumentApplyRequest(
+            document_id=DOCUMENT_ID,
+            source=VALID_SOURCE,
+            base_revision_token="stale-token",
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert not result.applied
+    assert result.errors[0].code == "stale_revision_token"
+    assert result.current_revision_token == document.current_revision_token
+    assert result.current_snapshot == document.current_snapshot
+
+
+def test_confirmation_required_apply_rejection_reports_current_context() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    ObjectStateRegistry.record_snapshot("before edit", scope_id=PLATE_SCOPE_ID)
+    bridge = UiAgentBridgeService(
+        plate_manager=FakePlateManager(
+            selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+            operations=FakeOperations(state),
+        )
+    )
+    document = bridge.get_document(
+        UiCodeDocumentRequest(
+            document_id=DOCUMENT_ID,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    result = bridge.apply_document(
+        UiCodeDocumentApplyRequest(
+            document_id=DOCUMENT_ID,
+            source=VALID_SOURCE,
+            base_revision_token=document.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(True),
+        )
+    )
+
+    assert not result.applied
+    assert result.errors[0].code == "confirmation_required"
+    assert result.current_revision_token == document.current_revision_token
+    assert result.current_snapshot == document.current_snapshot
+
+
+def test_object_state_apply_rejection_reports_dynamic_revision_key() -> None:
+    scope_id = "plate::functionstep_0"
+    state = ObjectState(Dummy(), scope_id=scope_id)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    ObjectStateRegistry.record_snapshot("before object edit", scope_id=scope_id)
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    provider = ObjectStateScopeCodeDocumentProvider(snapshot_provider)
+    document_id = f"{OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX}{scope_id}"
+
+    result = provider.apply(
+        UiCodeDocumentApplyRequest(
+            document_id=document_id,
+            source="pattern = None\n",
+            base_revision_token="stale-token",
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert not result.applied
+    assert result.errors[0].code == "stale_revision_token"
+    assert result.current_revision_token == snapshot_provider.revision_token(
+        f"ui-code-document:{document_id}"
+    )
+    assert result.current_snapshot == snapshot_provider.current_snapshot()
+
+
+def test_source_policy_allows_declared_imported_factories_only() -> None:
+    policy = UiCodeDocumentSourcePolicy()
+    cellprofiler_factory_source = (
+        "from openhcs.interop.cellprofiler.runtime.module_execution import "
+        "cellprofiler_module_callable\n"
+        "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
+        "from openhcs.processing.backends.lib_registry.unified_registry import "
+        "ProcessingContract\n"
+        "from openhcs.processing.backends.cellprofiler import "
+        "identify_secondary_objects\n"
+        f"plate_paths = ['{PLATE_SCOPE_ID}']\n"
+        "global_config = None\n"
+        f"per_plate_configs = {{'{PLATE_SCOPE_ID}': None}}\n"
+        f"pipeline_data = {{'{PLATE_SCOPE_ID}': [cellprofiler_module_callable("
+        "identify_secondary_objects, "
+        "ModuleArtifactContract(module_name='IdentifySecondaryObjects'), "
+        "processing_contract=ProcessingContract.PURE_2D)]}\n"
+    )
+    undeclared_factory_source = (
+        "from openhcs.fake import lower_factory\n"
+        f"plate_paths = ['{PLATE_SCOPE_ID}']\n"
+        f"pipeline_data = {{'{PLATE_SCOPE_ID}': [lower_factory()]}}\n"
+    )
+
+    assert policy.validate(cellprofiler_factory_source) == ()
+    errors = policy.validate(undeclared_factory_source)
+    assert any(error.code == "unsafe_call" for error in errors)
+
+
 def test_apply_creates_baseline_and_edit_snapshot() -> None:
     state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
     ObjectStateRegistry.register(state, _skip_snapshot=True)
@@ -484,14 +2751,27 @@ def test_apply_creates_baseline_and_edit_snapshot() -> None:
 
     history = ObjectStateRegistry.get_branch_history()
     assert result.applied
+    assert result.operation_id is not None
+    assert result.receipt.accepted
+    assert result.receipt.bridge_operation_id == result.operation_id
     assert operations.pre_count == 1
     assert operations.post_count == 1
     assert [snapshot.label for snapshot in history] == [
         "init",
         f"edit {DOCUMENT_ID} via MCP [{PLATE_SCOPE_ID}]",
     ]
-    assert result.pre_apply_snapshot is None
+    assert result.undo_snapshot is not None
+    assert result.undo_snapshot == result.pre_apply_snapshot
+    assert result.undo_snapshot.label == "init"
     assert result.post_apply_snapshot is not None
+    assert result.post_apply_snapshot == result.current_snapshot
+    assert bridge.list_snapshots(UiSnapshotListRequest()).current_snapshot_index == 1
+    assert (
+        bridge.list_object_state_scopes(
+            UiObjectStateScopeListRequest()
+        ).current_snapshot_index
+        == 1
+    )
 
 
 def test_bridge_lists_and_restores_snapshots() -> None:

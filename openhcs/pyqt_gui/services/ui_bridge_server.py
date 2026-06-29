@@ -7,7 +7,7 @@ import os
 import pickle
 import threading
 import time
-from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -18,59 +18,48 @@ from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
-    UiActionInvokeRequest,
     UiActionInvokeResult,
     UiBranchCatalog,
-    UiBranchSwitchRequest,
     UiBridgeConnectionSpec,
     UiBridgeDescriptorFile,
     UiBridgeDescriptorWirePayload,
     UiBridgeOperationRef,
-    UiBridgeOperationStatusRequest,
     UiBridgeRequestEnvelope,
     UiBridgeResponseEnvelope,
     UiBridgeStatus,
     UiCodeDocument,
     UiCodeDocumentApplyResult,
-    UiCodeDocumentApplyRequest,
     UiCodeDocumentCatalog,
-    UiCodeDocumentRequest,
     UiCodeDocumentValidationResult,
-    UiCodeDocumentValidationRequest,
+    UiObjectStateFieldHelpResult,
     UiObjectStateScopeCatalog,
-    UiObjectStateScopeListRequest,
-    UiSelectedPlateWorkflowRequest,
     UiSelectedPlateWorkflowResult,
     UiStateSurfaceCatalog,
     UiStateSurfaceDocument,
-    UiStateSurfaceRequest,
     UiSnapshotCatalog,
-    UiSnapshotListRequest,
     UiSnapshotRestoreResult,
-    UiSnapshotRestoreRequest,
-    UiTimeTravelHeadRequest,
+    UiWidgetActionInvokeResult,
     UiWindowCatalog,
-    UiWindowCloseRequest,
     UiWindowCloseResult,
-    UiWindowFocusRequest,
     UiWindowFocusResult,
-    UiWindowNavigateRequest,
     UiWindowNavigateResult,
-    UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
-    UiWidgetTreeRequest,
     UiWidgetTreeResult,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
+    UiBridgeOperationContract,
+    UiBridgeOperationContractABC,
 )
 from openhcs.agent.services.ui_bridge_transport import (
     AgentDtoJsonCodec,
-    UiBridgeOperationName,
 )
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig
-from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
+from openhcs.pyqt_gui.services.ui_agent_bridge import (
+    InProcessUiBridgeGateway,
+    UiAgentBridgeService,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
@@ -117,6 +106,8 @@ UiBridgeOperationDispatchResult = (
     | UiWindowNavigateResult
     | UiWindowSnapshotResult
     | UiWidgetTreeResult
+    | UiWidgetActionInvokeResult
+    | UiObjectStateFieldHelpResult
     | UiObjectStateScopeCatalog
     | UiSnapshotCatalog
     | UiSnapshotRestoreResult
@@ -188,361 +179,129 @@ class UiBridgeUnsupportedOperationError(LookupError):
         return f"Unsupported UI bridge operation: {self.operation_name}"
 
 
-class UiBridgeRequestOperation(ABC, metaclass=AutoRegisterMeta):
-    """Registered handler for one UI bridge request operation."""
+class UiBridgeServerInProcessGateway(InProcessUiBridgeGateway):
+    """In-process gateway with server descriptor details in status responses."""
 
-    __registry_key__ = "operation"
-    __skip_if_no_key__ = True
+    def __init__(
+        self,
+        bridge: UiAgentBridgeService,
+        *,
+        binding_supplier: Callable[[], UiBridgeServerBinding],
+    ) -> None:
+        super().__init__(bridge)
+        self._binding_supplier = binding_supplier
 
-    operation: ClassVar[UiBridgeOperationName | None] = None
+    def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
+        binding = self._binding_supplier()
+        return replace(
+            super().status(connection),
+            auth_required=True,
+            bridge_instance_id=binding.bridge_instance_id,
+            connection=binding.connection,
+            descriptor_file_path=str(binding.descriptor_file_path),
+            supported_operations=UiBridgeOperationContractABC.supported_operation_names(),
+            provider_catalog_schema_versions=(SCHEMA_VERSION,),
+            bridge_features=UiBridgeOperationContractABC.supported_bridge_features(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class UiBridgeRequestOperation:
+    """Generic server adapter for a typed UI bridge operation contract."""
+
+    contract: UiBridgeOperationContract
 
     @classmethod
-    def for_name(cls, operation: UiBridgeOperationName) -> "UiBridgeRequestOperation":
-        if operation not in cls.__registry__:
-            raise UiBridgeUnsupportedOperationError(operation.value)
-        return cls.__registry__[operation]()
+    def for_name(cls, operation_name: str) -> "UiBridgeRequestOperation":
+        try:
+            return cls(UiBridgeOperationContractABC.for_name(operation_name))
+        except KeyError as exc:
+            raise UiBridgeUnsupportedOperationError(operation_name) from exc
 
     @classmethod
     def supported_operation_names(cls) -> tuple[str, ...]:
-        return tuple(
-            operation.value
-            for operation in UiBridgeOperationName
-            if operation in cls.__registry__
-        )
+        return UiBridgeOperationContractABC.supported_operation_names()
 
-    @abstractmethod
+    @property
+    def requires_auth(self) -> bool:
+        return self.contract.requires_auth
+
     def execute(
         self,
         dispatcher: "UiBridgeRequestDispatcher",
         request: UiBridgeRequestEnvelope,
     ) -> UiBridgeOperationDispatchResult:
-        raise NotImplementedError
-
-
-class UiBridgeStatusOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.STATUS
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiBridgeStatus:
-        del request
-        return dispatcher.status_result()
-
-
-class UiBridgeListDocumentsOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_DOCUMENTS
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiCodeDocumentCatalog:
-        del request
-        return dispatcher.bridge.list_documents()
-
-
-class UiBridgeListStateSurfacesOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_STATE_SURFACES
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiStateSurfaceCatalog:
-        del request
-        return dispatcher.bridge.list_state_surfaces()
-
-
-class UiBridgeGetDocumentOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.GET_DOCUMENT
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiCodeDocument:
-        return dispatcher.bridge.get_document(
-            dispatcher.request_payload(UiCodeDocumentRequest, request)
+        return self.contract.invoke_with_payload(
+            dispatcher.gateway,
+            dispatcher.bridge_connection,
+            dispatcher.contract_payload(self.contract, request),
         )
 
 
-class UiBridgeGetStateSurfaceOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.GET_STATE_SURFACE
+class UiBridgeRequestExceptionClassifier(metaclass=AutoRegisterMeta):
+    """Registered classifier for request-dispatch exception codes."""
 
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiStateSurfaceDocument:
-        return dispatcher.bridge.get_state_surface(
-            dispatcher.request_payload(UiStateSurfaceRequest, request)
-        )
+    __registry_key__ = "exception_key"
+    __skip_if_no_key__ = True
 
+    exception_type: ClassVar[type[BaseException] | None] = None
+    exception_key: ClassVar[str | None] = None
+    error_code: ClassVar[str]
 
-class UiBridgeListActionsOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_ACTIONS
+    @classmethod
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if cls.exception_type is not None and cls.exception_key is None:
+            cls.exception_key = cls.exception_type_key(cls.exception_type)
 
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiActionCatalog:
-        del request
-        return dispatcher.bridge.list_actions()
+    @staticmethod
+    def exception_type_key(exception_type: type[BaseException]) -> str:
+        return f"{exception_type.__module__}.{exception_type.__qualname__}"
 
-
-class UiBridgeInvokeActionOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.INVOKE_ACTION
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiActionInvokeResult:
-        return dispatcher.bridge.invoke_action(
-            dispatcher.request_payload(UiActionInvokeRequest, request)
-        )
+    @classmethod
+    def classifier_for_exception(
+        cls,
+        exception: Exception,
+    ) -> type["UiBridgeRequestExceptionClassifier"] | None:
+        for exception_type in type(exception).__mro__:
+            classifier = cls.__registry__.get(cls.exception_type_key(exception_type))
+            if classifier is not None:
+                return classifier
+        return None
 
 
-class UiBridgeListWindowsOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_WINDOWS
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiWindowCatalog:
-        del request
-        return dispatcher.bridge.list_windows()
+class UiBridgePermissionErrorClassifier(UiBridgeRequestExceptionClassifier):
+    exception_type = PermissionError
+    error_code = "ui_bridge_auth_failed"
 
 
-class UiBridgeFocusWindowOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.FOCUS_WINDOW
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiWindowFocusResult:
-        return dispatcher.bridge.focus_window(
-            dispatcher.request_payload(UiWindowFocusRequest, request)
-        )
+class UiBridgeUnsupportedOperationErrorClassifier(UiBridgeRequestExceptionClassifier):
+    exception_type = UiBridgeUnsupportedOperationError
+    error_code = "unsupported_ui_bridge_operation"
 
 
-class UiBridgeNavigateWindowOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.NAVIGATE_WINDOW
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiWindowNavigateResult:
-        return dispatcher.bridge.navigate_window(
-            dispatcher.request_payload(UiWindowNavigateRequest, request)
-        )
-
-
-class UiBridgeCloseWindowOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.CLOSE_WINDOW
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiWindowCloseResult:
-        return dispatcher.bridge.close_window(
-            dispatcher.request_payload(UiWindowCloseRequest, request)
-        )
-
-
-class UiBridgeSnapshotWindowOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.SNAPSHOT_WINDOW
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiWindowSnapshotResult:
-        return dispatcher.bridge.snapshot_window(
-            dispatcher.request_payload(UiWindowSnapshotRequest, request)
-        )
-
-
-class UiBridgeWidgetTreeOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.WIDGET_TREE
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiWidgetTreeResult:
-        return dispatcher.bridge.widget_tree(
-            dispatcher.request_payload(UiWidgetTreeRequest, request)
-        )
-
-
-class UiBridgeListObjectStateScopesOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_OBJECT_STATE_SCOPES
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiObjectStateScopeCatalog:
-        return dispatcher.bridge.list_object_state_scopes(
-            dispatcher.request_payload(UiObjectStateScopeListRequest, request)
-        )
-
-
-class UiBridgeValidateDocumentOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.VALIDATE_DOCUMENT
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiCodeDocumentValidationResult:
-        return dispatcher.bridge.validate_document(
-            dispatcher.request_payload(UiCodeDocumentValidationRequest, request)
-        )
-
-
-class UiBridgeApplyDocumentOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.APPLY_DOCUMENT
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiCodeDocumentApplyResult:
-        return dispatcher.bridge.apply_document(
-            dispatcher.request_payload(UiCodeDocumentApplyRequest, request)
-        )
-
-
-class UiBridgeListSnapshotsOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_SNAPSHOTS
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiSnapshotCatalog:
-        return dispatcher.bridge.list_snapshots(
-            dispatcher.request_payload(UiSnapshotListRequest, request)
-        )
-
-
-class UiBridgeRestoreSnapshotOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.RESTORE_SNAPSHOT
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiSnapshotRestoreResult:
-        return dispatcher.bridge.restore_snapshot(
-            dispatcher.request_payload(UiSnapshotRestoreRequest, request)
-        )
-
-
-class UiBridgeTimeTravelHeadOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.TIME_TRAVEL_HEAD
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiSnapshotRestoreResult:
-        return dispatcher.bridge.time_travel_head(
-            dispatcher.request_payload(UiTimeTravelHeadRequest, request)
-        )
-
-
-class UiBridgeListBranchesOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.LIST_BRANCHES
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiBranchCatalog:
-        del request
-        return dispatcher.bridge.list_branches()
-
-
-class UiBridgeSwitchBranchOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.SWITCH_BRANCH
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiSnapshotRestoreResult:
-        return dispatcher.bridge.switch_branch(
-            dispatcher.request_payload(UiBranchSwitchRequest, request)
-        )
-
-
-class UiBridgeGetOperationStatusOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.GET_OPERATION_STATUS
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiBridgeOperationRef:
-        status_request = dispatcher.request_payload(UiBridgeOperationStatusRequest, request)
-        return dispatcher.bridge.get_operation_status(status_request.operation_id)
-
-
-class UiBridgeSelectedPlateWorkflowOperation(UiBridgeRequestOperation):
-    operation = UiBridgeOperationName.SELECTED_PLATE_WORKFLOW
-
-    def execute(
-        self,
-        dispatcher: "UiBridgeRequestDispatcher",
-        request: UiBridgeRequestEnvelope,
-    ) -> UiSelectedPlateWorkflowResult:
-        return dispatcher.bridge.selected_plate_workflow(
-            dispatcher.request_payload(UiSelectedPlateWorkflowRequest, request)
-        )
+class UiBridgeValueErrorClassifier(UiBridgeRequestExceptionClassifier):
+    exception_type = ValueError
+    error_code = "invalid_ui_bridge_request"
 
 
 class UiBridgeRequestErrorAuthority:
     """Classify request-dispatch exceptions into agent-facing error codes."""
 
-    _ERROR_CODE_BY_TYPE = {
-        PermissionError: "ui_bridge_auth_failed",
-        UiBridgeUnsupportedOperationError: "unsupported_ui_bridge_operation",
-        ValueError: "invalid_ui_bridge_request",
-    }
     DEFAULT_ERROR_CODE = "ui_bridge_request_failed"
 
     @classmethod
     def agent_error(cls, exception: Exception) -> AgentError:
-        exception_type = cls._classified_type(exception)
-        if exception_type in cls._ERROR_CODE_BY_TYPE:
-            return AgentError.from_exception(
-                cls._ERROR_CODE_BY_TYPE[exception_type],
-                exception,
-            )
+        classifier = UiBridgeRequestExceptionClassifier.classifier_for_exception(
+            exception
+        )
+        if classifier is not None:
+            return AgentError.from_exception(classifier.error_code, exception)
         return AgentError.from_exception(cls.DEFAULT_ERROR_CODE, exception)
-
-    @classmethod
-    def _classified_type(cls, exception: Exception) -> type[BaseException]:
-        for exception_type in type(exception).__mro__:
-            if exception_type in cls._ERROR_CODE_BY_TYPE:
-                return exception_type
-        return BaseException
 
 
 class UiBridgeRequestDispatcher:
     """Route validated UI bridge envelopes to the in-process bridge service."""
-
-    _AUTH_FREE_OPERATIONS = frozenset((UiBridgeOperationName.STATUS.value,))
 
     def __init__(
         self,
@@ -559,14 +318,27 @@ class UiBridgeRequestDispatcher:
     def bridge(self) -> UiAgentBridgeService:
         return self._bridge
 
+    @property
+    def gateway(self) -> UiBridgeServerInProcessGateway:
+        return UiBridgeServerInProcessGateway(
+            self._bridge,
+            binding_supplier=self._binding_supplier,
+        )
+
+    @property
+    def bridge_connection(self) -> UiBridgeConnectionSpec:
+        return self._binding_supplier().connection
+
     def dispatch(self, payload: JsonObject) -> JsonObject:
         try:
             request = AgentDtoJsonCodec.dataclass_from_json(
                 UiBridgeRequestEnvelope,
                 payload,
             )
-            self._validate_request(request)
-            result = self._operation_result(request)
+            self._validate_protocol(request)
+            operation = UiBridgeRequestOperation.for_name(request.operation)
+            self._validate_auth(request, operation)
+            result = operation.execute(self, request)
             response = UiBridgeResponseEnvelope(
                 schema_version=SCHEMA_VERSION,
                 bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
@@ -578,58 +350,35 @@ class UiBridgeRequestDispatcher:
             response = self._error_response(payload, exc)
         return self._response_payload(response)
 
-    def _validate_request(self, request: UiBridgeRequestEnvelope) -> None:
+    def _validate_protocol(self, request: UiBridgeRequestEnvelope) -> None:
         if request.schema_version != SCHEMA_VERSION:
             raise ValueError(f"Unsupported agent schema version: {request.schema_version}")
         if request.bridge_protocol_version != UI_BRIDGE_PROTOCOL_VERSION:
             raise ValueError(
                 f"Unsupported UI bridge protocol version: {request.bridge_protocol_version}"
             )
-        if (
-            request.operation not in self._AUTH_FREE_OPERATIONS
-            and request.auth_token != self._auth_token
-        ):
-            raise PermissionError("UI bridge auth token is missing or invalid.")
 
-    def _operation_result(
+    def _validate_auth(
         self,
         request: UiBridgeRequestEnvelope,
-    ) -> UiBridgeOperationDispatchResult:
-        try:
-            operation = UiBridgeOperationName(request.operation)
-        except ValueError as exc:
-            raise UiBridgeUnsupportedOperationError(request.operation) from exc
-        return UiBridgeRequestOperation.for_name(operation).execute(self, request)
-
-    def status_result(self) -> UiBridgeStatus:
-        binding = self._binding_supplier()
-        return replace(
-            self._bridge.status(),
-            auth_required=True,
-            bridge_instance_id=binding.bridge_instance_id,
-            connection=binding.connection,
-            descriptor_file_path=str(binding.descriptor_file_path),
-            supported_operations=UiBridgeRequestOperation.supported_operation_names(),
-            provider_catalog_schema_versions=(SCHEMA_VERSION,),
-            bridge_features=(
-                "ui_code_documents",
-                "ui_state_surfaces",
-                "ui_actions",
-                "ui_windows",
-                "ui_window_navigation",
-                "ui_window_snapshots",
-                "selected_plate_workflows",
-                "widget_tree_projection",
-                "objectstate_scopes",
-                "objectstate_snapshots",
-                "objectstate_branches",
-                "operation_status",
-            ),
-        )
+        operation: UiBridgeRequestOperation,
+    ) -> None:
+        if operation.requires_auth and request.auth_token != self._auth_token:
+            raise PermissionError("UI bridge auth token is missing or invalid.")
 
     @staticmethod
     def request_payload(target_type, request: UiBridgeRequestEnvelope):
         return AgentDtoJsonCodec.dataclass_from_json(target_type, request.payload)
+
+    def contract_payload(
+        self,
+        contract: UiBridgeOperationContract,
+        request: UiBridgeRequestEnvelope,
+    ):
+        return contract.decode_request_payload(
+            request.payload,
+            AgentDtoJsonCodec.dataclass_from_json,
+        )
 
     @staticmethod
     def _result_payload(result) -> JsonObject:

@@ -10,6 +10,9 @@ from openhcs.pyqt_gui.services.ui_agent_bridge import (
 )
 from openhcs.pyqt_gui.services.ui_bridge_object_state import ObjectStateBridgeProviderSet
 from openhcs.pyqt_gui.services.ui_bridge_plate_manager import PlateManagerBridgeProviderSet
+from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
+    PipelineEditorBridgeProviderSet,
+)
 from openhcs.pyqt_gui.services.ui_bridge_windows import MainWindowBridgeProviderSet
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     CompositeUiBridgeProviderSet,
@@ -31,6 +34,7 @@ class OpenHCSUiBridgeCompositionRoot:
             CompositeUiBridgeProviderSet(
                 (
                     PlateManagerBridgeProviderSet(main_window.plate_manager_widget),
+                    PipelineEditorBridgeProviderSet(main_window.pipeline_editor_widget),
                     MainWindowBridgeProviderSet(main_window),
                     ObjectStateBridgeProviderSet(),
                 )

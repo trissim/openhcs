@@ -5,12 +5,17 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import ClassVar, Mapping
 
+from openhcs.agent.ui_bridge_identities import (
+    PipelineEditorWidgetIdentity,
+    PlateManagerWidgetIdentity,
+)
+
 
 class OpenHCSUiWindowId:
     """Closed identifiers for stable windows exposed through the UI bridge."""
 
-    plate_manager: ClassVar[str] = "plate_manager"
-    pipeline_editor: ClassVar[str] = "pipeline_editor"
+    plate_manager: ClassVar[str] = PlateManagerWidgetIdentity.require_value()
+    pipeline_editor: ClassVar[str] = PipelineEditorWidgetIdentity.require_value()
     zmq_server_manager: ClassVar[str] = "zmq_server_manager"
     image_browser: ClassVar[str] = "image_browser"
     log_viewer: ClassVar[str] = "log_viewer"

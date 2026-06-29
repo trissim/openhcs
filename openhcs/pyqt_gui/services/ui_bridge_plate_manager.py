@@ -16,7 +16,6 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocument,
     UiCodeDocumentApplyRequest,
     UiCodeDocumentApplyResult,
-    UiCodeDocumentId,
     UiCodeDocumentRequest,
     UiCodeDocumentSelectionMode,
     UiCodeDocumentSummary,
@@ -24,12 +23,16 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentValidationResult,
     UiPlateManagerRowState,
     UiPlateManagerState,
-    UiStateSurfaceId,
     UiStateSurfaceDocument,
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
     UiMutationReceipt,
-    UiWidgetId,
+)
+from openhcs.agent.ui_bridge_actions import PlateManagerAction
+from openhcs.agent.ui_bridge_identities import (
+    PlateManagerOrchestratorCodeDocumentIdentity,
+    PlateManagerStateSurfaceIdentityDeclaration,
+    PlateManagerWidgetIdentity,
 )
 from openhcs.agent.serialization import to_jsonable
 from openhcs.config_framework.object_state import ObjectStateRegistry
@@ -48,10 +51,10 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiActionProviderABC,
     UiActionProviderIdentity,
     UiBridgeSnapshotProviderABC,
-    UiCodeDocumentProviderABC,
     UiCodeDocumentProviderIdentity,
     UiStateSurfaceProviderABC,
     UiStateSurfaceProviderIdentity,
+    SnapshotBackedUiCodeDocumentProviderABC,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
@@ -59,7 +62,7 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
 )
 from openhcs.pyqt_gui.widgets.plate_manager import (
     EmptyPlateSelectionPolicy,
-    PlateManagerAction,
+    PlateOperationValidator,
 )
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     dispatch_widget_action,
@@ -72,53 +75,51 @@ from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
 ORCHESTRATOR_DOCUMENT_TITLE = "Plate manager orchestrator config"
 PLATE_MANAGER_STATE_TITLE = "Plate manager state"
 PLATE_MANAGER_ACTIONS_TITLE = "Plate manager actions"
-ORCHESTRATOR_WIDGET_ID = UiWidgetId.PLATE_MANAGER.value
 PYTHON_MIME_TYPE = "text/x-python"
 PLATE_MANAGER_STATE_PAYLOAD_SCHEMA = "openhcs.ui.plate_manager_state.v1"
 
-PLATE_MANAGER_ORCHESTRATOR_IDENTITY = UiCodeDocumentProviderIdentity(
-    document_id=UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value,
+PLATE_MANAGER_ORCHESTRATOR_IDENTITY = UiCodeDocumentProviderIdentity.from_declaration(
+    PlateManagerOrchestratorCodeDocumentIdentity,
     title=ORCHESTRATOR_DOCUMENT_TITLE,
-    widget_id=ORCHESTRATOR_WIDGET_ID,
 )
-PLATE_MANAGER_STATE_IDENTITY = UiStateSurfaceProviderIdentity(
-    surface_id=UiStateSurfaceId.PLATE_MANAGER.value,
+PLATE_MANAGER_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
+    PlateManagerStateSurfaceIdentityDeclaration,
     title=PLATE_MANAGER_STATE_TITLE,
-    widget_id=ORCHESTRATOR_WIDGET_ID,
 )
-PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity(
-    action_id="plate_manager.actions",
-    widget_id=ORCHESTRATOR_WIDGET_ID,
+PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity.from_widget_declaration(
+    PlateManagerWidgetIdentity,
     title=PLATE_MANAGER_ACTIONS_TITLE,
 )
-PLATE_MANAGER_ACTION_STATE_SURFACES = (UiStateSurfaceId.PLATE_MANAGER.value,)
-PLATE_MANAGER_CONFIRMED_ACTIONS = frozenset(
-    (
-        PlateManagerAction.ADD_PLATE,
-        PlateManagerAction.DELETE_PLATE,
-        PlateManagerAction.EDIT_CONFIG,
-        PlateManagerAction.INIT_PLATE,
-        PlateManagerAction.COMPILE_PLATE,
-        PlateManagerAction.RUN_PLATE,
-    )
+PLATE_MANAGER_STATE_SURFACE_ID = PlateManagerStateSurfaceIdentityDeclaration.require_value()
+PLATE_MANAGER_ACTION_STATE_SURFACES = (
+    PLATE_MANAGER_STATE_SURFACE_ID,
 )
-PLATE_MANAGER_ACTION_SIDE_EFFECTS = {
-    PlateManagerAction.ADD_PLATE: ("opens_file_dialog", "mutates_plate_collection"),
-    PlateManagerAction.DELETE_PLATE: ("mutates_plate_collection",),
-    PlateManagerAction.EDIT_CONFIG: ("opens_config_window", "may_mutate_plate_config"),
-    PlateManagerAction.INIT_PLATE: ("starts_initialization_workflow",),
-    PlateManagerAction.COMPILE_PLATE: ("starts_compile_workflow",),
-    PlateManagerAction.RUN_PLATE: ("starts_or_stops_execution_workflow",),
-    PlateManagerAction.CODE_PLATE: ("opens_code_document_window",),
-    PlateManagerAction.VIEW_RESULTS: ("opens_results_window",),
-    PlateManagerAction.VIEW_METADATA: ("opens_metadata_window",),
-}
+PLATE_MANAGER_CODE_DOCUMENT_ID = (
+    PlateManagerOrchestratorCodeDocumentIdentity.require_value()
+)
+PLATE_PATH_CODE_DOCUMENT_HINT = (
+    "For autonomous path-based plate setup, read "
+    f"{PLATE_MANAGER_CODE_DOCUMENT_ID!r} with openhcs_ui_get_code_document"
+    "(selection_mode='all'), then apply source containing plate_paths and "
+    "pipeline_data via openhcs_ui_apply_code_document. The add_plate UI action "
+    "opens a GUI file dialog."
+)
+PLATE_SELECTION_REQUIRED_HINT = (
+    f"Use openhcs_ui_get_state_surface(surface_id={PLATE_MANAGER_STATE_SURFACE_ID!r}) "
+    "to inspect "
+    "available rows and selected_scope_ids. If no rows are listed, add a plate "
+    f"first. {PLATE_PATH_CODE_DOCUMENT_HINT}"
+)
+PLATE_ACTION_DISABLED_HINT = (
+    f"Inspect openhcs_ui_list_actions and {PLATE_MANAGER_STATE_SURFACE_ID} for the current "
+    "selection and workflow preconditions before invoking this action."
+)
 
 
 class PlateManagerBridgeProviderSet(UiBridgeProviderSetABC):
     """Register all PlateManager surfaces with a UI bridge registry."""
 
-    registry_key = "plate_manager"
+    registry_key = PlateManagerWidgetIdentity.require_value()
 
     def __init__(self, manager) -> None:
         self._manager = manager
@@ -155,7 +156,7 @@ def bind_snapshot_backed_provider(
 
 
 class PlateManagerOrchestratorCodeDocumentProvider(
-    UiCodeDocumentProviderABC,
+    SnapshotBackedUiCodeDocumentProviderABC,
 ):
     """Plate-manager orchestrator config provider backed by code mode."""
 
@@ -272,10 +273,10 @@ class PlateManagerOrchestratorCodeDocumentProvider(
         try:
             operations = self._manager.code_document_execution_operations()
             result = self._execution_service.validate_source(request.source, operations)
-            pre_snapshot = self._snapshot_provider.current_snapshot()
-            pre_head_id = self._snapshot_provider.current_branch_head_snapshot_id()
             operations.pre_code_execution()
             ObjectStateRegistry.ensure_baseline_snapshot()
+            pre_snapshot = self._snapshot_provider.current_snapshot()
+            pre_head_id = self._snapshot_provider.current_branch_head_snapshot_id()
             label = UiCodeDocumentApplyLabel.resolve(request, self.identity).value
             with ObjectStateRegistry.atomic_success(label, result.mutation_scope):
                 if not operations.apply_code_namespace(result.apply_namespace()):
@@ -302,6 +303,7 @@ class PlateManagerOrchestratorCodeDocumentProvider(
                 document_id=request.document_id,
                 applied=True,
                 base_revision_token=request.base_revision_token,
+                receipt=UiMutationReceipt.accepted_for(request.request_token),
                 outcome="applied",
                 new_revision_token=new_revision_token,
                 current_revision_token=new_revision_token,
@@ -311,13 +313,7 @@ class PlateManagerOrchestratorCodeDocumentProvider(
                 post_apply_snapshot=post_snapshot,
             )
         except UiCodeDocumentValidationError as exc:
-            return UiCodeDocumentApplyResult(
-                schema_version=SCHEMA_VERSION,
-                document_id=request.document_id,
-                applied=False,
-                base_revision_token=request.base_revision_token,
-                errors=exc.errors,
-            )
+            return self._apply_errors(request, exc.errors)
         except Exception as exc:
             return self._apply_error(
                 request,
@@ -365,30 +361,6 @@ class PlateManagerOrchestratorCodeDocumentProvider(
                 ),
             )
         )
-
-    @staticmethod
-    def apply_error(
-        request: UiCodeDocumentApplyRequest,
-        error: AgentError,
-    ) -> UiCodeDocumentApplyResult:
-        return PlateManagerOrchestratorCodeDocumentProvider._apply_error(
-            request,
-            error,
-        )
-
-    @staticmethod
-    def _apply_error(
-        request: UiCodeDocumentApplyRequest,
-        error: AgentError,
-    ) -> UiCodeDocumentApplyResult:
-        return UiCodeDocumentApplyResult(
-            schema_version=SCHEMA_VERSION,
-            document_id=request.document_id,
-            applied=False,
-            base_revision_token=request.base_revision_token,
-            errors=(error,),
-        )
-
 
 class PlateManagerStateSurfaceProvider(
     UiStateSurfaceProviderABC,
@@ -544,11 +516,18 @@ class PlateManagerActionProvider(
                 self.summary(action.value)
                 for action in self._manager.ACTION_ROUTES
             ),
+            warnings=(
+                AgentWarning(
+                    code="plate_path_setup_uses_code_document",
+                    message=PLATE_PATH_CODE_DOCUMENT_HINT,
+                ),
+            ),
         )
 
     def summary(self, action_id: str) -> UiActionSummary:
         action = self._action(action_id)
         selected_scope_ids = self._selected_scope_ids()
+        availability_error = self._action_availability_error(action)
         return UiActionSummary(
             schema_version=SCHEMA_VERSION,
             identity=UiActionIdentity(
@@ -556,10 +535,11 @@ class PlateManagerActionProvider(
                 action_id=action.value,
             ),
             title=self._action_title(action),
-            enabled=self._action_enabled(action),
+            enabled=availability_error is None,
+            disabled_error=availability_error,
             invocation_mode=self._invocation_mode(action),
-            side_effects=PLATE_MANAGER_ACTION_SIDE_EFFECTS[action],
-            confirmation_required=action in PLATE_MANAGER_CONFIRMED_ACTIONS,
+            side_effects=action.side_effects,
+            confirmation_required=action.confirmation_required,
             selection_mode="selected",
             current_selection_count=len(selected_scope_ids),
             target_scope_ids=selected_scope_ids,
@@ -601,10 +581,7 @@ class PlateManagerActionProvider(
                 action_id=action.value,
             ),
             status=UiActionInvocationStatus.ACCEPTED.value,
-            receipt=UiMutationReceipt(
-                request_token=request.request_token,
-                accepted=True,
-            ),
+            receipt=UiMutationReceipt.accepted_for(request.request_token),
             target_scope_ids=self._selected_scope_ids(),
             selection_revision_token=self._selection_revision_token(),
             workflow_status_surface_ids=PLATE_MANAGER_ACTION_STATE_SURFACES,
@@ -615,7 +592,7 @@ class PlateManagerActionProvider(
                     message=(
                         f"PlateManager action {action.value!r} was dispatched "
                         f"as {dispatch_result.invocation_mode} work; poll "
-                        "plate_manager.state for workflow status."
+                        f"{PLATE_MANAGER_STATE_SURFACE_ID} for workflow status."
                     ),
                 ),
             ),
@@ -626,11 +603,6 @@ class PlateManagerActionProvider(
         action: PlateManagerAction,
         request: UiActionInvokeRequest,
     ) -> AgentError | None:
-        if not self._action_enabled(action):
-            return AgentError(
-                code="ui_action_disabled",
-                message=f"PlateManager action {action.value!r} is disabled.",
-            )
         selected_scope_ids = self._selected_scope_ids()
         if request.selected_scope_ids and request.selected_scope_ids != selected_scope_ids:
             return AgentError(
@@ -644,7 +616,10 @@ class PlateManagerActionProvider(
                 code="stale_ui_action_revision",
                 message="PlateManager selection changed after the action was planned.",
             )
-        if action in PLATE_MANAGER_CONFIRMED_ACTIONS and request.confirmation_is_required():
+        availability_error = self._action_availability_error(action)
+        if availability_error is not None:
+            return availability_error
+        if action.confirmation_required and request.confirmation_is_required():
             return AgentError(
                 code="confirmation_required",
                 message=(
@@ -652,6 +627,52 @@ class PlateManagerActionProvider(
                     "set require_confirmation=False to dispatch it."
                 ),
             )
+        return None
+
+    def _action_availability_error(self, action: PlateManagerAction) -> AgentError | None:
+        operation_error = self._operation_validation_error(action)
+        if operation_error is not None:
+            return operation_error
+        if not self._action_enabled(action):
+            return AgentError(
+                code="ui_action_disabled",
+                message=f"PlateManager action {action.value!r} is disabled.",
+                hint=PLATE_ACTION_DISABLED_HINT,
+            )
+        return None
+
+    def _operation_validation_error(self, action: PlateManagerAction) -> AgentError | None:
+        selected_rows = tuple(self._manager.get_selected_items())
+        if action.plate_operation is not None:
+            if not selected_rows:
+                return AgentError(
+                    code="plate_selection_required",
+                    message=(
+                        f"PlateManager action {action.value!r} requires a selected plate."
+                    ),
+                    hint=PLATE_SELECTION_REQUIRED_HINT,
+                )
+
+            validator = PlateOperationValidator.for_operation(
+                action.plate_operation
+            )
+            invalid_results = []
+            for row in selected_rows:
+                result = validator.validate(self._manager, row)
+                if not result.valid:
+                    invalid_results.append(result)
+            if invalid_results:
+                result = invalid_results[0]
+                message = result.message
+                if result.recovery_action is not None:
+                    message = (
+                        f"{message} Next workflow: {result.recovery_action.value}."
+                    )
+                return AgentError(
+                    code=result.reason,
+                    message=message,
+                    hint=PLATE_ACTION_DISABLED_HINT,
+                )
         return None
 
     def _invoke_error(
@@ -666,10 +687,7 @@ class PlateManagerActionProvider(
                 action_id=request.action_id,
             ),
             status=UiActionInvocationStatus.REJECTED.value,
-            receipt=UiMutationReceipt(
-                request_token=request.request_token,
-                accepted=False,
-            ),
+            receipt=UiMutationReceipt.rejected_for(request.request_token),
             target_scope_ids=self._selected_scope_ids(),
             selection_revision_token=self._selection_revision_token(),
             workflow_status_surface_ids=PLATE_MANAGER_ACTION_STATE_SURFACES,
@@ -687,11 +705,8 @@ class PlateManagerActionProvider(
         return button.isEnabled()
 
     def _invocation_mode(self, action: PlateManagerAction) -> str:
-        route = self._manager.ACTION_ROUTES[action]
-        import inspect
-
-        if inspect.iscoroutinefunction(route.resolve_callable(self._manager)):
-            return "async"
+        if action not in self._manager.ACTION_ROUTES:
+            raise ValueError(f"PlateManager action has no route: {action.value!r}")
         return "sync"
 
     def _selected_scope_ids(self) -> tuple[str, ...]:

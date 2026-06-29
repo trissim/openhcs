@@ -5,9 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Self
 
-from openhcs.agent.dto.common import AgentError
+from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UiCodeDocument,
     UiCodeDocumentApplyRequest,
@@ -17,6 +17,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentSummary,
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
+    UiMutationReceipt,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeListRequest,
     UiActionCatalog,
@@ -30,6 +31,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceSummary,
     UiSnapshotRef,
     UiWidgetIdentity,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -41,6 +44,11 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSnapshotResult,
     UiWidgetTreeRequest,
     UiWidgetTreeResult,
+)
+from openhcs.agent.ui_bridge_identities import (
+    UiCodeDocumentIdentityDeclaration,
+    UiStateSurfaceIdentityDeclarationBase,
+    UiWidgetIdentityDeclaration,
 )
 
 
@@ -65,6 +73,10 @@ class UiCodeDocumentProviderABC(ABC):
     @abstractmethod
     def summary(self) -> UiCodeDocumentSummary:
         raise NotImplementedError
+
+    def summaries(self) -> tuple[UiCodeDocumentSummary, ...]:
+        """Return catalog summaries owned by this provider."""
+        return (self.summary(),)
 
     @abstractmethod
     def read(self, request: UiCodeDocumentRequest) -> UiCodeDocument:
@@ -150,6 +162,13 @@ class UiWindowProviderABC(ABC):
     def widget_tree(self, request: UiWidgetTreeRequest) -> UiWidgetTreeResult:
         raise NotImplementedError
 
+    @abstractmethod
+    def invoke_widget_action(
+        self,
+        request: UiWidgetActionInvokeRequest,
+    ) -> UiWidgetActionInvokeResult:
+        raise NotImplementedError
+
 
 class UiObjectStateScopeProviderABC(ABC):
     """Provider contract for ObjectState registry scope projection."""
@@ -180,11 +199,93 @@ class UiBridgeSnapshotProviderABC(ABC):
         raise NotImplementedError
 
 
+class SnapshotBackedUiCodeDocumentProviderABC(UiCodeDocumentProviderABC):
+    """Shared apply rejection behavior for snapshot-backed code documents."""
+
+    _snapshot_provider: UiBridgeSnapshotProviderABC
+
+    def revision_key_for_document_id(self, document_id: str) -> str:
+        del document_id
+        return self.identity.revision_key
+
+    def _apply_error(
+        self,
+        request: UiCodeDocumentApplyRequest,
+        error: AgentError,
+    ) -> UiCodeDocumentApplyResult:
+        return self._apply_errors(request, (error,))
+
+    def _apply_errors(
+        self,
+        request: UiCodeDocumentApplyRequest,
+        errors: tuple[AgentError, ...],
+    ) -> UiCodeDocumentApplyResult:
+        return UiCodeDocumentApplyResult(
+            schema_version=SCHEMA_VERSION,
+            document_id=request.document_id,
+            applied=False,
+            base_revision_token=request.base_revision_token,
+            receipt=UiMutationReceipt.rejected_for(request.request_token),
+            current_revision_token=self._current_revision_token_for_apply_result(
+                request
+            ),
+            current_snapshot=self._current_snapshot_for_apply_result(),
+            errors=errors,
+        )
+
+    def _apply_unchanged(
+        self,
+        request: UiCodeDocumentApplyRequest,
+    ) -> UiCodeDocumentApplyResult:
+        current_revision = self._current_revision_token_for_apply_result(request)
+        return UiCodeDocumentApplyResult(
+            schema_version=SCHEMA_VERSION,
+            document_id=request.document_id,
+            applied=False,
+            base_revision_token=request.base_revision_token,
+            receipt=UiMutationReceipt.accepted_for(request.request_token),
+            outcome="unchanged",
+            new_revision_token=current_revision,
+            current_revision_token=current_revision,
+            current_snapshot=self._current_snapshot_for_apply_result(),
+        )
+
+    def _current_revision_token_for_apply_result(
+        self,
+        request: UiCodeDocumentApplyRequest,
+    ) -> str | None:
+        try:
+            return self._snapshot_provider.revision_token(
+                self.revision_key_for_document_id(request.document_id)
+            )
+        except Exception:
+            return None
+
+    def _current_snapshot_for_apply_result(self) -> UiSnapshotRef | None:
+        try:
+            return self._snapshot_provider.current_snapshot()
+        except Exception:
+            return None
+
+
 @dataclass(frozen=True, slots=True)
 class UiCodeDocumentProviderIdentity(UiCodeDocumentIdentity, UiWidgetIdentity):
     """Stable identity and derived names for one UI code document."""
 
     title: str
+
+    @classmethod
+    def from_declaration(
+        cls,
+        declaration: type[UiCodeDocumentIdentityDeclaration],
+        *,
+        title: str,
+    ) -> Self:
+        return cls(
+            document_id=declaration.require_value(),
+            widget_id=declaration.widget_id(),
+            title=title,
+        )
 
     @property
     def revision_key(self) -> str:
@@ -201,6 +302,19 @@ class UiStateSurfaceProviderIdentity(UiStateSurfaceIdentity, UiWidgetIdentity):
 
     title: str
 
+    @classmethod
+    def from_declaration(
+        cls,
+        declaration: type[UiStateSurfaceIdentityDeclarationBase],
+        *,
+        title: str,
+    ) -> Self:
+        return cls(
+            surface_id=declaration.require_value(),
+            widget_id=declaration.widget_id(),
+            title=title,
+        )
+
     @property
     def revision_key(self) -> str:
         return f"ui-state-surface:{self.surface_id}"
@@ -211,6 +325,24 @@ class UiActionProviderIdentity(UiActionIdentity):
     """Stable identity and derived names for one UI action provider."""
 
     title: str
+
+    @classmethod
+    def from_widget_declaration(
+        cls,
+        declaration: type[UiWidgetIdentityDeclaration],
+        *,
+        title: str,
+        action_id: str | None = None,
+    ) -> Self:
+        return cls(
+            widget_id=declaration.require_value(),
+            action_id=(
+                declaration.action_provider_id()
+                if action_id is None
+                else action_id
+            ),
+            title=title,
+        )
 
     @property
     def revision_key(self) -> str:
