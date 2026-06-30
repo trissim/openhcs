@@ -111,9 +111,15 @@ PY
 
 Execute these plans in order:
 
+0. `docs/plans/mcp_public_python_api_projection_plan_20260629.md`
+   - Reframe the already-generic MCP/capability/dev-client infrastructure as a
+     projection of public operation declarations in `openhcs.agent`, not as the
+     final authority itself.
 1. `docs/plans/mcp_capability_tool_binding_refactor_20260629.md`
    - Collapse capability contracts, MCP tool registration, and dev-client command
-     tool names onto typed capability declarations.
+     tool names onto typed capability declarations. This is now migration
+     history and scaffold for the public-operation refactor, not the final
+     endpoint.
 2. `docs/plans/mcp_ui_bridge_authority_refactor_20260629.md`
    - Move UI bridge operation/action/window/code-document semantics to their
      existing UI declarations and typed operation contracts.
@@ -201,6 +207,24 @@ rg -n "get_agent_capability\\(\"openhcs_|tool_name: ClassVar|tool_name = \"openh
   openhcs/mcp/dev_client.py
 # no matches
 ```
+
+## Public API Lens Update
+
+2026-06-29 reinvestigation:
+
+- `AgentCapabilityDeclaration` is currently the operation-like authority for
+  the exposed agent/MCP surface, with 79 declarations.
+- `UiBridgeOperationContractABC` is already a headless operation contract
+  registry for 26 UI bridge operations.
+- `openhcs.mcp.server` is mostly generic, but still owns nine generated binding
+  families and seven explicit binding leaves.
+- The next cleanup should not add another MCP registry. It should promote the
+  operation model into `openhcs.agent` and make MCP/dev-client/knowledge
+  projections consume that public operation catalog.
+
+Relevant plan:
+
+- `docs/plans/mcp_public_python_api_projection_plan_20260629.md`
 
 Focused tests:
 
