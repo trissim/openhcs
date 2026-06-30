@@ -731,8 +731,8 @@ class CellProfilerGeneratedRuntimeBindingState:
 
         return CellProfilerRuntimeCallable
 
-    @staticmethod
-    def function_spec_callables(func_spec: Any) -> Iterator[Callable[..., Any]]:
+    @classmethod
+    def function_spec_callables(cls, func_spec: Any) -> Iterator[Callable[..., Any]]:
         if callable(func_spec):
             yield func_spec
             return
@@ -743,7 +743,7 @@ class CellProfilerGeneratedRuntimeBindingState:
             return
         if isinstance(func_spec, list):
             for item in func_spec:
-                yield from self.function_spec_callables(item)
+                yield from cls.function_spec_callables(item)
 
 
 @dataclass(frozen=True, slots=True)

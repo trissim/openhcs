@@ -22,6 +22,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerGeneratedRuntimeBindingState,
     CellProfilerGeneratedPipelineInvocationContracts,
     bind_generated_pipeline_runtime,
 )
@@ -338,6 +339,18 @@ def test_generated_contract_provider_binds_cellprofiler_runtime_at_compile_time(
     assert invocation.contract.module_artifact_contract == contract
     assert isinstance(invocation.contract.func, CellProfilerRuntimeCallable)
     assert runtime_adapter_spec_from_callable(invocation.contract.func) is not None
+
+
+def test_generated_runtime_binding_state_accepts_nested_function_patterns():
+    """Generated CP runtime contract checks must traverse list-shaped FunctionStep specs."""
+    contract = crop_contract(outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),))
+    runtime_callable = declared_runtime_callable(crop, contract)
+    state = CellProfilerGeneratedRuntimeBindingState(
+        pipeline_steps=[FunctionStep(func=[(runtime_callable, {})])],
+        contracts_by_module_num={1: contract},
+    )
+
+    assert state.matches_expected_contracts()
 
 
 def test_generated_runtime_binding_rejects_callable_contract_order_mismatch():
