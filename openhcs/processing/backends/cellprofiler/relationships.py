@@ -6,7 +6,7 @@ from abc import ABC
 from enum import Enum
 from typing import ClassVar
 
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.callable_contract import CallableContract

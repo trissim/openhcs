@@ -6,7 +6,7 @@ import threading
 import time
 from typing import ClassVar
 
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 import psutil
 
 from benchmark.contracts.metric import MetricCollector

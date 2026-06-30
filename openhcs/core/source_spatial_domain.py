@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, Self, TypeVar
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 from zmqruntime.viewer_protocol import (
     ViewerSourceSpatialDomainPayload,

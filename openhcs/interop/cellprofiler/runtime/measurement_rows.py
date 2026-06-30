@@ -10,7 +10,7 @@ import json
 from typing import ClassVar, TYPE_CHECKING
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection

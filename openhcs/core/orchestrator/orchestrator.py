@@ -55,7 +55,7 @@ from polystore.zarr import ZarrStorageBackend
 # PipelineConfig now imported directly above
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 
 # Import generic component system - required for orchestrator functionality

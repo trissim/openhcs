@@ -12,7 +12,7 @@ import re
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape

@@ -87,7 +87,6 @@ dependencies = [
     "arraybridge>=0.1.0",
     "polystore>=0.1.0",
     "pyqt-reactive>=0.1.0",
-    "nominal-refactor-advisor>=0.1.0",
 ]
 
 [project.optional-dependencies]

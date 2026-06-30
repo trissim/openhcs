@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
 from openhcs.core.aligned_image_payload import (

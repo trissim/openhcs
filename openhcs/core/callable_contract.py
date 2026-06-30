@@ -18,7 +18,7 @@ from threading import Lock
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_type_hints
 
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector

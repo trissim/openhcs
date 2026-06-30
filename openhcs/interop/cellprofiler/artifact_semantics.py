@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline.function_contracts import special_output_specs_from_callable

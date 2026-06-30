@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
 from openhcs.core.image_shapes import (

@@ -670,7 +670,7 @@ from typing import TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 from numba import njit
 
 from openhcs.constants.constants import MemoryType

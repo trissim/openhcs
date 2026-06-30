@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 from openhcs.constants.constants import MEMORY_TYPE_NUMPY
 from openhcs.core.callable_contract import CallableContract, CallableMetadata

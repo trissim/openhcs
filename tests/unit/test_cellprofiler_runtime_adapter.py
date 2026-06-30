@@ -7,7 +7,7 @@ from typing import ClassVar
 import pytest
 import numpy as np
 from scipy.io import savemat
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerRelationshipPayload,

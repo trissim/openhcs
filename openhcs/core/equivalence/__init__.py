@@ -1,7 +1,5 @@
 """Staged runtime equivalence APIs."""
 
-from nominal_refactor_advisor.collection_algebra import sorted_tuple
-
 from openhcs.core.equivalence.report import (
     RuntimeEquivalenceDifference,
     RuntimeEquivalenceDifferenceKind,
@@ -73,4 +71,4 @@ from openhcs.core.equivalence.comparison import (
     runtime_table_differences,
 )
 
-__all__ = sorted_tuple(name for name in globals() if not name.startswith("_"))
+__all__ = tuple(sorted(name for name in globals() if not name.startswith("_")))

@@ -230,7 +230,7 @@ from typing import ClassVar, TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode

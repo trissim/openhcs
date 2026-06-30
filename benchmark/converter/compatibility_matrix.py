@@ -20,7 +20,7 @@ from openhcs.processing.backends.cellprofiler import require_cellprofiler_functi
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
-from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+from openhcs.core.alias_property import AliasProperty
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from openhcs.processing.backends.cellprofiler.module_classes import (
     ModuleSettingCoverageRecord,

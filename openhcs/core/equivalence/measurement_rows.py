@@ -11,8 +11,6 @@ from types import MappingProxyType
 from typing import ClassVar, Generic
 
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
-from nominal_refactor_advisor.collection_algebra import sorted_tuple
-
 from openhcs.core.equivalence.cells import (
     RuntimeCellSignature,
     RuntimeMeasurementCellPresence,
@@ -102,8 +100,8 @@ def _measurement_qualifier_value_renderers(
     renderer_modes = set(renderers)
     value_modes = set(RuntimeMeasurementQualifierValueMode)
     if renderer_modes != value_modes:
-        missing = sorted_tuple(mode.value for mode in value_modes - renderer_modes)
-        extra = sorted_tuple(mode.value for mode in renderer_modes - value_modes)
+        missing = tuple(sorted(mode.value for mode in value_modes - renderer_modes))
+        extra = tuple(sorted(mode.value for mode in renderer_modes - value_modes))
         raise ValueError(
             "Measurement qualifier value renderers must cover "
             f"RuntimeMeasurementQualifierValueMode exactly: "
@@ -169,7 +167,7 @@ def measurement_row_image_identity_key(
                 measurement_table_cell_payload(value),
             )
         )
-    return sorted_tuple(identity_values)
+    return tuple(sorted(identity_values))
 
 
 def axis_scoped_measurement_row_identity(
