@@ -15,6 +15,9 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
     PlatePipelineRequest,
 )
+from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
+    CellProfilerPipelineRuntimeBindingService,
+)
 from openhcs.pyqt_gui.widgets.shared.services.plate_config_resolver import (
     resolve_pipeline_config_for_plate,
 )
@@ -159,6 +162,13 @@ class PlatePipelineRequestBuilder:
             definition_pipeline = []
         definition_pipeline = CompileWorkflowService.normalize_pipeline_for_transport(
             definition_pipeline
+        )
+        definition_pipeline = (
+            CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
+                plate_pipeline_editor=self._host.plate_pipeline_editor,
+                plate_path=plate_path,
+                pipeline_steps=definition_pipeline,
+            )
         )
         self.validate_pipeline_steps(definition_pipeline)
         return definition_pipeline

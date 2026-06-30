@@ -19,6 +19,7 @@ from openhcs.core.image_shapes import (
 )
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
+    ImagePayloadChannelProjection,
     image_payload_data,
     image_payload_metadata,
     with_image_payload_data,
@@ -1178,9 +1179,22 @@ def color_to_gray(
             output,
             metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
         )
+    image_data = image_payload_data(image)
+    outputs = split_color_to_gray(image, resolved_image_type, channel_indices)
+    if resolved_image_type is ImageChannelType.RGB:
+        return tuple(
+            ImagePayloadChannelProjection(
+                source_payload=image,
+                source_data=image_data,
+                channel_index=channel_index,
+                channel_data=output,
+                channel_axis=-1,
+            ).payload()
+            for channel_index, output in zip(channel_indices, outputs, strict=True)
+        )
     return tuple(
         with_image_payload_data(image, output)
-        for output in split_color_to_gray(image, resolved_image_type, channel_indices)
+        for output in outputs
     )
 
 

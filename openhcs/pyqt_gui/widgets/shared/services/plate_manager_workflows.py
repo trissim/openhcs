@@ -11,16 +11,14 @@ from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerGeneratedRuntimeBindingState,
-    CellProfilerGeneratedStepFunctionSpec,
-    CellProfilerPipelineRuntimeRebinder,
-)
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,
 )
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
+from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
+    CellProfilerPipelineRuntimeBindingService,
+)
 from pyqt_reactive.widgets.shared.manager_workflows import (
     ManagerCodeExecutionWorkflow,
     ManagerDeletionWorkflow,
@@ -409,60 +407,11 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         pipeline_steps: list[FunctionStep],
     ) -> list[FunctionStep]:
         """Preserve generated CellProfiler artifact bindings through code mode."""
-        if not self.pipeline_contains_cellprofiler_steps(pipeline_steps):
-            return pipeline_steps
-        if not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
-            pipeline_steps
-        ):
-            return pipeline_steps
-
-        plate_pipeline_editor = self.manager.plate_pipeline_editor
-        if plate_pipeline_editor is None:
-            raise RuntimeError(
-                "Cannot apply CellProfiler pipeline code without a pipeline editor."
-            )
-
-        import_result = self.cellprofiler_import_result_for_plate(
-            plate_pipeline_editor,
-            plate_path,
+        return CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
+            plate_pipeline_editor=self.manager.plate_pipeline_editor,
+            plate_path=plate_path,
+            pipeline_steps=pipeline_steps,
         )
-        if import_result is None:
-            identity = PlateScopeIdentity.from_scope_id(plate_path)
-            if identity.cppipe_path is None:
-                return pipeline_steps
-            raise RuntimeError(
-                "Cannot apply CellProfiler pipeline code for "
-                f"{plate_path!r} because the .cppipe import context is not loaded. "
-                "Initialize the plate before editing or applying generated pipeline code."
-            )
-
-        return CellProfilerPipelineRuntimeRebinder.from_import_result(
-            import_result,
-        ).rebind(pipeline_steps)
-
-    @staticmethod
-    def pipeline_contains_cellprofiler_steps(
-        pipeline_steps: list[FunctionStep],
-    ) -> bool:
-        """Return whether any edited step references absorbed CellProfiler callables."""
-        return any(
-            isinstance(step, FunctionStep)
-            and CellProfilerGeneratedStepFunctionSpec(step.func).metadata() is not None
-            for step in pipeline_steps
-        )
-
-    @staticmethod
-    def cellprofiler_import_result_for_plate(
-        plate_pipeline_editor,
-        plate_path: str,
-    ):
-        """Return the import result already associated with a logical plate scope."""
-        plate_key = str(plate_path)
-        if plate_key in plate_pipeline_editor.cellprofiler_import_results_by_plate:
-            return plate_pipeline_editor.cellprofiler_import_results_by_plate[plate_key]
-        if plate_pipeline_editor.current_plate == plate_key:
-            return plate_pipeline_editor.cellprofiler_import_result
-        return None
 
     def invalidate_orchestrator_compilation_state(self, plate_path: str) -> None:
         if plate_path in self.manager.plate_compiled_data:

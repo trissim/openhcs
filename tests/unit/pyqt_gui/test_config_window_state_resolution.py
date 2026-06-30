@@ -10,7 +10,7 @@ from openhcs.pyqt_gui.services.window_handlers import (
     OpenHCSWindowCreationAuthority,
     register_openhcs_window_handlers,
 )
-from openhcs.pyqt_gui.windows.config_window import ConfigWindowStateResolver
+from openhcs.pyqt_gui.windows.config_window import ConfigWindow, ConfigWindowStateResolver
 from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
     ScopeWindowRegistry,
@@ -97,6 +97,13 @@ def test_global_config_window_creates_state_at_canonical_scope() -> None:
 
     assert state.scope_id == ""
     assert state.object_instance.num_workers == 3
+
+
+def test_global_config_window_registers_with_stable_window_id() -> None:
+    window = ConfigWindow.__new__(ConfigWindow)
+    window.scope_id = ""
+
+    assert window.window_manager_scope_id() == OpenHCSUiWindowId.global_config
 
 
 def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:

@@ -65,6 +65,10 @@ class PipelineEditorWorkflowSurface(ConfigChangeSurface):
         raise NotImplementedError
 
     @abstractmethod
+    def on_orchestrator_state_changed(self, plate_path: str, state: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def load_pipeline_from_file(self, file_path: Path) -> None:
         raise NotImplementedError
 
@@ -76,6 +80,7 @@ class PipelineEditorWorkflowSurface(ConfigChangeSurface):
 class PlateManagerWorkflowSurface(ConfigChangeSurface):
     plate_selected: SignalConnectionSurface
     orchestrator_config_changed: SignalConnectionSurface
+    orchestrator_state_changed: SignalConnectionSurface
     selected_plate_path: str | None
 
     @abstractmethod
@@ -291,6 +296,9 @@ class MainWindowWidgetConnector:
         plate_manager.plate_selected.connect(pipeline_editor.set_current_plate)
         plate_manager.orchestrator_config_changed.connect(
             pipeline_editor.on_orchestrator_config_changed
+        )
+        plate_manager.orchestrator_state_changed.connect(
+            pipeline_editor.on_orchestrator_state_changed
         )
         plate_manager.set_pipeline_editor(pipeline_editor)
         pipeline_editor.plate_manager = plate_manager

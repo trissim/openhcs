@@ -4744,6 +4744,47 @@ def test_color_to_gray_splits_openhcs_color_slice_by_selected_channels() -> None
     np.testing.assert_array_equal(blue, np.full((4, 5), 3.0, dtype=np.float32))
 
 
+def test_color_to_gray_rgb_split_projects_selected_source_plane_metadata() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((4, 5, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w1.tif",
+                    "/input/A01_s001_w2.tif",
+                    "/input/A01_s001_w3.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "1", "channel": "2"},
+                    {"well": "A01", "site": "1", "channel": "3"},
+                ),
+            ),
+            source_image_names=("OrigRed", "OrigGreen", "OrigBlue"),
+        ),
+    )
+    image.data[..., 1] = 2.0
+
+    (green,) = color_to_gray(
+        image,
+        mode="split",
+        image_type="rgb",
+        channel_indices=(1,),
+        dtype_config=DtypeConfig(),
+    )
+
+    metadata = image_payload_metadata(green)
+    assert metadata.source_path == "/input/A01_s001_w2.tif"
+    assert metadata.source_component_metadata == {
+        "well": "A01",
+        "site": "1",
+        "channel": "2",
+    }
+    assert metadata.source_image_names == ("OrigGreen",)
+    assert metadata.source_provenance.source_plane_count == 0
+    np.testing.assert_array_equal(green.data, np.full((4, 5), 2.0, dtype=np.float32))
+
+
 def test_color_to_gray_splits_channel_last_non_rgb_slice() -> None:
     image = np.zeros((4, 5, 2), dtype=np.float32)
     image[..., 0] = 7.0

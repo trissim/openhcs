@@ -934,7 +934,8 @@ def test_global_scope_color_scheme_is_white_and_layered() -> None:
     scheme = get_scope_color_scheme("")
 
     assert scheme.scope_id == ""
-    assert scheme.step_border_layers == [(1, 1, "solid")]
+    assert scheme.step_border_layers == [(3, 1, "solid")]
+    assert scheme.step_border_width == 3
     assert scheme.accent_qcolor().name().lower() == "#ffffff"
     assert scheme.border_layer_qcolor(scheme.step_border_layers[0]).name().lower() == (
         "#ffffff"

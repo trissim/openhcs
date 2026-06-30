@@ -8,7 +8,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import dataclasses
 from functools import partial
-from typing import Callable, Optional, Dict
+from typing import Callable, Optional
 
 from PyQt6.QtWidgets import (
     QVBoxLayout,
@@ -19,8 +19,7 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem,
     QMessageBox,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QShowEvent
+from PyQt6.QtCore import pyqtSignal, QTimer
 
 # Infrastructure classes removed - functionality migrated to ParameterFormManager service layer
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
@@ -308,6 +307,12 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def window_code_document_driver(self) -> WindowCodeDocumentDriver | None:
         """Expose this config window's pycodified code-mode document."""
         return self._code_document_driver
+
+    def window_manager_scope_id(self) -> str | None:
+        """Expose the stable UI/window id for WindowManager registration."""
+        if self.scope_id is None:
+            return None
+        return OpenHCSUiWindowId.agent_window_id_for_manager_scope(self.scope_id)
 
     def managed_window_action_capabilities(
         self,

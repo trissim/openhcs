@@ -10,7 +10,9 @@ from openhcs.core.debug import (
     DebugEventType,
     DebugExecutionConfig,
     DebugProgressEventRequest,
+    DebugReplayMode,
 )
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
 )
@@ -22,6 +24,10 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
+    DebugCompileArtifactCacheKey,
+    DebugPlateRunRequest,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
@@ -50,6 +56,7 @@ from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
     ZMQExecutionClientBoundary,
 )
+from openhcs.runtime.zmq_execution_client import ZMQExecutionRequestBuilder
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
     LiveMeasurementProgressNotificationService,
@@ -69,6 +76,10 @@ from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParse
 from zmqruntime.execution import BatchSubmitWaitEngine
 
 
+def _identity_image(image):
+    return image
+
+
 def _job(plate_path: str) -> CompileJob:
     return CompileJob(
         plate_scope=PlateScopeIdentity.from_scope_id(plate_path),
@@ -77,6 +88,17 @@ def _job(plate_path: str) -> CompileJob:
         plate_name=plate_path,
         definition_pipeline=[],
         pipeline_config={"x": 1},
+    )
+
+
+def _debug_run_spec() -> RunSpec:
+    return RunSpec(
+        plate_scope=PlateScopeIdentity.from_scope_id("/tmp/plate"),
+        execution_plate_path="/tmp/plate/.openhcs_debug/execution",
+        selected_pipeline_path="/tmp/plate/pipeline.cppipe",
+        definition_pipeline=[],
+        global_config=GlobalPipelineConfig(),
+        pipeline_config=PipelineConfig(),
     )
 
 
@@ -168,6 +190,95 @@ def test_build_compile_job_preserves_debug_config_params():
     assert job.config_params == debug_config_params
 
 
+def test_debug_compile_cache_key_uses_runtime_replay_signature():
+    run_spec = _debug_run_spec()
+    debug_request = DebugPlateRunRequest(
+        debug_session_id="debug-1",
+        snapshot_store_ref="/tmp/snapshots/debug-1",
+        snapshot_store_backend="local",
+        command_type=DebugCommandType.STEP,
+        selected_source_group="A01",
+        pause_step_indices=(0,),
+        replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+    )
+
+    cache_key = DebugCompileArtifactCacheKey.from_run_spec(
+        run_spec=run_spec,
+        debug_request=debug_request,
+    )
+    expected_payload = ZMQExecutionRequestBuilder.from_task(
+        run_spec.submission(
+            global_config=run_spec.global_config,
+            config_params=debug_request.compile_config_params,
+        )
+    ).request_payload
+
+    assert cache_key.debug_replay_signature == expected_payload.debug_replay_signature
+
+
+def test_debug_compile_cache_key_changes_for_new_debug_session():
+    run_spec = _debug_run_spec()
+    first_request = DebugPlateRunRequest(
+        debug_session_id="debug-1",
+        snapshot_store_ref="/tmp/snapshots/debug-1",
+        snapshot_store_backend="local",
+        command_type=DebugCommandType.STEP,
+        selected_source_group="A01",
+        pause_step_indices=(0,),
+        replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+    )
+    second_request = DebugPlateRunRequest(
+        debug_session_id="debug-2",
+        snapshot_store_ref="/tmp/snapshots/debug-2",
+        snapshot_store_backend="local",
+        command_type=DebugCommandType.STEP,
+        selected_source_group="A01",
+        pause_step_indices=(0,),
+        replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+    )
+
+    assert DebugCompileArtifactCacheKey.from_run_spec(
+        run_spec=run_spec,
+        debug_request=first_request,
+    ) != DebugCompileArtifactCacheKey.from_run_spec(
+        run_spec=run_spec,
+        debug_request=second_request,
+    )
+
+
+def test_debug_compile_cache_key_ignores_cursor_only_debug_commands():
+    run_spec = _debug_run_spec()
+    first_request = DebugPlateRunRequest(
+        debug_session_id="debug-1",
+        snapshot_store_ref="/tmp/snapshots/debug-1",
+        snapshot_store_backend="local",
+        command_type=DebugCommandType.STEP,
+        selected_source_group="A01",
+        pause_step_indices=(0,),
+        start_step_index=0,
+        replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+    )
+    second_request = DebugPlateRunRequest(
+        debug_session_id="debug-1",
+        snapshot_store_ref="/tmp/snapshots/debug-1",
+        snapshot_store_backend="local",
+        command_type=DebugCommandType.RUN_TO_PAUSE,
+        selected_source_group="A01",
+        pause_step_indices=(0,),
+        start_step_index=4,
+        start_after_invocation_key="default:0:color_to_gray",
+        replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+    )
+
+    assert DebugCompileArtifactCacheKey.from_run_spec(
+        run_spec=run_spec,
+        debug_request=first_request,
+    ) == DebugCompileArtifactCacheKey.from_run_spec(
+        run_spec=run_spec,
+        debug_request=second_request,
+    )
+
+
 def test_compile_submission_uses_execution_plate_path_for_transport():
     captured = {}
 
@@ -248,6 +359,54 @@ def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
 
     assert normalized[0].func is cellprofiler_backend.crop
     pickle.dumps(normalized)
+
+
+def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
+    monkeypatch,
+):
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.pyqt_gui.widgets.shared.services import (
+        plate_pipeline_request_builder,
+    )
+
+    raw_step = FunctionStep(func=_identity_image, name="raw")
+    rebound_step = FunctionStep(func=_identity_image, name="rebound")
+    calls = []
+
+    class Host:
+        plate_pipeline_editor = object()
+
+        def get_pipeline_definition(self, plate_path: str):
+            calls.append(("definition", plate_path))
+            return [raw_step]
+
+    def rebind(**kwargs):
+        calls.append(
+            (
+                "rebind",
+                kwargs["plate_pipeline_editor"],
+                kwargs["plate_path"],
+                kwargs["pipeline_steps"],
+            )
+        )
+        return [rebound_step]
+
+    monkeypatch.setattr(
+        plate_pipeline_request_builder.CellProfilerPipelineRuntimeBindingService,
+        "runtime_bound_pipeline_for_plate",
+        rebind,
+    )
+
+    pipeline = PlatePipelineRequestBuilder(Host())._definition_pipeline_for_plate(
+        plate_path="/tmp/plate",
+        display_name="plate",
+    )
+
+    assert pipeline == [rebound_step]
+    assert calls == [
+        ("definition", "/tmp/plate"),
+        ("rebind", Host.plate_pipeline_editor, "/tmp/plate", [raw_step]),
+    ]
 
 
 def test_compile_transport_rejects_unresolved_module_objects():
