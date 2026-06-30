@@ -26,6 +26,7 @@ The fundamental concepts that define how OpenHCS works.
 .. toctree::
    :maxdepth: 1
 
+   core_model
    pipelines_and_steps
    function_patterns
    data_dimensions

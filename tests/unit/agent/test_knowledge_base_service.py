@@ -19,6 +19,7 @@ def test_knowledge_base_catalog_lists_source_backed_documents():
     documents = {document.document_id: document for document in catalog.documents}
 
     assert catalog.schema_version == "openhcs.agent.v1"
+    assert "openhcs_core_model" in documents
     assert "openhcs_agent_mcp_overview" in documents
     assert "openhcs_domain_expert_onboarding" in documents
     assert "openhcs_example_corpus_map" in documents
@@ -33,6 +34,15 @@ def test_knowledge_base_catalog_lists_source_backed_documents():
     )
     assert documents["openhcs_agent_mcp_overview"].section_count > 0
     assert "mcp" in documents["openhcs_agent_mcp_overview"].tags
+    assert documents["openhcs_core_model"].source_path == (
+        "docs/source/concepts/core_model.rst"
+    )
+    assert "core model" in documents["openhcs_core_model"].tags
+    assert "Live UI/code biconversion" in documents[
+        "openhcs_code_ui_interconversion"
+    ].summary
+    assert "live UI code" in documents["openhcs_code_ui_interconversion"].tags
+    assert "code mode" in documents["openhcs_code_ui_interconversion"].tags
 
 
 def test_knowledge_base_document_read_is_bounded_and_sectioned():
@@ -78,7 +88,7 @@ def test_knowledge_base_search_covers_domain_expert_onboarding_terms():
     expected_documents_by_query = {
         "microscopy": "openhcs_domain_expert_onboarding",
         "getting started": "openhcs_domain_expert_onboarding",
-        "plate well site channel": "openhcs_data_dimensions",
+        "plate well site channel": "openhcs_core_model",
         "segmentation fluorescence": "openhcs_domain_expert_onboarding",
         "plate layout": "openhcs_data_dimensions",
     }
@@ -94,6 +104,12 @@ def test_knowledge_base_search_covers_example_corpus_terms():
     service = KnowledgeBaseService()
     expected_documents_by_query = {
         "CellProfiler examples cppipe": "openhcs_example_corpus_map",
+        "CellProfiler compatibility OpenHCS runtime official30": (
+            "openhcs_core_model"
+        ),
+        "runtime artifact sidecar source universe source binding": (
+            "openhcs_core_model"
+        ),
         "CellProfiler mental model OpenHCS translation": (
             "openhcs_domain_expert_onboarding"
         ),
@@ -140,6 +156,61 @@ def test_example_corpus_document_points_to_live_plate_inspection_tools():
     assert "Until that tool exists" not in document.content
 
 
+def test_example_corpus_document_exposes_native_python_source():
+    service = KnowledgeBaseService()
+
+    index = service.get_document(
+        KnowledgeBaseDocumentRequest.from_fields(
+            document_id="openhcs_example_corpus_map",
+            section_id="native-example-source-index",
+            max_chars=12_000,
+        )
+    )
+    source = service.get_document(
+        KnowledgeBaseDocumentRequest.from_fields(
+            document_id="openhcs_example_corpus_map",
+            section_id="benchmark-pipelines-bbbc021-nuclei-segmentation-py",
+            max_chars=20_000,
+        )
+    )
+
+    assert index.selected_section_id == "native-example-source-index"
+    assert "Generated from the Python paths declared" in index.content
+    assert "benchmark/pipelines/bbbc021_nuclei_segmentation.py" in index.content
+    assert "openhcs/processing/presets/pipelines/" in index.content
+    assert source.selected_section_id == (
+        "benchmark-pipelines-bbbc021-nuclei-segmentation-py"
+    )
+    assert "Source path: benchmark/pipelines/bbbc021_nuclei_segmentation.py" in (
+        source.content
+    )
+    assert ".. code-block:: python" in source.content
+    assert "from openhcs.core.steps.function_step import FunctionStep" in (
+        source.content
+    )
+    assert "pipeline_steps = []" in source.content
+    assert "GAUSSIAN_SIGMA = 2.3" in source.content
+
+
+def test_knowledge_base_search_covers_native_python_source():
+    service = KnowledgeBaseService()
+
+    result = service.search(
+        KnowledgeBaseSearchRequest(
+            query="bbbc021_nuclei_segmentation FunctionStep GAUSSIAN_SIGMA",
+            limit=5,
+        )
+    )
+
+    assert any(
+        hit.document.document_id == "openhcs_example_corpus_map"
+        and hit.section is not None
+        and hit.section.section_id
+        == "benchmark-pipelines-bbbc021-nuclei-segmentation-py"
+        for hit in result.hits
+    )
+
+
 def test_official30_recipe_document_renders_generated_case_index():
     service = KnowledgeBaseService()
 
@@ -159,11 +230,16 @@ def test_official30_recipe_document_renders_generated_case_index():
         "30. cp_tutorial_translocation_start: "
         "dataset=CellProfiler_tutorials"
     ) in document.content
+    assert "Module Usage Index" in document.content
     assert "Default pipeline params: openhcs_max_axis_count=1" in document.content
     assert "Raw manifest:" not in document.content
-    assert len(document.sections) == 32
+    assert len(document.sections) == 33
     assert any(
         section.section_id == "examplehuman"
+        for section in document.sections
+    )
+    assert any(
+        section.section_id == "module-usage-index"
         for section in document.sections
     )
 
@@ -184,7 +260,30 @@ def test_official30_recipe_document_supports_case_sections():
     assert "dataset_id: ExampleHuman" in document.content
     assert "dataset_path: ExampleHuman/images" in document.content
     assert "cppipe_path: ExampleHuman/ExampleHuman.cppipe" in document.content
+    assert "modules: Images, Metadata, NamesAndTypes, Groups" in document.content
+    assert "IdentifyPrimaryObjects" in document.content
+    assert "MeasureObjectIntensity" in document.content
+    assert "resolved_cppipe_path:" in document.content
     assert "ExampleFly" not in document.content
+
+
+def test_official30_recipe_document_supports_module_usage_section():
+    service = KnowledgeBaseService()
+
+    document = service.get_document(
+        KnowledgeBaseDocumentRequest.from_fields(
+            document_id="openhcs_official30_benchmark_recipes",
+            section_id="module-usage-index",
+            max_chars=10_000,
+        )
+    )
+
+    assert document.selected_section_id == "module-usage-index"
+    assert "Module Usage Index" in document.content
+    assert "ExampleTrackObjects:" in document.content
+    assert "TrackObjects" in document.content
+    assert "IdentifyPrimaryObjects" in document.content
+    assert "MeasureObjectIntensity" in document.content
 
 
 def test_knowledge_base_search_covers_official30_case_sections():
@@ -201,6 +300,24 @@ def test_knowledge_base_search_covers_official30_case_sections():
         hit.document.document_id == "openhcs_official30_benchmark_recipes"
         and hit.section is not None
         and hit.section.section_id == "examplehuman"
+        for hit in result.hits
+    )
+
+
+def test_knowledge_base_search_covers_official30_module_usage():
+    service = KnowledgeBaseService()
+
+    result = service.search(
+        KnowledgeBaseSearchRequest(
+            query="IdentifyPrimaryObjects MeasureObjectIntensity TrackObjects",
+            limit=5,
+        )
+    )
+
+    assert any(
+        hit.document.document_id == "openhcs_official30_benchmark_recipes"
+        and hit.section is not None
+        and hit.section.section_id == "module-usage-index"
         for hit in result.hits
     )
 
@@ -233,6 +350,13 @@ def test_knowledge_base_search_handles_broad_biology_workflow_query():
 def test_knowledge_base_search_covers_technical_operator_terms():
     service = KnowledgeBaseService()
     expected_documents_by_query = {
+        "what is openhcs core model": "openhcs_core_model",
+        "compiler runtime FunctionStep ObjectState code documents": (
+            "openhcs_core_model"
+        ),
+        "UI code interconversion revision tokens": (
+            "openhcs_code_ui_interconversion"
+        ),
         "GlobalPipelineConfig registered step config": (
             "openhcs_configuration_framework"
         ),

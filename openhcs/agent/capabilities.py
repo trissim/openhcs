@@ -30,6 +30,116 @@ class CapabilityCliConnectionProfile(Enum):
     RUNTIME_SERVER = "runtime_server"
 
 
+class CapabilityWorkflowGroup(Enum):
+    """Agent-facing workflow group for capability exposition."""
+
+    DISCOVERY = "discovery"
+    KNOWLEDGE = "knowledge"
+    FUNCTION_AUTHORING = "function_authoring"
+    PIPELINE_AUTHORING = "pipeline_authoring"
+    PLATE_DATA = "plate_data"
+    UI_SELECTED_PLATE = "ui_selected_plate"
+    HEADLESS_EXECUTION = "headless_execution"
+    RUNTIME_DIAGNOSTICS = "runtime_diagnostics"
+    UI_CONTROL = "ui_control"
+    UI_STATE_EDITING = "ui_state_editing"
+    VIEWER_REVIEW = "viewer_review"
+
+    @property
+    def title(self) -> str:
+        return _enum_member_title(self)
+
+
+class CapabilityWorkflowStage(Enum):
+    """Workflow stage occupied by one agent capability."""
+
+    DISCOVERY = "discovery"
+    CONTEXT = "context"
+    AUTHORING = "authoring"
+    DATA_PREPARATION = "data_preparation"
+    VALIDATION = "validation"
+    EXECUTION = "execution"
+    STATUS = "status"
+    INSPECTION = "inspection"
+    CONTROL = "control"
+    STATE_EDITING = "state_editing"
+    DIAGNOSTIC = "diagnostic"
+
+
+class CapabilityTargetContext(Enum):
+    """Runtime or data authority targeted by an agent capability."""
+
+    SERVER = "server"
+    KNOWLEDGE_BASE = "knowledge_base"
+    ARCHITECTURE_MODEL = "architecture_model"
+    FUNCTION_REGISTRY = "function_registry"
+    CONFIG_DRAFT = "config_draft"
+    PIPELINE_DRAFT = "pipeline_draft"
+    PLATE_PATH = "plate_path"
+    UI_SELECTED_PLATE = "ui_selected_plate"
+    HEADLESS_SESSION = "headless_session"
+    SUBMITTED_JOB = "submitted_job"
+    RUNTIME_SERVER = "runtime_server"
+    UI_BRIDGE = "ui_bridge"
+    UI_WINDOW = "ui_window"
+    UI_OBJECT_STATE = "ui_object_state"
+    UI_CODE_DOCUMENT = "ui_code_document"
+    VIEWER_WINDOW = "viewer_window"
+
+
+class CapabilityVisibility(Enum):
+    """Default audience visibility for grouped capability projections."""
+
+    BEGINNER = "beginner"
+    STANDARD = "standard"
+    EXPERT = "expert"
+
+
+class CapabilityRole(Enum):
+    """Capability role inside an agent-facing workflow group."""
+
+    PRIMARY = "primary"
+    MODE_VARIANT = "mode_variant"
+    FALLBACK = "fallback"
+    DIAGNOSTIC = "diagnostic"
+    EXPERT = "expert"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapabilityExposition:
+    """Complete nominal exposition contract for one agent capability."""
+
+    workflow_group: CapabilityWorkflowGroup
+    workflow_stage: CapabilityWorkflowStage
+    target_context: CapabilityTargetContext
+    visibility: CapabilityVisibility
+    role: CapabilityRole = CapabilityRole.PRIMARY
+
+    def refine(
+        self,
+        *,
+        workflow_group: CapabilityWorkflowGroup | None = None,
+        workflow_stage: CapabilityWorkflowStage | None = None,
+        target_context: CapabilityTargetContext | None = None,
+        visibility: CapabilityVisibility | None = None,
+        role: CapabilityRole | None = None,
+    ) -> "AgentCapabilityExposition":
+        """Return a typed refinement owned by an inherited capability family."""
+        return AgentCapabilityExposition(
+            workflow_group=(
+                self.workflow_group if workflow_group is None else workflow_group
+            ),
+            workflow_stage=(
+                self.workflow_stage if workflow_stage is None else workflow_stage
+            ),
+            target_context=(
+                self.target_context if target_context is None else target_context
+            ),
+            visibility=self.visibility if visibility is None else visibility,
+            role=self.role if role is None else role,
+        )
+
+
 class CapabilityViewerControlTimeoutProfile(Enum):
     """Viewer-window control timeout profile required by a capability."""
 
@@ -62,6 +172,19 @@ AgentServiceT = TypeVar("AgentServiceT")
 AgentRequestT = TypeVar("AgentRequestT")
 AgentConnectionT = TypeVar("AgentConnectionT")
 AgentResultT = TypeVar("AgentResultT")
+
+
+def _enum_json_value(value: Enum | None) -> str | None:
+    if value is None:
+        return None
+    return str(value.value)
+
+
+def _enum_member_title(value: Enum) -> str:
+    return " ".join(
+        token if token.isupper() and len(token) <= 3 else token.lower().title()
+        for token in value.name.split("_")
+    )
 
 
 def _contract_schema_name(contract: AgentContract | None) -> str | None:
@@ -360,6 +483,7 @@ class AgentCapabilitySpec:
     security_requirements: tuple[str, ...] = ()
     input_contract: AgentContract | None = None
     output_contract: AgentContract | None = None
+    exposition: AgentCapabilityExposition | None = None
 
     @property
     def input_type(self) -> str | None:
@@ -368,6 +492,36 @@ class AgentCapabilitySpec:
     @property
     def output_type(self) -> str | None:
         return _contract_schema_name(self.output_contract)
+
+    @property
+    def workflow_group(self) -> CapabilityWorkflowGroup | None:
+        if self.exposition is None:
+            return None
+        return self.exposition.workflow_group
+
+    @property
+    def workflow_stage(self) -> CapabilityWorkflowStage | None:
+        if self.exposition is None:
+            return None
+        return self.exposition.workflow_stage
+
+    @property
+    def target_context(self) -> CapabilityTargetContext | None:
+        if self.exposition is None:
+            return None
+        return self.exposition.target_context
+
+    @property
+    def visibility(self) -> CapabilityVisibility | None:
+        if self.exposition is None:
+            return None
+        return self.exposition.visibility
+
+    @property
+    def role(self) -> CapabilityRole | None:
+        if self.exposition is None:
+            return None
+        return self.exposition.role
 
     def as_jsonable(self) -> dict[str, object]:
         return {
@@ -387,6 +541,11 @@ class AgentCapabilitySpec:
             "security_requirements": list(self.security_requirements),
             "input_type": self.input_type,
             "output_type": self.output_type,
+            "workflow_group": _enum_json_value(self.workflow_group),
+            "workflow_stage": _enum_json_value(self.workflow_stage),
+            "target_context": _enum_json_value(self.target_context),
+            "visibility": _enum_json_value(self.visibility),
+            "role": _enum_json_value(self.role),
         }
 
 
@@ -417,6 +576,7 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
     security_requirements: ClassVar[tuple[str, ...]] = ()
     input_contract: ClassVar[AgentContract | None] = None
     output_contract: ClassVar[AgentContract | None] = None
+    exposition: ClassVar[AgentCapabilityExposition | None] = None
     no_argument_invocation: ClassVar[
         AgentCapabilityNoArgumentInvocationABC | None
     ] = None
@@ -519,31 +679,227 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
             security_requirements=cls.security_requirements,
             input_contract=cls.input_contract,
             output_contract=cls.output_contract,
+            exposition=cls.exposition,
         )
 
 
-class UiBridgeCliConnectionCapability(AgentCapabilityDeclaration):
+class DiscoveryCapability(AgentCapabilityDeclaration):
+    """Capability exposed in the initial server/capability discovery lane."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.DISCOVERY,
+        workflow_stage=CapabilityWorkflowStage.DISCOVERY,
+        target_context=CapabilityTargetContext.SERVER,
+        visibility=CapabilityVisibility.BEGINNER,
+    )
+
+
+class KnowledgeCapability(AgentCapabilityDeclaration):
+    """Capability that exposes bounded documentation or authoring context."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.KNOWLEDGE,
+        workflow_stage=CapabilityWorkflowStage.CONTEXT,
+        target_context=CapabilityTargetContext.KNOWLEDGE_BASE,
+        visibility=CapabilityVisibility.BEGINNER,
+    )
+
+
+class ArchitectureCapability(KnowledgeCapability):
+    """Capability that exposes source-backed OpenHCS architecture facts."""
+
+    exposition = KnowledgeCapability.exposition.refine(
+        target_context=CapabilityTargetContext.ARCHITECTURE_MODEL,
+    )
+
+
+class FunctionCatalogCapability(AgentCapabilityDeclaration):
+    """Capability that reads or extends the processing-function catalog."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.FUNCTION_AUTHORING,
+        workflow_stage=CapabilityWorkflowStage.AUTHORING,
+        target_context=CapabilityTargetContext.FUNCTION_REGISTRY,
+        visibility=CapabilityVisibility.BEGINNER,
+    )
+
+
+class ConfigDraftCapability(AgentCapabilityDeclaration):
+    """Capability that works with typed configuration draft state."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.PIPELINE_AUTHORING,
+        workflow_stage=CapabilityWorkflowStage.AUTHORING,
+        target_context=CapabilityTargetContext.CONFIG_DRAFT,
+        visibility=CapabilityVisibility.STANDARD,
+    )
+
+
+class PipelineDraftCapability(AgentCapabilityDeclaration):
+    """Capability that works with pipeline draft or source planning state."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.PIPELINE_AUTHORING,
+        workflow_stage=CapabilityWorkflowStage.AUTHORING,
+        target_context=CapabilityTargetContext.PIPELINE_DRAFT,
+        visibility=CapabilityVisibility.STANDARD,
+    )
+
+
+class PlatePathCapability(AgentCapabilityDeclaration):
+    """Capability that works from an explicit local plate path."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.PLATE_DATA,
+        workflow_stage=CapabilityWorkflowStage.DATA_PREPARATION,
+        target_context=CapabilityTargetContext.PLATE_PATH,
+        visibility=CapabilityVisibility.BEGINNER,
+    )
+
+
+class HeadlessExecutionCapability(AgentCapabilityDeclaration):
+    """Capability that works with headless execution sessions or jobs."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.HEADLESS_EXECUTION,
+        workflow_stage=CapabilityWorkflowStage.EXECUTION,
+        target_context=CapabilityTargetContext.HEADLESS_SESSION,
+        visibility=CapabilityVisibility.STANDARD,
+    )
+
+
+class SubmittedJobCapability(HeadlessExecutionCapability):
+    """Capability that observes a submitted compile or execution job."""
+
+    exposition = HeadlessExecutionCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.STATUS,
+        target_context=CapabilityTargetContext.SUBMITTED_JOB,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
+
+
+class UiBridgeCapability(AgentCapabilityDeclaration):
+    """Capability that targets the running PyQt UI bridge."""
+
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.UI_CONTROL,
+        workflow_stage=CapabilityWorkflowStage.CONTROL,
+        target_context=CapabilityTargetContext.UI_BRIDGE,
+        visibility=CapabilityVisibility.STANDARD,
+    )
+
+
+class UiBridgeCliConnectionCapability(UiBridgeCapability):
     """Capability whose CLI command accepts UI bridge connection options."""
 
     cli_connection_profile = CapabilityCliConnectionProfile.UI_BRIDGE
+
+
+class UiSelectedPlateCapability(UiBridgeCliConnectionCapability):
+    """Capability that uses the current PlateManager selection as its plate."""
+
+    exposition = UiBridgeCliConnectionCapability.exposition.refine(
+        workflow_group=CapabilityWorkflowGroup.UI_SELECTED_PLATE,
+        workflow_stage=CapabilityWorkflowStage.DATA_PREPARATION,
+        target_context=CapabilityTargetContext.UI_SELECTED_PLATE,
+        role=CapabilityRole.MODE_VARIANT,
+    )
+
+
+class UiWindowCapability(UiBridgeCliConnectionCapability):
+    """Capability that targets a visible or focusable PyQt UI window."""
+
+    exposition = UiBridgeCliConnectionCapability.exposition.refine(
+        target_context=CapabilityTargetContext.UI_WINDOW,
+    )
+
+
+class UiSemanticActionCapability(UiBridgeCliConnectionCapability):
+    """Capability that invokes declared semantic UI actions."""
+
+    exposition = UiBridgeCliConnectionCapability.exposition
+
+
+class UiWidgetFallbackCapability(UiWindowCapability):
+    """Capability that uses generic widget projection as a fallback control."""
+
+    exposition = UiWindowCapability.exposition.refine(
+        visibility=CapabilityVisibility.EXPERT,
+        role=CapabilityRole.FALLBACK,
+    )
+
+
+class UiCodeDocumentCapability(UiBridgeCliConnectionCapability):
+    """Capability that targets UI-owned pycodified code documents."""
+
+    exposition = UiBridgeCliConnectionCapability.exposition.refine(
+        workflow_group=CapabilityWorkflowGroup.UI_STATE_EDITING,
+        workflow_stage=CapabilityWorkflowStage.STATE_EDITING,
+        target_context=CapabilityTargetContext.UI_CODE_DOCUMENT,
+    )
+
+
+class UiObjectStateCapability(UiBridgeCliConnectionCapability):
+    """Capability that targets typed ObjectState scopes and fields."""
+
+    exposition = UiBridgeCliConnectionCapability.exposition.refine(
+        workflow_group=CapabilityWorkflowGroup.UI_STATE_EDITING,
+        workflow_stage=CapabilityWorkflowStage.STATE_EDITING,
+        target_context=CapabilityTargetContext.UI_OBJECT_STATE,
+        visibility=CapabilityVisibility.EXPERT,
+    )
+
+
+class UiSnapshotCapability(UiObjectStateCapability):
+    """Capability that targets ObjectState snapshot or branch time travel."""
+
+    exposition = UiObjectStateCapability.exposition.refine(
+        role=CapabilityRole.EXPERT,
+    )
 
 
 class ViewerWindowCliConnectionCapability(AgentCapabilityDeclaration):
     """Capability whose CLI command accepts viewer-window connection options."""
 
     cli_connection_profile = CapabilityCliConnectionProfile.VIEWER_WINDOW
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.VIEWER_REVIEW,
+        workflow_stage=CapabilityWorkflowStage.INSPECTION,
+        target_context=CapabilityTargetContext.VIEWER_WINDOW,
+        visibility=CapabilityVisibility.STANDARD,
+    )
 
 
 class RuntimeServerCliConnectionCapability(AgentCapabilityDeclaration):
     """Capability whose CLI command accepts runtime-server connection options."""
 
     cli_connection_profile = CapabilityCliConnectionProfile.RUNTIME_SERVER
+    exposition = AgentCapabilityExposition(
+        workflow_group=CapabilityWorkflowGroup.RUNTIME_DIAGNOSTICS,
+        workflow_stage=CapabilityWorkflowStage.DIAGNOSTIC,
+        target_context=CapabilityTargetContext.RUNTIME_SERVER,
+        visibility=CapabilityVisibility.EXPERT,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapabilityGroup:
+    workflow_group: CapabilityWorkflowGroup
+    capability_names: tuple[str, ...]
+    tool_count: int
+    resource_count: int
+
+    @property
+    def title(self) -> str:
+        return self.workflow_group.title
 
 
 @dataclass(frozen=True, slots=True)
 class AgentCapabilityRegistry:
     schema_version: str
     capabilities: tuple[AgentCapabilitySpec, ...]
+    groups: tuple[AgentCapabilityGroup, ...] = ()
 
 
 class AgentCapabilityNamespace:
@@ -567,6 +923,17 @@ def _jsonable_agent_capability_spec(value: AgentCapabilitySpec) -> dict[str, obj
     return value.as_jsonable()
 
 
+@to_jsonable.register(AgentCapabilityGroup)
+def _jsonable_agent_capability_group(value: AgentCapabilityGroup) -> dict[str, object]:
+    return {
+        "workflow_group": value.workflow_group.value,
+        "title": value.title,
+        "capability_names": list(value.capability_names),
+        "tool_count": value.tool_count,
+        "resource_count": value.resource_count,
+    }
+
+
 @to_jsonable.register(AgentCapabilityRegistry)
 def _jsonable_agent_capability_registry(
     value: AgentCapabilityRegistry,
@@ -574,6 +941,7 @@ def _jsonable_agent_capability_registry(
     return {
         "schema_version": value.schema_version,
         "capabilities": [to_jsonable(capability) for capability in value.capabilities],
+        "groups": [to_jsonable(group) for group in value.groups],
     }
 
 
@@ -583,7 +951,7 @@ CONFIG_TYPE_INPUT = AgentScalarInputContract("config_type")
 OPERATION_ID_INPUT = AgentScalarInputContract("operation_id")
 
 
-class CapabilitiesResourceCapability(AgentCapabilityDeclaration):
+class CapabilitiesResourceCapability(DiscoveryCapability):
     name = "openhcs://capabilities"
     kind = CapabilityKind.RESOURCE
     title = "OpenHCS agent capability registry"
@@ -594,7 +962,7 @@ class CapabilitiesResourceCapability(AgentCapabilityDeclaration):
         function=lambda: get_capability_registry(),
     )
 
-class HealthCheckCapability(AgentCapabilityDeclaration):
+class HealthCheckCapability(DiscoveryCapability):
     name = "openhcs_health_check"
     cli_command = "health"
     kind = CapabilityKind.TOOL
@@ -604,10 +972,14 @@ class HealthCheckCapability(AgentCapabilityDeclaration):
         "and source freshness for stale-process diagnostics."
     )
     service = "capability_registry"
+    exposition = DiscoveryCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.DIAGNOSTIC,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
     data_exposure = ("mcp_process_identity", "mcp_source_freshness")
     output_contract = agent_dto.McpServerHealthResult
 
-class ListCapabilitiesCapability(AgentCapabilityDeclaration):
+class ListCapabilitiesCapability(DiscoveryCapability):
     name = "openhcs_list_capabilities"
     kind = CapabilityKind.TOOL
     title = "List capabilities"
@@ -618,7 +990,7 @@ class ListCapabilitiesCapability(AgentCapabilityDeclaration):
         function=lambda: get_capability_registry(),
     )
 
-class SearchFunctionsCapability(AgentCapabilityDeclaration):
+class SearchFunctionsCapability(FunctionCatalogCapability):
     name = "openhcs_search_functions"
     cli_command = "functions"
     kind = CapabilityKind.TOOL
@@ -637,7 +1009,7 @@ class SearchFunctionsCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class DescribeFunctionCapability(AgentCapabilityDeclaration):
+class DescribeFunctionCapability(FunctionCatalogCapability):
     name = "openhcs_describe_function"
     cli_command = "function"
     kind = CapabilityKind.TOOL
@@ -658,7 +1030,7 @@ class DescribeFunctionCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class RegisterCustomFunctionCapability(AgentCapabilityDeclaration):
+class RegisterCustomFunctionCapability(FunctionCatalogCapability):
     name = "openhcs_register_custom_function"
     cli_command = "register-custom-function"
     kind = CapabilityKind.TOOL
@@ -669,6 +1041,10 @@ class RegisterCustomFunctionCapability(AgentCapabilityDeclaration):
         "values for MCP pipeline authoring."
     )
     service = "function_catalog"
+    exposition = FunctionCatalogCapability.exposition.refine(
+        visibility=CapabilityVisibility.EXPERT,
+        role=CapabilityRole.EXPERT,
+    )
     mutating = True
     side_effects = ("writes_custom_function_file", "updates_function_registry")
     input_contract = agent_dto.CustomFunctionRegistrationRequest
@@ -678,12 +1054,16 @@ class RegisterCustomFunctionCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.register_custom_function(request),
     )
 
-class GetAuthoringContextCapability(AgentCapabilityDeclaration):
+class GetAuthoringContextCapability(KnowledgeCapability):
     name = "openhcs_get_authoring_context"
     cli_command = "authoring-context"
     kind = CapabilityKind.TOOL
     title = "Get authoring context"
-    description = "Returns bounded prompt/context text for agents authoring OpenHCS code."
+    description = (
+        "Returns bounded prompt/context text for agents authoring OpenHCS code. "
+        "Agents that do not already know OpenHCS should call this first with "
+        "kind='first_use' before choosing tools."
+    )
     service = "llm_context"
     input_contract = agent_dto.AuthoringContextRequest
     output_contract = agent_dto.AuthoringContext
@@ -694,7 +1074,7 @@ class GetAuthoringContextCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class KnowledgeResourceCapability(AgentCapabilityDeclaration):
+class KnowledgeResourceCapability(KnowledgeCapability):
     name = "openhcs://knowledge"
     kind = CapabilityKind.RESOURCE
     title = "OpenHCS agent knowledge base"
@@ -707,7 +1087,7 @@ class KnowledgeResourceCapability(AgentCapabilityDeclaration):
         method=lambda service: service.list_documents(),
     )
 
-class ListKnowledgeDocumentsCapability(AgentCapabilityDeclaration):
+class ListKnowledgeDocumentsCapability(KnowledgeCapability):
     name = "openhcs_list_knowledge_documents"
     cli_command = "knowledge"
     kind = CapabilityKind.TOOL
@@ -721,7 +1101,7 @@ class ListKnowledgeDocumentsCapability(AgentCapabilityDeclaration):
         method=lambda service: service.list_documents(),
     )
 
-class GetKnowledgeDocumentCapability(AgentCapabilityDeclaration):
+class GetKnowledgeDocumentCapability(KnowledgeCapability):
     name = "openhcs_get_knowledge_document"
     cli_command = "knowledge-document"
     kind = CapabilityKind.TOOL
@@ -736,7 +1116,7 @@ class GetKnowledgeDocumentCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.get_document(request),
     )
 
-class SearchKnowledgeCapability(AgentCapabilityDeclaration):
+class SearchKnowledgeCapability(KnowledgeCapability):
     name = "openhcs_search_knowledge"
     cli_command = "knowledge-search"
     kind = CapabilityKind.TOOL
@@ -751,7 +1131,7 @@ class SearchKnowledgeCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.search(request),
     )
 
-class GenerateSyntheticPlateCapability(AgentCapabilityDeclaration):
+class GenerateSyntheticPlateCapability(PlatePathCapability):
     name = "openhcs_generate_synthetic_plate"
     cli_command = "generate-synthetic-plate"
     cli_aliases = ("synthetic-plate",)
@@ -775,7 +1155,7 @@ class GenerateSyntheticPlateCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.generate(request),
     )
 
-class InspectPlatePathCapability(AgentCapabilityDeclaration):
+class InspectPlatePathCapability(PlatePathCapability):
     name = "openhcs_inspect_plate_path"
     cli_command = "inspect-plate"
     kind = CapabilityKind.TOOL
@@ -801,7 +1181,7 @@ class InspectPlatePathCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.inspect(request),
     )
 
-class QueryPlateFilesCapability(AgentCapabilityDeclaration):
+class QueryPlateFilesCapability(PlatePathCapability):
     name = "openhcs_query_plate_files"
     cli_command = "query-plate-files"
     kind = CapabilityKind.TOOL
@@ -828,7 +1208,7 @@ class QueryPlateFilesCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.query_files(request),
     )
 
-class SamplePlateImageCapability(AgentCapabilityDeclaration):
+class SamplePlateImageCapability(PlatePathCapability):
     name = "openhcs_sample_plate_image"
     cli_command = "sample-plate-image"
     kind = CapabilityKind.TOOL
@@ -853,7 +1233,7 @@ class SamplePlateImageCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.sample_image(request),
     )
 
-class StreamPlateFilesToViewerCapability(AgentCapabilityDeclaration):
+class StreamPlateFilesToViewerCapability(PlatePathCapability):
     name = "openhcs_stream_plate_files_to_viewer"
     cli_command = "stream-plate-files"
     kind = CapabilityKind.TOOL
@@ -880,7 +1260,7 @@ class StreamPlateFilesToViewerCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.stream_files(request),
     )
 
-class UiInspectSelectedPlateImagesCapability(UiBridgeCliConnectionCapability):
+class UiInspectSelectedPlateImagesCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_inspect_selected_plate_images"
     cli_command = "selected-plate-images"
     kind = CapabilityKind.TOOL
@@ -911,7 +1291,7 @@ class UiInspectSelectedPlateImagesCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiQuerySelectedPlateFilesCapability(UiBridgeCliConnectionCapability):
+class UiQuerySelectedPlateFilesCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_query_selected_plate_files"
     cli_command = "selected-plate-files"
     kind = CapabilityKind.TOOL
@@ -941,7 +1321,7 @@ class UiQuerySelectedPlateFilesCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiSampleSelectedPlateImageCapability(UiBridgeCliConnectionCapability):
+class UiSampleSelectedPlateImageCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_sample_selected_plate_image"
     cli_command = "selected-plate-sample"
     kind = CapabilityKind.TOOL
@@ -972,7 +1352,7 @@ class UiSampleSelectedPlateImageCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiStreamSelectedPlateFilesToViewerCapability(UiBridgeCliConnectionCapability):
+class UiStreamSelectedPlateFilesToViewerCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_stream_selected_plate_files_to_viewer"
     cli_command = "selected-plate-stream"
     kind = CapabilityKind.TOOL
@@ -1003,7 +1383,7 @@ class UiStreamSelectedPlateFilesToViewerCapability(UiBridgeCliConnectionCapabili
         ),
     )
 
-class ArchitectureTopicsResourceCapability(AgentCapabilityDeclaration):
+class ArchitectureTopicsResourceCapability(ArchitectureCapability):
     name = "openhcs://architecture/topics"
     kind = CapabilityKind.RESOURCE
     title = "Architecture topics"
@@ -1015,7 +1395,7 @@ class ArchitectureTopicsResourceCapability(AgentCapabilityDeclaration):
         method=lambda service: service.list_topics(),
     )
 
-class ListArchitectureTopicsCapability(AgentCapabilityDeclaration):
+class ListArchitectureTopicsCapability(ArchitectureCapability):
     name = "openhcs_list_architecture_topics"
     cli_command = "architecture"
     kind = CapabilityKind.TOOL
@@ -1028,7 +1408,7 @@ class ListArchitectureTopicsCapability(AgentCapabilityDeclaration):
         method=lambda service: service.list_topics(),
     )
 
-class ExplainArchitectureCapability(AgentCapabilityDeclaration):
+class ExplainArchitectureCapability(ArchitectureCapability):
     name = "openhcs_explain_architecture"
     cli_command = "architecture-topic"
     cli_aliases = ("explain-architecture",)
@@ -1043,7 +1423,7 @@ class ExplainArchitectureCapability(AgentCapabilityDeclaration):
         method=lambda service, value: service.explain_topic(value),
     )
 
-class DescribeInternalSymbolCapability(AgentCapabilityDeclaration):
+class DescribeInternalSymbolCapability(ArchitectureCapability):
     name = "openhcs_describe_internal_symbol"
     cli_command = "internal-symbol"
     cli_aliases = ("architecture-symbol",)
@@ -1058,7 +1438,7 @@ class DescribeInternalSymbolCapability(AgentCapabilityDeclaration):
         method=lambda service, value: service.describe_internal_symbol(value),
     )
 
-class DescribeConfigSchemaCapability(AgentCapabilityDeclaration):
+class DescribeConfigSchemaCapability(ConfigDraftCapability):
     name = "openhcs_describe_config_schema"
     kind = CapabilityKind.TOOL
     title = "Describe configuration schema"
@@ -1071,7 +1451,7 @@ class DescribeConfigSchemaCapability(AgentCapabilityDeclaration):
         method=lambda service, value: service.describe_schema(value),
     )
 
-class CreateConfigCapability(AgentCapabilityDeclaration):
+class CreateConfigCapability(ConfigDraftCapability):
     name = "openhcs_create_config"
     kind = CapabilityKind.TOOL
     title = "Create configuration"
@@ -1089,12 +1469,15 @@ class CreateConfigCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class ValidateConfigPatchCapability(AgentCapabilityDeclaration):
+class ValidateConfigPatchCapability(ConfigDraftCapability):
     name = "openhcs_validate_config_patch"
     kind = CapabilityKind.TOOL
     title = "Validate configuration patch"
     description = "Validates that a config patch can instantiate the target OpenHCS config class."
     service = "config"
+    exposition = ConfigDraftCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.VALIDATION,
+    )
     input_contract = agent_dto.ConfigPatch
     output_contract = agent_dto.ConfigValidationResult
     request_invocation = AgentConfigPatchServiceInvocation(
@@ -1105,7 +1488,7 @@ class ValidateConfigPatchCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class RenderConfigSourceCapability(AgentCapabilityDeclaration):
+class RenderConfigSourceCapability(ConfigDraftCapability):
     name = "openhcs_render_config_source"
     kind = CapabilityKind.TOOL
     title = "Render configuration source"
@@ -1121,7 +1504,7 @@ class RenderConfigSourceCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class CreatePipelineCapability(AgentCapabilityDeclaration):
+class CreatePipelineCapability(PipelineDraftCapability):
     name = "openhcs_create_pipeline"
     kind = CapabilityKind.TOOL
     title = "Create draft pipeline"
@@ -1135,7 +1518,7 @@ class CreatePipelineCapability(AgentCapabilityDeclaration):
         method=lambda service: service.create_pipeline(),
     )
 
-class AddFunctionStepCapability(AgentCapabilityDeclaration):
+class AddFunctionStepCapability(PipelineDraftCapability):
     name = "openhcs_add_function_step"
     kind = CapabilityKind.TOOL
     title = "Add FunctionStep"
@@ -1150,12 +1533,15 @@ class AddFunctionStepCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.add_function_step_from_request(request),
     )
 
-class ValidatePipelineCapability(AgentCapabilityDeclaration):
+class ValidatePipelineCapability(PipelineDraftCapability):
     name = "openhcs_validate_pipeline"
     kind = CapabilityKind.TOOL
     title = "Validate draft pipeline"
     description = "Validates function references and converts the draft into OpenHCS FunctionStep objects."
     service = "pipeline_authoring"
+    exposition = PipelineDraftCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.VALIDATION,
+    )
     input_contract = agent_dto.PipelineValidationRequest
     output_contract = agent_dto.PipelineValidationResult
     request_invocation = AgentDataclassRequestServiceInvocation(
@@ -1163,7 +1549,7 @@ class ValidatePipelineCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.validate(request.pipeline_id),
     )
 
-class RenderPipelineSourceCapability(AgentCapabilityDeclaration):
+class RenderPipelineSourceCapability(PipelineDraftCapability):
     name = "openhcs_render_pipeline_source"
     kind = CapabilityKind.TOOL
     title = "Render pipeline source"
@@ -1179,7 +1565,7 @@ class RenderPipelineSourceCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class CreateOrchestratorSessionCapability(AgentCapabilityDeclaration):
+class CreateOrchestratorSessionCapability(HeadlessExecutionCapability):
     name = "openhcs_create_orchestrator_session"
     kind = CapabilityKind.TOOL
     title = "Create orchestrator session"
@@ -1198,7 +1584,7 @@ class CreateOrchestratorSessionCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.create_session_from_request(request),
     )
 
-class CreateOrchestratorSessionFromPipelineSourceCapability(AgentCapabilityDeclaration):
+class CreateOrchestratorSessionFromPipelineSourceCapability(HeadlessExecutionCapability):
     name = "openhcs_create_orchestrator_session_from_pipeline_source"
     kind = CapabilityKind.TOOL
     title = "Create source-backed orchestrator session"
@@ -1220,7 +1606,7 @@ class CreateOrchestratorSessionFromPipelineSourceCapability(AgentCapabilityDecla
         ),
     )
 
-class GetOrchestratorSessionCapability(AgentCapabilityDeclaration):
+class GetOrchestratorSessionCapability(HeadlessExecutionCapability):
     name = "openhcs_get_orchestrator_session"
     kind = CapabilityKind.TOOL
     title = "Get orchestrator session"
@@ -1233,7 +1619,7 @@ class GetOrchestratorSessionCapability(AgentCapabilityDeclaration):
         method=lambda service, request: service.get_session_from_request(request),
     )
 
-class InspectPipelineSourceArtifactPlanCapability(AgentCapabilityDeclaration):
+class InspectPipelineSourceArtifactPlanCapability(PipelineDraftCapability):
     name = "openhcs_inspect_pipeline_source_artifact_plan"
     cli_command = "artifact-plan"
     kind = CapabilityKind.TOOL
@@ -1244,6 +1630,9 @@ class InspectPipelineSourceArtifactPlanCapability(AgentCapabilityDeclaration):
         "path, and artifact-output plans."
     )
     service = "execution_session"
+    exposition = PipelineDraftCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.VALIDATION,
+    )
     input_contract = agent_dto.PipelineSourceArtifactPlanInspectionRequest
     output_contract = agent_dto.ArtifactPlanInspection
     request_invocation = AgentFromFieldsServiceInvocation(
@@ -1253,7 +1642,7 @@ class InspectPipelineSourceArtifactPlanCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class SubmitCompileCapability(AgentCapabilityDeclaration):
+class SubmitCompileCapability(HeadlessExecutionCapability):
     name = "openhcs_submit_compile"
     kind = CapabilityKind.TOOL
     title = "Submit compile job"
@@ -1278,7 +1667,7 @@ class SubmitCompileCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class SubmitPipelineExecutionCapability(AgentCapabilityDeclaration):
+class SubmitPipelineExecutionCapability(HeadlessExecutionCapability):
     name = "openhcs_submit_pipeline_execution"
     kind = CapabilityKind.TOOL
     title = "Submit pipeline execution"
@@ -1305,7 +1694,7 @@ class SubmitPipelineExecutionCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class GetExecutionStatusCapability(AgentCapabilityDeclaration):
+class GetExecutionStatusCapability(SubmittedJobCapability):
     name = "openhcs_get_execution_status"
     kind = CapabilityKind.TOOL
     title = "Get execution status"
@@ -1530,6 +1919,10 @@ class ProbeViewerWindowCapability(ViewerWindowCliConnectionCapability):
     title = "Probe viewer window"
     description = "Quickly reports whether a running OpenHCS viewer control endpoint is reachable."
     service = "viewer_window"
+    exposition = ViewerWindowCliConnectionCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.DIAGNOSTIC,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
     runtime_requirements = ("running_openhcs_viewer_server",)
     data_exposure = ("viewer_identity", "viewer_layer_counts")
     input_contract = agent_dto.ViewerWindowStateRequest
@@ -1562,12 +1955,16 @@ class ValidateViewerWindowStateCapability(ViewerWindowCliConnectionCapability):
         method=lambda service, request: service.validation_summary(request),
     )
 
-class UiListBridgesCapability(AgentCapabilityDeclaration):
+class UiListBridgesCapability(UiBridgeCapability):
     name = "openhcs_ui_list_bridges"
     kind = CapabilityKind.TOOL
     title = "List UI bridges"
     description = "Lists local OpenHCS PyQt UI bridge descriptor summaries visible to this user."
     service = "ui_bridge"
+    exposition = UiBridgeCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.DIAGNOSTIC,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
     data_exposure = ("local_ui_bridge_descriptor_paths",)
     output_contract = agent_dto.UiBridgeCatalog
     no_argument_invocation = AgentNoArgumentServiceInvocation(
@@ -1582,6 +1979,10 @@ class UiBridgeStatusCapability(UiBridgeCliConnectionCapability):
     title = "Get UI bridge status"
     description = "Reports whether a local running OpenHCS PyQt UI bridge is reachable."
     service = "ui_bridge"
+    exposition = UiBridgeCliConnectionCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.DIAGNOSTIC,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     output_contract = agent_dto.UiBridgeStatus
     connection_invocation = AgentConnectionServiceInvocation(
@@ -1589,7 +1990,7 @@ class UiBridgeStatusCapability(UiBridgeCliConnectionCapability):
         method=lambda service, connection: service.status(connection),
     )
 
-class UiListCodeDocumentsCapability(UiBridgeCliConnectionCapability):
+class UiListCodeDocumentsCapability(UiCodeDocumentCapability):
     name = "openhcs_ui_list_code_documents"
     cli_command = "code-documents"
     kind = CapabilityKind.TOOL
@@ -1600,24 +2001,32 @@ class UiListCodeDocumentsCapability(UiBridgeCliConnectionCapability):
     security_requirements = ("ui_bridge_auth_token",)
     output_contract = agent_dto.UiCodeDocumentCatalog
 
-class UiListStateSurfacesCapability(UiBridgeCliConnectionCapability):
+class UiListStateSurfacesCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_list_state_surfaces"
     cli_command = "state-surfaces"
     kind = CapabilityKind.TOOL
     title = "List UI state surfaces"
     description = "Lists pollable UI state surfaces with flat surface_id values."
     service = "ui_bridge"
+    exposition = UiSelectedPlateCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.STATUS,
+        role=CapabilityRole.PRIMARY,
+    )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
     output_contract = agent_dto.UiStateSurfaceCatalog
 
-class UiGetStateSurfaceCapability(UiBridgeCliConnectionCapability):
+class UiGetStateSurfaceCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_get_state_surface"
     cli_command = "state-surface"
     kind = CapabilityKind.TOOL
     title = "Get UI state surface"
     description = "Reads or polls one typed UI state surface such as plate-manager status rows."
     service = "ui_bridge"
+    exposition = UiSelectedPlateCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.STATUS,
+        role=CapabilityRole.PRIMARY,
+    )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     data_exposure = ("local_paths",)
     security_requirements = ("ui_bridge_auth_token",)
@@ -1631,7 +2040,7 @@ class UiGetStateSurfaceCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiListActionsCapability(UiBridgeCliConnectionCapability):
+class UiListActionsCapability(UiSemanticActionCapability):
     name = "openhcs_ui_list_actions"
     cli_command = "actions"
     kind = CapabilityKind.TOOL
@@ -1642,7 +2051,7 @@ class UiListActionsCapability(UiBridgeCliConnectionCapability):
     security_requirements = ("ui_bridge_auth_token",)
     output_contract = agent_dto.UiActionCatalog
 
-class UiInvokeActionCapability(UiBridgeCliConnectionCapability):
+class UiInvokeActionCapability(UiSemanticActionCapability):
     name = "openhcs_ui_invoke_action"
     cli_command = "invoke-action"
     kind = CapabilityKind.TOOL
@@ -1664,7 +2073,7 @@ class UiInvokeActionCapability(UiBridgeCliConnectionCapability):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiSelectedPlateWorkflowCapability(UiBridgeCliConnectionCapability):
+class UiSelectedPlateWorkflowCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_selected_plate_workflow"
     cli_command = "selected-workflow"
     kind = CapabilityKind.TOOL
@@ -1675,6 +2084,10 @@ class UiSelectedPlateWorkflowCapability(UiBridgeCliConnectionCapability):
         "ObjectState snapshots, selected state, and output-plate auto-add."
     )
     service = "ui_bridge"
+    exposition = UiSelectedPlateCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.EXECUTION,
+        role=CapabilityRole.PRIMARY,
+    )
     mutating = True
     side_effects = ("may_mutate_running_ui_state", "may_start_ui_workflow")
     runtime_requirements = ("running_openhcs_ui_bridge",)
@@ -1690,7 +2103,7 @@ class UiSelectedPlateWorkflowCapability(UiBridgeCliConnectionCapability):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiListWindowsCapability(UiBridgeCliConnectionCapability):
+class UiListWindowsCapability(UiWindowCapability):
     name = "openhcs_ui_list_windows"
     cli_command = "windows"
     kind = CapabilityKind.TOOL
@@ -1701,7 +2114,7 @@ class UiListWindowsCapability(UiBridgeCliConnectionCapability):
     security_requirements = ("ui_bridge_auth_token",)
     output_contract = agent_dto.UiWindowCatalog
 
-class UiFocusWindowCapability(AgentCapabilityDeclaration):
+class UiFocusWindowCapability(UiWindowCapability):
     name = "openhcs_ui_focus_window"
     kind = CapabilityKind.TOOL
     title = "Focus UI window"
@@ -1722,7 +2135,7 @@ class UiFocusWindowCapability(AgentCapabilityDeclaration):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiNavigateWindowCapability(AgentCapabilityDeclaration):
+class UiNavigateWindowCapability(UiWindowCapability):
     name = "openhcs_ui_navigate_window"
     kind = CapabilityKind.TOOL
     title = "Navigate UI window"
@@ -1743,7 +2156,7 @@ class UiNavigateWindowCapability(AgentCapabilityDeclaration):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiCloseWindowCapability(AgentCapabilityDeclaration):
+class UiCloseWindowCapability(UiWindowCapability):
     name = "openhcs_ui_close_window"
     kind = CapabilityKind.TOOL
     title = "Close UI window"
@@ -1764,7 +2177,7 @@ class UiCloseWindowCapability(AgentCapabilityDeclaration):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiSnapshotWindowCapability(UiBridgeCliConnectionCapability):
+class UiSnapshotWindowCapability(UiWindowCapability):
     name = "openhcs_ui_snapshot_window"
     cli_command = "window-snapshot"
     kind = CapabilityKind.TOOL
@@ -1787,7 +2200,7 @@ class UiSnapshotWindowCapability(UiBridgeCliConnectionCapability):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiGetWidgetTreeCapability(UiBridgeCliConnectionCapability):
+class UiGetWidgetTreeCapability(UiWidgetFallbackCapability):
     name = "openhcs_ui_get_widget_tree"
     cli_command = "widget-tree"
     kind = CapabilityKind.TOOL
@@ -1811,7 +2224,7 @@ class UiGetWidgetTreeCapability(UiBridgeCliConnectionCapability):
     input_contract = agent_dto.UiWidgetTreeRequest
     output_contract = agent_dto.UiWidgetTreeResult
 
-class UiInvokeWidgetActionCapability(UiBridgeCliConnectionCapability):
+class UiInvokeWidgetActionCapability(UiWidgetFallbackCapability):
     name = "openhcs_ui_invoke_widget_action"
     cli_command = "invoke-widget-action"
     kind = CapabilityKind.TOOL
@@ -1836,7 +2249,7 @@ class UiInvokeWidgetActionCapability(UiBridgeCliConnectionCapability):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiListObjectStateScopesCapability(UiBridgeCliConnectionCapability):
+class UiListObjectStateScopesCapability(UiObjectStateCapability):
     name = "openhcs_ui_list_object_state_scopes"
     cli_command = "object-state-scopes"
     kind = CapabilityKind.TOOL
@@ -1865,7 +2278,7 @@ class UiListObjectStateScopesCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiGetObjectStateFieldsCapability(UiBridgeCliConnectionCapability):
+class UiGetObjectStateFieldsCapability(UiObjectStateCapability):
     name = "openhcs_ui_get_object_state_fields"
     cli_command = "object-state-fields"
     kind = CapabilityKind.TOOL
@@ -1893,7 +2306,7 @@ class UiGetObjectStateFieldsCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiDescribeObjectStateFieldCapability(UiBridgeCliConnectionCapability):
+class UiDescribeObjectStateFieldCapability(UiObjectStateCapability):
     name = "openhcs_ui_describe_object_state_field"
     cli_command = "object-state-field-help"
     cli_aliases = ("object-state-help", "field-help")
@@ -1924,7 +2337,7 @@ class UiDescribeObjectStateFieldCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiMutateObjectStateFieldCapability(UiBridgeCliConnectionCapability):
+class UiMutateObjectStateFieldCapability(UiObjectStateCapability):
     name = "openhcs_ui_mutate_object_state_field"
     cli_command = "object-state-set"
     cli_aliases = ("object-state-edit", "object-state-mutate")
@@ -1958,7 +2371,7 @@ class UiMutateObjectStateFieldCapability(UiBridgeCliConnectionCapability):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiGetCodeDocumentCapability(UiBridgeCliConnectionCapability):
+class UiGetCodeDocumentCapability(UiCodeDocumentCapability):
     name = "openhcs_ui_get_code_document"
     cli_command = "code-document"
     cli_aliases = ("get-code-document",)
@@ -1983,7 +2396,7 @@ class UiGetCodeDocumentCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiValidateCodeDocumentCapability(UiBridgeCliConnectionCapability):
+class UiValidateCodeDocumentCapability(UiCodeDocumentCapability):
     name = "openhcs_ui_validate_code_document"
     cli_command = "validate-code-document"
     kind = CapabilityKind.TOOL
@@ -2003,7 +2416,7 @@ class UiValidateCodeDocumentCapability(UiBridgeCliConnectionCapability):
         ),
     )
 
-class UiApplyCodeDocumentCapability(UiBridgeCliConnectionCapability):
+class UiApplyCodeDocumentCapability(UiCodeDocumentCapability):
     name = "openhcs_ui_apply_code_document"
     cli_command = "apply-code-document"
     kind = CapabilityKind.TOOL
@@ -2035,7 +2448,7 @@ class UiApplyCodeDocumentCapability(UiBridgeCliConnectionCapability):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiListSnapshotsCapability(AgentCapabilityDeclaration):
+class UiListSnapshotsCapability(UiSnapshotCapability):
     name = "openhcs_ui_list_snapshots"
     kind = CapabilityKind.TOOL
     title = "List UI snapshots"
@@ -2053,7 +2466,7 @@ class UiListSnapshotsCapability(AgentCapabilityDeclaration):
         ),
     )
 
-class UiRestoreSnapshotCapability(AgentCapabilityDeclaration):
+class UiRestoreSnapshotCapability(UiSnapshotCapability):
     name = "openhcs_ui_restore_snapshot"
     kind = CapabilityKind.TOOL
     title = "Restore UI snapshot"
@@ -2074,7 +2487,7 @@ class UiRestoreSnapshotCapability(AgentCapabilityDeclaration):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiTimeTravelHeadCapability(AgentCapabilityDeclaration):
+class UiTimeTravelHeadCapability(UiSnapshotCapability):
     name = "openhcs_ui_time_travel_head"
     kind = CapabilityKind.TOOL
     title = "Return UI to current head"
@@ -2095,7 +2508,7 @@ class UiTimeTravelHeadCapability(AgentCapabilityDeclaration):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiListBranchesCapability(AgentCapabilityDeclaration):
+class UiListBranchesCapability(UiSnapshotCapability):
     name = "openhcs_ui_list_branches"
     kind = CapabilityKind.TOOL
     title = "List UI snapshot branches"
@@ -2109,7 +2522,7 @@ class UiListBranchesCapability(AgentCapabilityDeclaration):
         method=lambda service, connection: service.list_branches(connection),
     )
 
-class UiSwitchBranchCapability(AgentCapabilityDeclaration):
+class UiSwitchBranchCapability(UiSnapshotCapability):
     name = "openhcs_ui_switch_branch"
     kind = CapabilityKind.TOOL
     title = "Switch UI snapshot branch"
@@ -2130,12 +2543,16 @@ class UiSwitchBranchCapability(AgentCapabilityDeclaration):
         timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
-class UiGetOperationStatusCapability(AgentCapabilityDeclaration):
+class UiGetOperationStatusCapability(UiBridgeCliConnectionCapability):
     name = "openhcs_ui_get_operation_status"
     kind = CapabilityKind.TOOL
     title = "Get UI bridge operation status"
     description = "Returns status for an active or recent running-UI bridge operation."
     service = "ui_bridge"
+    exposition = UiBridgeCliConnectionCapability.exposition.refine(
+        workflow_stage=CapabilityWorkflowStage.STATUS,
+        role=CapabilityRole.DIAGNOSTIC,
+    )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
     input_contract = OPERATION_ID_INPUT
@@ -2160,6 +2577,39 @@ def _declared_capabilities() -> tuple[AgentCapabilitySpec, ...]:
     )
 
 
+def _capability_groups(
+    capabilities: tuple[AgentCapabilitySpec, ...],
+) -> tuple[AgentCapabilityGroup, ...]:
+    groups: list[AgentCapabilityGroup] = []
+    for workflow_group in CapabilityWorkflowGroup:
+        grouped_capabilities = tuple(
+            capability
+            for capability in capabilities
+            if capability.workflow_group is workflow_group
+        )
+        if not grouped_capabilities:
+            continue
+        groups.append(
+            AgentCapabilityGroup(
+                workflow_group=workflow_group,
+                capability_names=tuple(
+                    capability.name for capability in grouped_capabilities
+                ),
+                tool_count=sum(
+                    1
+                    for capability in grouped_capabilities
+                    if capability.kind is CapabilityKind.TOOL
+                ),
+                resource_count=sum(
+                    1
+                    for capability in grouped_capabilities
+                    if capability.kind is CapabilityKind.RESOURCE
+                ),
+            )
+        )
+    return tuple(groups)
+
+
 CAPABILITIES: tuple[AgentCapabilitySpec, ...] = _declared_capabilities()
 
 
@@ -2180,6 +2630,7 @@ def get_capability_registry() -> AgentCapabilityRegistry:
     return AgentCapabilityRegistry(
         schema_version=SCHEMA_VERSION,
         capabilities=CAPABILITIES,
+        groups=_capability_groups(CAPABILITIES),
     )
 
 
@@ -2216,4 +2667,12 @@ def validate_capability_registry(
             raise ValueError(
                 f"Capability {capability.name!r} declares side_effects but is not "
                 "marked mutating."
+            )
+        if (
+            capability.kind is CapabilityKind.TOOL
+            and capability.exposition is None
+        ):
+            raise ValueError(
+                f"Tool {capability.name!r} must declare "
+                f"{AgentCapabilityExposition.__name__}."
             )

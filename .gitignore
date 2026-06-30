@@ -123,6 +123,7 @@ dmypy.json
 output/
 *.json
 !examples/*.json
+!docs/source/development/mcp_knowledge_base_manifest.json
 !benchmark/manifests/official23_plus_monolayer.json
 !benchmark/manifests/extra_provided_not_in_23_axis1.json
 !benchmark/manifests/official23_plus_extra6_axis1.json

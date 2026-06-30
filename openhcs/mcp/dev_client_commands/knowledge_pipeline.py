@@ -12,7 +12,10 @@ from openhcs.agent.dto.authoring import AuthoringContextRequest
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.functions import FunctionDetailRequest, FunctionSearchRequest
-from openhcs.agent.services.llm_context_service import AuthoringContextKind
+from openhcs.agent.services.llm_context_service import (
+    AuthoringContextDeclaration,
+    PipelineAuthoringContext,
+)
 from openhcs.agent.serialization import to_jsonable
 from openhcs.mcp.dev_client_commanding import McpDevCommandSpec, SingleToolCommandSpec
 from openhcs.mcp.dev_client_core import (
@@ -228,10 +231,14 @@ class AuthoringContextCommandSpec(SingleToolCommandSpec):
             "--kind",
             "--topic",
             dest="kind",
-            default=AuthoringContextKind.PIPELINE.value,
-            choices=AuthoringContextKind.allowed_values(),
+            default=PipelineAuthoringContext.require_kind(),
+            choices=AuthoringContextDeclaration.allowed_values(),
         )
-        parser.add_argument("--max-chars", type=int, default=2_000)
+        parser.add_argument(
+            "--max-chars",
+            type=int,
+            default=AuthoringContextRequest().max_chars,
+        )
         parser.add_argument(
             "--json",
             action="store_true",
@@ -263,7 +270,10 @@ class AuthoringContextCommandSpec(SingleToolCommandSpec):
     ) -> argparse.Namespace:
         return argparse.Namespace(
             json=False,
-            max_chars=optional_int(tool_arguments.get("max_chars")) or 2_000,
+            max_chars=(
+                optional_int(tool_arguments.get("max_chars"))
+                or AuthoringContextRequest().max_chars
+            ),
         )
 
 class DraftPipelineStepCommandSpec(McpDevCommandSpec):

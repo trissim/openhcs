@@ -2,6 +2,11 @@ from openhcs.agent.capabilities import (
     AgentCapabilitySpec,
     CapabilityCliConnectionProfile,
     CapabilityKind,
+    CapabilityRole,
+    CapabilityTargetContext,
+    CapabilityVisibility,
+    CapabilityWorkflowGroup,
+    CapabilityWorkflowStage,
     get_capability_registry,
     validate_capability_registry,
 )
@@ -48,6 +53,84 @@ def test_mutating_tools_must_declare_side_effects():
         assert "side_effects" in str(exc)
     else:
         raise AssertionError("mutating tools without side effects must fail")
+
+
+def test_tool_capabilities_declare_group_target_and_role_metadata():
+    registry = get_capability_registry()
+
+    tools = [
+        capability
+        for capability in registry.capabilities
+        if capability.kind is CapabilityKind.TOOL
+    ]
+
+    assert tools
+    assert all(capability.workflow_group is not None for capability in tools)
+    assert all(capability.workflow_stage is not None for capability in tools)
+    assert all(capability.target_context is not None for capability in tools)
+    assert all(capability.visibility is not None for capability in tools)
+    assert all(capability.role is not None for capability in tools)
+
+
+def test_capability_registry_groups_are_generated_from_declarations():
+    registry = get_capability_registry()
+
+    grouped_names = {
+        capability_name
+        for group in registry.groups
+        for capability_name in group.capability_names
+    }
+    registry_names = {capability.name for capability in registry.capabilities}
+
+    assert grouped_names == registry_names
+    assert [group.workflow_group for group in registry.groups] == [
+        workflow_group
+        for workflow_group in CapabilityWorkflowGroup
+        if any(
+            capability.workflow_group is workflow_group
+            for capability in registry.capabilities
+        )
+    ]
+
+
+def test_similar_mcp_tool_names_are_disambiguated_by_target_context_and_role():
+    registry = get_capability_registry()
+    capabilities = {capability.name: capability for capability in registry.capabilities}
+
+    assert capabilities["openhcs_sample_plate_image"].target_context is (
+        CapabilityTargetContext.PLATE_PATH
+    )
+    assert capabilities["openhcs_ui_sample_selected_plate_image"].target_context is (
+        CapabilityTargetContext.UI_SELECTED_PLATE
+    )
+    assert capabilities["openhcs_ui_sample_selected_plate_image"].role is (
+        CapabilityRole.MODE_VARIANT
+    )
+    assert capabilities["openhcs_get_execution_status"].target_context is (
+        CapabilityTargetContext.SUBMITTED_JOB
+    )
+    assert capabilities[
+        "openhcs_get_runtime_server_execution_status"
+    ].target_context is CapabilityTargetContext.RUNTIME_SERVER
+    assert capabilities["openhcs_ui_get_operation_status"].target_context is (
+        CapabilityTargetContext.UI_BRIDGE
+    )
+    assert capabilities["openhcs_ui_invoke_action"].role is CapabilityRole.PRIMARY
+    assert capabilities["openhcs_ui_invoke_widget_action"].role is (
+        CapabilityRole.FALLBACK
+    )
+    assert capabilities["openhcs_ui_get_code_document"].workflow_group is (
+        CapabilityWorkflowGroup.UI_STATE_EDITING
+    )
+    assert capabilities["openhcs_ui_get_code_document"].target_context is (
+        CapabilityTargetContext.UI_CODE_DOCUMENT
+    )
+    assert capabilities["openhcs_validate_pipeline"].workflow_stage is (
+        CapabilityWorkflowStage.VALIDATION
+    )
+    assert capabilities["openhcs_ui_mutate_object_state_field"].visibility is (
+        CapabilityVisibility.EXPERT
+    )
 
 
 def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():

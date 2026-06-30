@@ -46,8 +46,8 @@ import openhcs.agent.dto.mcp as agent_mcp_dto
 import openhcs.agent.dto.plate as agent_plate_dto
 import openhcs.agent.dto.ui_bridge as agent_ui_bridge_dto
 import openhcs.agent.dto.viewer as agent_viewer_dto
-import openhcs.agent.services.stdio as agent_stdio
-import openhcs.agent.services.ui_bridge_transport as ui_bridge_transport
+from openhcs.agent.services import stdio as agent_stdio
+from openhcs.agent.services import ui_bridge_transport
 import openhcs.core.viewer_streaming_service as core_viewer_streaming_service
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.execution import (

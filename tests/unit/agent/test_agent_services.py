@@ -7,6 +7,9 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from pyqt_reactive.services.parameter_help_service import (
+    dataclass_parameter_descriptions,
+)
 
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.path_policy import AgentPathPolicy
@@ -1686,13 +1689,30 @@ def test_config_service_reflects_pipeline_schema_without_materializing_lazy_valu
     service = ConfigService()
 
     schema = service.describe_schema("pipeline")
+    shared_descriptions = dataclass_parameter_descriptions(PipelineConfig)
     well_filter = next(
         field for field in schema.fields if field.path == "well_filter_config"
+    )
+    source_bindings = next(
+        field for field in schema.fields if field.path == "source_bindings_config"
+    )
+    path_planning = next(
+        field for field in schema.fields if field.path == "path_planning_config"
     )
 
     assert schema.config_type == "PipelineConfig"
     assert well_filter.lazy is True
     assert well_filter.default_repr.endswith("LazyWellFilterConfig()")
+    assert source_bindings.description == shared_descriptions["source_bindings_config"]
+    assert source_bindings.description == (
+        "Pipeline/plate source-binding defaults and init-time discovery config."
+    )
+    assert path_planning.description == shared_descriptions["path_planning_config"]
+    assert path_planning.description is not None
+    assert path_planning.description.startswith(
+        "Configuration for pipeline path planning"
+    )
+    assert "PathPlanningConfig(" not in path_planning.description
 
 
 def test_config_service_validates_and_renders_config_source():
@@ -2711,3 +2731,70 @@ def test_custom_function_authoring_context_is_not_pipeline_context():
     assert "CORE PIPELINE IMPORTS" not in context.content
     assert "CONFIG SCHEMA HINTS" not in context.content
     assert "REGISTERED OPENHCS FUNCTIONS" not in context.content
+
+
+def test_first_use_authoring_context_frontloads_core_model():
+    context = AgentAuthoringContextService().get_authoring_context("first_use")
+
+    assert context.kind == "first_use"
+    assert context.content.startswith("=== OPENHCS CORE MODEL ===")
+    assert "Data/source model" in context.content
+    assert "Axis/component model" in context.content
+    assert "Pipeline/function model" in context.content
+    assert "CellProfiler compatibility model" in context.content
+    assert "Source-universe model" in context.content
+    assert "Runtime artifact/sidecar model" in context.content
+    assert "Config/ObjectState model" in context.content
+    assert "Compiler/artifact model" in context.content
+    assert "Runtime/UI model" in context.content
+    assert "UI/code biconversion model" in context.content
+    assert "Review model" in context.content
+    assert "If you do not already know OpenHCS" in context.content
+    assert "read the ``first_use`` authoring context" in context.content
+    assert "=== CELLPROFILER COMPATIBILITY MODEL ===" in context.content
+    assert "first-class CellProfiler compatibility" in context.content
+    assert "official30 native" in context.content
+    assert "CellProfiler reference set" in context.content
+    assert "compiler/runtime model" in context.content
+    assert "=== ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL ===" in context.content
+    assert "SourceUniverseRequest" in context.content
+    assert "ArtifactSpec" in context.content
+    assert "ArtifactSidecarRole" in context.content
+    assert "UI-reflected objects can be edited" in context.content
+    assert "code documents are live typed pycodified projections" in context.content
+    assert "not standalone scripts" in context.content
+    assert "revision tokens" in context.content
+    assert context.content.index("=== OPENHCS CORE MODEL ===") < context.content.index(
+        "=== CELLPROFILER COMPATIBILITY MODEL ==="
+    )
+    assert context.content.index(
+        "=== CELLPROFILER COMPATIBILITY MODEL ==="
+    ) < context.content.index(
+        "=== ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL ==="
+    )
+    assert context.content.index(
+        "=== ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL ==="
+    ) < context.content.index(
+        "=== FIRST-USE OPERATIONAL ROUTES ==="
+    )
+    assert context.content.index(
+        "=== FIRST-USE OPERATIONAL ROUTES ==="
+    ) < context.content.index("=== FOLDER ONBOARDING WORKFLOW ===")
+    assert context.content.index("=== FOLDER ONBOARDING WORKFLOW ===") < context.content.index(
+        "=== UI-VISIBLE WORKFLOW ==="
+    )
+    assert context.content.index("=== UI-VISIBLE WORKFLOW ===") < context.content.index(
+        "=== VIEWER REVIEW WORKFLOW ==="
+    )
+    assert context.content.index("=== VIEWER REVIEW WORKFLOW ===") < context.content.index(
+        "=== CAPABILITY GROUPS ==="
+    )
+
+
+def test_domain_expert_context_points_unknown_agents_to_first_use():
+    context = AgentAuthoringContextService().get_authoring_context(
+        "domain_expert_assisted_setup"
+    )
+
+    assert context.kind == "domain_expert_assisted_setup"
+    assert 'openhcs_get_authoring_context(kind="first_use") first' in context.content

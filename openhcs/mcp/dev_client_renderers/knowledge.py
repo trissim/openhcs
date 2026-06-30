@@ -7,6 +7,11 @@ from collections.abc import Mapping
 from typing import ClassVar
 
 from openhcs.agent import dto as agent_dto
+from openhcs.agent.capabilities import (
+    AgentCapabilitySpec,
+    CapabilityWorkflowGroup,
+    get_agent_capability,
+)
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.mcp.dev_client_rendering import (
     AuthoringContextRenderOptions,
@@ -31,11 +36,12 @@ class ToolListRenderer:
         *,
         contains: str | None = None,
         limit: int = 80,
+        grouped: bool = True,
     ) -> str:
         errors = McpDevPayloadProjection.sequence_of_mappings(response.get("errors"))
         if errors:
             return "\n".join(
-                ("Tools: failed", *RuntimeServerRenderer._error_lines(errors))
+                ("Tools: failed", *ViewerValidationRenderer._error_lines(errors))
             )
         tools = McpDevPayloadProjection.sequence_of_mappings(response.get("tools"))
         if contains:
@@ -60,7 +66,10 @@ class ToolListRenderer:
             lines.append(f"Filter: contains={contains}")
         if visible_tools:
             lines.append("Tool names:")
-            lines.extend(cls._tool_lines(visible_tools))
+            if grouped:
+                lines.extend(cls._grouped_tool_lines(visible_tools))
+            else:
+                lines.extend(cls._tool_lines(visible_tools))
         if len(visible_tools) < len(tools):
             lines.append(f"...<truncated {len(tools) - len(visible_tools)} tools>")
         return "\n".join(lines)
@@ -75,6 +84,45 @@ class ToolListRenderer:
                 f"{McpDevPayloadProjection.text(tool.get('description'))}"
             )
         return lines
+
+    @classmethod
+    def _grouped_tool_lines(
+        cls,
+        tools: tuple[Mapping[str, JsonValue], ...],
+    ) -> list[str]:
+        entries = tuple(
+            (tool, cls._capability_for_tool(tool))
+            for tool in tools
+        )
+        lines: list[str] = []
+        for workflow_group in CapabilityWorkflowGroup:
+            group_entries = tuple(
+                (tool, capability)
+                for tool, capability in entries
+                if capability is not None
+                and capability.workflow_group is workflow_group
+            )
+            if not group_entries:
+                continue
+            lines.append(f"[{workflow_group.title}]")
+            lines.extend(cls._tool_lines(tuple(tool for tool, _ in group_entries)))
+        ungrouped_tools = tuple(
+            tool for tool, capability in entries if capability is None
+        )
+        if ungrouped_tools:
+            lines.append("[Ungrouped]")
+            lines.extend(cls._tool_lines(ungrouped_tools))
+        return lines
+
+    @staticmethod
+    def _capability_for_tool(
+        tool: Mapping[str, JsonValue],
+    ) -> AgentCapabilitySpec | None:
+        tool_name = McpDevPayloadProjection.text(tool.get("name"))
+        try:
+            return get_agent_capability(tool_name)
+        except KeyError:
+            return None
 
 class KnowledgeCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for knowledge-base document catalogs."""

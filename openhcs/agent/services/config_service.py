@@ -12,6 +12,7 @@ from typing import Annotated, ClassVar, TypeAlias, Union, get_args, get_origin
 
 from metaclass_registry import AutoRegisterMeta
 from objectstate import get_base_type_for_lazy
+from pyqt_reactive.services.parameter_help_service import dataclass_parameter_descriptions
 
 from openhcs.agent.dto.common import (
     AgentError,
@@ -281,10 +282,17 @@ def _unwrap_annotated(field_type):
 def _field_schema(cls: type) -> tuple[ConfigFieldSchema, ...]:
     if not is_dataclass(cls):
         raise TypeError(f"{cls.__name__} is not a dataclass config type")
-    return tuple(_schema_for_field(cls, field) for field in fields(cls))
+    field_descriptions = dataclass_parameter_descriptions(cls)
+    return tuple(
+        _schema_for_field(field, field_descriptions)
+        for field in fields(cls)
+    )
 
 
-def _schema_for_field(cls: type, field) -> ConfigFieldSchema:
+def _schema_for_field(
+    field,
+    field_descriptions: Mapping[str, str],
+) -> ConfigFieldSchema:
     field_type = field.type
     lazy_base = _lazy_base_type(field_type)
     ui_hidden = False
@@ -295,7 +303,7 @@ def _schema_for_field(cls: type, field) -> ConfigFieldSchema:
         type_repr=_type_repr(field_type),
         default_repr=_default_repr(field),
         required=_is_required(field),
-        description=None,
+        description=field_descriptions.get(field.name),
         enum_values=_enum_values(lazy_base or field_type),
         ui_hidden=ui_hidden,
         lazy=lazy_base is not None,

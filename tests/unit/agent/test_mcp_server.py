@@ -298,6 +298,8 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "bounded" in descriptions["openhcs_describe_function"]
     assert "max_doc_chars" in schemas["openhcs_describe_function"]["properties"]
     assert "compact_signature" in schemas["openhcs_describe_function"]["properties"]
+    assert "kind='first_use'" in descriptions["openhcs_get_authoring_context"]
+    assert "before choosing tools" in descriptions["openhcs_get_authoring_context"]
     assert "CustomFunctionManager" in descriptions["openhcs_register_custom_function"]
     custom_function_properties = schemas["openhcs_register_custom_function"]["properties"]
     assert "source_code" in custom_function_properties
@@ -948,6 +950,10 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
     )
     assert any(
         path.endswith("docs/plans/openhcs_mcp_agent_knowledge_base_20260625.md")
+        for path in watched_paths
+    )
+    assert any(
+        path.endswith("docs/source/concepts/core_model.rst")
         for path in watched_paths
     )
     assert any(
@@ -3229,9 +3235,40 @@ def test_mcp_dev_client_tools_command_renders_compact_filtered_list():
 
     assert "Tools: matched=2 total=3 shown=1" in rendered
     assert "Filter: contains=viewer" in rendered
+    assert "[Viewer Review]" in rendered
     assert "- openhcs_get_viewer_window_state: Read bounded viewer state." in rendered
     assert "...<truncated 1 tools>" in rendered
     assert "input_schema" not in rendered
+
+
+def test_mcp_dev_client_tools_command_can_render_flat_list():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    parser = dev_client._build_parser()
+    args = parser.parse_args(("tools", "--flat"))
+    response = {
+        "errors": [],
+        "tool_count": 1,
+        "tools": [
+            {
+                "name": "openhcs_get_viewer_window_state",
+                "description": "Read bounded viewer state.",
+                "input_schema": {},
+            },
+        ],
+    }
+
+    rendered = dev_client.McpDevCommandSpec.for_name("tools").render_response(
+        response,
+        args,
+    )
+
+    assert "Tools: matched=1 total=1 shown=1" in rendered
+    assert "[Viewer Review]" not in rendered
+    assert "- openhcs_get_viewer_window_state: Read bounded viewer state." in rendered
 
 
 def test_mcp_dev_client_knowledge_command_renders_compact_catalog():
@@ -3715,7 +3752,19 @@ def test_mcp_dev_client_authoring_context_kind_choices_are_explicit(capsys):
         parser.parse_args(("authoring-context", "--help"))
     assert help_exit.value.code == 0
     help_text = capsys.readouterr().out
-    assert "{pipeline,custom_function}" in help_text
+    for kind in (
+        "pipeline",
+        "custom_function",
+        "first_use",
+        "folder_onboarding",
+        "domain_expert_assisted_setup",
+        "ui_visible_workflow",
+        "headless_execution",
+        "viewer_review",
+        "objectstate_editing",
+        "cellprofiler_translation",
+    ):
+        assert kind in help_text
 
     with pytest.raises(SystemExit):
         parser.parse_args(("authoring-context", "--kind", "function"))

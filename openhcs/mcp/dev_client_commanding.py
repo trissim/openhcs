@@ -217,6 +217,11 @@ class ToolsCommandSpec(McpDevCommandSpec):
         parser.add_argument("--contains")
         parser.add_argument("--limit", type=int, default=80)
         parser.add_argument(
+            "--flat",
+            action="store_true",
+            help="Render a flat tool list instead of grouping by capability declarations.",
+        )
+        parser.add_argument(
             "--json",
             action="store_true",
             help="Render the complete MCP JSON response instead of a compact summary.",
@@ -246,6 +251,7 @@ class ToolsCommandSpec(McpDevCommandSpec):
             payload,
             contains=args.contains,
             limit=args.limit,
+            grouped=not args.flat,
         )
 
     def call_render_args(
@@ -253,7 +259,7 @@ class ToolsCommandSpec(McpDevCommandSpec):
         tool_arguments: Mapping[str, JsonValue],
     ) -> argparse.Namespace:
         del tool_arguments
-        return argparse.Namespace(json=False, contains=None, limit=20)
+        return argparse.Namespace(json=False, contains=None, limit=20, flat=False)
 
 
 class SingleToolCommandSpec(CapabilityBackedCommandSpec):

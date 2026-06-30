@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import ClassVar, Protocol, cast
 
 from openhcs.agent.dto.common import (
     AgentError,
@@ -49,6 +50,36 @@ class KnowledgeBaseIssueCode(str, Enum):
 @dataclass(frozen=True, slots=True)
 class KnowledgeBaseDocumentSpec:
     document: KnowledgeBaseDocumentSummary
+
+
+class _ComparisonManifestPathResolverLike(Protocol):
+    def resolve(self, raw_case: Mapping[str, JsonValue], path_key: str) -> Path:
+        """Resolve one case path through benchmark manifest path roots."""
+
+
+class _ComparisonManifestLike(Protocol):
+    path_resolver: _ComparisonManifestPathResolverLike
+
+
+@dataclass(frozen=True, slots=True)
+class _Official30CaseModuleInventory:
+    case_name: str
+    cppipe_path: Path | None
+    modules: tuple[str, ...]
+
+    @property
+    def unique_modules(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.modules))
+
+
+@dataclass(frozen=True, slots=True)
+class _ExampleSourceFile:
+    relative_path: Path
+    source_text: str
+
+    @property
+    def line_count(self) -> int:
+        return len(self.source_text.splitlines())
 
 
 DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH = Path(
@@ -497,6 +528,9 @@ class KnowledgeBaseService:
         spec: KnowledgeBaseDocumentSpec,
         text: str,
         lines: tuple[str, ...],
+        *,
+        repo_root: Path,
+        source_path: Path,
     ) -> tuple[str, ...]:
         manifest = KnowledgeBaseService._official30_recipe_manifest(text)
         if manifest is not None:
@@ -504,8 +538,55 @@ class KnowledgeBaseService:
                 spec,
                 manifest,
                 lines,
+                repo_root=repo_root,
+                source_path=source_path,
+            )
+        if spec.document.document_id == "openhcs_example_corpus_map":
+            return (
+                *lines,
+                *KnowledgeBaseService._native_example_source_projection_lines(
+                    lines,
+                    repo_root,
+                ),
             )
         return lines
+
+    @staticmethod
+    def _native_example_source_projection_lines(
+        lines: tuple[str, ...],
+        repo_root: Path,
+    ) -> tuple[str, ...]:
+        source_files = _native_example_source_files(lines, repo_root)
+        if not source_files:
+            return ()
+
+        projected_lines = [
+            "",
+            "Native Example Source Index",
+            "---------------------------",
+            "",
+            "Generated from the Python paths declared in the Native OpenHCS "
+            "Examples section. Use the file-path section ids to inspect actual "
+            "source without duplicating example code in the documentation.",
+            "",
+        ]
+        for source_file in source_files:
+            projected_lines.append(
+                f"* ``{source_file.relative_path.as_posix()}`` "
+                f"({source_file.line_count} lines)"
+            )
+
+        for source_file in source_files:
+            title = source_file.relative_path.as_posix()
+            projected_lines.extend(("", title, "-" * len(title), ""))
+            projected_lines.append(f"Source path: {title}")
+            projected_lines.append(f"Lines included: {source_file.line_count}")
+            projected_lines.extend(("", ".. code-block:: python", ""))
+            projected_lines.extend(
+                f"   {line}" if line else ""
+                for line in source_file.source_text.splitlines()
+            )
+        return tuple(projected_lines)
 
     @staticmethod
     def _official30_recipe_manifest(text: str) -> Mapping[str, JsonValue] | None:
@@ -524,6 +605,9 @@ class KnowledgeBaseService:
         spec: KnowledgeBaseDocumentSpec,
         manifest: Mapping[str, JsonValue],
         fallback_lines: tuple[str, ...],
+        *,
+        repo_root: Path,
+        source_path: Path,
     ) -> tuple[str, ...]:
         cases = manifest.get("cases")
         if not isinstance(cases, list):
@@ -558,20 +642,37 @@ class KnowledgeBaseService:
             for case in cases
             if isinstance(case, dict)
         ]
+        inventories = KnowledgeBaseService._official30_module_inventories(
+            source_path=source_path,
+            repo_root=repo_root,
+            cases=tuple(valid_cases),
+        )
         for index, case in enumerate(valid_cases, 1):
             recipe_lines.append(
                 KnowledgeBaseService._official30_recipe_line(index, case)
             )
 
+        recipe_lines.extend(
+            KnowledgeBaseService._official30_module_usage_lines(inventories)
+        )
+
+        inventories_by_case = {
+            inventory.case_name: inventory
+            for inventory in inventories
+        }
         for case in valid_cases:
             recipe_lines.extend(
-                KnowledgeBaseService._official30_case_section_lines(case)
+                KnowledgeBaseService._official30_case_section_lines(
+                    case,
+                    inventories_by_case.get(str(case.get("name") or "<unnamed>")),
+                )
             )
         return tuple(recipe_lines)
 
     @staticmethod
     def _official30_case_section_lines(
         case: Mapping[str, JsonValue],
+        inventory: _Official30CaseModuleInventory | None,
     ) -> tuple[str, ...]:
         name = str(case.get("name") or "<unnamed>")
         lines = [
@@ -597,6 +698,16 @@ class KnowledgeBaseService:
             lines.append(
                 f"{key}: {KnowledgeBaseService._official30_scalar(case[key])}"
             )
+        if inventory is not None:
+            if inventory.modules:
+                lines.append(
+                    "modules: "
+                    + ", ".join(inventory.unique_modules)
+                )
+            if inventory.cppipe_path is not None:
+                lines.append(
+                    f"resolved_cppipe_path: {inventory.cppipe_path}"
+                )
         if "pipeline_params" in case:
             lines.append(
                 KnowledgeBaseService._official30_mapping_line(
@@ -656,6 +767,68 @@ class KnowledgeBaseService:
         dataset_id = str(case.get("dataset_id") or "<unknown>")
         cppipe_path = str(case.get("cppipe_path") or "<none>")
         return f"{index}. {name}: dataset={dataset_id} cppipe={cppipe_path}"
+
+    @staticmethod
+    def _official30_module_usage_lines(
+        inventories: tuple[_Official30CaseModuleInventory, ...],
+    ) -> tuple[str, ...]:
+        lines = [
+            "",
+            "Module Usage Index",
+            "------------------",
+            "",
+            "Derived from the official30 manifest's resolved .cppipe paths. "
+            "The benchmark manifest acquisition layer can materialize missing "
+            "CellProfiler examples and tutorial datasets into the configured "
+            "cache roots.",
+            "",
+        ]
+        cases_by_module: dict[str, list[str]] = {}
+        for inventory in inventories:
+            if inventory.modules:
+                for module_name in inventory.unique_modules:
+                    cases_by_module.setdefault(module_name, []).append(
+                        inventory.case_name
+                    )
+                lines.append(
+                    f"{inventory.case_name}: module_count={len(inventory.modules)} "
+                    f"modules={', '.join(inventory.unique_modules)}"
+                )
+            else:
+                lines.append(
+                    f"{inventory.case_name}: module inventory unavailable; "
+                    "materialize the benchmark manifest roots and retry."
+                )
+
+        lines.extend(("", "Module To Case Lookup", "^^^^^^^^^^^^^^^^^^^^", ""))
+        for module_name, case_names in sorted(cases_by_module.items()):
+            lines.append(f"{module_name}: cases={', '.join(case_names)}")
+        return tuple(lines)
+
+    @staticmethod
+    def _official30_module_inventories(
+        *,
+        source_path: Path,
+        repo_root: Path,
+        cases: tuple[Mapping[str, JsonValue], ...],
+    ) -> tuple[_Official30CaseModuleInventory, ...]:
+        try:
+            return _official30_module_inventories_cached(
+                str(source_path),
+                source_path.stat().st_mtime_ns,
+                str(repo_root),
+                os.environ.get("CELLPROFILER_EXAMPLES_ROOT"),
+                os.environ.get("OPENHCS_BENCHMARK_DATASET_CACHE_ROOT"),
+            )
+        except (ImportError, OSError, TypeError, ValueError, UnicodeDecodeError):
+            return tuple(
+                _Official30CaseModuleInventory(
+                    case_name=str(case.get("name") or "<unnamed>"),
+                    cppipe_path=None,
+                    modules=(),
+                )
+                for case in cases
+            )
 
     def search(self, request: KnowledgeBaseSearchRequest) -> KnowledgeBaseSearchResult:
         query = KnowledgeBaseSearchQuery.from_text(request.query)
@@ -717,9 +890,19 @@ class KnowledgeBaseService:
                 score = title_score + text_score
                 if (
                     self._official30_recipe_manifest(parsed.text) is not None
-                    and not self._official30_query_is_specific_to_case(query, section)
+                    and not self._official30_query_is_specific_to_case(
+                        query,
+                        section,
+                        section_text,
+                    )
                 ):
                     score = max(0, score - 50)
+                if (
+                    spec.document.document_id == "openhcs_example_corpus_map"
+                    and _native_example_source_section(section)
+                    and not _native_example_query_is_specific_to_source(query)
+                ):
+                    score = max(0, score - 80)
                 if not score:
                     continue
                 matched_terms = tuple(
@@ -762,9 +945,15 @@ class KnowledgeBaseService:
     def _official30_query_is_specific_to_case(
         query: KnowledgeBaseSearchQuery,
         section: KnowledgeBaseSectionSummary,
+        section_text: str,
     ) -> bool:
         recipe_terms = {
+            "cellprofiler",
+            "example",
+            "examples",
             "official30",
+            "module",
+            "modules",
             "recipe",
             "recipes",
             "benchmark",
@@ -773,6 +962,30 @@ class KnowledgeBaseService:
         }
         if any(term in recipe_terms for term in query.terms):
             return True
+        if section.section_id == "module-usage-index":
+            case_names = frozenset(
+                match.group(1)
+                for match in re.finditer(
+                    r"^([A-Za-z0-9_]+): module_count=",
+                    section_text,
+                    flags=re.MULTILINE,
+                )
+            )
+            module_terms: set[str] = set()
+            for match in re.finditer(
+                r"^([A-Za-z][A-Za-z0-9]+): cases=(.+)$",
+                section_text,
+                flags=re.MULTILINE,
+            ):
+                module_case_names = frozenset(
+                    item.strip()
+                    for item in match.group(2).split(",")
+                    if item.strip()
+                )
+                if case_names and module_case_names == case_names:
+                    continue
+                module_terms.add(match.group(1).casefold())
+            return any(term in module_terms for term in query.terms)
         return any(term == section.section_id for term in query.terms)
 
     def _source_path(self, spec: KnowledgeBaseDocumentSpec) -> Path:
@@ -799,7 +1012,13 @@ class KnowledgeBaseService:
         source_path = self._source_path(spec)
         text = source_path.read_text(encoding="utf-8")
         source_lines = tuple(text.splitlines())
-        lines = self._display_lines(spec, text, source_lines)
+        lines = self._display_lines(
+            spec,
+            text,
+            source_lines,
+            repo_root=self._repo_root,
+            source_path=source_path,
+        )
         return _ParsedDocument(
             spec=spec,
             source_path=source_path,
@@ -883,6 +1102,225 @@ def _default_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+@lru_cache(maxsize=8)
+def _official30_module_inventories_cached(
+    manifest_path: str,
+    manifest_mtime_ns: int,
+    repo_root: str,
+    cellprofiler_examples_root: str | None,
+    dataset_cache_root: str | None,
+) -> tuple[_Official30CaseModuleInventory, ...]:
+    del manifest_mtime_ns, cellprofiler_examples_root, dataset_cache_root
+
+    from benchmark.contracts.comparison_manifest import ComparisonManifest
+    from openhcs.interop.cellprofiler.parser import CPPipeParser
+
+    manifest = ComparisonManifest.load(Path(manifest_path), materialize_roots=False)
+    raw_cases = manifest.payload.get("cases")
+    if not isinstance(raw_cases, list):
+        return ()
+
+    inventories: list[_Official30CaseModuleInventory] = []
+    for raw_case in raw_cases:
+        if not isinstance(raw_case, Mapping):
+            continue
+        case_name = str(raw_case.get("name") or "<unnamed>")
+        cppipe_path = _official30_existing_cppipe_path(
+            repo_root=Path(repo_root),
+            manifest=manifest,
+            raw_case=raw_case,
+            case_name=case_name,
+        )
+        modules: tuple[str, ...] = ()
+        if cppipe_path is not None:
+            try:
+                modules = tuple(
+                    module.name
+                    for module in CPPipeParser(cppipe_path).parse()
+                    if module.enabled
+                )
+            except (OSError, ValueError, UnicodeDecodeError):
+                modules = ()
+        inventories.append(
+            _Official30CaseModuleInventory(
+                case_name=case_name,
+                cppipe_path=cppipe_path,
+                modules=modules,
+            )
+        )
+    return tuple(inventories)
+
+
+def _official30_existing_cppipe_path(
+    *,
+    repo_root: Path,
+    manifest: _ComparisonManifestLike,
+    raw_case: Mapping[str, JsonValue],
+    case_name: str,
+) -> Path | None:
+    try:
+        resolved_path = manifest.path_resolver.resolve(raw_case, "cppipe_path")
+    except (KeyError, TypeError, ValueError):
+        resolved_path = None
+    if isinstance(resolved_path, Path) and resolved_path.is_file():
+        return resolved_path
+
+    raw_cppipe_path = raw_case.get("cppipe_path")
+    if raw_cppipe_path is None:
+        return None
+    return _official30_native_ref_cppipe_path(
+        repo_root,
+        case_name,
+        Path(str(raw_cppipe_path)).name,
+    )
+
+
+def _official30_native_ref_cppipe_path(
+    repo_root: Path,
+    case_name: str,
+    cppipe_name: str,
+) -> Path | None:
+    native_refs_root = repo_root / "benchmark/native_refs/official30_scoped_rows"
+    candidates = tuple(
+        sorted(native_refs_root.glob(f"*/native_cellprofiler_headless/{cppipe_name}"))
+    )
+    for candidate in candidates:
+        if case_name in candidate.parent.parent.name:
+            return candidate
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _native_example_source_files(
+    lines: tuple[str, ...],
+    repo_root: Path,
+) -> tuple[_ExampleSourceFile, ...]:
+    source_paths = tuple(
+        dict.fromkeys(
+            _native_example_python_paths(
+                _native_example_source_references(lines),
+                repo_root,
+            )
+        )
+    )
+    source_files: list[_ExampleSourceFile] = []
+    for source_path in source_paths:
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        source_files.append(
+            _ExampleSourceFile(
+                relative_path=source_path.relative_to(repo_root),
+                source_text=source_text,
+            )
+        )
+    return tuple(source_files)
+
+
+def _native_example_source_section(section: KnowledgeBaseSectionSummary) -> bool:
+    return section.title.endswith(".py")
+
+
+def _native_example_query_is_specific_to_source(
+    query: KnowledgeBaseSearchQuery,
+) -> bool:
+    source_terms = {
+        "benchmark",
+        "code",
+        "example",
+        "examples",
+        "functionstep",
+        "pipeline_steps",
+        "preset",
+        "presets",
+        "py",
+        "python",
+        "source",
+    }
+    return any(term in source_terms or "_" in term for term in query.terms)
+
+
+def _native_example_source_references(lines: tuple[str, ...]) -> tuple[str, ...]:
+    section_lines = _rst_section_body_lines(lines, "Native OpenHCS Examples")
+    references: list[str] = []
+    for line in section_lines:
+        for match in re.finditer(r"``([^`]+)``", line):
+            value = match.group(1)
+            if value.endswith("/") or value.endswith(".py"):
+                references.append(value)
+    return tuple(references)
+
+
+def _native_example_python_paths(
+    references: tuple[str, ...],
+    repo_root: Path,
+) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for reference in references:
+        source_path = _repo_relative_path(repo_root, reference)
+        if source_path is None:
+            continue
+        if source_path.is_dir():
+            paths.extend(
+                candidate
+                for candidate in sorted(source_path.glob("*.py"))
+                if candidate.name != "__init__.py"
+            )
+        elif source_path.is_file() and source_path.suffix == ".py":
+            paths.append(source_path)
+    return tuple(paths)
+
+
+def _repo_relative_path(repo_root: Path, raw_path: str) -> Path | None:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return None
+    resolved_path = (repo_root / path).resolve()
+    if not resolved_path.is_relative_to(repo_root):
+        return None
+    return resolved_path
+
+
+def _rst_section_body_lines(
+    lines: tuple[str, ...],
+    title: str,
+) -> tuple[str, ...]:
+    for index in range(len(lines) - 1):
+        if lines[index].strip() != title:
+            continue
+        underline = lines[index + 1].strip()
+        if not _is_rst_underline(underline, title):
+            continue
+        section_level = _RST_UNDERLINE_LEVELS[next(iter(set(underline)))]
+        body_start = index + 2
+        body_end = len(lines)
+        for candidate_index in range(body_start, len(lines) - 1):
+            candidate_title = lines[candidate_index].strip()
+            candidate_underline = lines[candidate_index + 1].strip()
+            if not candidate_title:
+                continue
+            if not _is_rst_underline(candidate_underline, candidate_title):
+                continue
+            candidate_level = _RST_UNDERLINE_LEVELS[
+                next(iter(set(candidate_underline)))
+            ]
+            if candidate_level <= section_level:
+                body_end = candidate_index
+                break
+        return lines[body_start:body_end]
+    return ()
+
+
+def _is_rst_underline(underline: str, title: str) -> bool:
+    underline_chars = set(underline)
+    if len(underline_chars) != 1:
+        return False
+    marker = next(iter(underline_chars))
+    return marker in _RST_UNDERLINE_LEVELS and len(underline) >= len(title)
+
+
 def _parse_sections(lines: tuple[str, ...]) -> tuple[KnowledgeBaseSectionSummary, ...]:
     sections = _parse_markdown_sections(lines)
     if not sections:
@@ -925,14 +1363,11 @@ def _parse_rst_sections(
     for index in range(len(lines) - 1):
         title = lines[index].strip()
         underline = lines[index + 1].strip()
-        if not title or not underline:
+        if not title:
             continue
-        underline_chars = set(underline)
-        if len(underline_chars) != 1:
+        if not _is_rst_underline(underline, title):
             continue
-        marker = next(iter(underline_chars))
-        if marker not in _RST_UNDERLINE_LEVELS or len(underline) < len(title):
-            continue
+        marker = next(iter(set(underline)))
         line_number = index + 1
         sections.append(
             KnowledgeBaseSectionSummary(

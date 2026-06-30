@@ -25,23 +25,26 @@ conversation with a domain expert:
   developer checkouts. Treat local paths as optional evidence, not a portable
   public contract.
 
-Treat existing CellProfiler pipelines as semantic evidence. They describe the
-biological operation, module order, measurements, and expected artifacts. Before
-claiming a direct MCP import path, verify the current tool surface and source
-code, then convert or re-author through current OpenHCS pipeline-authoring
-contracts.
+Treat existing CellProfiler pipelines as first-choice semantic evidence. They
+describe the biological operation, module order, measurements, and expected
+artifacts that OpenHCS preserves through compiler/runtime compatibility. A
+missing high-level MCP shortcut should not be interpreted as missing
+CellProfiler compatibility; use the current conversion, artifact-plan, runtime,
+inventory, and viewer tools exposed by the checkout.
 
 CellProfiler To OpenHCS Translation
 -----------------------------------
 
-Agents should assume CellProfiler knowledge is useful in OpenHCS. A
+Agents should assume CellProfiler knowledge is directly useful in OpenHCS. A
 CellProfiler pipeline's named images, objects, measurements, module order, and
-export modules describe the semantic workflow that OpenHCS needs to preserve.
+export modules describe the semantic workflow that OpenHCS compiles into its
+own source bindings, ``FunctionStep`` declarations, artifact contracts, runtime
+values, and materialized outputs.
 
 Use this translation map while reading examples:
 
 * CellProfiler modules become OpenHCS ``FunctionStep`` declarations backed by
-  absorbed or native functions.
+  absorbed or native functions and runtime adapters.
 * CellProfiler setup modules such as ``Images``, ``Metadata``, and
   ``NamesAndTypes`` become OpenHCS source schemas, source bindings, and virtual
   workspace names.
@@ -52,8 +55,8 @@ Use this translation map while reading examples:
 
 For the implementation boundary, use MCP architecture topic
 ``cellprofiler_translation``. For current authoring, use
-``openhcs_get_authoring_context`` and then verify with artifact-plan and runtime
-inspection tools.
+``openhcs_get_authoring_context`` and then verify with artifact-plan, runtime,
+inventory, and viewer inspection tools.
 
 Native OpenHCS Examples
 -----------------------
@@ -73,6 +76,10 @@ Native examples show current OpenHCS concepts and code shapes:
   ``docs/source/user_guide/production_examples.rst`` document complete workflow
   patterns, including configuration, dictionary routing, GPU processing, zarr,
   and execution.
+
+The MCP knowledge renderer appends a generated ``Native Example Source Index``
+from the Python paths above, so agents can inspect actual source without
+copying examples into this document.
 
 Operator Workflow
 -----------------

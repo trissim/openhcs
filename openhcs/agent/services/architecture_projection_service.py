@@ -184,13 +184,13 @@ class CellProfilerTranslationArchitectureTopic(ArchitectureTopicProjection):
     title = "CellProfiler to OpenHCS translation"
     summary = (
         "How .cppipe modules, images, objects, and measurements are parsed and "
-        "projected into OpenHCS semantics."
+        "compiled into OpenHCS runtime semantics."
     )
     concepts_text = (
         "CellProfiler .cppipe text is parsed into ordered ModuleBlock records.",
         "The symbol table validates image/object/measurement production and consumption before generated OpenHCS code is emitted.",
         "PipelineGenerator projects CellProfiler module contracts into OpenHCS FunctionStep declarations and source bindings.",
-        "CellProfilerFunctionCatalog is the nominal authority for absorbed backend functions; OpenHCS does not execute CellProfiler itself.",
+        "CellProfilerFunctionCatalog is the nominal authority for absorbed backend functions; OpenHCS executes CellProfiler-compatible semantics through OpenHCS runtime adapters and compiled plans rather than shelling out to CellProfiler as the engine.",
     )
     cellprofiler_translation_notes_text = (
         "A CellProfiler Image name becomes an OpenHCS semantic source binding or runtime image input.",

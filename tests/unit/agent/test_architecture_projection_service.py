@@ -39,6 +39,11 @@ def test_cellprofiler_translation_topic_exposes_parser_and_generator_authorities
 
     assert "cellprofiler.CPPipeParser" in symbol_ids
     assert "cellprofiler.PipelineGenerator" in symbol_ids
+    assert "compiled into OpenHCS runtime semantics" in topic.summary
+    assert any(
+        "OpenHCS runtime adapters and compiled plans" in concept
+        for concept in topic.concepts
+    )
     assert "CellProfiler Image name" in topic.cellprofiler_translation_notes[0]
 
 

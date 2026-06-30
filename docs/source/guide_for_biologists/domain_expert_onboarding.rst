@@ -100,7 +100,13 @@ CellProfiler Mental Model
 
 If the scientist or agent already knows CellProfiler, start there. OpenHCS uses
 the same practical analysis ideas: ordered processing modules, named images,
-named objects, measurements, and explicit result exports. The translation is:
+named objects, measurements, and explicit result exports. CellProfiler
+compatibility is integrated into the OpenHCS compiler/runtime model, so those
+concepts are not just informal analogies. They compile into OpenHCS source
+bindings, ``FunctionStep`` declarations, artifact contracts, runtime values,
+materialization, and measurements.
+
+The translation is:
 
 * CellProfiler modules map to OpenHCS ``FunctionStep`` declarations and
   generated backend functions.
@@ -117,19 +123,18 @@ named objects, measurements, and explicit result exports. The translation is:
   image/table result.
 
 Use CellProfiler examples to understand biological intent, module order, named
-images/objects, measurements, and expected artifacts. Then verify the current
-OpenHCS tool surface before claiming a direct ``.cppipe`` import command. Over
-MCP, ``openhcs_explain_architecture`` with topic ``cellprofiler_translation``
-provides the detailed internal map.
+images/objects, measurements, and expected artifacts. Then compile and validate
+the OpenHCS projection with artifact-plan, runtime, inventory, and viewer tools.
+Over MCP, ``openhcs_explain_architecture`` with topic
+``cellprofiler_translation`` provides the detailed internal map.
 
 CellProfiler And Existing Pipelines
 -----------------------------------
 
 If the scientist already has a CellProfiler pipeline, treat it as valuable
-semantic evidence. OpenHCS has active CellProfiler integration work and PR
-evidence around preserving CellProfiler-style image/object/measurement
-semantics, but an agent should verify the current live tool surface before
-claiming that a specific ``.cppipe`` import command is available over MCP.
+semantic evidence. OpenHCS preserves CellProfiler-style image, object,
+measurement, and export semantics by projecting them into OpenHCS compiler and
+runtime authorities.
 
 Do not start from a blank slate. The repository includes example CellProfiler
 pipelines in ``benchmark/cellprofiler_pipelines/``, thirty scoped native

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Protocol, runtime_checkable
 
-from python_introspect import DocstringExtractor, UnifiedParameterAnalyzer
+from pyqt_reactive.services.parameter_help_service import (
+    NO_PARAMETER_DESCRIPTION,
+    docstring_info_for_target,
+    parameter_help_content,
+    resolved_parameter_description,
+)
+from python_introspect import UnifiedParameterAnalyzer
 
 from openhcs.agent.dto.common import AgentError, AgentWarning, JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.functions import FunctionArtifactSpec, FunctionDetail
@@ -26,9 +31,6 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
 from openhcs.agent.services.ui_bridge_service import UiBridgeService
-
-
-NO_PARAMETER_DESCRIPTION = "No description available"
 
 
 @runtime_checkable
@@ -147,14 +149,20 @@ class ObjectStateFieldHelpService:
                 field.field_name
             )
             parameter_type = None
-            parameter_description = field.parameter_description
             if parameter_info is not None:
                 parameter_type = parameter_info.param_type
-                parameter_description = (
-                    parameter_info.description or parameter_description
-                )
+            parameter_description = resolved_parameter_description(
+                help_target=help_target,
+                param_name=field.field_name,
+                widget_description=field.parameter_description or "",
+            )
+            parameter_content = parameter_help_content(
+                param_name=field.field_name,
+                param_type=parameter_type,
+                description=parameter_description,
+            )
             parameter_description = self._description_with_function_parameter_context(
-                parameter_description,
+                parameter_content.description,
                 help_target,
                 field.field_name,
                 request.max_description_chars,
@@ -168,7 +176,7 @@ class ObjectStateFieldHelpService:
                 parameter_description or NO_PARAMETER_DESCRIPTION,
                 request.max_description_chars,
             )
-            target_docstring = DocstringExtractor.extract(help_target)
+            target_docstring = docstring_info_for_target(help_target)
             return UiObjectStateFieldHelpResult(
                 schema_version=SCHEMA_VERSION,
                 address=field.address,
@@ -178,7 +186,7 @@ class ObjectStateFieldHelpService:
                 parameter_name=field.field_name,
                 target_summary=target_docstring.summary,
                 target_description=target_docstring.description,
-                summary=self._parameter_summary(field.field_name, parameter_type),
+                summary=parameter_content.summary,
                 description=description,
                 description_truncated=description_truncated,
                 warnings=catalog.warnings,
@@ -307,20 +315,6 @@ class ObjectStateFieldHelpService:
         for name in qualname.split("."):
             symbol = vars(symbol)[name]
         return symbol
-
-    @staticmethod
-    def _parameter_summary(parameter_name: str, parameter_type: type | None) -> str:
-        type_name = ObjectStateFieldHelpService._parameter_type_name(parameter_type)
-        suffix = f" ({type_name})" if type_name else ""
-        return f"• {parameter_name}{suffix}"
-
-    @staticmethod
-    def _parameter_type_name(parameter_type: type | None) -> str | None:
-        if parameter_type is None:
-            return None
-        if isinstance(parameter_type, type):
-            return parameter_type.__name__
-        return inspect.formatannotation(parameter_type)
 
     def _description_with_value_context(
         self,
