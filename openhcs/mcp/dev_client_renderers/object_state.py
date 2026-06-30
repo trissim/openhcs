@@ -5,9 +5,14 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
-from openhcs.agent import dto as agent_dto
 from openhcs.agent.dto.common import JsonObject, JsonValue
-from openhcs.agent.dto.ui_bridge import UiObjectStateFieldFilter
+from openhcs.agent.dto.ui_bridge import (
+    UiObjectStateFieldFilter,
+    UiObjectStateFieldHelpResult,
+    UiObjectStateFieldListResult,
+    UiObjectStateFieldMutationResult,
+    UiObjectStateScopeCatalog,
+)
 from openhcs.mcp.dev_client_core import optional_int
 from openhcs.mcp.dev_client_rendering import (
     McpDevOutputRenderer,
@@ -18,7 +23,7 @@ from openhcs.mcp.dev_client_renderers.viewer import ViewerValidationRenderer
 class ObjectStateScopeRenderer(McpDevOutputRenderer):
     """Compact renderer for ObjectState scope catalogs."""
 
-    output_contract = agent_dto.UiObjectStateScopeCatalog
+    output_contract = UiObjectStateScopeCatalog
 
     MARKER_LEGEND = "Markers: [*]=unsaved/dirty [_]=differs-from-defaults [-]=clean"
 
@@ -141,7 +146,7 @@ class ObjectStateScopeRenderer(McpDevOutputRenderer):
 class ObjectStateFieldRenderer(McpDevOutputRenderer):
     """Compact renderer for ObjectState field projections."""
 
-    output_contract = agent_dto.UiObjectStateFieldListResult
+    output_contract = UiObjectStateFieldListResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -429,7 +434,7 @@ class ObjectStateFieldRenderer(McpDevOutputRenderer):
 class ObjectStateFieldHelpRenderer(McpDevOutputRenderer):
     """Compact renderer for one ObjectState field help result."""
 
-    output_contract = agent_dto.UiObjectStateFieldHelpResult
+    output_contract = UiObjectStateFieldHelpResult
 
     MAX_TARGET_SUMMARY_CHARS = 220
 
@@ -489,7 +494,7 @@ class ObjectStateFieldHelpRenderer(McpDevOutputRenderer):
 class ObjectStateFieldMutationRenderer(McpDevOutputRenderer):
     """Compact renderer for one ObjectState field update/reset result."""
 
-    output_contract = agent_dto.UiObjectStateFieldMutationResult
+    output_contract = UiObjectStateFieldMutationResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:

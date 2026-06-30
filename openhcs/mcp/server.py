@@ -13,6 +13,8 @@ from inspect import Parameter, Signature, getsourcefile, signature as inspect_si
 from pathlib import Path
 from typing import ClassVar, Generic, Self, TypeVar, get_type_hints
 
+import openhcs as openhcs_package
+from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
 from metaclass_registry import AutoRegisterMeta
 from openhcs.agent.capabilities import (
     AgentCapabilityDeclaration,
@@ -33,22 +35,13 @@ from openhcs.agent.capabilities import (
     agent_capability_declarations,
     get_agent_capability_declaration,
     get_capability_registry,
+    require_agent_type_contract,
 )
 from openhcs.agent.dto.common import (
     AgentError,
     JsonValue,
     SCHEMA_VERSION,
 )
-import openhcs.agent.dto.execution as agent_execution_dto
-import openhcs.agent.dto.functions as agent_functions_dto
-import openhcs.agent.dto.knowledge as agent_knowledge_dto
-import openhcs.agent.dto.mcp as agent_mcp_dto
-import openhcs.agent.dto.plate as agent_plate_dto
-import openhcs.agent.dto.ui_bridge as agent_ui_bridge_dto
-import openhcs.agent.dto.viewer as agent_viewer_dto
-from openhcs.agent.services import stdio as agent_stdio
-from openhcs.agent.services import ui_bridge_transport
-import openhcs.core.viewer_streaming_service as core_viewer_streaming_service
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.execution import (
     ExecutionConnectionSpec,
@@ -69,12 +62,9 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationRequest,
 )
 from openhcs.agent.serialization import to_jsonable
-from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
-import openhcs.core.plate_image_inventory as core_plate_image_inventory
 from openhcs.mcp.context import (
     OpenHCSAgentContext,
     create_agent_context,
-    openhcs_agent_context_source_types,
 )
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
@@ -83,9 +73,6 @@ from openhcs.mcp.control_timeout import (
     McpViewerCommandTimeoutPolicy,
     McpViewerTimeoutPolicy,
 )
-import openhcs.processing.custom_functions.manager as custom_function_manager
-import openhcs.runtime.viewer_protocol as runtime_viewer_protocol
-import openhcs.runtime.window_snapshot as runtime_window_snapshot
 from openhcs.runtime.viewer_protocol import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
@@ -123,31 +110,24 @@ def _deduplicate_source_paths(source_paths: tuple[Path, ...]) -> tuple[Path, ...
     return tuple(dict.fromkeys(source_paths))
 
 
+def _package_python_source_paths(package) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            path.resolve()
+            for location in package.__path__
+            for path in Path(location).rglob("*.py")
+        )
+    )
+
+
 MCP_SERVER_SOURCE_PATHS = _deduplicate_source_paths(
     (
         Path(__file__).resolve(),
         Path(create_agent_context.__code__.co_filename).resolve(),
         Path(get_capability_registry.__code__.co_filename).resolve(),
         Path(to_jsonable.__code__.co_filename).resolve(),
-        Path(agent_execution_dto.__file__).resolve(),
-        Path(agent_functions_dto.__file__).resolve(),
-        Path(agent_knowledge_dto.__file__).resolve(),
-        Path(agent_mcp_dto.__file__).resolve(),
-        Path(agent_plate_dto.__file__).resolve(),
-        Path(agent_ui_bridge_dto.__file__).resolve(),
-        Path(agent_viewer_dto.__file__).resolve(),
-        Path(agent_stdio.__file__).resolve(),
-        Path(core_plate_image_inventory.__file__).resolve(),
-        Path(core_viewer_streaming_service.__file__).resolve(),
-        Path(custom_function_manager.__file__).resolve(),
-        Path(ui_bridge_transport.__file__).resolve(),
-        Path(runtime_viewer_protocol.__file__).resolve(),
-        Path(runtime_window_snapshot.__file__).resolve(),
-        *tuple(
-            _source_path_for_type(source_type)
-            for source_type in openhcs_agent_context_source_types()
-        ),
-        *KnowledgeBaseService.default_source_paths(),
+        *_package_python_source_paths(openhcs_package),
+        *knowledge_base_source_paths_from_manifest(),
     )
 )
 MCP_SERVER_IMPORT_SOURCE_SNAPSHOTS = {
@@ -209,7 +189,7 @@ class McpWidgetTreePayloadProjection:
         )
     )
 
-    def project(self, result: agent_ui_bridge_dto.UiWidgetTreeResult) -> dict:
+    def project(self, result) -> dict:
         payload = to_jsonable(result)
         if not isinstance(payload, Mapping):
             raise TypeError("widget tree serialization did not produce a mapping")
@@ -707,12 +687,7 @@ class McpUiRequestToolBindingABC(
 
     @classmethod
     def request_type(cls) -> type[RequestT]:
-        contract = cls.capability.input_contract
-        if not isinstance(contract, type):
-            raise TypeError(
-                f"{cls.__name__} requires a request DTO input contract, got {contract!r}."
-            )
-        return contract
+        return require_agent_type_contract(cls.capability.input_contract)
 
     @classmethod
     def bind_request_tool(
@@ -825,13 +800,7 @@ class GeneratedMcpUiRequestToolBinding:
     def request_type(
         declaration: type[AgentCapabilityDeclaration],
     ) -> type:
-        contract = declaration.input_contract
-        if not isinstance(contract, type):
-            raise TypeError(
-                f"{declaration.__name__} requires a request DTO input contract, "
-                f"got {contract!r}."
-            )
-        return contract
+        return require_agent_type_contract(declaration.input_contract)
 
     @staticmethod
     def timeout_policy(
@@ -1326,12 +1295,7 @@ class McpFromFieldsToolBindingABC(
 
     @classmethod
     def request_type(cls) -> type[RequestT]:
-        contract = cls.capability.input_contract
-        if not isinstance(contract, type):
-            raise TypeError(
-                f"{cls.__name__} requires a request DTO input contract, got {contract!r}."
-            )
-        return contract
+        return require_agent_type_contract(cls.capability.input_contract)
 
     @classmethod
     def bind_request_tool(
@@ -1410,13 +1374,7 @@ class GeneratedMcpFromFieldsToolBinding:
     def request_type(
         declaration: type[AgentCapabilityDeclaration],
     ) -> type:
-        contract = declaration.input_contract
-        if not isinstance(contract, type):
-            raise TypeError(
-                f"{declaration.__name__} requires a request DTO input contract, "
-                f"got {contract!r}."
-            )
-        return contract
+        return require_agent_type_contract(declaration.input_contract)
 
 
 def generated_from_fields_capability_declarations() -> tuple[
@@ -1461,8 +1419,8 @@ class McpDataclassRequestToolBindingABC(
 
     @classmethod
     def request_type(cls) -> type[RequestT]:
-        contract = cls.capability.input_contract
-        if not isinstance(contract, type) or not is_dataclass(contract):
+        contract = require_agent_type_contract(cls.capability.input_contract)
+        if not is_dataclass(contract):
             raise TypeError(
                 f"{cls.__name__} requires a dataclass request input contract, got {contract!r}."
             )
@@ -1559,8 +1517,8 @@ class GeneratedMcpDataclassRequestToolBinding:
     def request_type(
         declaration: type[AgentCapabilityDeclaration],
     ) -> type:
-        contract = declaration.input_contract
-        if not isinstance(contract, type) or not is_dataclass(contract):
+        contract = require_agent_type_contract(declaration.input_contract)
+        if not is_dataclass(contract):
             raise TypeError(
                 f"{declaration.__name__} requires a dataclass request input "
                 f"contract, got {contract!r}."
@@ -1827,8 +1785,8 @@ class GeneratedMcpViewerRequestToolBinding:
     def request_type(
         declaration: type[AgentCapabilityDeclaration],
     ) -> type[ViewerWindowControlRequest]:
-        contract = declaration.input_contract
-        if not isinstance(contract, type) or not issubclass(
+        contract = require_agent_type_contract(declaration.input_contract)
+        if not issubclass(
             contract,
             ViewerWindowControlRequest,
         ):

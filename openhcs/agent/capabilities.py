@@ -10,8 +10,157 @@ from typing import ClassVar, Generic, TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.agent import dto as agent_dto
-from openhcs.agent.dto.common import SCHEMA_VERSION
+from openhcs.agent.dto.architecture import (
+    ArchitectureTopic,
+    ArchitectureTopicPage,
+    InternalApiSymbol,
+)
+from openhcs.agent.dto.authoring import (
+    AuthoringContext,
+    AuthoringContextRequest,
+)
+from openhcs.agent.dto.common import (
+    RenderedSource,
+    SCHEMA_VERSION,
+)
+from openhcs.agent.dto.config import (
+    ConfigPatch,
+    ConfigRef,
+    ConfigSchema,
+    ConfigSourceRenderRequest,
+    ConfigValidationResult,
+)
+from openhcs.agent.dto.execution import (
+    ArtifactPlanInspection,
+    CompileSubmissionRequest,
+    ExecutionJobRef,
+    ExecutionJobStatus,
+    ExecutionStatusRequest,
+    OrchestratorSession,
+    OrchestratorSessionCreationRequest,
+    OrchestratorSessionRef,
+    OrchestratorSessionRequest,
+    PipelineExecutionSubmissionRequest,
+    PipelineSourceArtifactPlanInspectionRequest,
+    PipelineSourceOrchestratorSessionRequest,
+    RuntimeExecutionStatus,
+    RuntimeServerExecutionStatusRequest,
+    RuntimeServerInfo,
+    RuntimeServerInfoRequest,
+    RuntimeServerScanRequest,
+    RuntimeServerScanResult,
+)
+from openhcs.agent.dto.functions import (
+    CustomFunctionRegistrationRequest,
+    CustomFunctionRegistrationResult,
+    FunctionCatalogPage,
+    FunctionDetail,
+    FunctionDetailRequest,
+    FunctionSearchRequest,
+)
+from openhcs.agent.dto.knowledge import (
+    KnowledgeBaseCatalog,
+    KnowledgeBaseDocument,
+    KnowledgeBaseDocumentRequest,
+    KnowledgeBaseSearchRequest,
+    KnowledgeBaseSearchResult,
+)
+from openhcs.agent.dto.mcp import McpServerHealthResult
+from openhcs.agent.dto.pipeline import (
+    FunctionStepAddRequest,
+    PipelineRef,
+    PipelineSourceRenderRequest,
+    PipelineSpec,
+    PipelineValidationRequest,
+    PipelineValidationResult,
+)
+from openhcs.agent.dto.plate import (
+    PlateFileQueryRequest,
+    PlateFileQueryResult,
+    PlateFileStreamRequest,
+    PlateFileStreamResult,
+    PlateImageSampleRequest,
+    PlateImageSampleResult,
+    PlatePathInspectionRequest,
+    PlatePathInspectionResult,
+    SelectedPlateFileQueryRequest,
+    SelectedPlateFileQueryResult,
+    SelectedPlateFileStreamRequest,
+    SelectedPlateFileStreamResult,
+    SelectedPlateImageInspectionRequest,
+    SelectedPlateImageInspectionResult,
+    SelectedPlateImageSampleRequest,
+    SelectedPlateImageSampleResult,
+    SyntheticPlateGenerationRequest,
+    SyntheticPlateGenerationResult,
+)
+from openhcs.agent.dto.ui_bridge import (
+    UiActionCatalog,
+    UiActionInvokeRequest,
+    UiActionInvokeResult,
+    UiBranchCatalog,
+    UiBranchSwitchRequest,
+    UiBridgeCatalog,
+    UiBridgeOperationRef,
+    UiBridgeStatus,
+    UiCodeDocument,
+    UiCodeDocumentApplyRequest,
+    UiCodeDocumentApplyResult,
+    UiCodeDocumentCatalog,
+    UiCodeDocumentRequest,
+    UiCodeDocumentValidationRequest,
+    UiCodeDocumentValidationResult,
+    UiObjectStateFieldHelpQuery,
+    UiObjectStateFieldHelpResult,
+    UiObjectStateFieldListQuery,
+    UiObjectStateFieldListResult,
+    UiObjectStateFieldMutationRequest,
+    UiObjectStateFieldMutationResult,
+    UiObjectStateScopeCatalog,
+    UiObjectStateScopeListRequest,
+    UiSelectedPlateWorkflowRequest,
+    UiSelectedPlateWorkflowResult,
+    UiSnapshotCatalog,
+    UiSnapshotListRequest,
+    UiSnapshotRestoreRequest,
+    UiSnapshotRestoreResult,
+    UiStateSurfaceCatalog,
+    UiStateSurfaceDocument,
+    UiStateSurfaceRequest,
+    UiTimeTravelHeadRequest,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
+    UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowCloseResult,
+    UiWindowFocusRequest,
+    UiWindowFocusResult,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+    UiWindowSnapshotResult,
+)
+from openhcs.agent.dto.viewer import (
+    ViewerWindowImageSampleRequest,
+    ViewerWindowImageSampleResult,
+    ViewerWindowLayerIsolationRequest,
+    ViewerWindowLayerIsolationResult,
+    ViewerWindowNavigationRequest,
+    ViewerWindowNavigationResult,
+    ViewerWindowPayloadRequest,
+    ViewerWindowPayloadResult,
+    ViewerWindowProbeResult,
+    ViewerWindowRoiSummaryRequest,
+    ViewerWindowRoiSummaryResult,
+    ViewerWindowSnapshotRequest,
+    ViewerWindowSnapshotResult,
+    ViewerWindowStateRequest,
+    ViewerWindowStateResult,
+    ViewerWindowValidationRequest,
+    ViewerWindowValidationSummaryResult,
+)
 from openhcs.agent.serialization import to_jsonable
 
 
@@ -193,6 +342,12 @@ def _contract_schema_name(contract: AgentContract | None) -> str | None:
     if isinstance(contract, AgentScalarInputContract):
         return contract.schema_name
     return contract.__name__
+
+
+def require_agent_type_contract(contract: AgentContract | None) -> type:
+    if not isinstance(contract, type):
+        raise TypeError(f"Expected agent type contract, got {contract!r}.")
+    return contract
 
 
 class AgentCapabilityRequestInvocationABC(
@@ -554,6 +709,7 @@ class AgentCapabilitySpec:
 class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
     """Registered declaration for one agent-facing capability."""
 
+    __registry__: ClassVar[dict[str, type["AgentCapabilityDeclaration"]]] = {}
     __registry_key__ = "name"
     __skip_if_no_key__ = True
 
@@ -977,7 +1133,7 @@ class HealthCheckCapability(DiscoveryCapability):
         role=CapabilityRole.DIAGNOSTIC,
     )
     data_exposure = ("mcp_process_identity", "mcp_source_freshness")
-    output_contract = agent_dto.McpServerHealthResult
+    output_contract = McpServerHealthResult
 
 class ListCapabilitiesCapability(DiscoveryCapability):
     name = "openhcs_list_capabilities"
@@ -997,8 +1153,8 @@ class SearchFunctionsCapability(FunctionCatalogCapability):
     title = "Search processing functions"
     description = "Searches the OpenHCS function registry by name, module, library, tag, or doc text."
     service = "function_catalog"
-    input_contract = agent_dto.FunctionSearchRequest
-    output_contract = agent_dto.FunctionCatalogPage
+    input_contract = FunctionSearchRequest
+    output_contract = FunctionCatalogPage
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.function_catalog,
         method=lambda service, request: service.search(
@@ -1019,8 +1175,8 @@ class DescribeFunctionCapability(FunctionCatalogCapability):
         "for one registry function."
     )
     service = "function_catalog"
-    input_contract = agent_dto.FunctionDetailRequest
-    output_contract = agent_dto.FunctionDetail
+    input_contract = FunctionDetailRequest
+    output_contract = FunctionDetail
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.function_catalog,
         method=lambda service, request: service.get(
@@ -1047,8 +1203,8 @@ class RegisterCustomFunctionCapability(FunctionCatalogCapability):
     )
     mutating = True
     side_effects = ("writes_custom_function_file", "updates_function_registry")
-    input_contract = agent_dto.CustomFunctionRegistrationRequest
-    output_contract = agent_dto.CustomFunctionRegistrationResult
+    input_contract = CustomFunctionRegistrationRequest
+    output_contract = CustomFunctionRegistrationResult
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.function_catalog,
         method=lambda service, request: service.register_custom_function(request),
@@ -1065,8 +1221,8 @@ class GetAuthoringContextCapability(KnowledgeCapability):
         "kind='first_use' before choosing tools."
     )
     service = "llm_context"
-    input_contract = agent_dto.AuthoringContextRequest
-    output_contract = agent_dto.AuthoringContext
+    input_contract = AuthoringContextRequest
+    output_contract = AuthoringContext
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.authoring_context_service,
         method=lambda service, request: service.get_bounded_authoring_context(
@@ -1081,7 +1237,7 @@ class KnowledgeResourceCapability(KnowledgeCapability):
     description = "Lists source-backed OpenHCS documentation available to agents."
     service = "knowledge_base"
     data_exposure = ("local_documentation_paths",)
-    output_contract = agent_dto.KnowledgeBaseCatalog
+    output_contract = KnowledgeBaseCatalog
     no_argument_invocation = AgentNoArgumentServiceInvocation(
         service=lambda context: context.knowledge_base_service,
         method=lambda service: service.list_documents(),
@@ -1095,7 +1251,7 @@ class ListKnowledgeDocumentsCapability(KnowledgeCapability):
     description = "Lists source-backed OpenHCS documentation available through the MCP knowledge base."
     service = "knowledge_base"
     data_exposure = ("local_documentation_paths",)
-    output_contract = agent_dto.KnowledgeBaseCatalog
+    output_contract = KnowledgeBaseCatalog
     no_argument_invocation = AgentNoArgumentServiceInvocation(
         service=lambda context: context.knowledge_base_service,
         method=lambda service: service.list_documents(),
@@ -1109,8 +1265,8 @@ class GetKnowledgeDocumentCapability(KnowledgeCapability):
     description = "Returns one bounded allowlisted OpenHCS documentation document or section."
     service = "knowledge_base"
     data_exposure = ("local_documentation_paths", "documentation_content")
-    input_contract = agent_dto.KnowledgeBaseDocumentRequest
-    output_contract = agent_dto.KnowledgeBaseDocument
+    input_contract = KnowledgeBaseDocumentRequest
+    output_contract = KnowledgeBaseDocument
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.knowledge_base_service,
         method=lambda service, request: service.get_document(request),
@@ -1124,8 +1280,8 @@ class SearchKnowledgeCapability(KnowledgeCapability):
     description = "Searches the allowlisted OpenHCS documentation knowledge base."
     service = "knowledge_base"
     data_exposure = ("local_documentation_paths", "documentation_content_snippets")
-    input_contract = agent_dto.KnowledgeBaseSearchRequest
-    output_contract = agent_dto.KnowledgeBaseSearchResult
+    input_contract = KnowledgeBaseSearchRequest
+    output_contract = KnowledgeBaseSearchResult
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.knowledge_base_service,
         method=lambda service, request: service.search(request),
@@ -1148,8 +1304,8 @@ class GenerateSyntheticPlateCapability(PlatePathCapability):
     side_effects = ("writes_local_plate_files",)
     data_exposure = ("local_output_path", "generated_image_file_names")
     security_requirements = ("AgentPathPolicy writable root",)
-    input_contract = agent_dto.SyntheticPlateGenerationRequest
-    output_contract = agent_dto.SyntheticPlateGenerationResult
+    input_contract = SyntheticPlateGenerationRequest
+    output_contract = SyntheticPlateGenerationResult
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.synthetic_plate_service,
         method=lambda service, request: service.generate(request),
@@ -1174,8 +1330,8 @@ class InspectPlatePathCapability(PlatePathCapability):
             "filename_parse_summaries",
         )
     security_requirements = ("AgentPathPolicy readable root",)
-    input_contract = agent_dto.PlatePathInspectionRequest
-    output_contract = agent_dto.PlatePathInspectionResult
+    input_contract = PlatePathInspectionRequest
+    output_contract = PlatePathInspectionResult
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.plate_inspection_service,
         method=lambda service, request: service.inspect(request),
@@ -1201,8 +1357,8 @@ class QueryPlateFilesCapability(PlatePathCapability):
             "file_metadata",
         )
     security_requirements = ("AgentPathPolicy readable root",)
-    input_contract = agent_dto.PlateFileQueryRequest
-    output_contract = agent_dto.PlateFileQueryResult
+    input_contract = PlateFileQueryRequest
+    output_contract = PlateFileQueryResult
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.plate_inspection_service,
         method=lambda service, request: service.query_files(request),
@@ -1226,8 +1382,8 @@ class SamplePlateImageCapability(PlatePathCapability):
             "bounded_image_pixels",
         )
     security_requirements = ("AgentPathPolicy readable root",)
-    input_contract = agent_dto.PlateImageSampleRequest
-    output_contract = agent_dto.PlateImageSampleResult
+    input_contract = PlateImageSampleRequest
+    output_contract = PlateImageSampleResult
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.plate_inspection_service,
         method=lambda service, request: service.sample_image(request),
@@ -1253,8 +1409,8 @@ class StreamPlateFilesToViewerCapability(PlatePathCapability):
         )
     runtime_requirements = ("napari_or_fiji_viewer_runtime",)
     security_requirements = ("AgentPathPolicy readable root",)
-    input_contract = agent_dto.PlateFileStreamRequest
-    output_contract = agent_dto.PlateFileStreamResult
+    input_contract = PlateFileStreamRequest
+    output_contract = PlateFileStreamResult
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.plate_streaming_service,
         method=lambda service, request: service.stream_files(request),
@@ -1281,8 +1437,8 @@ class UiInspectSelectedPlateImagesCapability(UiSelectedPlateCapability):
         )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token", "AgentPathPolicy readable root")
-    input_contract = agent_dto.SelectedPlateImageInspectionRequest
-    output_contract = agent_dto.SelectedPlateImageInspectionResult
+    input_contract = SelectedPlateImageInspectionRequest
+    output_contract = SelectedPlateImageInspectionResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.selected_plate_service,
         method=lambda service, request, connection: service.inspect_images(
@@ -1311,8 +1467,8 @@ class UiQuerySelectedPlateFilesCapability(UiSelectedPlateCapability):
         )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token", "AgentPathPolicy readable root")
-    input_contract = agent_dto.SelectedPlateFileQueryRequest
-    output_contract = agent_dto.SelectedPlateFileQueryResult
+    input_contract = SelectedPlateFileQueryRequest
+    output_contract = SelectedPlateFileQueryResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.selected_plate_service,
         method=lambda service, request, connection: service.query_files(
@@ -1342,8 +1498,8 @@ class UiSampleSelectedPlateImageCapability(UiSelectedPlateCapability):
         )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token", "AgentPathPolicy readable root")
-    input_contract = agent_dto.SelectedPlateImageSampleRequest
-    output_contract = agent_dto.SelectedPlateImageSampleResult
+    input_contract = SelectedPlateImageSampleRequest
+    output_contract = SelectedPlateImageSampleResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.selected_plate_service,
         method=lambda service, request, connection: service.sample_image(
@@ -1373,8 +1529,8 @@ class UiStreamSelectedPlateFilesToViewerCapability(UiSelectedPlateCapability):
         )
     runtime_requirements = ("running_openhcs_ui_bridge", "napari_or_fiji_viewer_runtime")
     security_requirements = ("ui_bridge_auth_token", "AgentPathPolicy readable root")
-    input_contract = agent_dto.SelectedPlateFileStreamRequest
-    output_contract = agent_dto.SelectedPlateFileStreamResult
+    input_contract = SelectedPlateFileStreamRequest
+    output_contract = SelectedPlateFileStreamResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.selected_plate_service,
         method=lambda service, request, connection: service.stream_files(
@@ -1389,7 +1545,7 @@ class ArchitectureTopicsResourceCapability(ArchitectureCapability):
     title = "Architecture topics"
     description = "Lists read-only architecture topics backed by real OpenHCS internal symbols."
     service = "architecture_projection"
-    output_contract = agent_dto.ArchitectureTopicPage
+    output_contract = ArchitectureTopicPage
     no_argument_invocation = AgentNoArgumentServiceInvocation(
         service=lambda context: context.architecture_service,
         method=lambda service: service.list_topics(),
@@ -1402,7 +1558,7 @@ class ListArchitectureTopicsCapability(ArchitectureCapability):
     title = "List architecture topics"
     description = "Lists architecture topics available to agents."
     service = "architecture_projection"
-    output_contract = agent_dto.ArchitectureTopicPage
+    output_contract = ArchitectureTopicPage
     no_argument_invocation = AgentNoArgumentServiceInvocation(
         service=lambda context: context.architecture_service,
         method=lambda service: service.list_topics(),
@@ -1417,7 +1573,7 @@ class ExplainArchitectureCapability(ArchitectureCapability):
     description = "Explains one OpenHCS architecture topic using source-backed internal API symbols."
     service = "architecture_projection"
     input_contract = TOPIC_ID_INPUT
-    output_contract = agent_dto.ArchitectureTopic
+    output_contract = ArchitectureTopic
     scalar_invocation = AgentScalarServiceInvocation(
         service=lambda context: context.architecture_service,
         method=lambda service, value: service.explain_topic(value),
@@ -1432,7 +1588,7 @@ class DescribeInternalSymbolCapability(ArchitectureCapability):
     description = "Returns read-only signature/doc/source-location facts for one internal OpenHCS symbol."
     service = "architecture_projection"
     input_contract = SYMBOL_ID_INPUT
-    output_contract = agent_dto.InternalApiSymbol
+    output_contract = InternalApiSymbol
     scalar_invocation = AgentScalarServiceInvocation(
         service=lambda context: context.architecture_service,
         method=lambda service, value: service.describe_internal_symbol(value),
@@ -1445,7 +1601,7 @@ class DescribeConfigSchemaCapability(ConfigDraftCapability):
     description = "Reflects GlobalPipelineConfig or PipelineConfig fields without materializing lazy values."
     service = "config"
     input_contract = CONFIG_TYPE_INPUT
-    output_contract = agent_dto.ConfigSchema
+    output_contract = ConfigSchema
     scalar_invocation = AgentScalarServiceInvocation(
         service=lambda context: context.config_service,
         method=lambda service, value: service.describe_schema(value),
@@ -1459,8 +1615,8 @@ class CreateConfigCapability(ConfigDraftCapability):
     service = "config"
     mutating = True
     side_effects = ("creates_in_memory_config_ref",)
-    input_contract = agent_dto.ConfigPatch
-    output_contract = agent_dto.ConfigRef
+    input_contract = ConfigPatch
+    output_contract = ConfigRef
     request_invocation = AgentConfigPatchServiceInvocation(
         service=lambda context: context.config_service,
         method=lambda service, request: service.create(
@@ -1478,8 +1634,8 @@ class ValidateConfigPatchCapability(ConfigDraftCapability):
     exposition = ConfigDraftCapability.exposition.refine(
         workflow_stage=CapabilityWorkflowStage.VALIDATION,
     )
-    input_contract = agent_dto.ConfigPatch
-    output_contract = agent_dto.ConfigValidationResult
+    input_contract = ConfigPatch
+    output_contract = ConfigValidationResult
     request_invocation = AgentConfigPatchServiceInvocation(
         service=lambda context: context.config_service,
         method=lambda service, request: service.validate_patch(
@@ -1494,8 +1650,8 @@ class RenderConfigSourceCapability(ConfigDraftCapability):
     title = "Render configuration source"
     description = "Renders a draft config reference as Python source using OpenHCS pycodify formatters."
     service = "config"
-    input_contract = agent_dto.ConfigSourceRenderRequest
-    output_contract = agent_dto.RenderedSource
+    input_contract = ConfigSourceRenderRequest
+    output_contract = RenderedSource
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.config_service,
         method=lambda service, request: service.render_source(
@@ -1512,7 +1668,7 @@ class CreatePipelineCapability(PipelineDraftCapability):
     service = "pipeline_authoring"
     mutating = True
     side_effects = ("creates_in_memory_pipeline_ref",)
-    output_contract = agent_dto.PipelineRef
+    output_contract = PipelineRef
     no_argument_invocation = AgentNoArgumentServiceInvocation(
         service=lambda context: context.pipeline_service,
         method=lambda service: service.create_pipeline(),
@@ -1526,8 +1682,8 @@ class AddFunctionStepCapability(PipelineDraftCapability):
     service = "pipeline_authoring"
     mutating = True
     side_effects = ("mutates_in_memory_pipeline_ref",)
-    input_contract = agent_dto.FunctionStepAddRequest
-    output_contract = agent_dto.PipelineSpec
+    input_contract = FunctionStepAddRequest
+    output_contract = PipelineSpec
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.pipeline_service,
         method=lambda service, request: service.add_function_step_from_request(request),
@@ -1542,8 +1698,8 @@ class ValidatePipelineCapability(PipelineDraftCapability):
     exposition = PipelineDraftCapability.exposition.refine(
         workflow_stage=CapabilityWorkflowStage.VALIDATION,
     )
-    input_contract = agent_dto.PipelineValidationRequest
-    output_contract = agent_dto.PipelineValidationResult
+    input_contract = PipelineValidationRequest
+    output_contract = PipelineValidationResult
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.pipeline_service,
         method=lambda service, request: service.validate(request.pipeline_id),
@@ -1555,8 +1711,8 @@ class RenderPipelineSourceCapability(PipelineDraftCapability):
     title = "Render pipeline source"
     description = "Renders an authored pipeline as Python source using the OpenHCS FunctionStep serializer."
     service = "pipeline_authoring"
-    input_contract = agent_dto.PipelineSourceRenderRequest
-    output_contract = agent_dto.RenderedSource
+    input_contract = PipelineSourceRenderRequest
+    output_contract = RenderedSource
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.pipeline_service,
         method=lambda service, request: service.render_source(
@@ -1577,8 +1733,8 @@ class CreateOrchestratorSessionCapability(HeadlessExecutionCapability):
     service = "execution_session"
     mutating = True
     side_effects = ("creates_in_memory_execution_session",)
-    input_contract = agent_dto.OrchestratorSessionCreationRequest
-    output_contract = agent_dto.OrchestratorSessionRef
+    input_contract = OrchestratorSessionCreationRequest
+    output_contract = OrchestratorSessionRef
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: service.create_session_from_request(request),
@@ -1597,8 +1753,8 @@ class CreateOrchestratorSessionFromPipelineSourceCapability(HeadlessExecutionCap
     service = "execution_session"
     mutating = True
     side_effects = ("creates_in_memory_execution_session",)
-    input_contract = agent_dto.PipelineSourceOrchestratorSessionRequest
-    output_contract = agent_dto.OrchestratorSessionRef
+    input_contract = PipelineSourceOrchestratorSessionRequest
+    output_contract = OrchestratorSessionRef
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: (
@@ -1612,8 +1768,8 @@ class GetOrchestratorSessionCapability(HeadlessExecutionCapability):
     title = "Get orchestrator session"
     description = "Returns the stored plate, pipeline, config, and ZMQ connection identity for a session."
     service = "execution_session"
-    input_contract = agent_dto.OrchestratorSessionRequest
-    output_contract = agent_dto.OrchestratorSession
+    input_contract = OrchestratorSessionRequest
+    output_contract = OrchestratorSession
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: service.get_session_from_request(request),
@@ -1633,8 +1789,8 @@ class InspectPipelineSourceArtifactPlanCapability(PipelineDraftCapability):
     exposition = PipelineDraftCapability.exposition.refine(
         workflow_stage=CapabilityWorkflowStage.VALIDATION,
     )
-    input_contract = agent_dto.PipelineSourceArtifactPlanInspectionRequest
-    output_contract = agent_dto.ArtifactPlanInspection
+    input_contract = PipelineSourceArtifactPlanInspectionRequest
+    output_contract = ArtifactPlanInspection
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: (
@@ -1655,8 +1811,8 @@ class SubmitCompileCapability(HeadlessExecutionCapability):
     service = "execution_session"
     mutating = True
     side_effects = ("submits_zmq_compile_job",)
-    input_contract = agent_dto.CompileSubmissionRequest
-    output_contract = agent_dto.ExecutionJobRef
+    input_contract = CompileSubmissionRequest
+    output_contract = ExecutionJobRef
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: service.submit_compile(
@@ -1681,8 +1837,8 @@ class SubmitPipelineExecutionCapability(HeadlessExecutionCapability):
     service = "execution_session"
     mutating = True
     side_effects = ("submits_zmq_execution_job",)
-    input_contract = agent_dto.PipelineExecutionSubmissionRequest
-    output_contract = agent_dto.ExecutionJobRef
+    input_contract = PipelineExecutionSubmissionRequest
+    output_contract = ExecutionJobRef
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: service.submit_execution(
@@ -1700,8 +1856,8 @@ class GetExecutionStatusCapability(SubmittedJobCapability):
     title = "Get execution status"
     description = "Polls the ZMQ server for one submitted compile or execution job."
     service = "execution_session"
-    input_contract = agent_dto.ExecutionStatusRequest
-    output_contract = agent_dto.ExecutionJobStatus
+    input_contract = ExecutionStatusRequest
+    output_contract = ExecutionJobStatus
     request_invocation = AgentDataclassRequestServiceInvocation(
         service=lambda context: context.execution_service,
         method=lambda service, request: service.get_job_status(
@@ -1717,8 +1873,8 @@ class ScanRuntimeServersCapability(RuntimeServerCliConnectionCapability):
     title = "Scan runtime servers"
     description = "Scans candidate ports for running OpenHCS ZMQ execution servers."
     service = "runtime_server"
-    input_contract = agent_dto.RuntimeServerScanRequest
-    output_contract = agent_dto.RuntimeServerScanResult
+    input_contract = RuntimeServerScanRequest
+    output_contract = RuntimeServerScanResult
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.runtime_server_service,
         method=lambda service, request: service.scan_from_request(request),
@@ -1731,8 +1887,8 @@ class GetRuntimeServerInfoCapability(RuntimeServerCliConnectionCapability):
     title = "Get runtime server info"
     description = "Returns a read-only server snapshot from a running OpenHCS ZMQ execution server."
     service = "runtime_server"
-    input_contract = agent_dto.RuntimeServerInfoRequest
-    output_contract = agent_dto.RuntimeServerInfo
+    input_contract = RuntimeServerInfoRequest
+    output_contract = RuntimeServerInfo
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.runtime_server_service,
         method=lambda service, request: service.server_info_from_request(request),
@@ -1745,8 +1901,8 @@ class GetRuntimeServerExecutionStatusCapability(RuntimeServerCliConnectionCapabi
     title = "Get runtime execution status"
     description = "Returns a bounded execution-status projection from a running OpenHCS runtime server."
     service = "runtime_server"
-    input_contract = agent_dto.RuntimeServerExecutionStatusRequest
-    output_contract = agent_dto.RuntimeExecutionStatus
+    input_contract = RuntimeServerExecutionStatusRequest
+    output_contract = RuntimeExecutionStatus
     request_invocation = AgentFromFieldsServiceInvocation(
         service=lambda context: context.runtime_server_service,
         method=lambda service, request: service.execution_status_from_request(request),
@@ -1764,8 +1920,8 @@ class ViewerSnapshotWindowCapability(ViewerWindowCliConnectionCapability):
     runtime_requirements = ("running_openhcs_viewer_server",)
     data_exposure = ("viewer_screenshot", "local_output_path")
     security_requirements = ("agent_path_policy",)
-    input_contract = agent_dto.ViewerWindowSnapshotRequest
-    output_contract = agent_dto.ViewerWindowSnapshotResult
+    input_contract = ViewerWindowSnapshotRequest
+    output_contract = ViewerWindowSnapshotResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.snapshot_window(request),
@@ -1789,8 +1945,8 @@ class GetViewerWindowStateCapability(ViewerWindowCliConnectionCapability):
             "viewer_payload_summaries",
             "viewer_shape_bounds",
     )
-    input_contract = agent_dto.ViewerWindowStateRequest
-    output_contract = agent_dto.ViewerWindowStateResult
+    input_contract = ViewerWindowStateRequest
+    output_contract = ViewerWindowStateResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.window_state(request),
@@ -1814,8 +1970,8 @@ class GetViewerWindowPayloadsCapability(ViewerWindowCliConnectionCapability):
             "viewer_shape_payloads",
             "viewer_array_values",
     )
-    input_contract = agent_dto.ViewerWindowPayloadRequest
-    output_contract = agent_dto.ViewerWindowPayloadResult
+    input_contract = ViewerWindowPayloadRequest
+    output_contract = ViewerWindowPayloadResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.window_payloads(request),
@@ -1837,8 +1993,8 @@ class SampleViewerWindowImageCapability(ViewerWindowCliConnectionCapability):
             "viewer_axis_coordinates",
             "viewer_array_values",
     )
-    input_contract = agent_dto.ViewerWindowImageSampleRequest
-    output_contract = agent_dto.ViewerWindowImageSampleResult
+    input_contract = ViewerWindowImageSampleRequest
+    output_contract = ViewerWindowImageSampleResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.sample_image(request),
@@ -1861,8 +2017,8 @@ class SummarizeViewerWindowRoisCapability(ViewerWindowCliConnectionCapability):
             "viewer_shape_bounds",
             "viewer_roi_statistics",
     )
-    input_contract = agent_dto.ViewerWindowRoiSummaryRequest
-    output_contract = agent_dto.ViewerWindowRoiSummaryResult
+    input_contract = ViewerWindowRoiSummaryRequest
+    output_contract = ViewerWindowRoiSummaryResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.summarize_rois(request),
@@ -1882,8 +2038,8 @@ class NavigateViewerWindowCapability(ViewerWindowCliConnectionCapability):
     side_effects = ("mutates_viewer_window_state",)
     runtime_requirements = ("running_openhcs_viewer_server",)
     data_exposure = ("viewer_layer_state", "viewer_axis_state")
-    input_contract = agent_dto.ViewerWindowNavigationRequest
-    output_contract = agent_dto.ViewerWindowNavigationResult
+    input_contract = ViewerWindowNavigationRequest
+    output_contract = ViewerWindowNavigationResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.navigate_window(request),
@@ -1904,8 +2060,8 @@ class IsolateViewerWindowLayersCapability(ViewerWindowCliConnectionCapability):
     side_effects = ("mutates_viewer_window_state",)
     runtime_requirements = ("running_openhcs_viewer_server",)
     data_exposure = ("viewer_layer_state", "viewer_axis_state")
-    input_contract = agent_dto.ViewerWindowLayerIsolationRequest
-    output_contract = agent_dto.ViewerWindowLayerIsolationResult
+    input_contract = ViewerWindowLayerIsolationRequest
+    output_contract = ViewerWindowLayerIsolationResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.isolate_layers(request),
@@ -1925,8 +2081,8 @@ class ProbeViewerWindowCapability(ViewerWindowCliConnectionCapability):
     )
     runtime_requirements = ("running_openhcs_viewer_server",)
     data_exposure = ("viewer_identity", "viewer_layer_counts")
-    input_contract = agent_dto.ViewerWindowStateRequest
-    output_contract = agent_dto.ViewerWindowProbeResult
+    input_contract = ViewerWindowStateRequest
+    output_contract = ViewerWindowProbeResult
 
 class ValidateViewerWindowStateCapability(ViewerWindowCliConnectionCapability):
     name = "openhcs_validate_viewer_window_state"
@@ -1948,8 +2104,8 @@ class ValidateViewerWindowStateCapability(ViewerWindowCliConnectionCapability):
             "viewer_coordinate_coverage",
             "viewer_payload_spatial_compatibility",
     )
-    input_contract = agent_dto.ViewerWindowValidationRequest
-    output_contract = agent_dto.ViewerWindowValidationSummaryResult
+    input_contract = ViewerWindowValidationRequest
+    output_contract = ViewerWindowValidationSummaryResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.validation_summary(request),
@@ -1966,7 +2122,7 @@ class UiListBridgesCapability(UiBridgeCapability):
         role=CapabilityRole.DIAGNOSTIC,
     )
     data_exposure = ("local_ui_bridge_descriptor_paths",)
-    output_contract = agent_dto.UiBridgeCatalog
+    output_contract = UiBridgeCatalog
     no_argument_invocation = AgentNoArgumentServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service: service.list_bridges(),
@@ -1984,7 +2140,7 @@ class UiBridgeStatusCapability(UiBridgeCliConnectionCapability):
         role=CapabilityRole.DIAGNOSTIC,
     )
     runtime_requirements = ("running_openhcs_ui_bridge",)
-    output_contract = agent_dto.UiBridgeStatus
+    output_contract = UiBridgeStatus
     connection_invocation = AgentConnectionServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, connection: service.status(connection),
@@ -1999,7 +2155,7 @@ class UiListCodeDocumentsCapability(UiCodeDocumentCapability):
     service = "ui_bridge"
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    output_contract = agent_dto.UiCodeDocumentCatalog
+    output_contract = UiCodeDocumentCatalog
 
 class UiListStateSurfacesCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_list_state_surfaces"
@@ -2014,7 +2170,7 @@ class UiListStateSurfacesCapability(UiSelectedPlateCapability):
     )
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    output_contract = agent_dto.UiStateSurfaceCatalog
+    output_contract = UiStateSurfaceCatalog
 
 class UiGetStateSurfaceCapability(UiSelectedPlateCapability):
     name = "openhcs_ui_get_state_surface"
@@ -2030,8 +2186,8 @@ class UiGetStateSurfaceCapability(UiSelectedPlateCapability):
     runtime_requirements = ("running_openhcs_ui_bridge",)
     data_exposure = ("local_paths",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiStateSurfaceRequest
-    output_contract = agent_dto.UiStateSurfaceDocument
+    input_contract = UiStateSurfaceRequest
+    output_contract = UiStateSurfaceDocument
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.get_state_surface(
@@ -2049,7 +2205,7 @@ class UiListActionsCapability(UiSemanticActionCapability):
     service = "ui_bridge"
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    output_contract = agent_dto.UiActionCatalog
+    output_contract = UiActionCatalog
 
 class UiInvokeActionCapability(UiSemanticActionCapability):
     name = "openhcs_ui_invoke_action"
@@ -2062,8 +2218,8 @@ class UiInvokeActionCapability(UiSemanticActionCapability):
     side_effects = ("may_mutate_running_ui_state", "may_start_ui_workflow")
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiActionInvokeRequest
-    output_contract = agent_dto.UiActionInvokeResult
+    input_contract = UiActionInvokeRequest
+    output_contract = UiActionInvokeResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.invoke_action(
@@ -2092,8 +2248,8 @@ class UiSelectedPlateWorkflowCapability(UiSelectedPlateCapability):
     side_effects = ("may_mutate_running_ui_state", "may_start_ui_workflow")
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiSelectedPlateWorkflowRequest
-    output_contract = agent_dto.UiSelectedPlateWorkflowResult
+    input_contract = UiSelectedPlateWorkflowRequest
+    output_contract = UiSelectedPlateWorkflowResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.selected_plate_workflow(
@@ -2112,7 +2268,7 @@ class UiListWindowsCapability(UiWindowCapability):
     service = "ui_bridge"
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    output_contract = agent_dto.UiWindowCatalog
+    output_contract = UiWindowCatalog
 
 class UiFocusWindowCapability(UiWindowCapability):
     name = "openhcs_ui_focus_window"
@@ -2124,8 +2280,8 @@ class UiFocusWindowCapability(UiWindowCapability):
     side_effects = ("changes_running_ui_focus",)
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiWindowFocusRequest
-    output_contract = agent_dto.UiWindowFocusResult
+    input_contract = UiWindowFocusRequest
+    output_contract = UiWindowFocusResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.focus_window(
@@ -2145,8 +2301,8 @@ class UiNavigateWindowCapability(UiWindowCapability):
     side_effects = ("changes_running_ui_focus", "may_open_running_ui_window")
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiWindowNavigateRequest
-    output_contract = agent_dto.UiWindowNavigateResult
+    input_contract = UiWindowNavigateRequest
+    output_contract = UiWindowNavigateResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.navigate_window(
@@ -2166,8 +2322,8 @@ class UiCloseWindowCapability(UiWindowCapability):
     side_effects = ("closes_running_ui_window",)
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiWindowCloseRequest
-    output_contract = agent_dto.UiWindowCloseResult
+    input_contract = UiWindowCloseRequest
+    output_contract = UiWindowCloseResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.close_window(
@@ -2189,8 +2345,8 @@ class UiSnapshotWindowCapability(UiWindowCapability):
     runtime_requirements = ("running_openhcs_ui_bridge",)
     data_exposure = ("ui_screenshot", "local_output_path")
     security_requirements = ("ui_bridge_auth_token", "agent_path_policy")
-    input_contract = agent_dto.UiWindowSnapshotRequest
-    output_contract = agent_dto.UiWindowSnapshotResult
+    input_contract = UiWindowSnapshotRequest
+    output_contract = UiWindowSnapshotResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.snapshot_window(
@@ -2221,8 +2377,8 @@ class UiGetWidgetTreeCapability(UiWidgetFallbackCapability):
             "object_state_resolved_value_previews",
         )
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiWidgetTreeRequest
-    output_contract = agent_dto.UiWidgetTreeResult
+    input_contract = UiWidgetTreeRequest
+    output_contract = UiWidgetTreeResult
 
 class UiInvokeWidgetActionCapability(UiWidgetFallbackCapability):
     name = "openhcs_ui_invoke_widget_action"
@@ -2238,8 +2394,8 @@ class UiInvokeWidgetActionCapability(UiWidgetFallbackCapability):
     side_effects = ("mutates_running_ui",)
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiWidgetActionInvokeRequest
-    output_contract = agent_dto.UiWidgetActionInvokeResult
+    input_contract = UiWidgetActionInvokeRequest
+    output_contract = UiWidgetActionInvokeResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.invoke_widget_action(
@@ -2268,8 +2424,8 @@ class UiListObjectStateScopesCapability(UiObjectStateCapability):
             "object_state_resolved_value_previews",
         )
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiObjectStateScopeListRequest
-    output_contract = agent_dto.UiObjectStateScopeCatalog
+    input_contract = UiObjectStateScopeListRequest
+    output_contract = UiObjectStateScopeCatalog
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.list_object_state_scopes(
@@ -2296,8 +2452,8 @@ class UiGetObjectStateFieldsCapability(UiObjectStateCapability):
             "object_state_field_provenance",
         )
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiObjectStateFieldListQuery
-    output_contract = agent_dto.UiObjectStateFieldListResult
+    input_contract = UiObjectStateFieldListQuery
+    output_contract = UiObjectStateFieldListResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.get_object_state_fields(
@@ -2327,8 +2483,8 @@ class UiDescribeObjectStateFieldCapability(UiObjectStateCapability):
             "object_state_resolved_value_previews",
         )
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiObjectStateFieldHelpQuery
-    output_contract = agent_dto.UiObjectStateFieldHelpResult
+    input_contract = UiObjectStateFieldHelpQuery
+    output_contract = UiObjectStateFieldHelpResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.object_state_field_help_service,
         method=lambda service, request, connection: service.describe_query(
@@ -2360,8 +2516,8 @@ class UiMutateObjectStateFieldCapability(UiObjectStateCapability):
             "object_state_resolved_value_previews",
         )
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiObjectStateFieldMutationRequest
-    output_contract = agent_dto.UiObjectStateFieldMutationResult
+    input_contract = UiObjectStateFieldMutationRequest
+    output_contract = UiObjectStateFieldMutationResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.mutate_object_state_field(
@@ -2386,8 +2542,8 @@ class UiGetCodeDocumentCapability(UiCodeDocumentCapability):
     runtime_requirements = ("running_openhcs_ui_bridge",)
     data_exposure = ("local_paths_in_source",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiCodeDocumentRequest
-    output_contract = agent_dto.UiCodeDocument
+    input_contract = UiCodeDocumentRequest
+    output_contract = UiCodeDocument
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.get_document(
@@ -2406,8 +2562,8 @@ class UiValidateCodeDocumentCapability(UiCodeDocumentCapability):
     runtime_requirements = ("running_openhcs_ui_bridge",)
     data_exposure = ("local_paths_in_source",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiCodeDocumentValidationRequest
-    output_contract = agent_dto.UiCodeDocumentValidationResult
+    input_contract = UiCodeDocumentValidationRequest
+    output_contract = UiCodeDocumentValidationResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.validate_document(
@@ -2437,8 +2593,8 @@ class UiApplyCodeDocumentCapability(UiCodeDocumentCapability):
             "object_state_undo_targets",
         )
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiCodeDocumentApplyRequest
-    output_contract = agent_dto.UiCodeDocumentApplyResult
+    input_contract = UiCodeDocumentApplyRequest
+    output_contract = UiCodeDocumentApplyResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.apply_document(
@@ -2456,8 +2612,8 @@ class UiListSnapshotsCapability(UiSnapshotCapability):
     service = "ui_bridge"
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiSnapshotListRequest
-    output_contract = agent_dto.UiSnapshotCatalog
+    input_contract = UiSnapshotListRequest
+    output_contract = UiSnapshotCatalog
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.list_snapshots(
@@ -2476,8 +2632,8 @@ class UiRestoreSnapshotCapability(UiSnapshotCapability):
     side_effects = ("mutates_running_ui_state", "time_travels_ui_state")
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiSnapshotRestoreRequest
-    output_contract = agent_dto.UiSnapshotRestoreResult
+    input_contract = UiSnapshotRestoreRequest
+    output_contract = UiSnapshotRestoreResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.restore_snapshot(
@@ -2497,8 +2653,8 @@ class UiTimeTravelHeadCapability(UiSnapshotCapability):
     side_effects = ("mutates_running_ui_state", "time_travels_ui_state")
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiTimeTravelHeadRequest
-    output_contract = agent_dto.UiSnapshotRestoreResult
+    input_contract = UiTimeTravelHeadRequest
+    output_contract = UiSnapshotRestoreResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.time_travel_head(
@@ -2516,7 +2672,7 @@ class UiListBranchesCapability(UiSnapshotCapability):
     service = "ui_bridge"
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    output_contract = agent_dto.UiBranchCatalog
+    output_contract = UiBranchCatalog
     connection_invocation = AgentConnectionServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, connection: service.list_branches(connection),
@@ -2532,8 +2688,8 @@ class UiSwitchBranchCapability(UiSnapshotCapability):
     side_effects = ("mutates_running_ui_state", "time_travels_ui_state")
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
-    input_contract = agent_dto.UiBranchSwitchRequest
-    output_contract = agent_dto.UiSnapshotRestoreResult
+    input_contract = UiBranchSwitchRequest
+    output_contract = UiSnapshotRestoreResult
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, request, connection: service.switch_branch(
@@ -2556,7 +2712,7 @@ class UiGetOperationStatusCapability(UiBridgeCliConnectionCapability):
     runtime_requirements = ("running_openhcs_ui_bridge",)
     security_requirements = ("ui_bridge_auth_token",)
     input_contract = OPERATION_ID_INPUT
-    output_contract = agent_dto.UiBridgeOperationRef
+    output_contract = UiBridgeOperationRef
     connection_scalar_invocation = AgentConnectionScalarServiceInvocation(
         service=lambda context: context.ui_bridge_service,
         method=lambda service, value, connection: service.get_operation_status(

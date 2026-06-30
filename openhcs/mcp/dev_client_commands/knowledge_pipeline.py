@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import ClassVar
 
 from openhcs.agent.capabilities import agent_capabilities
+from openhcs.agent.authoring_contexts import (
+    AuthoringContextDeclaration,
+    PipelineAuthoringContext,
+)
 from openhcs.agent.dto.authoring import AuthoringContextRequest
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.functions import FunctionDetailRequest, FunctionSearchRequest
-from openhcs.agent.services.llm_context_service import (
-    AuthoringContextDeclaration,
-    PipelineAuthoringContext,
-)
 from openhcs.agent.serialization import to_jsonable
 from openhcs.mcp.dev_client_commanding import McpDevCommandSpec, SingleToolCommandSpec
 from openhcs.mcp.dev_client_core import (
@@ -37,10 +37,6 @@ from openhcs.mcp.dev_client_core import (
 from openhcs.mcp.dev_client_rendering import (
     AuthoringContextRenderOptions,
     CatalogRenderOptions,
-)
-from openhcs.mcp.dev_client_renderers.pipeline import (
-    ExecuteSourceRenderer,
-    PipelineDraftStepRenderer,
 )
 
 class KnowledgeCommandSpec(SingleToolCommandSpec):
@@ -336,6 +332,8 @@ class DraftPipelineStepCommandSpec(McpDevCommandSpec):
     ) -> str:
         if args.json:
             return super().render_response(payload, args)
+        from openhcs.mcp.dev_client_renderers.pipeline import PipelineDraftStepRenderer
+
         return PipelineDraftStepRenderer.render(
             payload,
             max_source_chars=args.max_source_chars,
@@ -473,4 +471,6 @@ class ExecuteSourceCommandSpec(McpDevCommandSpec):
     ) -> str:
         if args.json:
             return super().render_response(payload, args)
+        from openhcs.mcp.dev_client_renderers.pipeline import ExecuteSourceRenderer
+
         return ExecuteSourceRenderer.render(payload)

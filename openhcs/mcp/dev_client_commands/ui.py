@@ -50,10 +50,6 @@ from openhcs.mcp.dev_client_rendering import (
     WidgetTreeOutputFormat,
     WidgetTreeRenderOptions,
 )
-from openhcs.mcp.dev_client_renderers.ui_bridge import (
-    UiActionInvokeRenderer,
-    UiSmokeRenderer,
-)
 from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
 
 class StateSurfaceCommandSpec(CapabilityBackedCommandSpec):
@@ -257,6 +253,8 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         payload: JsonObject,
         tool_arguments: Mapping[str, JsonValue],
     ) -> str:
+        from openhcs.mcp.dev_client_renderers.ui_bridge import UiActionInvokeRenderer
+
         workflow = optional_str(tool_arguments.get("workflow"))
         return UiActionInvokeRenderer.render(
             payload,
@@ -1138,4 +1136,6 @@ class UiSmokeCommandSpec(UiBridgeCommandSpec):
     ) -> str:
         if args.json:
             return super().render_response(payload, args)
+        from openhcs.mcp.dev_client_renderers.ui_bridge import UiSmokeRenderer
+
         return UiSmokeRenderer.render(payload)

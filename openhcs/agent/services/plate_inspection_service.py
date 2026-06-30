@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +19,7 @@ from openhcs.agent.dto.plate import (
     PlateInspectionDefaults,
     PlateInspectionImageFileSummary,
     PlateInspectionImageRecordSummary,
+    PlateInspectionIssueCode,
     PlateInspectionParseFailure,
     PlateInspectionParseSummary,
     PlateInspectionResultFileRecordSummary,
@@ -62,26 +62,6 @@ if TYPE_CHECKING:
         MetadataHandler,
     )
     from polystore.filemanager import FileManager
-
-
-class PlateInspectionIssueCode(str, Enum):
-    """Structured issue codes returned by plate inspection."""
-
-    PATH_POLICY_REJECTED = "plate_path_policy_rejected"
-    PATH_NOT_DIRECTORY = "plate_path_not_directory"
-    HANDLER_DETECTION_FAILED = "plate_handler_detection_failed"
-    METADATA_FILE_UNAVAILABLE = "plate_metadata_file_unavailable"
-    GRID_DIMENSIONS_UNAVAILABLE = "plate_grid_dimensions_unavailable"
-    PIXEL_SIZE_UNAVAILABLE = "plate_pixel_size_unavailable"
-    AVAILABLE_BACKENDS_UNAVAILABLE = "plate_available_backends_unavailable"
-    IMAGE_FILE_LISTING_FAILED = "plate_image_file_listing_failed"
-    RESULT_FILE_LISTING_FAILED = "plate_result_file_listing_failed"
-    RESULT_FILES_AVAILABLE = "plate_result_files_available"
-    NO_IMAGE_FILES = "plate_no_image_files"
-    PARSER_UNAVAILABLE = "plate_parser_unavailable"
-    PARSE_LIMIT_REACHED = "plate_parse_limit_reached"
-    PARSE_FAILURES = "plate_parse_failures"
-    LOW_PARSE_COVERAGE = "plate_low_parse_coverage"
 
 
 class PlateInspectionText:

@@ -15,7 +15,7 @@ from openhcs.agent.dto.common import (
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.constants.constants import AllComponents
 from openhcs.core.config import NapariStreamingConfig
-from openhcs.core.plate_image_inventory import PlateFileInventoryQuery, PlateFileKind
+from openhcs.core.plate_file_inventory import PlateFileInventoryQuery, PlateFileKind
 from openhcs.core.synthetic_plate_generation import (
     SYNTHETIC_PLATE_GENERATION_PROFILE,
     SyntheticPlateFormat,
@@ -46,6 +46,26 @@ class PlateInspectionValueSource(str, Enum):
     PARSED_FILENAMES = "parsed_filenames"
     METADATA_AND_PARSED_FILENAMES = "metadata_and_parsed_filenames"
     UNAVAILABLE = "unavailable"
+
+
+class PlateInspectionIssueCode(str, Enum):
+    """Structured issue codes returned by plate inspection."""
+
+    PATH_POLICY_REJECTED = "plate_path_policy_rejected"
+    PATH_NOT_DIRECTORY = "plate_path_not_directory"
+    HANDLER_DETECTION_FAILED = "plate_handler_detection_failed"
+    METADATA_FILE_UNAVAILABLE = "plate_metadata_file_unavailable"
+    GRID_DIMENSIONS_UNAVAILABLE = "plate_grid_dimensions_unavailable"
+    PIXEL_SIZE_UNAVAILABLE = "plate_pixel_size_unavailable"
+    AVAILABLE_BACKENDS_UNAVAILABLE = "plate_available_backends_unavailable"
+    IMAGE_FILE_LISTING_FAILED = "plate_image_file_listing_failed"
+    RESULT_FILE_LISTING_FAILED = "plate_result_file_listing_failed"
+    RESULT_FILES_AVAILABLE = "plate_result_files_available"
+    NO_IMAGE_FILES = "plate_no_image_files"
+    PARSER_UNAVAILABLE = "plate_parser_unavailable"
+    PARSE_LIMIT_REACHED = "plate_parse_limit_reached"
+    PARSE_FAILURES = "plate_parse_failures"
+    LOW_PARSE_COVERAGE = "plate_low_parse_coverage"
 
 
 class SelectedPlateFileQueryTarget(str, Enum):

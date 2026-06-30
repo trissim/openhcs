@@ -6,13 +6,23 @@ import json
 from collections.abc import Mapping
 from typing import ClassVar
 
-from openhcs.agent import dto as agent_dto
-from openhcs.agent.capabilities import (
-    AgentCapabilitySpec,
-    CapabilityWorkflowGroup,
-    get_agent_capability,
+from openhcs.agent.dto.architecture import (
+    ArchitectureTopic,
+    ArchitectureTopicPage,
+    InternalApiSymbol,
 )
+from openhcs.agent.dto.authoring import AuthoringContext
 from openhcs.agent.dto.common import JsonObject, JsonValue
+from openhcs.agent.dto.functions import (
+    CustomFunctionRegistrationResult,
+    FunctionCatalogPage,
+    FunctionDetail,
+)
+from openhcs.agent.dto.knowledge import (
+    KnowledgeBaseCatalog,
+    KnowledgeBaseDocument,
+    KnowledgeBaseSearchResult,
+)
 from openhcs.mcp.dev_client_rendering import (
     AuthoringContextRenderOptions,
     CatalogRenderOptions,
@@ -26,108 +36,10 @@ from openhcs.mcp.dev_client_renderers.viewer import (
     ViewerValidationRenderer,
 )
 
-class ToolListRenderer:
-    """Compact renderer for current MCP tool metadata."""
-
-    @classmethod
-    def render(
-        cls,
-        response: JsonObject,
-        *,
-        contains: str | None = None,
-        limit: int = 80,
-        grouped: bool = True,
-    ) -> str:
-        errors = McpDevPayloadProjection.sequence_of_mappings(response.get("errors"))
-        if errors:
-            return "\n".join(
-                ("Tools: failed", *ViewerValidationRenderer._error_lines(errors))
-            )
-        tools = McpDevPayloadProjection.sequence_of_mappings(response.get("tools"))
-        if contains:
-            needle = contains.casefold()
-            tools = tuple(
-                tool
-                for tool in tools
-                if needle in McpDevPayloadProjection.text(tool.get("name")).casefold()
-                or needle
-                in McpDevPayloadProjection.text(tool.get("description")).casefold()
-            )
-        bounded_limit = max(limit, 0)
-        visible_tools = tools[:bounded_limit]
-        lines = [
-            (
-                "Tools: "
-                f"matched={len(tools)} total={McpDevPayloadProjection.text(response.get('tool_count'))} "
-                f"shown={len(visible_tools)}"
-            )
-        ]
-        if contains:
-            lines.append(f"Filter: contains={contains}")
-        if visible_tools:
-            lines.append("Tool names:")
-            if grouped:
-                lines.extend(cls._grouped_tool_lines(visible_tools))
-            else:
-                lines.extend(cls._tool_lines(visible_tools))
-        if len(visible_tools) < len(tools):
-            lines.append(f"...<truncated {len(tools) - len(visible_tools)} tools>")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _tool_lines(tools: tuple[Mapping[str, JsonValue], ...]) -> list[str]:
-        lines: list[str] = []
-        for tool in tools:
-            lines.append(
-                "- "
-                f"{McpDevPayloadProjection.text(tool.get('name'))}: "
-                f"{McpDevPayloadProjection.text(tool.get('description'))}"
-            )
-        return lines
-
-    @classmethod
-    def _grouped_tool_lines(
-        cls,
-        tools: tuple[Mapping[str, JsonValue], ...],
-    ) -> list[str]:
-        entries = tuple(
-            (tool, cls._capability_for_tool(tool))
-            for tool in tools
-        )
-        lines: list[str] = []
-        for workflow_group in CapabilityWorkflowGroup:
-            group_entries = tuple(
-                (tool, capability)
-                for tool, capability in entries
-                if capability is not None
-                and capability.workflow_group is workflow_group
-            )
-            if not group_entries:
-                continue
-            lines.append(f"[{workflow_group.title}]")
-            lines.extend(cls._tool_lines(tuple(tool for tool, _ in group_entries)))
-        ungrouped_tools = tuple(
-            tool for tool, capability in entries if capability is None
-        )
-        if ungrouped_tools:
-            lines.append("[Ungrouped]")
-            lines.extend(cls._tool_lines(ungrouped_tools))
-        return lines
-
-    @staticmethod
-    def _capability_for_tool(
-        tool: Mapping[str, JsonValue],
-    ) -> AgentCapabilitySpec | None:
-        tool_name = McpDevPayloadProjection.text(tool.get("name"))
-        try:
-            return get_agent_capability(tool_name)
-        except KeyError:
-            return None
-
 class KnowledgeCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for knowledge-base document catalogs."""
 
-    output_contract = agent_dto.KnowledgeBaseCatalog
+    output_contract = KnowledgeBaseCatalog
 
     @classmethod
     def render_with_options(
@@ -218,7 +130,7 @@ class KnowledgeCatalogRenderer(McpDevOutputRenderer):
 class KnowledgeSearchRenderer(McpDevOutputRenderer):
     """Compact renderer for knowledge search hits."""
 
-    output_contract = agent_dto.KnowledgeBaseSearchResult
+    output_contract = KnowledgeBaseSearchResult
 
     @classmethod
     def render(
@@ -265,7 +177,7 @@ class KnowledgeSearchRenderer(McpDevOutputRenderer):
 class KnowledgeDocumentRenderer(McpDevOutputRenderer):
     """Compact renderer for one knowledge-base document or section."""
 
-    output_contract = agent_dto.KnowledgeBaseDocument
+    output_contract = KnowledgeBaseDocument
 
     MAX_SECTION_HINTS: ClassVar[int] = 12
 
@@ -330,7 +242,7 @@ class KnowledgeDocumentRenderer(McpDevOutputRenderer):
 class ArchitectureCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for architecture topic catalogs."""
 
-    output_contract = agent_dto.ArchitectureTopicPage
+    output_contract = ArchitectureTopicPage
 
     @classmethod
     def render_with_options(
@@ -403,7 +315,7 @@ class ArchitectureCatalogRenderer(McpDevOutputRenderer):
 class ArchitectureTopicRenderer(McpDevOutputRenderer):
     """Compact renderer for one source-backed architecture topic."""
 
-    output_contract = agent_dto.ArchitectureTopic
+    output_contract = ArchitectureTopic
 
     @classmethod
     def render(
@@ -473,7 +385,7 @@ class ArchitectureTopicRenderer(McpDevOutputRenderer):
 class InternalSymbolRenderer(McpDevOutputRenderer):
     """Compact renderer for one projected internal architecture symbol."""
 
-    output_contract = agent_dto.InternalApiSymbol
+    output_contract = InternalApiSymbol
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -508,7 +420,7 @@ class InternalSymbolRenderer(McpDevOutputRenderer):
 class FunctionSearchRenderer(McpDevOutputRenderer):
     """Compact renderer for processing-function search results."""
 
-    output_contract = agent_dto.FunctionCatalogPage
+    output_contract = FunctionCatalogPage
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -548,7 +460,7 @@ class FunctionSearchRenderer(McpDevOutputRenderer):
 class CustomFunctionRegistrationRenderer(McpDevOutputRenderer):
     """Compact renderer for custom-function registration results."""
 
-    output_contract = agent_dto.CustomFunctionRegistrationResult
+    output_contract = CustomFunctionRegistrationResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -598,7 +510,7 @@ class CustomFunctionRegistrationRenderer(McpDevOutputRenderer):
 class FunctionDetailRenderer(McpDevOutputRenderer):
     """Compact renderer for one processing-function detail payload."""
 
-    output_contract = agent_dto.FunctionDetail
+    output_contract = FunctionDetail
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -716,7 +628,7 @@ class FunctionDetailRenderer(McpDevOutputRenderer):
 class AuthoringContextRenderer(McpDevOutputRenderer):
     """Compact renderer for authoring guidance."""
 
-    output_contract = agent_dto.AuthoringContext
+    output_contract = AuthoringContext
 
     @classmethod
     def render_with_options(

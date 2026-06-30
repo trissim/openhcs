@@ -6,13 +6,13 @@ import csv
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
-from typing import ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from openhcs.constants.constants import FileFormat
+from openhcs.core.plate_file_inventory import PlateFileInventoryQuery, PlateFileKind
 from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
@@ -34,13 +34,6 @@ if TYPE_CHECKING:
 
 
 JsonLike = str | int | float | bool | None
-
-
-class PlateFileKind(str, Enum):
-    """Kind of file exposed by a plate inventory."""
-
-    IMAGE = "image"
-    RESULT = "result"
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,48 +275,6 @@ class PlateFileRecord:
             if well is None or str(well) != query.well:
                 return False
         return True
-
-
-@dataclass(frozen=True, slots=True)
-class PlateFileInventoryQuery:
-    """Bounded filter over unified plate file records."""
-
-    ALL_KIND_VALUE: ClassVar[str] = "all"
-
-    kinds: tuple[PlateFileKind, ...] = ()
-    path_contains: str | None = None
-    well: str | None = None
-    offset: int = 0
-    limit: int = 50
-
-    @classmethod
-    def kinds_for(cls, kind: PlateFileKind | str | None) -> tuple[PlateFileKind, ...]:
-        if kind is None:
-            return ()
-        if isinstance(kind, str) and kind == cls.ALL_KIND_VALUE:
-            return ()
-        return (PlateFileKind(kind),)
-
-    @classmethod
-    def kind_choices(cls) -> tuple[str, ...]:
-        return (cls.ALL_KIND_VALUE, *(kind.value for kind in PlateFileKind))
-
-    @classmethod
-    def kind_from_value(cls, value: PlateFileKind | str | None) -> PlateFileKind | None:
-        if value is None:
-            return None
-        if isinstance(value, str) and value == cls.ALL_KIND_VALUE:
-            return None
-        return PlateFileKind(value)
-
-    def normalized(self) -> "PlateFileInventoryQuery":
-        return PlateFileInventoryQuery(
-            kinds=self.kinds,
-            path_contains=self.path_contains,
-            well=self.well,
-            offset=max(0, int(self.offset)),
-            limit=max(0, int(self.limit)),
-        )
 
 
 @dataclass(frozen=True, slots=True)

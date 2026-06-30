@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
-from openhcs.agent import dto as agent_dto
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
+from openhcs.agent.dto.execution import ArtifactPlanInspection
 from openhcs.mcp.dev_client_rendering import (
     McpDevOutputRenderer,
     McpDevPayloadProjection,
@@ -200,7 +200,7 @@ class PipelineDraftStepRenderer:
 class PipelineArtifactPlanRenderer(McpDevOutputRenderer):
     """Compact renderer for pycodified pipeline artifact-plan inspection."""
 
-    output_contract = agent_dto.ArtifactPlanInspection
+    output_contract = ArtifactPlanInspection
 
     @classmethod
     def render(cls, response: JsonObject) -> str:

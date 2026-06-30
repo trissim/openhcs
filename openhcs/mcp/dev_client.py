@@ -16,7 +16,6 @@ else:
 
 from openhcs.agent.serialization import to_jsonable as to_jsonable
 from openhcs.constants.constants import AllComponents as AllComponents
-from openhcs.mcp import dev_client_renderers as dev_client_renderers
 from openhcs.mcp.dev_client_core import (
     DEFAULT_CALL_TIMEOUT_SECONDS,
     DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS as DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS,
@@ -51,7 +50,7 @@ from openhcs.mcp.dev_client_rendering import (
     DEFAULT_CODE_DOCUMENT_MAX_CHARS as DEFAULT_CODE_DOCUMENT_MAX_CHARS,
 )
 
-_DECLARATION_MODULES = (dev_client_renderers, dev_client_commands)
+_DECLARATION_MODULES = (dev_client_commands,)
 
 __all__ = (
     "AllComponents",

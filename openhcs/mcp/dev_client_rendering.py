@@ -10,6 +10,11 @@ from typing import ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.agent.capabilities import (
+    AgentCapabilitySpec,
+    CapabilityWorkflowGroup,
+    get_agent_capability,
+)
 from openhcs.agent.dto.common import JsonObject, JsonValue
 
 DEFAULT_CODE_DOCUMENT_MAX_CHARS = 2_000
@@ -115,6 +120,11 @@ class McpDevOutputRenderer(metaclass=AutoRegisterMeta):
     ) -> "McpDevOutputRendererBinding | None":
         if output_contract is None:
             return None
+        from openhcs.mcp.dev_client_renderers import (
+            ensure_dev_client_renderers_registered,
+        )
+
+        ensure_dev_client_renderers_registered()
         for renderer_type in cls.__renderer_types__:
             binding = renderer_type.binding_for_output_contract(output_contract)
             if binding is not None:
@@ -307,3 +317,102 @@ class McpDiagnosticRenderer:
         if remaining_group_count > 0:
             lines.append(f"... {remaining_group_count} more diagnostics")
         return tuple(lines)
+
+
+class ToolListRenderer:
+    """Compact renderer for current MCP tool metadata."""
+
+    @classmethod
+    def render(
+        cls,
+        response: JsonObject,
+        *,
+        contains: str | None = None,
+        limit: int = 80,
+        grouped: bool = True,
+    ) -> str:
+        errors = McpDevPayloadProjection.sequence_of_mappings(response.get("errors"))
+        if errors:
+            return "\n".join(
+                ("Tools: failed", *McpDiagnosticRenderer.error_lines(errors))
+            )
+        tools = McpDevPayloadProjection.sequence_of_mappings(response.get("tools"))
+        if contains:
+            needle = contains.casefold()
+            tools = tuple(
+                tool
+                for tool in tools
+                if needle in McpDevPayloadProjection.text(tool.get("name")).casefold()
+                or needle
+                in McpDevPayloadProjection.text(tool.get("description")).casefold()
+            )
+        bounded_limit = max(limit, 0)
+        visible_tools = tools[:bounded_limit]
+        lines = [
+            (
+                "Tools: "
+                f"matched={len(tools)} total={McpDevPayloadProjection.text(response.get('tool_count'))} "
+                f"shown={len(visible_tools)}"
+            )
+        ]
+        if contains:
+            lines.append(f"Filter: contains={contains}")
+        if visible_tools:
+            lines.append("Tool names:")
+            if grouped:
+                lines.extend(cls._grouped_tool_lines(visible_tools))
+            else:
+                lines.extend(cls._tool_lines(visible_tools))
+        if len(visible_tools) < len(tools):
+            lines.append(f"...<truncated {len(tools) - len(visible_tools)} tools>")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _tool_lines(tools: tuple[Mapping[str, JsonValue], ...]) -> list[str]:
+        lines: list[str] = []
+        for tool in tools:
+            lines.append(
+                "- "
+                f"{McpDevPayloadProjection.text(tool.get('name'))}: "
+                f"{McpDevPayloadProjection.text(tool.get('description'))}"
+            )
+        return lines
+
+    @classmethod
+    def _grouped_tool_lines(
+        cls,
+        tools: tuple[Mapping[str, JsonValue], ...],
+    ) -> list[str]:
+        entries = tuple(
+            (tool, cls._capability_for_tool(tool))
+            for tool in tools
+        )
+        lines: list[str] = []
+        for workflow_group in CapabilityWorkflowGroup:
+            group_entries = tuple(
+                (tool, capability)
+                for tool, capability in entries
+                if capability is not None
+                and capability.workflow_group is workflow_group
+            )
+            if not group_entries:
+                continue
+            lines.append(f"[{workflow_group.title}]")
+            lines.extend(cls._tool_lines(tuple(tool for tool, _ in group_entries)))
+        ungrouped_tools = tuple(
+            tool for tool, capability in entries if capability is None
+        )
+        if ungrouped_tools:
+            lines.append("[Ungrouped]")
+            lines.extend(cls._tool_lines(ungrouped_tools))
+        return lines
+
+    @staticmethod
+    def _capability_for_tool(
+        tool: Mapping[str, JsonValue],
+    ) -> AgentCapabilitySpec | None:
+        tool_name = McpDevPayloadProjection.text(tool.get("name"))
+        try:
+            return get_agent_capability(tool_name)
+        except KeyError:
+            return None

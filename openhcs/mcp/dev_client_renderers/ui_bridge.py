@@ -10,9 +10,22 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.agent import dto as agent_dto
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
+from openhcs.agent.dto.ui_bridge import (
+    UiActionCatalog,
+    UiActionInvokeResult,
+    UiBridgeStatus,
+    UiCodeDocument,
+    UiCodeDocumentApplyResult,
+    UiCodeDocumentCatalog,
+    UiCodeDocumentValidationResult,
+    UiStateSurfaceCatalog,
+    UiStateSurfaceDocument,
+    UiWidgetActionInvokeResult,
+    UiWidgetTreeResult,
+    UiWindowCatalog,
+)
 from openhcs.agent.ui_bridge_identities import (
     PipelineEditorStateSurfaceIdentityDeclaration,
     PlateManagerStateSurfaceIdentityDeclaration,
@@ -35,7 +48,7 @@ from openhcs.mcp.dev_client_renderers.viewer import ViewerValidationRenderer
 class UiBridgeStatusRenderer(McpDevOutputRenderer):
     """Compact renderer for live UI bridge status."""
 
-    output_contract = agent_dto.UiBridgeStatus
+    output_contract = UiBridgeStatus
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -89,7 +102,7 @@ class UiBridgeStatusRenderer(McpDevOutputRenderer):
 class UiWindowCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for UI window catalogs."""
 
-    output_contract = agent_dto.UiWindowCatalog
+    output_contract = UiWindowCatalog
 
     MAIN_WINDOW_TITLE = "OpenHCS"
     TOP_LEVEL_WINDOW_KIND = "qt_top_level"
@@ -222,7 +235,7 @@ class UiSmokeRenderer:
 class UiStateSurfaceCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for UI state-surface catalogs."""
 
-    output_contract = agent_dto.UiStateSurfaceCatalog
+    output_contract = UiStateSurfaceCatalog
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -318,7 +331,7 @@ class UiStateSurfacePayloadRenderer(ABC, metaclass=AutoRegisterMeta):
 class UiStateSurfaceRenderer(McpDevOutputRenderer):
     """Compact fallback renderer for non-PlateManager state surfaces."""
 
-    output_contract = agent_dto.UiStateSurfaceDocument
+    output_contract = UiStateSurfaceDocument
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -543,7 +556,7 @@ class WidgetTreeOutlineOptions:
 class WidgetTreeOutlineRenderer(McpDevOutputRenderer):
     """Human-readable outline for a widget-tree MCP payload."""
 
-    output_contract = agent_dto.UiWidgetTreeResult
+    output_contract = UiWidgetTreeResult
 
     MAX_LABEL_CHARS = 96
 
@@ -836,7 +849,7 @@ class WidgetTreeOutlineRenderer(McpDevOutputRenderer):
 class CodeDocumentCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for UI code-document catalogs."""
 
-    output_contract = agent_dto.UiCodeDocumentCatalog
+    output_contract = UiCodeDocumentCatalog
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -885,7 +898,7 @@ class CodeDocumentCatalogRenderer(McpDevOutputRenderer):
 class CodeDocumentRenderer(McpDevOutputRenderer):
     """Compact renderer for one UI code document."""
 
-    output_contract = agent_dto.UiCodeDocument
+    output_contract = UiCodeDocument
 
     @classmethod
     def render_with_options(
@@ -955,7 +968,7 @@ class CodeDocumentRenderer(McpDevOutputRenderer):
 class CodeDocumentValidationRenderer(McpDevOutputRenderer):
     """Compact renderer for UI code-document validation results."""
 
-    output_contract = agent_dto.UiCodeDocumentValidationResult
+    output_contract = UiCodeDocumentValidationResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -979,7 +992,7 @@ class CodeDocumentValidationRenderer(McpDevOutputRenderer):
 class CodeDocumentApplyRenderer(McpDevOutputRenderer):
     """Compact renderer for UI code-document apply results."""
 
-    output_contract = agent_dto.UiCodeDocumentApplyResult
+    output_contract = UiCodeDocumentApplyResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1046,7 +1059,7 @@ class CodeDocumentApplyRenderer(McpDevOutputRenderer):
 class UiActionCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for semantic UI action catalogs."""
 
-    output_contract = agent_dto.UiActionCatalog
+    output_contract = UiActionCatalog
 
     @classmethod
     def render_with_options(
@@ -1215,7 +1228,7 @@ class UiActionCatalogRenderer(McpDevOutputRenderer):
 class UiActionInvokeRenderer(McpDevOutputRenderer):
     """Compact renderer for semantic UI action invocation results."""
 
-    output_contract = agent_dto.UiActionInvokeResult
+    output_contract = UiActionInvokeResult
 
     @classmethod
     def render_with_options(
@@ -1281,7 +1294,7 @@ class UiActionInvokeRenderer(McpDevOutputRenderer):
 class UiWidgetActionInvokeRenderer(McpDevOutputRenderer):
     """Compact renderer for generic widget action invocation results."""
 
-    output_contract = agent_dto.UiWidgetActionInvokeResult
+    output_contract = UiWidgetActionInvokeResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:

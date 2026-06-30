@@ -12,6 +12,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
 
+from openhcs.agent.knowledge_manifest import (
+    DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH,
+    KnowledgeBaseManifestField,
+    default_repo_root,
+)
 from openhcs.agent.dto.common import (
     AgentError,
     AgentWarning,
@@ -82,23 +87,6 @@ class _ExampleSourceFile:
         return len(self.source_text.splitlines())
 
 
-DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH = Path(
-    "docs/source/development/mcp_knowledge_base_manifest.json"
-)
-
-
-class KnowledgeBaseManifestField(str, Enum):
-    """JSON field names for the source-backed knowledge-base manifest."""
-
-    DOCUMENTS = "documents"
-    DOCUMENT_ID = "document_id"
-    TITLE = "title"
-    SUMMARY = "summary"
-    SOURCE_PATH = "source_path"
-    TAGS = "tags"
-    SECTION_COUNT = "section_count"
-
-
 def load_document_specs_from_manifest(
     manifest_path: Path,
 ) -> tuple[KnowledgeBaseDocumentSpec, ...]:
@@ -117,7 +105,7 @@ def load_document_specs_from_manifest(
 def default_document_specs() -> tuple[KnowledgeBaseDocumentSpec, ...]:
     """Return the source-backed default knowledge-base document specs."""
     return load_document_specs_from_manifest(
-        _default_repo_root() / DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH
+        default_repo_root() / DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH
     )
 
 
@@ -1099,7 +1087,7 @@ _RST_UNDERLINE_LEVELS = {
 
 
 def _default_repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return default_repo_root()
 
 
 @lru_cache(maxsize=8)

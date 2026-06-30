@@ -17,6 +17,7 @@ from openhcs.agent.capabilities import (
     CapabilityCliConnectionProfile,
     get_agent_capability,
     get_capability_registry,
+    require_agent_type_contract,
 )
 from openhcs.agent.dto.common import (
     AgentCliArgumentSpec,
@@ -50,8 +51,8 @@ from openhcs.mcp.dev_client_core import (
 from openhcs.mcp.dev_client_rendering import (
     McpDevOutputRenderOptions,
     McpDevOutputRenderer,
+    ToolListRenderer,
 )
-from openhcs.mcp.dev_client_renderers.knowledge import ToolListRenderer
 
 class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
     """Nominal command specification for the fresh-process MCP dev CLI."""
@@ -201,8 +202,9 @@ class CapabilityBackedCommandSpec(McpDevCommandSpec):
     ) -> str:
         if bool(vars(args).get("json", False)):
             return super().render_response(payload, args)
+        output_contract = self.capability.output_contract
         renderer_binding = McpDevOutputRenderer.for_output_contract(
-            self.capability.output_contract
+            output_contract if isinstance(output_contract, type) else None
         )
         if renderer_binding is None:
             return super().render_response(payload, args)
@@ -351,8 +353,8 @@ class GeneratedAgentCliRequestCommandMixin:
 
     @property
     def request_type(self) -> type[AgentCliRequest]:
-        input_contract = self.capability.input_contract
-        if not isinstance(input_contract, type) or not issubclass(
+        input_contract = require_agent_type_contract(self.capability.input_contract)
+        if not issubclass(
             input_contract,
             AgentCliRequest,
         ):
@@ -523,8 +525,8 @@ class GeneratedRuntimeServerToolCommandSpec(
 
     @property
     def request_type(self) -> type[RuntimeServerToolRequest]:
-        input_contract = self.capability.input_contract
-        if not isinstance(input_contract, type) or not issubclass(
+        input_contract = require_agent_type_contract(self.capability.input_contract)
+        if not issubclass(
             input_contract,
             RuntimeServerToolRequest,
         ):

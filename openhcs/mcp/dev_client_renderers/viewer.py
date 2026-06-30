@@ -6,8 +6,24 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
-from openhcs.agent import dto as agent_dto
 from openhcs.agent.dto.common import JsonObject, JsonValue
+from openhcs.agent.dto.execution import (
+    RuntimeExecutionStatus,
+    RuntimeServerInfo,
+    RuntimeServerScanResult,
+)
+from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
+from openhcs.agent.dto.viewer import (
+    ViewerWindowImageSampleResult,
+    ViewerWindowLayerIsolationResult,
+    ViewerWindowNavigationResult,
+    ViewerWindowPayloadResult,
+    ViewerWindowProbeResult,
+    ViewerWindowRoiSummaryResult,
+    ViewerWindowSnapshotResult,
+    ViewerWindowStateResult,
+    ViewerWindowValidationSummaryResult,
+)
 from openhcs.mcp.dev_client_rendering import (
     McpDevOutputRenderer,
     McpDevOutputRendererBinding,
@@ -19,7 +35,7 @@ from openhcs.mcp.dev_client_rendering import (
 class ViewerValidationRenderer(McpDevOutputRenderer):
     """Compact renderer for viewer validation summaries."""
 
-    output_contract = agent_dto.ViewerWindowValidationSummaryResult
+    output_contract = ViewerWindowValidationSummaryResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -154,7 +170,7 @@ class ViewerValidationRenderer(McpDevOutputRenderer):
 class ViewerStateRenderer(McpDevOutputRenderer):
     """Compact renderer for viewer state and layer component metadata."""
 
-    output_contract = agent_dto.ViewerWindowStateResult
+    output_contract = ViewerWindowStateResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -299,7 +315,7 @@ class ViewerStateRenderer(McpDevOutputRenderer):
 class ViewerPayloadRenderer(McpDevOutputRenderer):
     """Compact renderer for viewer payload inspection records."""
 
-    output_contract = agent_dto.ViewerWindowPayloadResult
+    output_contract = ViewerWindowPayloadResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -440,7 +456,7 @@ class ViewerAxisIndexRenderer:
 class ViewerRoiSummaryRenderer(McpDevOutputRenderer):
     """Compact renderer for viewer ROI summaries."""
 
-    output_contract = agent_dto.ViewerWindowRoiSummaryResult
+    output_contract = ViewerWindowRoiSummaryResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -623,7 +639,7 @@ class ViewerRoiSummaryRenderer(McpDevOutputRenderer):
 class ViewerImageSampleRenderer(McpDevOutputRenderer):
     """Compact renderer for viewer image samples."""
 
-    output_contract = agent_dto.ViewerWindowImageSampleResult
+    output_contract = ViewerWindowImageSampleResult
 
     @classmethod
     def render_with_options(
@@ -792,12 +808,12 @@ class ViewerNavigationRenderer(McpDevOutputRenderer):
     def render_bindings(cls) -> tuple[McpDevOutputRendererBinding, ...]:
         return (
             McpDevOutputRendererBinding(
-                output_contract=agent_dto.ViewerWindowNavigationResult,
+                output_contract=ViewerWindowNavigationResult,
                 renderer_type=cls,
                 render_function=cls.render_navigation,
             ),
             McpDevOutputRendererBinding(
-                output_contract=agent_dto.ViewerWindowLayerIsolationResult,
+                output_contract=ViewerWindowLayerIsolationResult,
                 renderer_type=cls,
                 render_function=cls.render_isolation,
             ),
@@ -906,17 +922,17 @@ class RuntimeServerRenderer(McpDevOutputRenderer):
     def render_bindings(cls) -> tuple[McpDevOutputRendererBinding, ...]:
         return (
             McpDevOutputRendererBinding(
-                output_contract=agent_dto.RuntimeServerScanResult,
+                output_contract=RuntimeServerScanResult,
                 renderer_type=cls,
                 render_function=cls.render_scan,
             ),
             McpDevOutputRendererBinding(
-                output_contract=agent_dto.RuntimeServerInfo,
+                output_contract=RuntimeServerInfo,
                 renderer_type=cls,
                 render_function=cls.render_info,
             ),
             McpDevOutputRendererBinding(
-                output_contract=agent_dto.RuntimeExecutionStatus,
+                output_contract=RuntimeExecutionStatus,
                 renderer_type=cls,
                 render_function=cls.render_status,
             ),
@@ -1039,7 +1055,7 @@ class RuntimeServerRenderer(McpDevOutputRenderer):
 class ViewerProbeRenderer(McpDevOutputRenderer):
     """Compact renderer for cheap viewer reachability probes."""
 
-    output_contract = agent_dto.ViewerWindowProbeResult
+    output_contract = ViewerWindowProbeResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1071,7 +1087,7 @@ class ViewerProbeRenderer(McpDevOutputRenderer):
 class ViewerSnapshotRenderer(McpDevOutputRenderer):
     """Compact renderer for viewer snapshot resources."""
 
-    output_contract = agent_dto.ViewerWindowSnapshotResult
+    output_contract = ViewerWindowSnapshotResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1109,7 +1125,7 @@ class ViewerSnapshotRenderer(McpDevOutputRenderer):
 class WindowSnapshotRenderer(McpDevOutputRenderer):
     """Compact renderer for UI bridge window snapshot resources."""
 
-    output_contract = agent_dto.UiWindowSnapshotResult
+    output_contract = UiWindowSnapshotResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:

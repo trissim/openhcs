@@ -7,11 +7,21 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
 
-from openhcs.agent import dto as agent_dto
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
-from openhcs.agent.dto.plate import SelectedPlateFileQueryTarget
-from openhcs.agent.services.plate_inspection_service import PlateInspectionIssueCode
+from openhcs.agent.dto.plate import (
+    PlateFileQueryResult,
+    PlateFileStreamResult,
+    PlateImageSampleResult,
+    PlateInspectionIssueCode,
+    PlatePathInspectionResult,
+    SelectedPlateFileQueryTarget,
+    SelectedPlateFileQueryResult,
+    SelectedPlateFileStreamResult,
+    SelectedPlateImageInspectionResult,
+    SelectedPlateImageSampleResult,
+    SyntheticPlateGenerationResult,
+)
 from openhcs.mcp.dev_client_core import optional_int
 from openhcs.mcp.dev_client_rendering import (
     McpDevOutputRenderer,
@@ -22,7 +32,7 @@ from openhcs.mcp.dev_client_rendering import (
 class PlateImageSampleRenderer(McpDevOutputRenderer):
     """Compact renderer for sampled plate image pixels and statistics."""
 
-    output_contract = agent_dto.PlateImageSampleResult
+    output_contract = PlateImageSampleResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -167,7 +177,7 @@ class PlateImageSampleRenderer(McpDevOutputRenderer):
 class SyntheticPlateGenerationRenderer(McpDevOutputRenderer):
     """Compact renderer for synthetic plate generation results."""
 
-    output_contract = agent_dto.SyntheticPlateGenerationResult
+    output_contract = SyntheticPlateGenerationResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -237,7 +247,7 @@ class SyntheticPlateGenerationRenderer(McpDevOutputRenderer):
 class PlateInspectionRenderer(McpDevOutputRenderer):
     """Compact renderer for plate inspection results."""
 
-    output_contract = agent_dto.PlatePathInspectionResult
+    output_contract = PlatePathInspectionResult
 
     MAX_TEXT_PREVIEW_LINES: ClassVar[int] = 3
     MAX_CSV_PREVIEW_ROWS: ClassVar[int] = 3
@@ -777,7 +787,7 @@ class PlateInspectionRenderer(McpDevOutputRenderer):
 class PlateFileQueryRenderer(McpDevOutputRenderer):
     """Compact renderer for plate file query results."""
 
-    output_contract = agent_dto.PlateFileQueryResult
+    output_contract = PlateFileQueryResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1046,7 +1056,7 @@ class PlateFileQueryRenderer(McpDevOutputRenderer):
 class PlateFileStreamRenderer(McpDevOutputRenderer):
     """Compact renderer for plate file stream results."""
 
-    output_contract = agent_dto.PlateFileStreamResult
+    output_contract = PlateFileStreamResult
 
     MAX_PATH_LINES: ClassVar[int] = 8
     MAX_STATUS_LINES: ClassVar[int] = 5
@@ -1178,7 +1188,7 @@ class PlateFileStreamRenderer(McpDevOutputRenderer):
 class SelectedPlateImagesRenderer(McpDevOutputRenderer):
     """Compact renderer for selected-plate image inspection."""
 
-    output_contract = agent_dto.SelectedPlateImageInspectionResult
+    output_contract = SelectedPlateImageInspectionResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1232,7 +1242,7 @@ class SelectedPlateImagesRenderer(McpDevOutputRenderer):
 class SelectedPlateFilesRenderer(McpDevOutputRenderer):
     """Compact renderer for selected-plate file queries."""
 
-    output_contract = agent_dto.SelectedPlateFileQueryResult
+    output_contract = SelectedPlateFileQueryResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1300,7 +1310,7 @@ class SelectedPlateFilesRenderer(McpDevOutputRenderer):
 class SelectedPlateSampleRenderer(McpDevOutputRenderer):
     """Compact renderer for selected-plate image sampling."""
 
-    output_contract = agent_dto.SelectedPlateImageSampleResult
+    output_contract = SelectedPlateImageSampleResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:
@@ -1362,7 +1372,7 @@ class SelectedPlateSampleRenderer(McpDevOutputRenderer):
 class SelectedPlateStreamRenderer(McpDevOutputRenderer):
     """Compact renderer for selected-plate file streaming."""
 
-    output_contract = agent_dto.SelectedPlateFileStreamResult
+    output_contract = SelectedPlateFileStreamResult
 
     @classmethod
     def render(cls, response: JsonObject) -> str:

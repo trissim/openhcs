@@ -37,14 +37,12 @@ from openhcs.agent.dto.ui_bridge import (
 from openhcs.agent.ui_bridge_identities import PlateManagerStateSurfaceIdentityDeclaration
 from openhcs.agent.serialization import to_jsonable
 from openhcs.constants.constants import AllComponents, OrchestratorState
-from openhcs.core.plate_image_inventory import PlateFileInventoryQuery
+from openhcs.core.execution_state import TerminalExecutionStatus
+from openhcs.core.plate_file_inventory import PlateFileInventoryQuery
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
     McpUiBridgeTimeoutPolicy,
     McpViewerTimeoutPolicy,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    TerminalExecutionStatus,
 )
 
 DEFAULT_CALL_TIMEOUT_SECONDS = 5.0
