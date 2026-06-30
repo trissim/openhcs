@@ -18,7 +18,7 @@ from pyqt_reactive.forms.parameter_form_service import ParameterFormService
 from pyqt_reactive.services.window_code_document import PYTHON_MIME_TYPE
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import WindowNavigationRequest
-from pyqt_reactive.windows.help_window_manager import (
+from pyqt_reactive.services.parameter_help_service import (
     parameter_help_content,
     resolved_parameter_description,
 )

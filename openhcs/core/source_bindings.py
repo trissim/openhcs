@@ -13,6 +13,8 @@ from types import MappingProxyType
 from typing import Any, ClassVar, Mapping, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import Enableable
+from python_introspect.enableable import EnableableMeta
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
@@ -33,6 +35,10 @@ from openhcs.core.source_path_identity import source_path_identity_key
 SourceMetadataIdentity = tuple[tuple[str, SourceMetadataIdentityItems], ...]
 SOURCE_ALIAS_PART_SEPARATOR = "__"
 SourceBindingValue = TypeVar("SourceBindingValue")
+
+
+class SourceBindingPlanMeta(EnableableMeta, AutoRegisterMeta):
+    """Auto-register source-binding plans while preserving Enableable semantics."""
 
 
 class SourceBindingOrigin(Enum):
@@ -478,7 +484,7 @@ class NamedSourceBinding(SourceAssignmentBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
+class _SourceBindingPlanBase(ABC, metaclass=SourceBindingPlanMeta):
     """Shared typed source-binding plan fields across editable and compiled views."""
 
     __registry_key__ = "registry_key"
@@ -638,7 +644,10 @@ class SourceBindingsConfig(_SourceBindingPlanBase):
 
 
 @dataclass(frozen=True)
-class StepSourceBindingsConfig(SourceBindingsConfig):
+class StepSourceBindingsConfig(
+    SourceBindingsConfig,
+    Enableable,
+):
     """Step-local source-binding config inheriting pipeline/plate defaults."""
 
     registry_key: ClassVar[str] = "editable"

@@ -129,8 +129,9 @@ def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:
             *args,
             **kwargs,
         ) -> None:
-            del config_class, current_config, args, kwargs
+            del config_class, current_config, args
             self.on_save_callback = on_save_callback
+            self.scope_id = kwargs.get("scope_id")
             created_windows.append(self)
 
         def show(self) -> None:
@@ -165,6 +166,7 @@ def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:
     window.on_save_callback(new_config)
 
     assert window is created_windows[0]
+    assert window.scope_id == ""
     assert saved_configs == [new_config]
     assert propagated_configs == [new_config]
 

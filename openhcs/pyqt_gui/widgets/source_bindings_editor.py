@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from enum import Enum
 from types import MappingProxyType
-from typing import Callable, Generic, Mapping, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, Mapping, TypeVar, cast
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QGraphicsOpacityEffect,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -27,19 +28,36 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from pyqt_reactive.protocols import (
+    ChildFieldChromeRefreshable,
+    ChildFieldNavigationTargetProvider,
     ChangeSignalEmitter,
+    InlineDataclassGroupBoxChromeProvider,
     PyQtWidgetMeta,
+    ResolvedValuePreviewSettable,
     ValueGettable,
     ValueSettable,
 )
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from pyqt_reactive.forms.widget_creation_config import (
+    EnabledTitleWidgetMoveAuthority,
+    ResetButtonStyler,
+)
+from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.utils.styling_utils import update_reset_button_styling
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
+from pyqt_reactive.widgets.shared.clickable_help_components import (
+    HelpContext,
+    InlineDataclassGroupBox,
+    LabelWithHelp,
+)
+from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+from python_introspect import Enableable, is_enableable
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
-    LazyStepSourceBindingsConfig,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -53,6 +71,7 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
     SourceSelector,
+    SourceBindingsConfig,
     StepSourceBindingsConfig,
 )
 from openhcs.core.artifacts import ArtifactKind
@@ -61,9 +80,78 @@ from openhcs.core.source_bindings_view import (
     SourceBindingsViewModel,
     SourceInventory,
 )
+from objectstate import DataclassFieldAccess
+from objectstate.lazy_factory import LazyDataclass, get_base_type_for_lazy, replace_raw
+
+if TYPE_CHECKING:
+    from objectstate import ObjectState
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
+    from pyqt_reactive.forms.parameter_info_types import InlineDataclassWidgetInfo
 
 EMPTY_PIPELINE_IMAGE_SCHEMA = PipelineImageSchema.empty()
 EditableRowT = TypeVar("EditableRowT")
+SourceBindingsEditorRawValue = SourceBindingsConfig | LazyDataclass
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingsEditorFormContext:
+    """Form chrome context for child source-binding fields."""
+
+    state: "ObjectState"
+    manager: "ParameterFormManager"
+    field_path: str
+    local_field_path: str
+    config_type: type[SourceBindingsConfig]
+    color_scheme: "ColorScheme | None"
+    scope_accent_color: object
+
+    def child_path(self, field_name: str) -> str:
+        return f"{self.field_path}.{field_name}"
+
+    def child_manager_path(self, field_name: str) -> str:
+        return f"{self.local_field_path}.{field_name}"
+
+    def child_description(self, field_name: str) -> str | None:
+        return self.state.parameter_descriptions.get(self.child_path(field_name))
+
+    def child_type(self, field_name: str) -> type | None:
+        for dataclass_field in dataclass_fields(self.config_type):
+            if dataclass_field.name == field_name:
+                field_type = dataclass_field.type
+                return field_type if isinstance(field_type, type) else None
+        return None
+
+    def raw_child_value(self, field_name: str) -> object:
+        return self.state.parameters.get(self.child_path(field_name))
+
+    def resolved_child_value(self, field_name: str) -> object:
+        return self.state.get_resolved_value(self.child_path(field_name))
+
+    def child_has_inherited_preview(self, field_name: str) -> bool:
+        return (
+            self.raw_child_value(field_name) is None
+            and self.resolved_child_value(field_name) is not None
+        )
+
+    def reset_child(self, field_name: str) -> None:
+        container_value = self.state.parameters[self.field_path]
+        default_value = self.state.signature_default(self.child_path(field_name))
+        self.manager.update_parameter(
+            self.local_field_path,
+            replace_raw(container_value, **{field_name: default_value}),
+        )
+
+    def update_reset_button_styling(
+        self,
+        button: QPushButton,
+        field_name: str,
+    ) -> None:
+        update_reset_button_styling(
+            button,
+            self.state,
+            self.manager.field_id,
+            self.child_manager_path(field_name),
+        )
 
 
 class EditableTableColumn(Enum):
@@ -111,6 +199,14 @@ class MetadataRuleColumn(EditableTableColumn):
     SOURCE = (0, MetadataSource)
     PATTERN = (1, None)
     FILTERS = (2, None)
+
+
+class SourceFilterColumn(EditableTableColumn):
+    """Editable table columns for one source-universe filter clause."""
+
+    SUBJECT = (0, SourceFilterSubject)
+    MATCH_TYPE = (1, SourceFilterMatchType)
+    VALUE = (2, None)
 
 
 class MatchPlanColumn(EditableTableColumn):
@@ -516,13 +612,27 @@ class EditableTableController(Generic[EditableRowT]):
 
     def rows(self) -> tuple[EditableRowT, ...]:
         rows: list[EditableRowT] = []
-        for row_index in range(self.table.rowCount()):
-            row_model = self.row_from_cells(
-                tuple(self._cell_text(row_index, column) for column in self.columns)
-            )
+        for values in self.row_values():
+            row_model = self.row_from_cells(values)
             if row_model is not None:
                 rows.append(row_model)
         return tuple(rows)
+
+    def row_values(self) -> tuple[tuple[str, ...], ...]:
+        """Return current table cell text values for every row."""
+
+        return tuple(
+            tuple(self._cell_text(row_index, column) for column in self.columns)
+            for row_index in range(self.table.rowCount())
+        )
+
+    def has_incomplete_rows(self) -> bool:
+        """Whether any non-empty row is not yet valid for the row model."""
+
+        for values in self.row_values():
+            if any(value.strip() for value in values) and self.row_from_cells(values) is None:
+                return True
+        return False
 
     def remove_selected(self) -> bool:
         selected_rows = {index.row() for index in self.table.selectedIndexes()}
@@ -594,6 +704,9 @@ class EditableTableLayout:
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(22)
+        table.verticalHeader().setMinimumSectionSize(18)
         table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
@@ -610,7 +723,7 @@ class EditableTableLayout:
             row_height = table.verticalHeader().defaultSectionSize()
         scrollbar_height = table.horizontalScrollBar().sizeHint().height()
         frame = table.frameWidth() * 2
-        table.setFixedHeight(header_height + row_height + scrollbar_height + frame + 8)
+        table.setFixedHeight(header_height + row_height + scrollbar_height + frame + 4)
 
 
 class StepBindingsTableEditor(QWidget):
@@ -929,6 +1042,43 @@ class EditableMetadataRuleRow:
 
 
 @dataclass(frozen=True, slots=True)
+class EditableSourceFilterRow:
+    """Nominal row model for editing one source filter clause."""
+
+    clause: SourceFilterClause
+
+    @classmethod
+    def from_cells(cls, values: tuple[str, ...]) -> "EditableSourceFilterRow | None":
+        subject, match_type, value = (cell.strip() for cell in values)
+        if not subject and not match_type and not value:
+            return None
+        match_type_value = SourceFilterMatchType(
+            match_type or SourceFilterMatchType.IS_IMAGE.value
+        )
+        value_or_none = value or None
+        if match_type_value.requires_value and value_or_none is None:
+            return None
+        return cls(
+            clause=SourceFilterClause(
+                subject=SourceFilterSubject(subject or SourceFilterSubject.FILE.value),
+                match_type=match_type_value,
+                value=value_or_none,
+            )
+        )
+
+    @classmethod
+    def from_clause(cls, clause: SourceFilterClause) -> "EditableSourceFilterRow":
+        return cls(clause=clause)
+
+    def cells(self) -> tuple[str, ...]:
+        return (
+            self.clause.subject.value,
+            self.clause.match_type.value,
+            self.clause.value or "",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EditableMatchPlanRow:
     """Nominal row model for editing one match-plan dimension."""
 
@@ -974,10 +1124,66 @@ class EditableMatchPlanRow:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SourceBindingsEditorValue:
+    """Validated editor bridge between raw lazy configs and concrete source-binding views."""
+
+    raw: SourceBindingsEditorRawValue
+
+    def __post_init__(self) -> None:
+        self.base_type()
+
+    def base_type(self) -> type[SourceBindingsConfig]:
+        value_type = type(self.raw)
+        base_type = get_base_type_for_lazy(value_type) or value_type
+        if not issubclass(base_type, SourceBindingsConfig):
+            raise TypeError(
+                "SourceBindingsEditorWidget requires SourceBindingsConfig, "
+                f"got {value_type.__name__}."
+            )
+        return base_type
+
+    def raw_field_value(self, field_name: str) -> object:
+        """Return one source-binding field without triggering lazy resolution."""
+
+        return DataclassFieldAccess.raw_value(self.raw, field_name)
+
+    @property
+    def source_filter_declarations(self) -> tuple[SourceFilterClause, ...]:
+        return tuple(self.raw_field_value("source_filters") or ())
+
+    @property
+    def binding_declarations(self) -> tuple[NamedSourceBinding, ...]:
+        return tuple(self.raw_field_value("bindings") or ())
+
+    @property
+    def metadata_rule_declarations(self) -> tuple[MetadataExtractionRule, ...]:
+        return tuple(self.raw_field_value("metadata_rules") or ())
+
+    @property
+    def match_plan(self) -> SourceBindingMatchPlan | None:
+        return cast(
+            SourceBindingMatchPlan | None,
+            self.raw_field_value("match_plan"),
+        )
+
+    def concrete_view(self) -> SourceBindingsConfig:
+        if isinstance(self.raw, SourceBindingsConfig):
+            return self.raw
+        config_type = self.base_type()
+        return config_type(
+            **DataclassFieldAccess.raw_init_values(self.raw, config_type)
+        )
+
+
 class SourceBindingsEditorWidget(
     QWidget,
     ValueGettable,
     ValueSettable,
+    ResolvedValuePreviewSettable,
+    ChildFieldChromeRefreshable,
+    ChildFieldNavigationTargetProvider,
+    InlineDataclassGroupBoxChromeProvider,
     ChangeSignalEmitter,
     ScopeColorSchemeReceiver,
     metaclass=PyQtWidgetMeta,
@@ -991,19 +1197,35 @@ class SourceBindingsEditorWidget(
         view_model: SourceBindingsViewModel | None = None,
         *,
         schema: PipelineImageSchema = EMPTY_PIPELINE_IMAGE_SCHEMA,
-        bindings: StepSourceBindingsConfig | None = None,
+        bindings: SourceBindingsEditorRawValue | None = None,
+        display_bindings: SourceBindingsEditorRawValue | None = None,
         inventory: SourceInventory | None = None,
+        form_context: SourceBindingsEditorFormContext | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._schema = schema
         self._bindings = bindings or StepSourceBindingsConfig()
+        self._display_bindings = display_bindings or self._bindings
         self._inventory = inventory
+        self._form_context = form_context
         self._updating_ui = False
         self.step_bindings_table: QTableWidget | None = None
         self.step_bindings_editor: StepBindingsTableEditor | None = None
+        self.source_filters_table: QTableWidget | None = None
         self.metadata_rules_table: QTableWidget | None = None
         self.match_plan_table: QTableWidget | None = None
+        self.section_labels: dict[str, LabelWithHelp] = {}
+        self.section_groups: dict[str, QGroupBox] = {}
+        self.section_reset_buttons: dict[str, QPushButton] = {}
+        self._inline_groupbox: object | None = None
+        self._enabled_checkbox: NoneAwareCheckBox | None = None
+        self._enabled_title_widget: QWidget | None = None
+        self._enabled_reset_button: QPushButton | None = None
+        self._updating_enableable_chrome = False
+        self.source_filters_controller: (
+            EditableTableController[EditableSourceFilterRow] | None
+        ) = None
         self.metadata_rules_controller: (
             EditableTableController[EditableMetadataRuleRow] | None
         ) = None
@@ -1012,7 +1234,8 @@ class SourceBindingsEditorWidget(
         ) = None
         self._scope_color_scheme = None
         self.layout = QVBoxLayout(self)
-        self.layout.setSpacing(8)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(3)
         self.empty_label = QLabel("No source bindings loaded")
         self.layout.addWidget(self.empty_label)
         if view_model is not None:
@@ -1021,50 +1244,71 @@ class SourceBindingsEditorWidget(
     @classmethod
     def from_bindings(
         cls,
-        bindings: StepSourceBindingsConfig,
+        bindings: SourceBindingsEditorRawValue,
         *,
+        display_bindings: SourceBindingsEditorRawValue | None = None,
         schema: PipelineImageSchema = EMPTY_PIPELINE_IMAGE_SCHEMA,
         inventory: SourceInventory | None = None,
+        form_context: SourceBindingsEditorFormContext | None = None,
         parent: QWidget | None = None,
     ) -> "SourceBindingsEditorWidget":
         """Create an editor from typed source bindings and an optional schema."""
 
+        table_bindings = display_bindings or bindings
         return cls(
             SourceBindingsViewModel.from_schema_and_bindings(
                 schema=schema,
-                bindings=bindings,
+                bindings=SourceBindingsEditorValue(table_bindings).concrete_view(),
             ),
             schema=schema,
             bindings=bindings,
+            display_bindings=table_bindings,
             inventory=inventory,
+            form_context=form_context,
             parent=parent,
         )
 
     @property
-    def value(self) -> StepSourceBindingsConfig:
+    def value(self) -> SourceBindingsEditorRawValue:
         """Value property used by pyqt-reactive signal adapters."""
 
         return self.get_value()
 
-    def get_value(self) -> StepSourceBindingsConfig:
+    def get_value(self) -> SourceBindingsEditorRawValue:
         """Return the current typed source-bindings config."""
 
         return self._bindings
 
-    def set_value(self, value: StepSourceBindingsConfig | None) -> None:
+    def set_value(self, value: SourceBindingsEditorRawValue | None) -> None:
         """Update the widget from a typed source-bindings config."""
 
-        bindings = value or StepSourceBindingsConfig()
-        if not isinstance(bindings, StepSourceBindingsConfig):
-            raise TypeError(
-                "SourceBindingsEditorWidget value must be StepSourceBindingsConfig, "
-                f"got {type(bindings).__name__}."
-            )
+        bindings = value or type(self._bindings)()
+        SourceBindingsEditorValue(bindings)
         if bindings == self._bindings:
             return
         self._bindings = bindings
+        self._display_bindings = bindings
         self.refresh()
-        self.changed.emit()
+
+    def set_resolved_value_preview(self, value: SourceBindingsEditorRawValue) -> None:
+        """Update inherited/resolved display without changing the raw edit value."""
+
+        SourceBindingsEditorValue(value)
+        if value == self._display_bindings:
+            self.refresh_child_field_chrome()
+            return
+        self._display_bindings = value
+        self.refresh()
+
+    def refresh_child_field_chrome(self) -> None:
+        """Refresh child labels and reset buttons after ObjectState changes."""
+
+        self.refresh_section_label_markers()
+
+    def child_field_navigation_target(self, field_name: str) -> QWidget | None:
+        """Return the rendered section widget for a source-binding child field."""
+
+        return self.section_groups.get(field_name)
 
     def set_preview_context(
         self,
@@ -1084,7 +1328,7 @@ class SourceBindingsEditorWidget(
         self.set_view_model(
             SourceBindingsViewModel.from_schema_and_bindings(
                 schema=self._schema,
-                bindings=self._bindings,
+                bindings=SourceBindingsEditorValue(self._display_bindings).concrete_view(),
             )
         )
 
@@ -1109,7 +1353,7 @@ class SourceBindingsEditorWidget(
         )
         self.layout.addWidget(
             self._table_group(
-                "Pipeline Bindings",
+                "Pipeline Image Schema Bindings",
                 ("Alias", "Kind", "Origin", "Payload"),
                 tuple(
                     (
@@ -1123,6 +1367,7 @@ class SourceBindingsEditorWidget(
             ),
         )
         self.layout.addWidget(self._step_bindings_group(view_model))
+        self.layout.addWidget(self._source_filters_group())
         self.layout.addWidget(self._metadata_rules_group())
         self.layout.addWidget(self._match_plan_group())
         self.layout.addWidget(
@@ -1142,7 +1387,7 @@ class SourceBindingsEditorWidget(
         if self._inventory is not None:
             preview = SourceBindingsPreview.from_schema_and_bindings(
                 schema=self._schema,
-                bindings=self._bindings,
+                bindings=self._display_bindings,
                 inventory=self._inventory,
             )
             if preview.diagnostics:
@@ -1197,14 +1442,16 @@ class SourceBindingsEditorWidget(
                 )
             )
         self.layout.addStretch(1)
+        self.refresh_section_label_markers()
+        self._sync_enableable_chrome()
         self._updating_ui = False
 
-    def connect_change_signal(self, callback: Callable[[StepSourceBindingsConfig], None]) -> None:
+    def connect_change_signal(self, callback: Callable[[SourceBindingsEditorRawValue], None]) -> None:
         """Implement ChangeSignalEmitter for pyqt-reactive inline dataclass forms."""
 
         self.changed.connect(lambda: callback(self.get_value()))
 
-    def disconnect_change_signal(self, callback: Callable[[StepSourceBindingsConfig], None]) -> None:
+    def disconnect_change_signal(self, callback: Callable[[SourceBindingsEditorRawValue], None]) -> None:
         """Disconnect a previously registered change callback when Qt can match it."""
 
         try:
@@ -1219,8 +1466,125 @@ class SourceBindingsEditorWidget(
         for table in self.findChildren(ScopedTableWidget):
             table.set_scope_color_scheme(scheme)
 
+    def configure_inline_dataclass_groupbox(
+        self,
+        groupbox: InlineDataclassGroupBox,
+    ) -> None:
+        """Attach source-binding enableable chrome to the inline groupbox title."""
+
+        self._inline_groupbox = groupbox
+        if not self._config_type_is_enableable():
+            return
+        if self._enabled_checkbox is not None:
+            return
+
+        enableable_title_authority = EnabledTitleWidgetMoveAuthority()
+        checkbox = NoneAwareCheckBox(groupbox)
+        checkbox.setToolTip("Enable step source bindings")
+        checkbox.toggled.connect(self._on_enabled_checkbox_toggled)
+        title_widget = enableable_title_authority.wrap_checkbox_widget_for_title(
+            checkbox,
+            groupbox.color_scheme,
+        )
+        enableable_title_authority.bind_title_label_to_checkbox(groupbox, checkbox)
+
+        reset_button = QPushButton("Reset", groupbox)
+        reset_button.setToolTip("Reset enabled to default")
+        enableable_title_authority.prepare_title_reset_button(
+            reset_button,
+            groupbox.color_scheme,
+        )
+        reset_button.clicked.connect(self._reset_enabled_field)
+
+        provenance_button = None
+        if self._form_context is not None:
+            provenance_button = enableable_title_authority.create_title_provenance_button(
+                state=self._form_context.state,
+                dotted_path=self._form_context.child_path(self._enabled_field_name()),
+                color_scheme=groupbox.color_scheme,
+            )
+
+        self._enabled_checkbox = checkbox
+        self._enabled_title_widget = title_widget
+        self._enabled_reset_button = reset_button
+        groupbox.addEnableableWidgets(title_widget, reset_button, provenance_button)
+        self._sync_enableable_chrome()
+
+    def _config_type_is_enableable(self) -> bool:
+        return is_enableable(SourceBindingsEditorValue(self._bindings).base_type())
+
+    def _enabled_field_name(self) -> str:
+        return Enableable.require_parameter_name()
+
+    def _enabled_value(
+        self,
+        value: SourceBindingsEditorRawValue,
+    ) -> bool | None:
+        if not is_enableable(value):
+            raise TypeError(
+                f"{type(value).__name__} is not an Enableable source-binding config."
+            )
+        enabled = cast(Enableable, value).enabled
+        return None if enabled is None else bool(enabled)
+
+    def _sync_enableable_chrome(self) -> None:
+        if not self._config_type_is_enableable():
+            self._set_widget_dimmed(self, False)
+            return
+
+        effective_enabled = bool(self._enabled_value(self._display_bindings))
+        raw_enabled = self._enabled_value(self._bindings)
+        if self._enabled_checkbox is not None:
+            self._updating_enableable_chrome = True
+            try:
+                if raw_enabled is None:
+                    self._enabled_checkbox.set_value(None)
+                    self._enabled_checkbox.set_placeholder_preview(effective_enabled)
+                else:
+                    self._enabled_checkbox.set_value(raw_enabled)
+            finally:
+                self._updating_enableable_chrome = False
+        if self._enabled_reset_button is not None and self._form_context is not None:
+            self._form_context.update_reset_button_styling(
+                self._enabled_reset_button,
+                self._enabled_field_name(),
+            )
+        self._set_widget_dimmed(self, not effective_enabled, 0.4)
+
+    def _on_enabled_checkbox_toggled(self, checked: bool) -> None:
+        if self._updating_enableable_chrome:
+            return
+        self._set_enabled_value(bool(checked))
+
+    def _set_enabled_value(self, enabled: bool) -> None:
+        field_name = self._enabled_field_name()
+        self._bindings = replace_raw(self._bindings, **{field_name: enabled})
+        self._display_bindings = replace_raw(
+            self._display_bindings,
+            **{field_name: enabled},
+        )
+        self._sync_enableable_chrome()
+        self.changed.emit()
+
+    def _reset_enabled_field(self) -> None:
+        field_name = self._enabled_field_name()
+        if self._form_context is not None:
+            self._form_context.reset_child(field_name)
+            return
+        default_value = cast(
+            Enableable,
+            SourceBindingsEditorValue(self._bindings).base_type()(),
+        ).enabled
+        self._bindings = replace_raw(self._bindings, **{field_name: default_value})
+        self._display_bindings = replace_raw(
+            self._display_bindings,
+            **{field_name: default_value},
+        )
+        self._sync_enableable_chrome()
+        self.changed.emit()
+
     def add_binding_row(self, binding: NamedSourceBinding | None = None) -> None:
-        """Append one editable source binding row to the step-binding table."""
+        """Append one editable source binding row to the active binding table."""
 
         if self.step_bindings_table is None:
             self._append_step_binding(binding or NamedSourceBinding(alias="NewSource"))
@@ -1230,6 +1594,44 @@ class SourceBindingsEditorWidget(
             return
         self.step_bindings_editor.add_binding_row(binding)
         self._apply_step_bindings(self.step_bindings_editor.bindings())
+
+    def add_source_filter_row(
+        self,
+        clause: SourceFilterClause | None = None,
+    ) -> None:
+        """Append one editable source-universe filter clause row."""
+
+        if self.source_filters_table is None:
+            return
+        if self.source_filters_controller is None:
+            raise RuntimeError("Source filters table controller is not initialized.")
+        self._updating_ui = True
+        try:
+            self.source_filters_controller.append(
+                EditableSourceFilterRow.from_clause(
+                    clause
+                    or SourceFilterClause(
+                        SourceFilterSubject.FILE,
+                        SourceFilterMatchType.IS_IMAGE,
+                    )
+                )
+            )
+        finally:
+            self._updating_ui = False
+        self._fit_table_to_rows(self.source_filters_table)
+        self._apply_source_filters_table()
+
+    def remove_selected_source_filter_rows(self) -> None:
+        """Remove selected source-universe filter clause rows."""
+
+        if self.source_filters_table is None:
+            return
+        if self.source_filters_controller is None:
+            raise RuntimeError("Source filters table controller is not initialized.")
+        if not self.source_filters_controller.remove_selected():
+            return
+        self._fit_table_to_rows(self.source_filters_table)
+        self._apply_source_filters_table()
 
     def remove_selected_binding_rows(self) -> None:
         """Remove selected source binding rows from the open dialog editor."""
@@ -1318,10 +1720,15 @@ class SourceBindingsEditorWidget(
                 widget.deleteLater()
         self.step_bindings_table = None
         self.step_bindings_editor = None
+        self.source_filters_table = None
         self.metadata_rules_table = None
         self.match_plan_table = None
+        self.source_filters_controller = None
         self.metadata_rules_controller = None
         self.match_plan_controller = None
+        self.section_labels = {}
+        self.section_groups = {}
+        self.section_reset_buttons = {}
 
     def _free_form_cell_specs(
         self,
@@ -1353,9 +1760,13 @@ class SourceBindingsEditorWidget(
             ),
         }
 
+    @staticmethod
+    def _compact_button(button: QPushButton) -> QPushButton:
+        button.setFixedHeight(min(CURRENT_LAYOUT.button_height, 24))
+        return button
+
     def _step_bindings_group(self, view_model: SourceBindingsViewModel) -> QGroupBox:
-        group = self._section_group("Step Bindings")
-        layout = QVBoxLayout(group)
+        group, layout = self._section_group("Bindings", "bindings")
         summary_table = self._create_table(0, 3)
         summary_table.setHorizontalHeaderLabels(("Bindings", "Aliases", "Origins"))
         for row_index, row in enumerate(self._binding_summary_rows(view_model)):
@@ -1368,9 +1779,11 @@ class SourceBindingsEditorWidget(
         layout.addWidget(summary_table)
 
         buttons = QHBoxLayout()
-        edit_button = QPushButton("Edit bindings...", group)
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(3)
+        edit_button = self._compact_button(QPushButton("Edit bindings...", group))
         edit_button.clicked.connect(self._open_step_bindings_dialog)
-        add_button = QPushButton("Add binding", group)
+        add_button = self._compact_button(QPushButton("Add binding", group))
         add_button.clicked.connect(lambda: self.add_binding_row())
         buttons.addWidget(edit_button)
         buttons.addWidget(add_button)
@@ -1380,7 +1793,7 @@ class SourceBindingsEditorWidget(
 
     def _create_step_bindings_dialog(self) -> StepBindingsDialog:
         return StepBindingsDialog(
-            bindings=self._bindings.bindings,
+            bindings=SourceBindingsEditorValue(self._display_bindings).binding_declarations,
             free_form_cell_specs=self._free_form_cell_specs(),
             scope_color_scheme=self._scope_color_scheme,
             parent=self,
@@ -1397,7 +1810,10 @@ class SourceBindingsEditorWidget(
         self.step_bindings_table = None
 
     def _append_step_binding(self, binding: NamedSourceBinding) -> None:
-        self._apply_step_bindings(self._bindings.bindings + (binding,))
+        self._apply_step_bindings(
+            SourceBindingsEditorValue(self._display_bindings).binding_declarations
+            + (binding,)
+        )
 
     def _binding_summary_rows(
         self,
@@ -1413,9 +1829,46 @@ class SourceBindingsEditorWidget(
             ),
         )
 
+    def _source_filters_group(self) -> QGroupBox:
+        group, layout = self._section_group("Source Filters", "source_filters")
+        table = self._create_table(0, len(SourceFilterColumn))
+        table.setHorizontalHeaderLabels(
+            tuple(column.name.title() for column in SourceFilterColumn)
+        )
+        self.source_filters_table = table
+        self.source_filters_controller = EditableTableController(
+            table=table,
+            columns=tuple(SourceFilterColumn),
+            free_form_cell_specs=self._free_form_cell_specs(),
+            row_cells=EditableSourceFilterRow.cells,
+            row_from_cells=EditableSourceFilterRow.from_cells,
+            apply_changes=self._apply_source_filters_table,
+        )
+        for clause in SourceBindingsEditorValue(
+            self._display_bindings
+        ).source_filter_declarations:
+            self.source_filters_controller.append(EditableSourceFilterRow.from_clause(clause))
+        table.itemChanged.connect(lambda _: self._apply_source_filters_table())
+        table.resizeColumnsToContents()
+        self._configure_table(table)
+        self._fit_table_to_rows(table)
+        layout.addWidget(table)
+
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(3)
+        add_button = self._compact_button(QPushButton("Add source filter"))
+        add_button.clicked.connect(self.add_source_filter_row)
+        remove_button = self._compact_button(QPushButton("Remove selected"))
+        remove_button.clicked.connect(self.remove_selected_source_filter_rows)
+        buttons.addWidget(add_button)
+        buttons.addWidget(remove_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        return group
+
     def _metadata_rules_group(self) -> QGroupBox:
-        group = self._section_group("Step Metadata Rules")
-        layout = QVBoxLayout(group)
+        group, layout = self._section_group("Metadata Rules", "metadata_rules")
         table = self._create_table(0, len(MetadataRuleColumn))
         table.setHorizontalHeaderLabels(
             tuple(column.name.title() for column in MetadataRuleColumn)
@@ -1429,7 +1882,9 @@ class SourceBindingsEditorWidget(
             row_from_cells=EditableMetadataRuleRow.from_cells,
             apply_changes=self._apply_metadata_rules_table,
         )
-        for rule in self._bindings.metadata_rules:
+        for rule in SourceBindingsEditorValue(
+            self._display_bindings
+        ).metadata_rule_declarations:
             self.metadata_rules_controller.append(EditableMetadataRuleRow.from_rule(rule))
         table.itemChanged.connect(lambda _: self._apply_metadata_rules_table())
         table.resizeColumnsToContents()
@@ -1438,9 +1893,11 @@ class SourceBindingsEditorWidget(
         layout.addWidget(table)
 
         buttons = QHBoxLayout()
-        add_button = QPushButton("Add metadata rule")
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(3)
+        add_button = self._compact_button(QPushButton("Add metadata rule"))
         add_button.clicked.connect(self.add_metadata_rule_row)
-        remove_button = QPushButton("Remove selected")
+        remove_button = self._compact_button(QPushButton("Remove selected"))
         remove_button.clicked.connect(self.remove_selected_metadata_rule_rows)
         buttons.addWidget(add_button)
         buttons.addWidget(remove_button)
@@ -1449,8 +1906,7 @@ class SourceBindingsEditorWidget(
         return group
 
     def _match_plan_group(self) -> QGroupBox:
-        group = self._section_group("Step Match Plan")
-        layout = QVBoxLayout(group)
+        group, layout = self._section_group("Match Plan", "match_plan")
         table = self._create_table(0, len(MatchPlanColumn))
         table.setHorizontalHeaderLabels(
             tuple(column.name.title() for column in MatchPlanColumn)
@@ -1464,7 +1920,9 @@ class SourceBindingsEditorWidget(
             row_from_cells=EditableMatchPlanRow.from_cells,
             apply_changes=self._apply_match_plan_table,
         )
-        for row in EditableMatchPlanRow.from_plan(self._bindings.match_plan):
+        for row in EditableMatchPlanRow.from_plan(
+            SourceBindingsEditorValue(self._display_bindings).match_plan
+        ):
             self.match_plan_controller.append(row)
         table.itemChanged.connect(lambda _: self._apply_match_plan_table())
         table.resizeColumnsToContents()
@@ -1473,9 +1931,11 @@ class SourceBindingsEditorWidget(
         layout.addWidget(table)
 
         buttons = QHBoxLayout()
-        add_button = QPushButton("Add match dimension")
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(3)
+        add_button = self._compact_button(QPushButton("Add match dimension"))
         add_button.clicked.connect(self.add_match_plan_row)
-        remove_button = QPushButton("Remove selected")
+        remove_button = self._compact_button(QPushButton("Remove selected"))
         remove_button.clicked.connect(self.remove_selected_match_plan_rows)
         buttons.addWidget(add_button)
         buttons.addWidget(remove_button)
@@ -1489,12 +1949,29 @@ class SourceBindingsEditorWidget(
     ) -> None:
         if self._updating_ui:
             return
-        self._bindings = StepSourceBindingsConfig(
-            bindings=bindings,
-            metadata_rules=self._bindings.metadata_rules,
-            match_plan=self._bindings.match_plan,
-        )
+        self._bindings = replace_raw(self._bindings, bindings=bindings)
+        self._display_bindings = replace_raw(self._display_bindings, bindings=bindings)
         self.refresh()
+        self.changed.emit()
+
+    def _apply_source_filters_table(self) -> None:
+        if self._updating_ui or self.source_filters_table is None:
+            return
+        if self.source_filters_controller is None:
+            raise RuntimeError("Source filters table controller is not initialized.")
+        if self.source_filters_controller.has_incomplete_rows():
+            return
+        source_filters = tuple(
+            row.clause for row in self.source_filters_controller.rows()
+        )
+        self._bindings = replace_raw(
+            self._bindings,
+            source_filters=source_filters,
+        )
+        self._display_bindings = replace_raw(
+            self._display_bindings,
+            source_filters=source_filters,
+        )
         self.changed.emit()
 
     def _apply_metadata_rules_table(self) -> None:
@@ -1502,12 +1979,16 @@ class SourceBindingsEditorWidget(
             return
         if self.metadata_rules_controller is None:
             raise RuntimeError("Metadata rules table controller is not initialized.")
-        self._bindings = StepSourceBindingsConfig(
-            bindings=self._bindings.bindings,
-            metadata_rules=tuple(
-                row.rule for row in self.metadata_rules_controller.rows()
-            ),
-            match_plan=self._bindings.match_plan,
+        metadata_rules = tuple(
+            row.rule for row in self.metadata_rules_controller.rows()
+        )
+        self._bindings = replace_raw(
+            self._bindings,
+            metadata_rules=metadata_rules,
+        )
+        self._display_bindings = replace_raw(
+            self._display_bindings,
+            metadata_rules=metadata_rules,
         )
         self.changed.emit()
 
@@ -1516,13 +1997,36 @@ class SourceBindingsEditorWidget(
             return
         if self.match_plan_controller is None:
             raise RuntimeError("Match plan table controller is not initialized.")
+        if self.match_plan_controller.has_incomplete_rows():
+            return
+        if self._match_plan_table_has_incomplete_dimension_rows():
+            return
         rows = self.match_plan_controller.rows()
-        self._bindings = StepSourceBindingsConfig(
-            bindings=self._bindings.bindings,
-            metadata_rules=self._bindings.metadata_rules,
-            match_plan=self._match_plan_from_rows(rows),
+        match_plan = self._match_plan_from_rows(rows)
+        self._bindings = replace_raw(
+            self._bindings,
+            match_plan=match_plan,
+        )
+        self._display_bindings = replace_raw(
+            self._display_bindings,
+            match_plan=match_plan,
         )
         self.changed.emit()
+
+    def _match_plan_table_has_incomplete_dimension_rows(self) -> bool:
+        if self.match_plan_controller is None:
+            return False
+        row_values = self.match_plan_controller.row_values()
+        rows_with_fields = 0
+        rows_without_fields = 0
+        for method, fields in row_values:
+            if not method.strip() and not fields.strip():
+                continue
+            if fields.strip():
+                rows_with_fields += 1
+            else:
+                rows_without_fields += 1
+        return rows_with_fields > 0 and rows_without_fields > 0
 
     @staticmethod
     def _match_plan_from_rows(
@@ -1542,8 +2046,7 @@ class SourceBindingsEditorWidget(
         columns: tuple[str, ...],
         rows: tuple[tuple[str, ...], ...],
     ) -> QGroupBox:
-        group = self._section_group(title)
-        layout = QVBoxLayout(group)
+        group, layout = self._section_group(title)
         table = self._create_table(len(rows), len(columns))
         table.setHorizontalHeaderLabels(columns)
         for row_index, row in enumerate(rows):
@@ -1560,23 +2063,126 @@ class SourceBindingsEditorWidget(
         table.set_scope_color_scheme(self._scope_color_scheme)
         return table
 
-    @staticmethod
-    def _section_group(title: str) -> QGroupBox:
-        group = QGroupBox(title)
+    def _section_group(
+        self,
+        title: str,
+        field_name: str | None = None,
+    ) -> tuple[QGroupBox, QVBoxLayout]:
+        group = QGroupBox("")
         group.setStyleSheet(
             """
             QGroupBox {
-                margin-top: 18px;
-            }
-            QGroupBox::title {
-                color: #f0f0f0;
-                subcontrol-origin: margin;
-                left: 6px;
-                padding: 0 3px;
+                margin-top: 6px;
             }
             """
         )
-        return group
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
+        if field_name and self._form_context:
+            label = self._section_label(title, field_name)
+            reset_button = self._section_reset_button(field_name)
+            self.section_labels[field_name] = label
+            self.section_groups[field_name] = group
+            self.section_reset_buttons[field_name] = reset_button
+
+            title_layout = QHBoxLayout()
+            title_layout.setContentsMargins(0, 0, 0, 0)
+            title_layout.setSpacing(3)
+            title_layout.addWidget(
+                label,
+                0,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            )
+            title_layout.addStretch(1)
+            title_layout.addWidget(reset_button)
+            layout.addLayout(title_layout)
+        else:
+            label = QLabel(title, group)
+            font = label.font()
+            font.setBold(True)
+            label.setFont(font)
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            layout.addWidget(label)
+        return group, layout
+
+    def _section_label(self, title: str, field_name: str) -> LabelWithHelp:
+        if self._form_context is None:
+            raise RuntimeError("Source binding section labels require form context.")
+        label = LabelWithHelp(
+            title,
+            HelpContext(
+                help_target=self._form_context.config_type,
+                param_name=field_name,
+                param_description=self._form_context.child_description(field_name),
+                param_type=self._form_context.child_type(field_name),
+                color_scheme=self._form_context.color_scheme,
+                scope_accent_color=self._form_context.scope_accent_color,
+            ),
+            state=self._form_context.state,
+            dotted_path=self._form_context.child_path(field_name),
+        )
+        label.set_bold(True)
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        return label
+
+    def _section_reset_button(self, field_name: str) -> QPushButton:
+        if self._form_context is None:
+            raise RuntimeError("Source binding reset buttons require form context.")
+        button = QPushButton("Reset")
+        button.setMaximumWidth(60)
+        button.setFixedHeight(min(CURRENT_LAYOUT.button_height, 24))
+        button.setToolTip(f"Reset {field_name} to default")
+        ResetButtonStyler.apply(button, self._form_context.color_scheme or ColorScheme())
+        button.clicked.connect(lambda: self._form_context.reset_child(field_name))
+        self._form_context.update_reset_button_styling(button, field_name)
+        return button
+
+    def refresh_section_label_markers(self) -> None:
+        if self._form_context is None:
+            return
+        for field_name, label in self.section_labels.items():
+            field_path = self._form_context.child_path(field_name)
+            label.set_dirty_indicator(
+                self._path_or_descendant_in(field_path, self._form_context.state.dirty_fields)
+            )
+            label.set_underline(
+                self._path_or_descendant_in(
+                    field_path,
+                    self._form_context.state.signature_diff_fields,
+                )
+            )
+        for field_name, button in self.section_reset_buttons.items():
+            self._form_context.update_reset_button_styling(button, field_name)
+        for field_name, group in self.section_groups.items():
+            self._set_widget_dimmed(
+                group,
+                self._form_context.child_has_inherited_preview(field_name),
+                0.72,
+            )
+        self._sync_enableable_chrome()
+
+    @staticmethod
+    def _path_or_descendant_in(path: str, paths: set[str]) -> bool:
+        if path in paths:
+            return True
+        prefix = f"{path}."
+        return any(candidate.startswith(prefix) for candidate in paths)
+
+    @staticmethod
+    def _set_widget_dimmed(
+        widget: QWidget,
+        dimmed: bool,
+        opacity: float = 0.4,
+    ) -> None:
+        if dimmed:
+            effect = QGraphicsOpacityEffect(widget)
+            effect.setOpacity(opacity)
+            widget.setGraphicsEffect(effect)
+        else:
+            widget.setGraphicsEffect(None)
+        widget.repaint()
 
     @staticmethod
     def _configure_table(table: QTableWidget) -> None:
@@ -1589,18 +2195,84 @@ class SourceBindingsEditorWidget(
 
 def create_source_bindings_editor_widget(
     *,
-    current_value: StepSourceBindingsConfig,
+    current_value: SourceBindingsEditorRawValue,
+    manager: ParameterFormManager | None = None,
+    param_info: InlineDataclassWidgetInfo | None = None,
     parent: QWidget | None = None,
     **_: object,
 ) -> SourceBindingsEditorWidget:
     """pyqt-reactive inline dataclass widget factory for source bindings."""
 
-    if not isinstance(current_value, StepSourceBindingsConfig):
+    SourceBindingsEditorValue(current_value)
+    display_value = resolved_source_bindings_value(
+        current_value=current_value,
+        manager=manager,
+        param_info=param_info,
+    )
+    return SourceBindingsEditorWidget.from_bindings(
+        current_value,
+        display_bindings=display_value,
+        form_context=source_bindings_form_context(
+            current_value=current_value,
+            manager=manager,
+            param_info=param_info,
+        ),
+        parent=parent,
+    )
+
+
+def source_bindings_form_context(
+    *,
+    current_value: SourceBindingsEditorRawValue,
+    manager: ParameterFormManager | None,
+    param_info: InlineDataclassWidgetInfo | None,
+) -> SourceBindingsEditorFormContext | None:
+    """Build the semantic form context for source-binding child fields."""
+
+    if manager is None or param_info is None:
+        return None
+    field_path = (
+        f"{manager.field_id}.{param_info.name}"
+        if manager.field_id
+        else param_info.name
+    )
+    return SourceBindingsEditorFormContext(
+        state=manager.state,
+        manager=manager,
+        field_path=field_path,
+        local_field_path=param_info.name,
+        config_type=SourceBindingsEditorValue(current_value).base_type(),
+        color_scheme=manager.config.color_scheme,
+        scope_accent_color=manager._scope_accent_color,
+    )
+
+
+def resolved_source_bindings_value(
+    *,
+    current_value: SourceBindingsEditorRawValue,
+    manager: ParameterFormManager | None,
+    param_info: InlineDataclassWidgetInfo | None,
+) -> SourceBindingsEditorRawValue:
+    """Return the live inherited value used to seed placeholder tables."""
+
+    if manager is None or param_info is None:
+        return current_value
+    field_path = (
+        f"{manager.field_id}.{param_info.name}"
+        if manager.field_id
+        else param_info.name
+    )
+    resolved_value = manager.state.get_resolved_value(field_path)
+    if resolved_value is None:
+        return current_value
+    expected_base_type = SourceBindingsEditorValue(current_value).base_type()
+    resolved_editor_value = SourceBindingsEditorValue(resolved_value)
+    if resolved_editor_value.base_type() is not expected_base_type:
         raise TypeError(
-            "SourceBindingsEditorWidget requires StepSourceBindingsConfig, "
-            f"got {type(current_value).__name__}."
+            f"Resolved source-bindings value must be {expected_base_type.__name__}, "
+            f"got {type(resolved_value).__name__}."
         )
-    return SourceBindingsEditorWidget.from_bindings(current_value, parent=parent)
+    return resolved_value
 
 
 def register_source_bindings_editor_widget() -> None:
@@ -1608,21 +2280,22 @@ def register_source_bindings_editor_widget() -> None:
 
     from pyqt_reactive.forms.parameter_info_types import register_inline_dataclass_widget
 
-    register_inline_dataclass_widget(
-        StepSourceBindingsConfig,
-        create_source_bindings_editor_widget,
-    )
-    register_inline_dataclass_widget(
-        LazyStepSourceBindingsConfig,
-        create_source_bindings_editor_widget,
-    )
+    for config_type in SourceBindingsConfig.registered_plan_types():
+        if issubclass(config_type, SourceBindingsConfig):
+            register_inline_dataclass_widget(
+                config_type,
+                create_source_bindings_editor_widget,
+            )
 
 
 register_source_bindings_editor_widget()
 
 
 __all__ = (
+    "SourceBindingsEditorFormContext",
     "SourceBindingsEditorWidget",
+    "SourceFilterColumn",
     "create_source_bindings_editor_widget",
+    "resolved_source_bindings_value",
     "register_source_bindings_editor_widget",
 )

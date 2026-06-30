@@ -32,6 +32,7 @@ from openhcs.core.source_bindings import (
     SourceBindingMatchDimension,
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
+    SourceBindingsConfig,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -313,7 +314,7 @@ class SourceBindingsViewModel:
         cls,
         *,
         schema: PipelineImageSchema,
-        bindings: StepSourceBindingsConfig,
+        bindings: SourceBindingsConfig,
     ) -> "SourceBindingsViewModel":
         return cls(
             pipeline_sources=PipelineSourceUniverseView.from_schema(schema),
@@ -355,7 +356,7 @@ class SourceBindingsViewModel:
 
     @staticmethod
     def step_binding_views(
-        bindings: StepSourceBindingsConfig,
+        bindings: SourceBindingsConfig,
     ) -> tuple[SourceBindingView, ...]:
         return tuple(
             SourceBindingView.from_named_binding(
@@ -368,7 +369,7 @@ class SourceBindingsViewModel:
     @staticmethod
     def metadata_rule_views(
         schema: PipelineImageSchema,
-        bindings: StepSourceBindingsConfig,
+        bindings: SourceBindingsConfig,
     ) -> tuple[MetadataRuleView, ...]:
         return tuple(
             MetadataRuleView.from_rule(rule, declaration_scope="pipeline_image_schema")
@@ -381,7 +382,7 @@ class SourceBindingsViewModel:
     @staticmethod
     def match_plan_views(
         schema: PipelineImageSchema,
-        bindings: StepSourceBindingsConfig,
+        bindings: SourceBindingsConfig,
     ) -> tuple[SourceBindingMatchPlanView, ...]:
         plans: list[SourceBindingMatchPlanView] = []
         if schema.match_plan is not None:

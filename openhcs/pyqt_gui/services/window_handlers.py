@@ -71,7 +71,9 @@ class OpenHCSWindowCreationAuthority:
             config_class=GlobalPipelineConfig,
             current_config=current_config,
             on_save_callback=handle_save,
-            scope_id=OpenHCSUiWindowId.global_config,
+            scope_id=OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(
+                request.scope_id
+            ),
         )
         self._show_window(window)
         return window

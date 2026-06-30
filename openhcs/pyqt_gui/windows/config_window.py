@@ -459,7 +459,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         # CRITICAL: Initialize scope-based border styling AFTER widgets are created
         # This ensures widgets exist when apply_scope_accent_styling() tries to style them
         # (mirrors DualEditorWindow pattern which calls init_scope_border in setup_connections)
-        if self.scope_id:
+        if self.scope_id is not None:
             self.init_scope_border()
 
     def showEvent(self, a0) -> None:
@@ -498,27 +498,13 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         if not accent_color:
             return
 
-        hex_color = accent_color.name()
-
         # Style Save button with hover effect
-        save_button_style = f"""
-            QPushButton {{
-                background-color: {hex_color};
-                color: white;
-                border: none;
-                border-radius: 3px;
-                padding: 8px;
-            }}
-            QPushButton:hover {{
-                background-color: {accent_color.lighter(115).name()};
-            }}
-        """
         if self._save_button is not None:
-            self._save_button.setStyleSheet(save_button_style)
+            self._save_button.setStyleSheet(self.get_scope_accent_stylesheet())
 
         # Style header label with scope accent color
         if self._header_label is not None:
-            self._header_label.setStyleSheet(f"color: {hex_color};")
+            self._header_label.setStyleSheet(f"color: {accent_color.name()};")
 
         # Style tree selection with scope accent
         tree_style = self.get_scope_tree_selection_stylesheet()

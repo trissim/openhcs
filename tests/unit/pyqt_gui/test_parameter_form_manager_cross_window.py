@@ -8,6 +8,7 @@ from pyqt_reactive.forms.parameter_form_chrome_sync import ParameterFormChromeSy
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.protocols.widget_protocols import ValueSettable
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
+from pyqt_reactive.widgets.shared.clickable_help_components import FlashableGroupBox
 
 
 class QtApplicationHarness:
@@ -286,3 +287,49 @@ def test_resolved_change_refreshes_widget_values_outside_time_travel() -> None:
         {"well_filter_config.well_filter"}
     ]
     assert manager.flashes == ["well_filter_config.well_filter"]
+
+
+def test_resolved_child_path_flashes_inline_dataclass_container() -> None:
+    """Inline dataclass child updates flash their owning value widget."""
+    QtApplicationHarness.app()
+
+    class FakeFormTree:
+        def matching_prefix(self, path):
+            del path
+            return None
+
+    class FakeManager:
+        _parent_manager = None
+        labels = {}
+
+        def __init__(self) -> None:
+            self.form_tree = FakeFormTree()
+            self.widgets = {
+                "source_bindings": FlashableGroupBox(
+                    "Source Bindings",
+                    flash_key="source_bindings",
+                )
+            }
+            self.flashes: list[str] = []
+
+        def queue_flash_local(self, key):
+            self.flashes.append(key)
+
+        def _queue_inline_dataclass_flash_for_path(self, manager, path):
+            return ParameterFormManager._queue_inline_dataclass_flash_for_path(
+                self,
+                manager,
+                path,
+            )
+
+        def parent(self):
+            return None
+
+    manager = FakeManager()
+
+    ParameterFormManager._queue_leaf_flash_for_path(
+        manager,
+        "source_bindings.bindings",
+    )
+
+    assert manager.flashes == ["source_bindings"]
