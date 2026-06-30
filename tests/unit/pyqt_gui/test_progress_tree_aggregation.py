@@ -117,6 +117,27 @@ def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
     assert round(plate.percent, 1) == 25.0
 
 
+def test_execution_events_without_topology_render_shallow_node(monkeypatch):
+    projection = _projection()
+
+    step_event = _event(
+        execution_id="exec-run",
+        phase=ProgressPhase.STEP_STARTED,
+        status=ProgressStatus.RUNNING,
+        percent=25.0,
+        plate_id="/tmp/plate",
+        axis_id="A01",
+        step_name="ColorToGray",
+    )
+
+    nodes = projection.build_progress_tree({"exec-run": [step_event]})
+
+    assert len(nodes) == 1
+    assert nodes[0].status == "⚙️ Executing"
+    assert round(nodes[0].percent, 1) == 25.0
+    assert nodes[0].children == []
+
+
 def test_compile_tree_marks_plate_as_compiled_at_100_percent(monkeypatch):
     projection = _projection(known_wells={("exec-1", "/tmp/plate"): ["A01", "B01"]})
 

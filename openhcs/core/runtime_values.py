@@ -1112,6 +1112,7 @@ class ImagePayloadChannelProjection:
     source_data: Any
     channel_index: int
     channel_data: Any
+    channel_axis: int = 0
 
     @classmethod
     def from_channel(
@@ -1119,13 +1120,33 @@ class ImagePayloadChannelProjection:
         source_payload: Any,
         source_data: Any,
         channel_index: int,
+        *,
+        channel_axis: int = 0,
     ) -> "ImagePayloadChannelProjection":
         return cls(
             source_payload=source_payload,
             source_data=source_data,
             channel_index=channel_index,
-            channel_data=source_data[channel_index : channel_index + 1],
+            channel_data=cls.channel_axis_slice(
+                source_data,
+                channel_axis=channel_axis,
+                channel_index=channel_index,
+            ),
+            channel_axis=channel_axis,
         )
+
+    @staticmethod
+    def channel_axis_slice(
+        value: Any,
+        *,
+        channel_axis: int,
+        channel_index: int,
+    ) -> Any:
+        array = np.asarray(value)
+        normalized_axis = channel_axis % array.ndim
+        slices = [slice(None)] * array.ndim
+        slices[normalized_axis] = slice(channel_index, channel_index + 1)
+        return value[tuple(slices)]
 
     def payload(self) -> Any:
         return RuntimeImagePayloadContext(
@@ -1142,7 +1163,20 @@ class ImagePayloadChannelProjection:
             return None
         mask_array = np.asarray(mask, dtype=bool)
         if mask_array.shape == np.asarray(self.source_data).shape:
-            return mask_array[self.channel_index : self.channel_index + 1]
+            channel_mask = self.channel_axis_slice(
+                mask_array,
+                channel_axis=self.channel_axis,
+                channel_index=self.channel_index,
+            )
+            if np.shape(channel_mask) == np.shape(self.channel_data):
+                return channel_mask
+            squeezed_mask = np.squeeze(
+                channel_mask,
+                axis=self.channel_axis % channel_mask.ndim,
+            )
+            if np.shape(squeezed_mask) == np.shape(self.channel_data):
+                return squeezed_mask
+            return channel_mask
         return mask_array
 
 

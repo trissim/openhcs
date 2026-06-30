@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, ClassVar, Mapping
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping
 from uuid import uuid4
 
 from metaclass_registry import AutoRegisterMeta
@@ -27,6 +27,11 @@ from openhcs.core.progress import (
     ProgressStatus,
 )
 from openhcs.core.vfs_protocol import FileManagerLike
+
+if TYPE_CHECKING:
+    from openhcs.core.debug_views import DebugViewModel
+    from openhcs.core.pipeline.compiler import CompiledRuntimeEnvironmentPlan
+    from openhcs.core.runtime_stores import RuntimeValueStore
 
 
 class DebugEventType(Enum):
@@ -89,6 +94,7 @@ class DebugControlMessageType(Enum):
     READ_SNAPSHOT = "openhcs_debug_read_snapshot"
     WORKER_COMMAND = "openhcs_debug_worker_command"
     EXPORT_ARTIFACT = "openhcs_debug_export_artifact"
+    INSPECT_RUNTIME = "openhcs_debug_inspect_runtime"
 
 
 class DebugPausedWorkerState(Enum):
@@ -830,6 +836,78 @@ class DebugArtifactExportResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class DebugRuntimeInspectionRequest(DebugSessionRequest):
+    """Control-channel request for a paused worker runtime inspection view."""
+
+    request_kind: ClassVar[str] = "runtime_inspection"
+
+
+@dataclass(frozen=True, slots=True)
+class DebugRuntimeInspectionControlPayload:
+    """Wire payload for live runtime inspection requests."""
+
+    debug_session_id: str
+    message_type: DebugControlMessageType = DebugControlMessageType.INSPECT_RUNTIME
+
+    @classmethod
+    def from_request(
+        cls,
+        request: DebugRuntimeInspectionRequest,
+    ) -> "DebugRuntimeInspectionControlPayload":
+        return cls(debug_session_id=request.debug_session_id)
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> "DebugRuntimeInspectionControlPayload":
+        message_type = DebugControlMessageType(str(payload["type"]))
+        if message_type is not DebugControlMessageType.INSPECT_RUNTIME:
+            raise ValueError(
+                "DebugRuntimeInspectionControlPayload requires "
+                f"{DebugControlMessageType.INSPECT_RUNTIME.value}, got "
+                f"{message_type.value}."
+            )
+        return cls(
+            message_type=message_type,
+            debug_session_id=str(payload["debug_session_id"]),
+        )
+
+    def to_request(self) -> DebugRuntimeInspectionRequest:
+        return DebugRuntimeInspectionRequest(debug_session_id=self.debug_session_id)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.message_type.value,
+            "debug_session_id": self.debug_session_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DebugRuntimeInspectionResponse:
+    """Control-channel response containing a renderer-independent debug view."""
+
+    view_model: "DebugViewModel"
+
+    def to_control_response(self) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "view_model": self.view_model.to_json_dict(),
+        }
+
+    @classmethod
+    def from_control_response(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> "DebugRuntimeInspectionResponse":
+        if payload.get("status") != "ok":
+            raise RuntimeError(str(payload.get("error") or payload))
+        from openhcs.core.debug_views import DebugViewModel
+
+        return cls(view_model=DebugViewModel.from_json_dict(payload["view_model"]))
+
+
+@dataclass(frozen=True, slots=True)
 class DebugArtifactExportPlan:
     """Filesystem export plan executed in the worker/server namespace."""
 
@@ -1507,6 +1585,7 @@ class DebugPausedWorkerController:
         self._condition = threading.Condition()
         self._state = DebugPausedWorkerState.RUNNING
         self._cursor: DebugCursor | None = None
+        self._context: DebugExecutionContext | None = None
         self._step_permits = 0
         self._continuous = False
 
@@ -1514,6 +1593,25 @@ class DebugPausedWorkerController:
     def status(self) -> DebugPausedWorkerStatus:
         with self._condition:
             return DebugPausedWorkerStatus.from_controller(self)
+
+    def bind_context(self, context: "DebugExecutionContext") -> None:
+        with self._condition:
+            self._context = context
+
+    def runtime_inspection_view(self) -> "DebugViewModel":
+        with self._condition:
+            if self._context is None:
+                raise RuntimeError("Debug worker context is not available.")
+            if self._state is not DebugPausedWorkerState.PAUSED:
+                raise RuntimeError(
+                    "Runtime inspection requires a paused debug worker."
+                )
+            from openhcs.core.debug_views import DebugViewModel
+
+            return DebugViewModel.from_runtime_value_store(
+                self._context.runtime_value_store,
+                title=f"Runtime Values ({self.debug_session_id[:8]})",
+            )
 
     def apply_command(self, command_type: DebugCommandType) -> DebugPausedWorkerStatus:
         with self._condition:
@@ -1991,6 +2089,11 @@ class DebugExecutionContext(ABC):
     def install_debug_event_sink(self, debug_event_sink: "DebugEventSink") -> None:
         """Install the debug sink selected for this execution context."""
 
+    @property
+    @abstractmethod
+    def runtime_value_store(self) -> "RuntimeValueStore":
+        """Return the RuntimeValueStore owned by the active execution context."""
+
 
 @dataclass(frozen=True, slots=True)
 class DebugSinkInstallRequest:
@@ -2053,6 +2156,8 @@ class ProgressDebugExecutionPolicy(DebugExecutionPolicy):
             if self.config.replay_mode is DebugReplayMode.PERSISTENT_PAUSED_WORKER
             else None
         )
+        if pause_controller is not None:
+            pause_controller.bind_context(request.context)
 
         if self.config.snapshot_store_ref is not None:
             debug_event_sink: DebugEventSink = LocalSnapshotProgressDebugEventSink(

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
@@ -25,6 +26,7 @@ class ZMQClientService:
         self.port = port
         self.zmq_client = None
         self._generation = 0
+        self._client_lock = threading.Lock()
 
     async def connect(
         self,
@@ -33,13 +35,31 @@ class ZMQClientService:
         timeout: float = 15,
     ):
         """Create a client and connect to the execution server."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._client_lock.acquire)
+        try:
+            return await self._connect_unlocked(
+                progress_callback=progress_callback,
+                persistent=persistent,
+                timeout=timeout,
+            )
+        finally:
+            self._client_lock.release()
+
+    async def _connect_unlocked(
+        self,
+        *,
+        progress_callback=None,
+        persistent: bool = True,
+        timeout: float = 15,
+    ):
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
         if self.zmq_client is not None and self.zmq_client.is_connected():
             existing_callback = self.zmq_client.progress_callback
             if existing_callback is progress_callback:
                 return self.zmq_client
-            await self.disconnect()
+            await self._disconnect_unlocked()
         loop = asyncio.get_event_loop()
         self._generation += 1
         generation = self._generation
@@ -64,6 +84,14 @@ class ZMQClientService:
 
     async def disconnect(self) -> None:
         """Disconnect the client (async-safe)."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._client_lock.acquire)
+        try:
+            await self._disconnect_unlocked()
+        finally:
+            self._client_lock.release()
+
+    async def _disconnect_unlocked(self) -> None:
         if self.zmq_client is None:
             return
         loop = asyncio.get_event_loop()

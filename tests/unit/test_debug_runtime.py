@@ -29,6 +29,9 @@ from openhcs.core.debug import (
     DebugProgressContext,
     DebugProgressEventRequest,
     DebugPausedWorkerRegistry,
+    DebugRuntimeInspectionControlPayload,
+    DebugRuntimeInspectionRequest,
+    DebugRuntimeInspectionResponse,
     DebugSnapshotReadRequest,
     DebugSnapshotReadControlPayload,
     DebugSnapshotReadResponse,
@@ -57,6 +60,7 @@ from openhcs.core.progress import (
     ProgressStatus,
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
@@ -70,6 +74,7 @@ from openhcs.core.steps.function_runtime import (
     ComponentArtifactPlans,
     FunctionRuntimeScope,
 )
+from openhcs.core.runtime_stores import RuntimeValueStore
 
 
 class DebugRuntimeFixture:
@@ -265,6 +270,7 @@ class DebugExecutionContextStub(DebugExecutionContext):
         filemanager: DebugSnapshotFileManagerStub | None = None,
         debug_event_sink: DebugEventSink | None = None,
     ) -> None:
+        self._runtime_value_store = RuntimeValueStore()
         if filemanager is None:
             self._filemanager = DebugSnapshotFileManagerStub()
         else:
@@ -277,6 +283,10 @@ class DebugExecutionContextStub(DebugExecutionContext):
     @property
     def debug_event_sink(self) -> DebugEventSink:
         return self._debug_event_sink
+
+    @property
+    def runtime_value_store(self) -> RuntimeValueStore:
+        return self._runtime_value_store
 
     def install_debug_event_sink(self, debug_event_sink: DebugEventSink) -> None:
         self._debug_event_sink = debug_event_sink
@@ -906,6 +916,77 @@ def test_debug_snapshot_round_trips_invocation_parameters_and_artifact_identity(
     assert restored.output_artifact_refs[0].identity == DebugArtifactIdentity.from_artifact_plan(
         artifact
     )
+
+
+def test_paused_worker_runtime_inspection_projects_runtime_value_store():
+    context = DebugExecutionContextStub()
+    value = normalize_artifact_value(
+        ArtifactOutputPlan(
+            name="measurements",
+            path="/memory/measurements.pkl",
+            kind=ArtifactKind.MEASUREMENTS,
+            group_keys=("DAPI",),
+        ),
+        [{"object_id": 1}],
+        axis_id=DebugRuntimeFixture.AXIS_ID,
+    )
+    context.runtime_value_store.record(
+        value,
+        path="/memory/measurements.pkl",
+        backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+    controller = DebugPausedWorkerRegistry.controller_for(
+        DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    controller.bind_context(context)
+    controller.apply_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
+
+    view_model = controller.runtime_inspection_view()
+
+    table = view_model.sections[0].table
+    assert table is not None
+    assert table.rows == (
+        (
+            "measurements",
+            ArtifactKind.MEASUREMENTS.value,
+            DebugRuntimeFixture.AXIS_ID,
+            "DAPI",
+            DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+            "/memory/measurements.pkl",
+            "",
+            "list",
+        ),
+    )
+    DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
+
+
+def test_runtime_inspection_control_payload_round_trips_view_model():
+    request = DebugRuntimeInspectionRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    payload = DebugRuntimeInspectionControlPayload.from_request(request)
+    restored_request = DebugRuntimeInspectionControlPayload.from_dict(
+        payload.to_dict()
+    ).to_request()
+
+    assert restored_request == request
+
+    context = DebugExecutionContextStub()
+    controller = DebugPausedWorkerRegistry.controller_for(
+        DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    controller.bind_context(context)
+    controller.apply_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
+    response = DebugRuntimeInspectionResponse(
+        view_model=controller.runtime_inspection_view()
+    )
+
+    restored_response = DebugRuntimeInspectionResponse.from_control_response(
+        response.to_control_response()
+    )
+
+    assert restored_response.view_model == response.view_model
+    DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
 
 
 def test_debug_boundary_state_registry_covers_event_and_snapshot():

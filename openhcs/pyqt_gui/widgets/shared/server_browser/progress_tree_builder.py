@@ -256,7 +256,22 @@ class ProgressTreeBuilder:
                 events=events,
                 worker_assignments=worker_assignments,
             )
-            if is_executing:
+            missing_execution_topology = (
+                is_executing
+                and (exec_id, plate_id) not in worker_assignments
+            )
+            if missing_execution_topology:
+                children = []
+                plate_percent = max(
+                    (
+                        event.percent
+                        for event in events
+                        if phase_channel(event.phase).role
+                        is ProgressChannelRole.EXECUTION
+                    ),
+                    default=0.0,
+                )
+            elif is_executing:
                 children = self._build_worker_children(
                     execution_id=exec_id,
                     plate_id=plate_id,
@@ -264,6 +279,7 @@ class ProgressTreeBuilder:
                     worker_assignments=worker_assignments,
                     step_names=step_names,
                 )
+                plate_percent = 0.0
             else:
                 children = self._build_compilation_children(
                     execution_id=exec_id,
@@ -271,6 +287,7 @@ class ProgressTreeBuilder:
                     events=events,
                     known_wells=known_wells,
                 )
+                plate_percent = 0.0
 
             plate_node = self.node_factory.make_progress_node(
                 node_id=plate_id,
@@ -279,6 +296,7 @@ class ProgressTreeBuilder:
                 status="⚙️ Executing" if is_executing else "⏳ Compiling",
                 info="",
                 execution_id=exec_id,
+                percent=plate_percent,
                 children=children,
             )
             self.status_projector.finalize_plate_node(

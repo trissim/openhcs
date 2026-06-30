@@ -64,6 +64,53 @@ def test_debug_toolbar_emits_typed_command() -> None:
     assert commands == [DebugCommand(DebugCommandType.STEP)]
 
 
+def test_debug_toolbar_debug_button_runs_debug_execution() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+    commands: list[DebugCommand] = []
+    toolbar.command_requested.connect(commands.append)
+
+    toolbar.buttons[DebugCommandType.RUN].click()
+
+    assert toolbar.buttons[DebugCommandType.RUN].text() == "Debug"
+    assert commands == [DebugCommand(DebugCommandType.RUN)]
+
+
+def test_debug_toolbar_moves_secondary_commands_to_menu() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+    commands: list[DebugCommand] = []
+    toolbar.command_requested.connect(commands.append)
+
+    assert DebugCommandType.TOGGLE not in toolbar.buttons
+    assert DebugCommandType.CHOOSE_SOURCE_GROUP not in toolbar.buttons
+    assert DebugCommandType.RANDOM_SOURCE_GROUP not in toolbar.buttons
+    assert DebugCommandType.STOP not in toolbar.buttons
+
+    toolbar.menu_actions[DebugCommandType.CHOOSE_SOURCE_GROUP].trigger()
+    toolbar.set_debug_session_active(True)
+    toolbar.menu_actions[DebugCommandType.STOP].trigger()
+
+    assert commands == [
+        DebugCommand(DebugCommandType.CHOOSE_SOURCE_GROUP),
+        DebugCommand(DebugCommandType.STOP),
+    ]
+
+
+def test_debug_toolbar_runtime_inspection_action_emits_separate_signal() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+    requests = []
+    toolbar.runtime_inspection_requested.connect(lambda: requests.append("runtime"))
+
+    assert toolbar.runtime_inspection_action is not None
+    toolbar.set_debug_session_active(True)
+    toolbar.set_runtime_inspection_enabled(True)
+    toolbar.runtime_inspection_action.trigger()
+
+    assert requests == ["runtime"]
+
+
 def test_debug_toolbar_enables_controls_together() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
@@ -71,6 +118,36 @@ def test_debug_toolbar_enables_controls_together() -> None:
     toolbar.set_controls_enabled(False)
 
     assert all(not button.isEnabled() for button in toolbar.buttons.values())
+    assert not toolbar.menu_button.isEnabled()
+    assert toolbar.runtime_inspection_action is not None
+    assert not toolbar.runtime_inspection_action.isEnabled()
+    assert all(not action.isEnabled() for action in toolbar.menu_actions.values())
+
+
+def test_debug_toolbar_session_only_controls_follow_active_session() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+
+    assert toolbar.buttons[DebugCommandType.RUN].isEnabled()
+    assert toolbar.buttons[DebugCommandType.STEP].isEnabled()
+    assert toolbar.menu_actions[DebugCommandType.CHOOSE_SOURCE_GROUP].isEnabled()
+    assert not toolbar.buttons[DebugCommandType.RESTART].isEnabled()
+    assert not toolbar.menu_actions[DebugCommandType.STOP].isEnabled()
+    assert toolbar.runtime_inspection_action is not None
+    assert not toolbar.runtime_inspection_action.isEnabled()
+
+    toolbar.set_debug_session_active(True)
+
+    assert toolbar.buttons[DebugCommandType.RESTART].isEnabled()
+    assert toolbar.menu_actions[DebugCommandType.STOP].isEnabled()
+    assert toolbar.runtime_inspection_action.isEnabled()
+
+
+def test_debug_toolbar_omits_random_source_group_action() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+
+    assert DebugCommandType.RANDOM_SOURCE_GROUP not in toolbar.menu_actions
 
 
 def test_debug_toolbar_uses_shared_button_panel_styling() -> None:
@@ -140,6 +217,7 @@ class PlateManagerDebugHarness:
 
     def __init__(self) -> None:
         self._active_debug_sessions = {}
+        self._plate_pipeline_editor = None
         self._batch_workflow_service = DebugBatchWorkflowRecorder()
         self.execution_error = StatusSignalRecorder()
         self.export_calls = []
@@ -149,6 +227,21 @@ class PlateManagerDebugHarness:
 
     async def action_export_debug_artifact(self, **kwargs) -> None:
         self.export_calls.append(kwargs)
+
+
+class PipelineEditorDebugStateRecorder:
+    """Pipeline-editor state used by terminal debug-session cleanup tests."""
+
+    def __init__(self, session: DebugSession) -> None:
+        self.debug_session_state: DebugSession | None = session
+        self.item_updates = 0
+        self.button_updates = 0
+
+    def update_item_list(self) -> None:
+        self.item_updates += 1
+
+    def update_button_states(self) -> None:
+        self.button_updates += 1
 
 
 class ImmediatePipelineEditorCoroutineRunner:
@@ -281,9 +374,13 @@ class PipelineEditorSnapshotHarness:
         self.plate_manager = None
         self.debug_session_state = None
         self.debug_workflow = PipelineEditorDebugWorkflow(self)
+        self.button_state_updates = 0
 
     def get_file_manager(self) -> FileManagerRecorder:
         return self.filemanager
+
+    def update_button_states(self) -> None:
+        self.button_state_updates += 1
 
     def _handle_debug_artifact_export_request(self, request) -> None:
         self.debug_workflow.handle_artifact_export_request(request)
@@ -396,6 +493,22 @@ def test_plate_manager_reuses_persistent_paused_worker_across_commands(tmp_path)
         (session.debug_session_id, DebugCommandType.STOP),
     ]
     assert plate_path not in harness._active_debug_sessions
+
+
+def test_plate_manager_completion_clears_matching_pipeline_editor_debug_session() -> None:
+    plate_path = "plate"
+    manager = PlateManagerDebugHarness()
+    session = DebugSession.create(plate_id=plate_path)
+    manager._active_debug_sessions[plate_path] = session
+    editor = PipelineEditorDebugStateRecorder(session)
+    manager._plate_pipeline_editor = editor
+
+    PlateManagerWidget._clear_debug_session_for_plate(manager, plate_path)
+
+    assert plate_path not in manager._active_debug_sessions
+    assert editor.debug_session_state is None
+    assert editor.item_updates == 1
+    assert editor.button_updates == 1
 
 
 def test_pipeline_editor_routes_step_debug_command_to_bounded_run(monkeypatch) -> None:

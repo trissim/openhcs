@@ -74,19 +74,9 @@ class DebugControlMessageStrategy(metaclass=AutoRegisterMeta):
 class DebugControlMessageRouter:
     """Nominal facade for ZMQ debug-control message routing."""
 
-    from openhcs.core.debug import DebugControlMessageType
-
-    message_types: ClassVar[frozenset[str]] = frozenset(
-        (
-            DebugControlMessageType.READ_SNAPSHOT.value,
-            DebugControlMessageType.WORKER_COMMAND.value,
-            DebugControlMessageType.EXPORT_ARTIFACT.value,
-        )
-    )
-
     @classmethod
     def handles(cls, message: dict) -> bool:
-        return message.get(MessageFields.TYPE) in cls.message_types
+        return message.get(MessageFields.TYPE) in DebugControlMessageStrategy.__registry__
 
     @classmethod
     def handle(cls, message: dict) -> dict:
@@ -169,6 +159,32 @@ class DebugArtifactExportMessageStrategy(DebugControlMessageStrategy):
             ).export()
             return DebugArtifactExportResponse(
                 exported_ref=str(exported_path)
+            ).to_control_response()
+        except Exception as error:
+            return self.error_response(error)
+
+
+class DebugRuntimeInspectionMessageStrategy(DebugControlMessageStrategy):
+    """Handle paused-worker live runtime inspection requests."""
+
+    from openhcs.core.debug import DebugControlMessageType
+
+    registry_key = DebugControlMessageType.INSPECT_RUNTIME.value
+
+    def handle(self, message: dict) -> dict:
+        from openhcs.core.debug import (
+            DebugPausedWorkerRegistry,
+            DebugRuntimeInspectionControlPayload,
+            DebugRuntimeInspectionResponse,
+        )
+
+        try:
+            request = DebugRuntimeInspectionControlPayload.from_dict(message).to_request()
+            view_model = DebugPausedWorkerRegistry.controller_for(
+                request.debug_session_id
+            ).runtime_inspection_view()
+            return DebugRuntimeInspectionResponse(
+                view_model=view_model
             ).to_control_response()
         except Exception as error:
             return self.error_response(error)

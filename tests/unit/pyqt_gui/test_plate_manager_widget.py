@@ -43,6 +43,7 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
+    ManagerExecutionState,
     TerminalExecutionStatus,
 )
 
@@ -661,6 +662,28 @@ class TestPlateManagerWidget:
             ]
         finally:
             ObjectStateRegistry.clear()
+
+    def test_stop_completion_resets_force_kill_state_despite_stale_server_info(
+        self,
+    ) -> None:
+        manager = PlateManagerWidget.__new__(PlateManagerWidget)
+        manager.execution_state = ManagerExecutionState.FORCE_KILL_READY
+        manager.current_execution_id = "execution-1"
+        manager.execution_server_info = SimpleNamespace(
+            running_execution_entries=("stale-running",),
+            queued_execution_entries=(),
+        )
+        manager.plate_terminal_activity_status = ExecutionBatchRuntime()
+        manager.plate_terminal_activity_status.begin_batch(("/plate",))
+        manager.plate_terminal_activity_status.mark_terminal(
+            "/plate",
+            TerminalExecutionStatus.CANCELLED,
+        )
+
+        manager._maybe_reset_execution_state_after_stop()
+
+        assert manager.execution_state is ManagerExecutionState.IDLE
+        assert manager.current_execution_id is None
 
 
 class PlatePipelineChangedSignalRecorder:

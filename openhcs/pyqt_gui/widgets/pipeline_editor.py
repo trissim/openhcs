@@ -12,18 +12,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, List, Dict, Optional, Callable, Tuple, Any, Set
+from typing import TYPE_CHECKING, List, Dict, Optional, Callable, Tuple, Any
 from pathlib import Path
 
 from typing_extensions import override
 
 from PyQt6.QtWidgets import QVBoxLayout, QSplitter
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Backend
-from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_binding_context import SourceBindingContext
@@ -36,11 +34,9 @@ from openhcs.interop.cellprofiler import (
     get_cellprofiler_dialect_compiler,
 )
 
-# Mixin imports REMOVED - now in ABC (handle_selection_change_with_prevention, CrossWindowPreviewMixin)
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 from pyqt_reactive.theming import ColorScheme
-from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
+from openhcs.pyqt_gui.config import PyQtGUIConfig
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.services.pattern_data_manager import (
@@ -51,12 +47,6 @@ from pyqt_reactive.services.function_pattern_code_document import (
 )
 from pyqt_reactive.animation import WindowFlashOverlay
 
-# Import shared list widget components (single source of truth)
-from pyqt_reactive.core import ReorderableListWidget
-from pyqt_reactive.widgets.shared.list_item_delegate import (
-    MultilinePreviewItemDelegate,
-    StyledText,
-)
 from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
     create_manager_header,
@@ -120,8 +110,6 @@ from pyqt_reactive.widgets.shared.manager_action_controller import CodeEditorPay
 from pyqt_reactive.widgets.shared.manager_selection_controller import (
     ItemSelectionPayloadProjection,
 )
-
-from openhcs.utils.performance_monitor import timer
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +306,7 @@ def dispatch_pipeline_debug_run_command(editor: "PipelineEditorWidget") -> None:
 
 def dispatch_pipeline_debug_toggle_command(editor: "PipelineEditorWidget") -> None:
     editor.status_message.emit(
-        "Debug toolbar active. Use Step, Run, Pause, Restart, Choose, Random, or Stop."
+        "Debug toolbar active. Use Debug, Step, Pause, Restart, or Inspect."
     )
 
 
@@ -605,6 +593,9 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
         # Step-specific signal
         self.pipeline_changed.connect(self.on_pipeline_changed)
+        self.debug_toolbar.runtime_inspection_requested.connect(
+            self.debug_workflow.show_runtime_inspection
+        )
         self._suppress_pipeline_state_sync = False
 
         # Keyboard shortcuts for copy-paste
@@ -1248,7 +1239,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             )
         else:
             self.pipeline_steps = []
-            logger.info(f"  → No plate selected, cleared pipeline")
+            logger.info("  → No plate selected, cleared pipeline")
 
         self._normalize_step_scope_tokens(register=False)
 
@@ -1310,6 +1301,14 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
                 )
             else:
                 logger.debug(f"No orchestrator found for config refresh: {plate_path}")
+
+    def on_orchestrator_state_changed(self, plate_path: str, state: str) -> None:
+        """Refresh editor controls when the current plate state changes."""
+        if plate_path != self.current_plate:
+            return
+
+        logger.debug("Refreshing editor controls for plate state: %s -> %s", plate_path, state)
+        self.update_button_states()
 
     # Config-attribute preview resolution is owned by the base list-format path.
 
@@ -1498,7 +1497,18 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             has_plate and is_initialized
         )  # Same as add button - orchestrator init is sufficient
         if self.debug_toolbar is not None:
-            self.debug_toolbar.set_controls_enabled(has_plate and is_initialized)
+            is_compiled = self._is_current_plate_compiled()
+            has_debug_session = self.debug_session_state is not None
+            self.debug_toolbar.set_controls_enabled(
+                has_plate and is_initialized and is_compiled
+            )
+            self.debug_toolbar.set_debug_session_active(has_debug_session)
+            self.debug_toolbar.set_runtime_inspection_enabled(
+                has_plate
+                and is_initialized
+                and is_compiled
+                and has_debug_session
+            )
 
     def _get_item_scope_id(self, item: FunctionStep, index: int) -> str:
         """Return the ObjectState scope id represented by a pipeline step list item."""
@@ -1573,6 +1583,13 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             is_initialized,
         )
         return is_initialized
+
+    def _is_current_plate_compiled(self) -> bool:
+        """Check whether the current plate has a compiled execution artifact."""
+        if not self.current_plate or self.plate_manager is None:
+            return False
+
+        return self.current_plate in self.plate_manager.plate_compiled_data
 
     def _get_current_orchestrator(self) -> Optional[PipelineOrchestrator]:
         """Get the orchestrator for the currently selected plate."""

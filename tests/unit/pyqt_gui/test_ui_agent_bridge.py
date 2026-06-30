@@ -38,6 +38,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowOpenPolicy,
     UiWindowSnapshotRequest,
 )
+from openhcs.agent.ui_bridge_identities import PipelineDebugToolbarWidgetIdentity
 from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
     UiBridgeConnectionResolution,
@@ -52,6 +53,7 @@ from openhcs.core.config import (
     PipelineConfig,
 )
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
+from openhcs.core.debug import DebugCommand, DebugCommandType, DebugSession
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
@@ -102,6 +104,10 @@ from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerAction
 from openhcs.pyqt_gui.widgets.pipeline_editor import (
     PipelineEditorAction,
     PipelineEditorWidget,
+)
+from openhcs.pyqt_gui.widgets.debug_toolbar import (
+    DebugToolbarAuxiliaryAction,
+    DebugToolbarWidget,
 )
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
@@ -471,6 +477,7 @@ class FakePlateManager:
 class FakePipelineEditor:
     BUTTON_CONFIGS = PipelineEditorWidget.BUTTON_CONFIGS
     STATE_BINDING = PipelineEditorWidget.STATE_BINDING
+    DEBUG_COMMAND_ROUTES = PipelineEditorWidget.DEBUG_COMMAND_ROUTES
     ACTION_ROUTES = {
         PipelineEditorAction.ADD_STEP: WidgetActionRoute(
             PipelineEditorAction.ADD_STEP,
@@ -511,6 +518,11 @@ class FakePipelineEditor:
             action.value: FakeButton(enabled=True)
             for action in self.ACTION_ROUTES
         }
+        self.debug_toolbar = DebugToolbarWidget()
+        self.debug_toolbar.set_controls_enabled(bool(current_plate))
+        self.debug_toolbar.set_runtime_inspection_enabled(False)
+        self.debug_session_state = None
+        self.debug_workflow = FakePipelineDebugWorkflow()
         self.add_count = 0
         self.delete_count = 0
         self.edit_count = 0
@@ -546,6 +558,18 @@ class FakePipelineEditor:
 
     def action_code_pipeline(self) -> None:
         self.code_count += 1
+
+
+class FakePipelineDebugWorkflow:
+    def __init__(self) -> None:
+        self.commands: list[DebugCommand] = []
+        self.runtime_inspections = 0
+
+    def handle_command(self, command: DebugCommand) -> None:
+        self.commands.append(command)
+
+    def show_runtime_inspection(self) -> None:
+        self.runtime_inspections += 1
 
 
 @pytest.fixture(autouse=True)
@@ -2296,6 +2320,7 @@ def test_pipeline_editor_action_catalog_uses_declared_routes_and_scope_hooks() -
     actions = {
         action.identity.action_id: action
         for action in bridge.list_actions().actions
+        if action.identity.widget_id == OpenHCSUiWindowId.pipeline_editor
     }
     code_action = actions[PipelineEditorAction.CODE_PIPELINE.value]
     edit_action = actions[PipelineEditorAction.EDIT_STEP.value]
@@ -2316,6 +2341,120 @@ def test_pipeline_editor_action_catalog_uses_declared_routes_and_scope_hooks() -
     assert "selected step" in edit_action.disabled_error.hint
     assert auto_action.confirmation_required is True
     assert auto_action.side_effects == ("loads_basic_pipeline", "mutates_pipeline")
+
+
+def test_pipeline_debug_toolbar_actions_are_exposed_from_toolbar_declarations() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor()
+    bridge = _pipeline_editor_bridge(manager)
+    widget_id = PipelineDebugToolbarWidgetIdentity.require_value()
+
+    actions = {
+        action.identity.action_id: action
+        for action in bridge.list_actions().actions
+        if action.identity.widget_id == widget_id
+    }
+    expected_action_ids = {
+        *(spec.command_type.value for spec in DebugToolbarWidget.command_specs()),
+        *(
+            spec.action_type.value
+            for spec in DebugToolbarWidget.AUXILIARY_ACTION_SPECS
+        ),
+    }
+
+    assert set(actions) == expected_action_ids
+    step_action = actions[DebugCommandType.STEP.value]
+    restart_action = actions[DebugCommandType.RESTART.value]
+    stop_action = actions[DebugCommandType.STOP.value]
+    runtime_action = actions[DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value]
+    assert step_action.title == DebugToolbarWidget.command_spec(
+        DebugCommandType.STEP
+    ).label
+    assert step_action.enabled is True
+    assert step_action.confirmation_required is True
+    assert restart_action.enabled is False
+    assert restart_action.disabled_error is not None
+    assert restart_action.disabled_error.code == "debug_session_required"
+    assert stop_action.enabled is False
+    assert stop_action.disabled_error is not None
+    assert stop_action.disabled_error.code == "debug_session_required"
+    assert runtime_action.enabled is False
+    assert runtime_action.disabled_error is not None
+    assert runtime_action.disabled_error.code == "debug_session_required"
+
+
+def test_pipeline_debug_toolbar_action_invoke_routes_to_debug_workflow() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor()
+    bridge = _pipeline_editor_bridge(manager)
+    widget_id = PipelineDebugToolbarWidgetIdentity.require_value()
+    action = next(
+        action
+        for action in bridge.list_actions().actions
+        if (
+            action.identity.widget_id == widget_id
+            and action.identity.action_id == DebugCommandType.STEP.value
+        )
+    )
+
+    rejected = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=widget_id,
+            action_id=DebugCommandType.STEP.value,
+            selected_scope_ids=action.target_scope_ids,
+            observed_selection_revision_token=action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(True),
+        )
+    )
+    accepted = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=widget_id,
+            action_id=DebugCommandType.STEP.value,
+            selected_scope_ids=action.target_scope_ids,
+            observed_selection_revision_token=action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert rejected.status == "rejected"
+    assert rejected.errors
+    assert rejected.errors[0].code == "confirmation_required"
+    assert accepted.status == "accepted"
+    assert manager.debug_workflow.commands == [DebugCommand(DebugCommandType.STEP)]
+
+
+def test_pipeline_debug_toolbar_runtime_values_action_requires_debug_session() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor()
+    bridge = _pipeline_editor_bridge(manager)
+    widget_id = PipelineDebugToolbarWidgetIdentity.require_value()
+    manager.debug_session_state = DebugSession.create(plate_id=PLATE_SCOPE_ID)
+    manager.debug_toolbar.set_debug_session_active(True)
+    manager.debug_toolbar.set_runtime_inspection_enabled(True)
+    action = next(
+        action
+        for action in bridge.list_actions().actions
+        if (
+            action.identity.widget_id == widget_id
+            and action.identity.action_id
+            == DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value
+        )
+    )
+
+    result = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=widget_id,
+            action_id=DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value,
+            selected_scope_ids=action.target_scope_ids,
+            observed_selection_revision_token=action.selection_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(True),
+        )
+    )
+
+    assert action.enabled is True
+    assert action.confirmation_required is False
+    assert result.status == "accepted"
+    assert manager.debug_workflow.runtime_inspections == 1
 
 
 def test_pipeline_editor_state_surface_projects_steps_and_selection(monkeypatch) -> None:

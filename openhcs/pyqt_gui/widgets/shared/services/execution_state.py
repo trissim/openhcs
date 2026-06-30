@@ -3,37 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Iterable
 
+from openhcs.core.execution_state import (
+    BUSY_MANAGER_STATES,
+    ManagerExecutionState,
+    STOP_PENDING_MANAGER_STATES,
+    TerminalExecutionStatus,
+    parse_terminal_status,
+)
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
-
-
-class BooleanPolicyStringEnum(str, Enum):
-    """String enum carrying one boolean policy attribute."""
-
-    def __new__(cls, value: str, policy_value: bool):
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        setattr(obj, cls.__policy_attribute_name__, policy_value)
-        return obj
-
-
-class ManagerExecutionState(BooleanPolicyStringEnum):
-    __policy_attribute_name__ = "suppresses_stop_failure"
-
-    IDLE = ("idle", True)
-    RUNNING = ("running", False)
-    STOPPING = ("stopping", True)
-    FORCE_KILL_READY = ("force_kill_ready", True)
-
-
-class TerminalExecutionStatus(BooleanPolicyStringEnum):
-    __policy_attribute_name__ = "counts_as_failed"
-
-    COMPLETE = ("complete", False)
-    FAILED = ("failed", True)
-    CANCELLED = ("cancelled", True)
 
 
 @dataclass(frozen=True)
@@ -111,21 +90,6 @@ class ExecutionBatchRuntime:
         )
 
 
-STOP_PENDING_MANAGER_STATES = frozenset(
-    {
-        ManagerExecutionState.STOPPING,
-        ManagerExecutionState.FORCE_KILL_READY,
-    }
-)
-BUSY_MANAGER_STATES = frozenset(
-    {
-        ManagerExecutionState.RUNNING,
-        ManagerExecutionState.STOPPING,
-        ManagerExecutionState.FORCE_KILL_READY,
-    }
-)
-
-
 TERMINAL_UI_POLICIES = {
     TerminalExecutionStatus.COMPLETE: TerminalUiPolicy(
         orchestrator_state=OrchestratorState.COMPLETED,
@@ -141,22 +105,6 @@ TERMINAL_UI_POLICIES = {
         status_prefix="✗ Cancelled",
     ),
 }
-
-
-_TERMINAL_STATUS_ALIASES: dict[str, TerminalExecutionStatus] = {
-    "error": TerminalExecutionStatus.FAILED,
-}
-
-
-def parse_terminal_status(
-    status: str | TerminalExecutionStatus,
-) -> TerminalExecutionStatus:
-    if isinstance(status, TerminalExecutionStatus):
-        return status
-    alias = _TERMINAL_STATUS_ALIASES.get(status)
-    if alias is not None:
-        return alias
-    return TerminalExecutionStatus(status)
 
 
 def terminal_ui_policy(status: str | TerminalExecutionStatus) -> TerminalUiPolicy:

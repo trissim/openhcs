@@ -63,6 +63,11 @@ class PipelineEditorWidgetIdentity(UiWidgetIdentityDeclaration):
     enum_member_name = "PIPELINE_EDITOR"
 
 
+class PipelineDebugToolbarWidgetIdentity(UiWidgetIdentityDeclaration):
+    value = "pipeline_debug_toolbar"
+    enum_member_name = "PIPELINE_DEBUG_TOOLBAR"
+
+
 class ManagedWindowWidgetIdentity(UiWidgetIdentityDeclaration):
     value = "managed_window"
     enum_member_name = "MANAGED_WINDOW"

@@ -116,6 +116,12 @@ class DebugInspectorWindow(QDialog):
                 artifact_group,
             )
 
+    def set_inspection_view_model(self, view_model: DebugViewModel) -> None:
+        """Render a non-snapshot debug inspection view."""
+
+        self.current_snapshot = None
+        self.set_view_model(view_model)
+
     def load_snapshot(
         self,
         *,

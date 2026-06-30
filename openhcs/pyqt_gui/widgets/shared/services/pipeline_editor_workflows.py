@@ -300,6 +300,32 @@ class PipelineEditorDebugWorkflow:
         self.editor.plate_manager.action_stop_execution()
         self.editor.status_message.emit("Requested debug execution stop.")
 
+    def show_runtime_inspection(self) -> None:
+        if self.editor.plate_manager is None or self.editor.debug_session_state is None:
+            self.editor.status_message.emit(
+                "Runtime inspection requires an active debug session."
+            )
+            return
+        PipelineEditorCoroutineRunner(self.editor).submit(
+            self._show_runtime_inspection()
+        )
+
+    async def _show_runtime_inspection(self) -> None:
+        view_model = await self.editor.plate_manager.action_inspect_debug_runtime(
+            debug_session_id=self.editor.debug_session_state.debug_session_id,
+        )
+        if self.editor.debug_inspector_window is None:
+            self.editor.debug_inspector_window = DebugInspectorWindow(self.editor)
+            self.editor.debug_inspector_window.artifact_export_requested.connect(
+                self.handle_artifact_export_request
+            )
+            self.editor.debug_inspector_window.artifact_open_requested.connect(
+                self.handle_artifact_open_request
+            )
+        self.editor.debug_inspector_window.set_inspection_view_model(view_model)
+        self.editor.debug_inspector_window.show()
+        self.editor.debug_inspector_window.raise_()
+
     def show_snapshot(self, notification) -> None:
         debug_context = notification.debug_context
         snapshot_store_ref = debug_context.snapshot_store_ref
@@ -326,6 +352,7 @@ class PipelineEditorDebugWorkflow:
             snapshot_store_ref=snapshot_store_ref,
             snapshot_store_backend=snapshot_store_backend,
         ).with_cursor(debug_context.cursor)
+        self.editor.update_button_states()
         if notification.snapshot is not None:
             self.editor.debug_inspector_window.set_snapshot(notification.snapshot)
         elif snapshot_store_backend is None:

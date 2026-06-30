@@ -1424,9 +1424,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             )
             return
 
-        selected_orchestrators = [
-            orchestrator for _, orchestrator in selected_orchestrator_entries
-        ]
         representative_scope_id, representative_orchestrator = (
             selected_orchestrator_entries[0]
         )
@@ -1454,7 +1451,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                     f"Orchestrator context automatically maintained after config save: {self.selected_plate_path}"
                 )
 
-            count = len(selected_orchestrators)
             # Success message dialog removed for test automation compatibility
 
         # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
@@ -1661,6 +1657,17 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         )
         return response.exported_ref
 
+    async def action_inspect_debug_runtime(
+        self,
+        *,
+        debug_session_id: str,
+    ):
+        """Read a renderer-independent live runtime inspection view."""
+
+        return await self._batch_workflow_service.inspect_debug_runtime(
+            debug_session_id=debug_session_id,
+        )
+
     def _maybe_auto_add_output_plate_orchestrator(
         self,
         source_plate_path: str,
@@ -1751,9 +1758,21 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             self.orchestrator_state_changed.emit(plate_path, new_state.value)
 
         self.clear_plate_execution_tracking(plate_path, clear_terminal=False)
-        self._active_debug_sessions.pop(plate_path, None)
+        self._clear_debug_session_for_plate(plate_path)
         self._maybe_reset_execution_state_after_stop()
         self.refresh_execution_ui()
+
+    def _clear_debug_session_for_plate(self, plate_path: str) -> None:
+        self._active_debug_sessions.pop(plate_path, None)
+        editor = self._plate_pipeline_editor
+        if editor is None:
+            return
+        session = editor.debug_session_state
+        if session is None or session.plate_id != plate_path:
+            return
+        editor.debug_session_state = None
+        editor.update_item_list()
+        editor.update_button_states()
 
     @staticmethod
     def _build_execution_failure_message(
@@ -1770,13 +1789,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             return
 
         if not self.plate_terminal_activity_status.all_batch_terminal():
-            return
-
-        server_info = self.execution_server_info
-        if server_info is not None and (
-            server_info.running_execution_entries
-            or server_info.queued_execution_entries
-        ):
             return
 
         self.execution_state = ManagerExecutionState.IDLE

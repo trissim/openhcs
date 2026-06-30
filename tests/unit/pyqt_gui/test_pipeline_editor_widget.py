@@ -20,6 +20,7 @@ from openhcs.core.config import (
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
+from openhcs.core.debug import DebugCommandType
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
@@ -101,9 +102,17 @@ class PlateManagerDefinitionChangeRecorder:
 
     def __init__(self) -> None:
         self.changed_plates: list[str] = []
+        self.plate_compiled_data: dict[str, object] = {}
 
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         self.changed_plates.append(plate_path)
+
+
+class PlateManagerCompiledStateRecorder:
+    """Minimal plate-manager compiled-state authority for editor tests."""
+
+    def __init__(self) -> None:
+        self.plate_compiled_data: dict[str, object] = {}
 
 
 def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
@@ -544,6 +553,56 @@ def test_delete_and_edit_buttons_require_step_selection() -> None:
 
         assert widget.buttons["del_step"].isEnabled() is True
         assert widget.buttons["edit_step"].isEnabled() is True
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_debug_toolbar_requires_compiled_current_plate() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    plate_manager = PlateManagerCompiledStateRecorder()
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = plate_manager
+    widget._is_current_plate_initialized = lambda: True
+
+    try:
+        widget.update_button_states()
+
+        assert widget.debug_toolbar is not None
+        command_type = DebugCommandType.STEP
+        assert widget.debug_toolbar.command_enabled(command_type) is False
+
+        plate_manager.plate_compiled_data[TEST_PLATE_SCOPE] = object()
+        widget.update_button_states()
+
+        assert widget.debug_toolbar.command_enabled(command_type) is True
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_orchestrator_state_change_refreshes_debug_toolbar() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    plate_manager = PlateManagerCompiledStateRecorder()
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = plate_manager
+    widget._is_current_plate_initialized = lambda: True
+
+    try:
+        assert widget.debug_toolbar is not None
+        widget.update_button_states()
+        assert widget.debug_toolbar.command_enabled(DebugCommandType.STEP) is False
+
+        plate_manager.plate_compiled_data[TEST_PLATE_SCOPE] = object()
+        widget.on_orchestrator_state_changed(TEST_PLATE_SCOPE, "compiled")
+
+        assert widget.debug_toolbar.command_enabled(DebugCommandType.STEP) is True
     finally:
         widget.close()
         ObjectStateRegistry.clear()

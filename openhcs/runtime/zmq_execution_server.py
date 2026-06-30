@@ -17,7 +17,6 @@ from zmqruntime.messages import (
     ExecuteRequest,
     ExecutionStatus,
     MessageFields,
-    ResponseType,
     StatusRequest,
 )
 

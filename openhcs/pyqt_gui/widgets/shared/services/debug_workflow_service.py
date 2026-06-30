@@ -21,8 +21,6 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
-    PlateExecutionIdentity,
-    PlatePipelineRequest,
 )
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
     CompileConfigParamsByPlate,
@@ -37,21 +35,22 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service impor
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     RunSpec,
 )
+from openhcs.runtime.zmq_execution_client import ZMQExecutionRequestBuilder
 from zmqruntime.execution import ExecutionSubmissionResponse
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
-class DebugCompileArtifactScope:
-    """Debug settings that determine compile artifact reuse."""
+class DebugReplayScope:
+    """Debug settings carried into the runtime replay contract."""
 
     selected_source_group: str | None
     replay_mode: DebugReplayMode = DebugReplayMode.WARM_ARTIFACT
 
 
 @dataclass(frozen=True)
-class DebugPlateRunRequest(DebugCompileArtifactScope):
+class DebugPlateRunRequest(DebugReplayScope):
     """Debug execution identity threaded through compile and run submission."""
 
     debug_session_id: str
@@ -82,26 +81,26 @@ class DebugPlateRunRequest(DebugCompileArtifactScope):
 
 
 @dataclass(frozen=True)
-class DebugCompileArtifactCacheKey(DebugCompileArtifactScope):
-    """Stable identity for reusable debug compile artifacts."""
+class DebugCompileArtifactCacheKey:
+    """Runtime-compatible identity for reusable debug compile artifacts."""
 
-    plate_identity: PlateExecutionIdentity
-    pipeline_fingerprint: str
+    debug_replay_signature: str
 
     @classmethod
-    def from_requests(
+    def from_run_spec(
         cls,
         *,
-        plate_request: PlatePipelineRequest,
+        run_spec: RunSpec,
         debug_request: DebugPlateRunRequest,
     ) -> "DebugCompileArtifactCacheKey":
+        signature_payload = ZMQExecutionRequestBuilder.from_task(
+            run_spec.submission(
+                global_config=run_spec.global_config,
+                config_params=debug_request.compile_config_params,
+            )
+        ).request_payload
         return cls(
-            plate_identity=PlateExecutionIdentity.from_request(plate_request),
-            pipeline_fingerprint=CompileWorkflowService.pipeline_fingerprint(
-                plate_request.definition_pipeline
-            ),
-            selected_source_group=debug_request.selected_source_group,
-            replay_mode=debug_request.replay_mode,
+            debug_replay_signature=signature_payload.debug_replay_signature,
         )
 
 
@@ -135,8 +134,8 @@ class DebugWorkflowService:
         debug_request: DebugPlateRunRequest,
         loop,
     ) -> str:
-        cache_key = DebugCompileArtifactCacheKey.from_requests(
-            plate_request=run_spec,
+        cache_key = DebugCompileArtifactCacheKey.from_run_spec(
+            run_spec=run_spec,
             debug_request=debug_request,
         )
         if debug_request.replay_mode.retains_compile_artifact:
@@ -232,6 +231,23 @@ class DebugWorkflowService:
             f"Debug worker {status.state.value} for session {debug_session_id[:8]}"
         )
         return status
+
+    async def inspect_runtime(
+        self,
+        *,
+        debug_session_id: str,
+        loop,
+    ):
+        def inspect_runtime():
+            return self._context.zmq.require_client().get_debug_runtime_inspection(
+                debug_session_id=debug_session_id,
+            )
+
+        view_model = await self._context.run_blocking(loop, inspect_runtime)
+        self._host.emit_status(
+            f"Loaded runtime inspection for session {debug_session_id[:8]}"
+        )
+        return view_model
 
     async def export_artifact(
         self,

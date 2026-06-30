@@ -256,6 +256,20 @@ class PlateManagerBatchWorkflow:
             loop=loop,
         )
 
+    async def inspect_debug_runtime(
+        self,
+        *,
+        debug_session_id: str,
+    ):
+        """Read the live runtime inspection view from a paused debug worker."""
+
+        loop = asyncio.get_event_loop()
+        await self._connect_progress_client()
+        return await self.components.debug_workflow.inspect_runtime(
+            debug_session_id=debug_session_id,
+            loop=loop,
+        )
+
     async def export_debug_artifact(
         self,
         *,
