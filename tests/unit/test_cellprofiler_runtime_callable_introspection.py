@@ -11,7 +11,10 @@ from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.function_patterns import compile_function_pattern
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.source_bindings import (
     NamedSourceBinding,
     StepSourceBindingsConfig,
@@ -19,6 +22,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerGeneratedPipelineInvocationContracts,
     bind_generated_pipeline_runtime,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
@@ -297,6 +301,43 @@ def test_generated_runtime_binding_accepts_matching_source_binding_contract():
     )
 
     assert isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
+
+
+def test_generated_contract_provider_binds_cellprofiler_runtime_at_compile_time():
+    """Generated CP contracts stay out of FunctionStep source but compile to runtime callables."""
+    contract = crop_contract(
+        inputs=(ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),),
+        outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+    )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigBlue",
+                artifact_kind=ArtifactKind.IMAGE,
+            ),
+        ),
+    )
+    provider = (
+        CellProfilerGeneratedPipelineInvocationContracts.from_mapping(
+            {1: contract}
+        ).invocation_contract_provider
+    )
+
+    compiled = compile_function_pattern(
+        crop,
+        {},
+        {},
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=0,
+            source_bindings=source_bindings,
+        ),
+    )
+    invocation = next(compiled.iter_invocations())
+
+    assert invocation.contract.module_artifact_contract == contract
+    assert isinstance(invocation.contract.func, CellProfilerRuntimeCallable)
+    assert runtime_adapter_spec_from_callable(invocation.contract.func) is not None
 
 
 def test_generated_runtime_binding_rejects_callable_contract_order_mismatch():

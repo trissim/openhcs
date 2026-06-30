@@ -1,7 +1,7 @@
 """Artifact graph extraction for compiled function patterns."""
 
 from collections import OrderedDict, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Iterator, Mapping, Optional
 
 from openhcs.core.artifacts import ArtifactSpec
@@ -10,8 +10,10 @@ from openhcs.core.function_patterns import FunctionInvocationKey
 from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
+    InvocationContractProviderLike,
     InvocationArtifactDeclarationProviderLike,
     callable_contract_artifact_declarations,
+    public_callable_invocation_contract,
 )
 
 
@@ -199,6 +201,9 @@ def extract_artifact_declarations(
     declaration_provider: InvocationArtifactDeclarationProviderLike = (
         callable_contract_artifact_declarations
     ),
+    invocation_contract_provider: InvocationContractProviderLike = (
+        public_callable_invocation_contract
+    ),
     step_context: ArtifactDeclarationStepContext = (
         ArtifactDeclarationStepContext.empty()
     ),
@@ -211,6 +216,9 @@ def extract_artifact_declarations(
     consumer_invocations: defaultdict[str, list[FunctionInvocationKey]] = defaultdict(list)
 
     for invocation in normalize_function_pattern(pattern).iter_items():
+        compile_contract = invocation_contract_provider(invocation, step_context)
+        if compile_contract is not None:
+            invocation = replace(invocation, contract=compile_contract)
         declarations = declaration_provider(invocation, step_context)
         group_key = invocation.key.group_key
         normalized_key = None if group_key == DEFAULT_GROUP_KEY else group_key

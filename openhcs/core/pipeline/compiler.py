@@ -117,6 +117,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.source_load_plan import SourceLoadPlan
+from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderMetadata
 from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
@@ -222,6 +223,7 @@ class PipelineCompiler:
         metadata_writer: bool = False,
         plate_path: Optional[Path] = None,
         global_config: "GlobalPipelineConfig" | None = None,
+        pipeline_metadata: Mapping[str, object] | None = None,
         step_state_map: Dict[int, "ObjectState"] = None,
         step_snapshots: tuple[StepSnapshot, ...] | None = None,
         steps_already_resolved: bool = True,
@@ -262,6 +264,7 @@ class PipelineCompiler:
                 global_config=compile_global_config,
                 step_state_map=step_state_map,
                 snapshots=step_snapshots,
+                pipeline_metadata=pipeline_metadata,
                 metadata_writer=metadata_writer,
                 plate_path=plate_path,
                 is_zmq_execution=is_zmq_execution,
@@ -272,6 +275,7 @@ class PipelineCompiler:
                 steps_definition=steps_definition,
                 orchestrator=orchestrator,
                 global_config=compile_global_config,
+                pipeline_metadata=pipeline_metadata,
                 metadata_writer=metadata_writer,
                 plate_path=plate_path,
                 is_zmq_execution=is_zmq_execution,
@@ -351,6 +355,7 @@ class PipelineCompiler:
         steps_definition: Sequence[AbstractStep],
         orchestrator,
         global_config: "GlobalPipelineConfig",
+        pipeline_metadata: Mapping[str, object] | None,
         metadata_writer: bool,
         plate_path: Path | None,
         is_zmq_execution: bool,
@@ -404,6 +409,7 @@ class PipelineCompiler:
             orchestrator=orchestrator,
             global_config=global_config,
             step_state_map=step_state_map,
+            pipeline_metadata=pipeline_metadata,
             metadata_writer=metadata_writer,
             plate_path=plate_path,
             is_zmq_execution=is_zmq_execution,
@@ -509,7 +515,14 @@ class PipelineCompiler:
     def _plan_context_paths(
         session: CompilationSession,
     ) -> None:
-        PipelinePathPlanner.prepare_pipeline_paths(session)
+        PipelinePathPlanner.prepare_pipeline_paths(
+            session,
+            invocation_contract_provider=(
+                PipelineInvocationContractProviderMetadata.from_metadata(
+                    session.pipeline_metadata
+                )
+            ),
+        )
 
     @staticmethod
     def _supplement_step_plans(session: CompilationSession) -> None:
@@ -1408,6 +1421,7 @@ class PipelineCompiler:
             metadata_writer=metadata_writer,
             plate_path=request.orchestrator.plate_path,
             global_config=request.global_config,
+            pipeline_metadata=request.pipeline.metadata,
             step_state_map=dict(request.pipeline.step_state_map),
             step_snapshots=request.pipeline.snapshots,
             steps_already_resolved=True,

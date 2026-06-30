@@ -17,8 +17,10 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     GeneratedPipelineSemanticContractsFingerprint,
     GeneratedPipelineSemanticContractsModule,
     materialize_generated_pipeline_import_module,
+    pipeline_from_generated_module,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerRuntimeCallable,
     cellprofiler_runtime_adapter_factory,
 )
 from openhcs.processing.backends.cellprofiler.primary_objects import (
@@ -30,6 +32,7 @@ from openhcs.constants import Backend
 from openhcs.constants.constants import MEMORY_TYPE_NUMPY
 from openhcs.constants.input_source import InputSource
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
+from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderMetadata
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
@@ -489,6 +492,15 @@ def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     assert "pipeline_steps" in vars(module)
+    assert not isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
+    pipeline = pipeline_from_generated_module(
+        module,
+        pipeline_name="contract-sidecar-smoke",
+    )
+    assert (
+        PipelineInvocationContractProviderMetadata.metadata_key
+        in pipeline.metadata
+    )
 
 
 def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(

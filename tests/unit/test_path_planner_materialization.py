@@ -11,7 +11,10 @@ from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     MaterializedOutputPlan,
 )
-from openhcs.core.invocation_artifacts import InvocationArtifactDeclarations
+from openhcs.core.invocation_artifacts import (
+    InvocationArtifactDeclarations,
+    public_callable_invocation_contract,
+)
 from openhcs.core.pipeline.artifact_planning import extract_artifact_declarations
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.pipeline.path_planner import (
@@ -57,6 +60,7 @@ def _artifact_planner_stub() -> PathPlanner:
         )
     }
     planner.declared = {}
+    planner.invocation_contract_provider = public_callable_invocation_contract
     planner.main_flow_component_scopes = {}
     planner.execution_groups = PathPlannerExecutionGroups(planner)
     planner.paths = PathPlannerPathAuthority(planner)
@@ -206,6 +210,7 @@ def test_planner_uses_invocation_aware_artifact_declaration_provider():
         index=2,
         source_bindings=EMPTY_SOURCE_BINDINGS,
         processing_config=None,
+        callable_runtime_config_bindings=(),
     )
 
     declarations, _execution_groups, func_pattern = planner.artifacts.prepare_step_declarations(

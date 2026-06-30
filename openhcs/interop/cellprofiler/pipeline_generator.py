@@ -72,7 +72,6 @@ from openhcs.processing.materialization import (
 from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
-    module_contract_literal,
 )
 
 from openhcs.interop.cellprofiler.module_processing_components import (
@@ -903,55 +902,6 @@ class PipelineGeneratorCodeEmitter:
         return "\n".join(lines), tuple(setting_coverage)
 
     @staticmethod
-    def runtime_contract_binding_block(
-        runtime_contracts_by_module: Mapping[int, ModuleArtifactContract],
-    ) -> str:
-        """Return source that rebinds generated CP steps to runtime contracts."""
-        if not runtime_contracts_by_module:
-            return ""
-        literal_imports: set[tuple[str, str]] = set()
-        contract_lines: list[str] = []
-        for module_num, contract in sorted(runtime_contracts_by_module.items()):
-            contract_lines.append(
-                "    "
-                f"{module_num}: "
-                f"{module_contract_literal(contract, import_collector=literal_imports)},"
-            )
-        lines = [
-            "",
-            "",
-            "# CellProfiler runtime artifact contracts",
-        ]
-        lines.extend(
-            f"from {module_name} import {symbol_name}"
-            for module_name, symbol_name in sorted(literal_imports)
-        )
-        if literal_imports:
-            lines.append("")
-        lines.append("_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {")
-        lines.extend(contract_lines)
-        lines.extend(
-            (
-                "}",
-                "",
-                "from types import ModuleType as _OpenHCSGeneratedModuleType",
-                "from openhcs.interop.cellprofiler.runtime.generated_pipeline import (",
-                "    bind_generated_pipeline_runtime as _openhcs_bind_generated_pipeline_runtime,",
-                ")",
-                "_openhcs_generated_module = _OpenHCSGeneratedModuleType(",
-                "    globals().get('__name__', 'openhcs_generated_pipeline')",
-                ")",
-                "_openhcs_generated_module.pipeline_steps = pipeline_steps",
-                "_openhcs_bind_generated_pipeline_runtime(",
-                "    _openhcs_generated_module,",
-                "    _CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM,",
-                ")",
-                "del _openhcs_generated_module",
-            )
-        )
-        return "\n".join(lines)
-
-    @staticmethod
     def backend_function_import_block(function_names: Iterable[str]) -> str:
         """Return imports for the absorbed backend functions used by the pipeline."""
         unique_function_names = tuple(dict.fromkeys(sorted(function_names)))
@@ -1108,9 +1058,6 @@ class PipelineGeneratorBuildStage:
         code = (
             imports
             + steps
-            + self.generator.emitter.runtime_contract_binding_block(
-                runtime_module_contracts_by_module
-            )
         )
 
         return GeneratedPipeline(
@@ -1185,7 +1132,6 @@ from enum import Enum
 # OpenHCS imports
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.source_bindings import (
     ComponentSelector,

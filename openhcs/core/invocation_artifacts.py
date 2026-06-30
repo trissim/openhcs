@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
 from openhcs.core.artifacts import ArtifactSpec
@@ -14,6 +14,9 @@ from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
     StepSourceBindingsConfig,
 )
+
+if TYPE_CHECKING:
+    from openhcs.core.callable_contract import CallableContract
 
 
 InvocationArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
@@ -116,3 +119,67 @@ InvocationArtifactDeclarationProviderLike = Callable[
     [Any, ArtifactDeclarationStepContext],
     InvocationArtifactDeclarations,
 ]
+
+
+class InvocationContractProvider(ABC):
+    """Compile-time hook for replacing public callables with runtime contracts."""
+
+    @abstractmethod
+    def __call__(
+        self,
+        invocation: Any,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> "CallableContract | None":
+        """Return a compile-only callable contract for this invocation."""
+
+
+def public_callable_invocation_contract(
+    invocation: Any,
+    step_context: ArtifactDeclarationStepContext,
+) -> "CallableContract | None":
+    """Default provider: public callable metadata is already the contract."""
+    del invocation, step_context
+    return None
+
+
+InvocationContractProviderLike = Callable[
+    [Any, ArtifactDeclarationStepContext],
+    "CallableContract | None",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineInvocationContractProviderMetadata:
+    """Typed metadata key for pipeline-owned compile-time contract providers."""
+
+    metadata_key: ClassVar[str] = "invocation_contract_provider"
+
+    @classmethod
+    def from_metadata(
+        cls,
+        metadata: Mapping[str, object],
+    ) -> InvocationContractProviderLike:
+        value = metadata.get(cls.metadata_key)
+        if value is None:
+            return public_callable_invocation_contract
+        if not callable(value):
+            raise TypeError(
+                "Pipeline invocation contract provider metadata must be callable, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    @classmethod
+    def with_provider(
+        cls,
+        metadata: Mapping[str, object],
+        provider: InvocationContractProviderLike,
+    ) -> dict[str, object]:
+        if not callable(provider):
+            raise TypeError(
+                "Pipeline invocation contract provider must be callable, "
+                f"got {type(provider).__name__}."
+            )
+        updated = dict(metadata)
+        updated[cls.metadata_key] = provider
+        return updated

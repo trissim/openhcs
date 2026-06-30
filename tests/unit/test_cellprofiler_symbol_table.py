@@ -916,14 +916,14 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CELLPROFILER_MODULE_CONTRACTS" not in generated.code
     assert "benchmark.cellprofiler_library" not in generated.code
     assert "benchmark.cellprofiler_compat" not in generated.code
-    assert "from openhcs.interop.cellprofiler.runtime.generated_pipeline import" in generated.code
+    assert "from openhcs.interop.cellprofiler.runtime.generated_pipeline import" not in generated.code
     assert "require_cellprofiler_function" not in generated.code
     assert "attach_callable_contract_metadata" not in generated.code
     assert "CellProfilerAbsorbedFunctionBinding" not in generated.code
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "CellProfilerModuleContractBinding" not in generated.code
-    assert "_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {" in generated.code
-    assert "ModuleArtifactContract(" in generated.code
+    assert "_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {" not in generated.code
+    assert "ModuleArtifactContract(" not in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
     assert generated.runtime_module_contracts_by_module_num[
         2
@@ -1022,10 +1022,6 @@ def test_pipeline_generator_uses_module_class_required_variable_components():
             2
         ].required_variable_components
         == (VariableComponents.TIMEPOINT,)
-    )
-    assert (
-        "required_variable_components=(VariableComponents.TIMEPOINT,)"
-        in generated.code
     )
 
 
@@ -1256,7 +1252,6 @@ def test_crop_contract_marks_mask_sidecar_with_typed_role():
 
     assert crop_mask_spec.name == "CropBlue__crop_mask"
     assert crop_mask_spec.sidecar_role is ArtifactSidecarRole.CROP_MASK
-    assert "ArtifactSidecarRole.CROP_MASK" in generated.code
     assert generated.runtime_module_contracts_by_module_num[
         1
     ].outputs[1].sidecar_role is ArtifactSidecarRole.CROP_MASK

@@ -9,7 +9,7 @@ gives that unit a named identity for compile-time planning and runtime lookup.
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TypeAlias
 
@@ -17,8 +17,10 @@ from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
+    InvocationContractProviderLike,
     InvocationArtifactDeclarationProviderLike,
     callable_contract_artifact_declarations,
+    public_callable_invocation_contract,
 )
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.runtime_invocation import (
@@ -461,6 +463,9 @@ def compile_function_pattern(
     declaration_provider: InvocationArtifactDeclarationProviderLike = (
         callable_contract_artifact_declarations
     ),
+    invocation_contract_provider: InvocationContractProviderLike = (
+        public_callable_invocation_contract
+    ),
     step_context: ArtifactDeclarationStepContext = (
         ArtifactDeclarationStepContext.empty()
     ),
@@ -472,6 +477,7 @@ def compile_function_pattern(
         input_plans=input_plans,
         output_plans=output_plans,
         declaration_provider=declaration_provider,
+        invocation_contract_provider=invocation_contract_provider,
         step_context=step_context,
         runtime_parameter_bindings=tuple(runtime_parameter_bindings),
     )
@@ -657,6 +663,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
     input_plans: Mapping[str, ArtifactInputPlan]
     output_plans: Mapping[str, ArtifactOutputPlan]
     declaration_provider: InvocationArtifactDeclarationProviderLike
+    invocation_contract_provider: InvocationContractProviderLike
     runtime_parameter_bindings: tuple[RuntimeParameterBinding, ...] = ()
 
     @classmethod
@@ -666,6 +673,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
         input_plans: Mapping[str, ArtifactInputPlan],
         output_plans: Mapping[str, ArtifactOutputPlan],
         declaration_provider: InvocationArtifactDeclarationProviderLike,
+        invocation_contract_provider: InvocationContractProviderLike,
         step_context: ArtifactDeclarationStepContext,
         runtime_parameter_bindings: Sequence[RuntimeParameterBinding] = (),
     ) -> "CompileFunctionGroupAuthority":
@@ -678,6 +686,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
             input_plans=input_plans,
             output_plans=output_plans,
             declaration_provider=declaration_provider,
+            invocation_contract_provider=invocation_contract_provider,
             runtime_parameter_bindings=tuple(runtime_parameter_bindings),
         )
 
@@ -688,6 +697,7 @@ class CompileFunctionGroupAuthority(ArtifactDeclarationStepContext):
                 input_plans=self.input_plans,
                 output_plans=self.output_plans,
                 declaration_provider=self.declaration_provider,
+                invocation_contract_provider=self.invocation_contract_provider,
                 step_context=self,
                 runtime_parameter_bindings=self.runtime_parameter_bindings,
             )
@@ -704,9 +714,13 @@ def _compile_invocation(
     input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
     declaration_provider: InvocationArtifactDeclarationProviderLike,
+    invocation_contract_provider: InvocationContractProviderLike,
     step_context: ArtifactDeclarationStepContext,
     runtime_parameter_bindings: Sequence[RuntimeParameterBinding],
 ) -> CompiledFunctionInvocation:
+    compile_contract = invocation_contract_provider(item, step_context)
+    if compile_contract is not None:
+        item = replace(item, contract=compile_contract)
     declarations = declaration_provider(item, step_context)
     user_kwargs, compiled_runtime_bindings = _compile_runtime_parameter_bindings(
         item.kwargs,

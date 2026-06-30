@@ -28,8 +28,10 @@ from openhcs.core.function_patterns import (
 )
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
+    InvocationContractProviderLike,
     InvocationArtifactDeclarationProviderLike,
     callable_contract_artifact_declarations,
+    public_callable_invocation_contract,
 )
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
@@ -342,6 +344,7 @@ class PathPlannerArtifactStage:
         declarations = extract_artifact_declarations(
             self.declaration_pattern(func_pattern),
             declaration_provider=self.planner.declaration_provider,
+            invocation_contract_provider=self.planner.invocation_contract_provider,
             step_context=self.artifact_declaration_context(snapshot),
         )
         group_scope = self.planner.execution_groups.get_execution_groups(
@@ -446,6 +449,7 @@ class PathPlannerArtifactStage:
             artifact_inputs,
             artifact_outputs,
             declaration_provider=self.planner.declaration_provider,
+            invocation_contract_provider=self.planner.invocation_contract_provider,
             step_context=self.artifact_declaration_context(snapshot),
             runtime_parameter_bindings=snapshot.callable_runtime_config_bindings,
         )
@@ -1016,6 +1020,9 @@ class PathPlannerStepAssemblyStage:
                 declarations = extract_artifact_declarations(
                     pattern,
                     declaration_provider=self.planner.declaration_provider,
+                    invocation_contract_provider=(
+                        self.planner.invocation_contract_provider
+                    ),
                     step_context=self.planner.artifacts.artifact_declaration_context(
                         snapshot
                     ),
@@ -1211,6 +1218,9 @@ class PathPlanner:
         declaration_provider: InvocationArtifactDeclarationProviderLike = (
             callable_contract_artifact_declarations
         ),
+        invocation_contract_provider: InvocationContractProviderLike = (
+            public_callable_invocation_contract
+        ),
     ):
         self.session = session
         self.ctx = session.context
@@ -1220,6 +1230,7 @@ class PathPlanner:
         self.declared = {}  # Tracks artifact outputs
         self.orchestrator = session.orchestrator
         self.declaration_provider = declaration_provider
+        self.invocation_contract_provider = invocation_contract_provider
         self.future_artifact_inputs: List[Set[str]] = [
             set() for _ in range(session.step_count)
         ]
@@ -1266,11 +1277,15 @@ class PipelinePathPlanner:
         declaration_provider: InvocationArtifactDeclarationProviderLike = (
             callable_contract_artifact_declarations
         ),
+        invocation_contract_provider: InvocationContractProviderLike = (
+            public_callable_invocation_contract
+        ),
     ) -> Dict:
         """Prepare path plans for an already resolved compilation session."""
         return PathPlanner(
             session,
             declaration_provider=declaration_provider,
+            invocation_contract_provider=invocation_contract_provider,
         ).plan()
 
     @staticmethod

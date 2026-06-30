@@ -78,6 +78,9 @@ class CompilationSession:
     step_state_map: Mapping[int, "ObjectState"]
     snapshots: tuple[StepSnapshot, ...]
     plans: MutableMapping[int, CompiledStepPlan]
+    pipeline_metadata: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     metadata_writer: bool = False
     plate_scope: CompilationPlateScope | None = None
     is_zmq_execution: bool = False
@@ -92,6 +95,7 @@ class CompilationSession:
         global_config: "GlobalPipelineConfig",
         step_state_map: Mapping[int, "ObjectState"],
         snapshots: tuple[StepSnapshot, ...] | None = None,
+        pipeline_metadata: Mapping[str, object] | None = None,
         metadata_writer: bool = False,
         plate_path: Path | None = None,
         is_zmq_execution: bool = False,
@@ -108,6 +112,7 @@ class CompilationSession:
             step_state_map=step_state_map,
             snapshots=snapshots,
             plans=context.step_plans,
+            pipeline_metadata=MappingProxyType(dict(pipeline_metadata or {})),
             metadata_writer=metadata_writer,
             plate_scope=(
                 CompilationPlateScope.from_path(plate_path)
