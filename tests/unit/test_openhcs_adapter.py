@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
 from benchmark.adapters.openhcs import (
-    OPENHCS_AXIS_FILTER_PARAM,
-    OPENHCS_MAX_AXIS_COUNT_PARAM,
-    OPENHCS_NUM_WORKERS_PARAM,
-    OPENHCS_USE_THREADING_PARAM,
-    OpenHCSAxisSelection,
-    OpenHCSBenchmarkExecutionConfig,
+    OpenHCSAdapter,
     OpenHCSPipelineGenerationPolicy,
     OpenHCSRunRequest,
     RuntimeExecutionCacheWritePolicy,
@@ -20,54 +14,40 @@ from benchmark.converter.execution_validation import (
     CPPipeInfrastructureProfile,
 )
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 
-def test_openhcs_axis_selection_limits_discovered_axes_in_order() -> None:
-    selection = OpenHCSAxisSelection.from_pipeline_params(
-        {OPENHCS_MAX_AXIS_COUNT_PARAM: 2}
+def test_openhcs_adapter_stores_injected_product_config_and_source_selection() -> None:
+    global_config = GlobalPipelineConfig(num_workers=2, use_threading=True)
+    selection = SourceSchemaImageSetSelection(
+        well_filter=("A01",),
+        max_image_set_count=1,
+    )
+    adapter = OpenHCSAdapter(
+        global_config=global_config,
+        source_schema_image_set_selection=selection,
     )
 
-    assert selection.resolve(("A01", "A02", "A03")) == ("A01", "A02")
+    assert adapter.global_config is global_config
+    assert adapter.source_schema_image_set_selection is selection
 
 
-def test_openhcs_axis_selection_intersects_explicit_axes_with_discovery_order() -> None:
-    selection = OpenHCSAxisSelection.from_pipeline_params(
-        {
-            OPENHCS_AXIS_FILTER_PARAM: ("A03", "A01"),
-            OPENHCS_MAX_AXIS_COUNT_PARAM: 1,
-        }
+def test_openhcs_run_request_carries_source_schema_selection() -> None:
+    selection = SourceSchemaImageSetSelection(
+        well_filter=("A01",),
+        max_image_set_count=1,
+    )
+    request = OpenHCSRunRequest(
+        dataset_path=Path("/tmp/dataset"),
+        pipeline_name="pipeline",
+        pipeline_params={},
+        metrics=(),
+        output_dir=Path("/tmp/out"),
+        source_schema_image_set_selection=selection,
     )
 
-    assert selection.resolve(("A01", "A02", "A03")) == ("A01",)
-
-
-def test_openhcs_axis_selection_rejects_missing_axes() -> None:
-    selection = OpenHCSAxisSelection.from_pipeline_params(
-        {OPENHCS_AXIS_FILTER_PARAM: ("A99",)}
-    )
-
-    with pytest.raises(ValueError, match="not available"):
-        selection.resolve(("A01",))
-
-
-def test_openhcs_axis_selection_treats_single_string_as_one_axis() -> None:
-    selection = OpenHCSAxisSelection.from_pipeline_params(
-        {OPENHCS_AXIS_FILTER_PARAM: "B02"}
-    )
-
-    assert selection.resolve(("B01", "B02")) == ("B02",)
-
-
-def test_openhcs_benchmark_execution_config_supports_threaded_single_process() -> None:
-    config = OpenHCSBenchmarkExecutionConfig.from_pipeline_params(
-        {
-            OPENHCS_NUM_WORKERS_PARAM: 1,
-            OPENHCS_USE_THREADING_PARAM: True,
-        }
-    )
-
-    assert config.num_workers == 1
-    assert config.use_threading is True
+    assert request.source_schema_image_set_selection is selection
 
 
 def test_runtime_execution_cache_policy_disables_discarded_candidate_runs() -> None:

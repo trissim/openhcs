@@ -25,6 +25,7 @@ import pytest
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.runner import CellProfilerCompatibilityResult
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 
 def test_comparison_observation_extracts_execution_only_speedup(
@@ -203,7 +204,10 @@ def test_native_reference_scope_discovers_completed_reference_with_dataset_alias
     scope = NativeCellProfilerReferenceScope(
         case=case,
         native_reference_root=tmp_path / "native_refs",
-        pipeline_params={"openhcs_max_axis_count": 1},
+        pipeline_params={},
+        source_schema_image_set_selection=SourceSchemaImageSetSelection(
+            max_image_set_count=1,
+        ),
     )
     reference = (
         scope.output_dir
@@ -388,7 +392,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
     manifest.write_text(
         json.dumps(
             {
-                "default_pipeline_params": {"openhcs_max_axis_count": 1},
+                "default_pipeline_params": {"compare_image_outputs": True},
                 "cases": [
                     {
                         "name": "ExampleHuman",
@@ -424,7 +428,6 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             equivalence_reference_output_dir=Path("native/human"),
             cellprofiler_timeout_seconds=120.0,
             pipeline_params={
-                "openhcs_max_axis_count": 1,
                 "compare_image_outputs": False,
             },
         ),
@@ -438,7 +441,7 @@ def test_filter_comparison_cases_by_exact_name_preserves_merged_params(
     manifest.write_text(
         json.dumps(
             {
-                "default_pipeline_params": {"openhcs_max_axis_count": 1},
+                "default_pipeline_params": {"custom_param": 1},
                 "cases": [
                     {
                         "name": "first",
@@ -461,7 +464,7 @@ def test_filter_comparison_cases_by_exact_name_preserves_merged_params(
 
     assert tuple(case.name for case in selected) == ("second",)
     assert selected[0].pipeline_params == {
-        "openhcs_max_axis_count": 1,
+        "custom_param": 1,
         "compare_image_outputs": False,
     }
 

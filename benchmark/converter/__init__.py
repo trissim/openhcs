@@ -22,6 +22,7 @@ from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
 )
+from openhcs.core.public_api import public_names_from_objects
 
 from .source_locator import SourceLocator
 from .llm_converter import LLMFunctionConverter
@@ -49,30 +50,33 @@ from openhcs.core.source_bindings import (
 )
 
 
-def _is_public_api_export(name: str, value: object) -> bool:
-    return not name.startswith("_") and (
-        getattr(value, "__module__", __name__).startswith("benchmark.converter")
-        or name in _COMPATIBILITY_EXPORTS
-    )
-
-
-_COMPATIBILITY_EXPORTS = frozenset(
-    {
-        "CPPipeParser",
-        "GroupingPlan",
-        "ImageAssignment",
-        "ImagesRule",
-        "MetadataExtractionRule",
-        "MetadataSource",
-        "ModuleBlock",
-        "PipelineImageSchema",
-        "compile_image_schema",
-    }
-)
-
-
-__all__ = sorted(
-    name
-    for name, value in globals().items()
-    if _is_public_api_export(name, value)
+__all__ = public_names_from_objects(
+    SourceLocator,
+    LLMFunctionConverter,
+    LibraryAbsorber,
+    ContractInference,
+    infer_contract,
+    CPPipeModulePartition,
+    CPPipePipelineGenerationRequest,
+    CPPipePipelinePreparationRequest,
+    DirectPipelineExecution,
+    GeneratedCPPipePipeline,
+    PreparedGeneratedPipeline,
+    execute_pipeline_direct,
+    prepare_generated_pipeline,
+    CellProfilerSymbol,
+    CellProfilerSymbolKind,
+    CellProfilerSymbolTable,
+    ModuleArtifactContracts,
+    CPPipeParser,
+    ModuleBlock,
+    PipelineGenerator,
+    SettingsBinder,
+    compile_image_schema,
+    GroupingPlan,
+    ImageAssignment,
+    ImagesRule,
+    PipelineImageSchema,
+    MetadataExtractionRule,
+    MetadataSource,
 )

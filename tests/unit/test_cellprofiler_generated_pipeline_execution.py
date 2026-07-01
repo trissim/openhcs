@@ -52,7 +52,6 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     CompiledSourceUniversePlan,
     NamedSourceBinding,
-    SourceBindingCompilationRequest,
     SourceBindingRuntimeContext,
     SourceSelector,
     StepSourceBindingsConfig,
@@ -824,10 +823,9 @@ def _run_generated_step(
             context=context,
             artifact_inputs=_artifact_input_plans(contract),
             artifact_outputs=_artifact_output_plans(contract),
-            source_binding_plan=SourceBindingCompilationRequest.from_module_contracts(
-                config=step.source_bindings,
-                contracts=(contract.module_contract,),
-            ).compile(),
+            source_binding_plan=CompiledSourceBindingPlan.from_config(
+                step.source_bindings
+            ),
             source_binding_context=source_binding_context,
         )
     )

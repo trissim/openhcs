@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -42,10 +42,8 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.contracts.metric import MetricCollector
-from openhcs.constants import MULTIPROCESSING_AXIS
-from openhcs.constants.constants import Microscope
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
-from openhcs.core.config import MultiprocessingStartMethod
+from openhcs.core.config import GlobalPipelineConfig, LazyWellFilterConfig
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
 from openhcs.core.equivalence.outputs import (
     RuntimeOutputSnapshot,
@@ -81,109 +79,12 @@ _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME = (
 )
 _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION = 2
 _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR = ".openhcs_measurement_snapshot_cache"
-_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX = "runtime_reference_measurement_snapshot"
-_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX = "runtime_candidate_measurement_snapshot"
-_RUNTIME_EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
-    {
-        "equivalence_reference_output_dir",
-        "openhcs_timeout_seconds",
-        "runtime_execution_cache_manifest",
-        "runtime_execution_cache_key",
-        "reuse_runtime_execution_cache",
-        "cache_candidate_measurement_snapshot",
-        "raise_on_equivalence_failure",
-    }
+_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX = (
+    "runtime_reference_measurement_snapshot"
 )
-_RUNTIME_EXECUTION_CACHE_HELPER_KEYS = frozenset({"legacy_source_tree"})
-
-
-OPENHCS_AXIS_FILTER_PARAM = "openhcs_axis_filter"
-OPENHCS_MAX_AXIS_COUNT_PARAM = "openhcs_max_axis_count"
-OPENHCS_NUM_WORKERS_PARAM = "openhcs_num_workers"
-OPENHCS_START_METHOD_PARAM = "openhcs_start_method"
-OPENHCS_USE_THREADING_PARAM = "openhcs_use_threading"
-
-
-@dataclass(frozen=True, slots=True)
-class OpenHCSBenchmarkExecutionConfig:
-    """OpenHCS runtime config requested by the benchmark harness."""
-
-    num_workers: int = 1
-    use_threading: bool = False
-    multiprocessing_start_method: MultiprocessingStartMethod = (
-        MultiprocessingStartMethod.FORK
-    )
-
-    @classmethod
-    def from_pipeline_params(
-        cls,
-        pipeline_params: Mapping[str, Any],
-    ) -> "OpenHCSBenchmarkExecutionConfig":
-        num_workers = int(pipeline_params.get(OPENHCS_NUM_WORKERS_PARAM, 1))
-        if num_workers <= 0:
-            raise ValueError("openhcs num workers must be positive.")
-        start_method = pipeline_params.get(
-            OPENHCS_START_METHOD_PARAM,
-            MultiprocessingStartMethod.FORK,
-        )
-        if not isinstance(start_method, MultiprocessingStartMethod):
-            start_method = MultiprocessingStartMethod(str(start_method))
-        return cls(
-            num_workers=num_workers,
-            use_threading=bool(pipeline_params.get(OPENHCS_USE_THREADING_PARAM, False)),
-            multiprocessing_start_method=start_method,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class OpenHCSAxisSelection:
-    """Typed benchmark-only axis selection for OpenHCS execution."""
-
-    axis_filter: tuple[str, ...] = ()
-    max_axis_count: int | None = None
-
-    @classmethod
-    def from_pipeline_params(
-        cls,
-        pipeline_params: Mapping[str, Any],
-    ) -> "OpenHCSAxisSelection":
-        max_axis_count = pipeline_params.get(OPENHCS_MAX_AXIS_COUNT_PARAM)
-        return cls(
-            axis_filter=_normalized_axis_filter(
-                pipeline_params.get(OPENHCS_AXIS_FILTER_PARAM)
-            ),
-            max_axis_count=(
-                int(max_axis_count) if max_axis_count is not None else None
-            ),
-        )
-
-    def resolve(self, available_axes: tuple[str, ...]) -> tuple[str, ...]:
-        """Resolve the selected axes against orchestrator-discovered axes."""
-        if self.max_axis_count is not None and self.max_axis_count <= 0:
-            raise ValueError("openhcs max axis count must be positive.")
-        if self.axis_filter:
-            requested = set(self.axis_filter)
-            selected = tuple(axis for axis in available_axes if axis in requested)
-            missing = tuple(axis for axis in self.axis_filter if axis not in selected)
-            if missing:
-                raise ValueError(
-                    "Requested OpenHCS axes are not available: "
-                    + ", ".join(missing)
-                )
-        else:
-            selected = available_axes
-        if self.max_axis_count is not None:
-            selected = selected[: self.max_axis_count]
-        if not selected:
-            raise ValueError("OpenHCS axis selection resolved to no axes.")
-        return selected
-
-    def source_schema_selection(self) -> SourceSchemaImageSetSelection:
-        """Return equivalent pre-materialization source-schema selection."""
-        return SourceSchemaImageSetSelection(
-            well_filter=self.axis_filter,
-            max_image_set_count=self.max_axis_count,
-        )
+_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX = (
+    "runtime_candidate_measurement_snapshot"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +96,7 @@ class OpenHCSRunRequest:
     pipeline_params: dict[str, Any]
     metrics: tuple[MetricCollector, ...]
     output_dir: Path
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
 
     @property
     def dataset_id(self) -> str:
@@ -265,10 +167,6 @@ class OpenHCSRunRequest:
             raise ValueError("openhcs_timeout_seconds must be positive.")
         return seconds
 
-    @property
-    def axis_selection(self) -> OpenHCSAxisSelection:
-        return OpenHCSAxisSelection.from_pipeline_params(self.pipeline_params)
-
 
 @dataclass(frozen=True, slots=True)
 class OpenHCSPipelineGenerationPolicy:
@@ -285,8 +183,7 @@ class OpenHCSPipelineGenerationPolicy:
         infrastructure: CPPipeInfrastructureProfile,
     ) -> "OpenHCSPipelineGenerationPolicy":
         no_external_exports = (
-            not infrastructure.exports_tables
-            and not infrastructure.exports_images
+            not infrastructure.exports_tables and not infrastructure.exports_images
         )
         return cls(
             prune_dead_unmaterialized_artifact_steps=(
@@ -308,7 +205,9 @@ class RuntimeExecutionCacheWritePolicy:
     include_non_image_records: bool
 
     @classmethod
-    def for_request(cls, request: OpenHCSRunRequest) -> "RuntimeExecutionCacheWritePolicy":
+    def for_request(
+        cls, request: OpenHCSRunRequest
+    ) -> "RuntimeExecutionCacheWritePolicy":
         if (
             request.runtime_execution_cache_manifest is None
             or request.runtime_execution_cache_key is None
@@ -395,7 +294,6 @@ class _RuntimeExecutionCacheHit:
     validation: CPPipeExecutionValidation
     output_roots: tuple[Path, ...]
     execution_output_root: Path
-    source_workspace_path: Path | None
     axis_count: int
 
 
@@ -404,64 +302,7 @@ def _runtime_execution_cache_key_matches(
     expected_key: object,
 ) -> bool:
     """Return whether a runtime execution cache key is valid for this request."""
-    if cached_key == expected_key:
-        return True
-    if not isinstance(cached_key, Mapping) or not isinstance(expected_key, Mapping):
-        return False
-
-    if "execution_source_tree" in cached_key:
-        return _runtime_execution_cache_identity(cached_key) == (
-            _runtime_execution_cache_identity(expected_key)
-        )
-
-    if "source_tree" not in cached_key:
-        return False
-    expected_legacy_source_tree = expected_key.get("legacy_source_tree")
-    if expected_legacy_source_tree is None:
-        expected_legacy_source_tree = expected_key.get("source_tree")
-    if cached_key.get("source_tree") != expected_legacy_source_tree:
-        return False
-
-    return _legacy_runtime_execution_cache_identity(cached_key) == (
-        _legacy_runtime_execution_cache_identity(expected_key)
-    )
-
-
-def _runtime_execution_cache_identity(cache_key: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the stable execution-cache identity for current cache keys."""
-    return {
-        key: cache_key[key]
-        for key in cache_key
-        if key not in _RUNTIME_EXECUTION_CACHE_HELPER_KEYS
-    }
-
-
-def _legacy_runtime_execution_cache_identity(
-    cache_key: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Compare legacy broad cache keys using only execution-defining fields."""
-    return {
-        "schema_version": cache_key.get("schema_version"),
-        "tool_name": cache_key.get("tool_name"),
-        "tool_version": cache_key.get("tool_version"),
-        "pipeline_name": cache_key.get("pipeline_name"),
-        "pipeline_params": _runtime_execution_pipeline_params(
-            cache_key.get("pipeline_params")
-        ),
-        "dataset_tree": cache_key.get("dataset_tree"),
-        "cppipe_file": cache_key.get("cppipe_file"),
-    }
-
-
-def _runtime_execution_pipeline_params(value: object) -> dict[str, Any]:
-    """Return pipeline params that can affect OpenHCS execution outputs."""
-    if not isinstance(value, Mapping):
-        return {}
-    return {
-        str(key): value[key]
-        for key in value
-        if str(key) not in _RUNTIME_EXECUTION_CACHE_IGNORED_PARAM_KEYS
-    }
+    return cached_key == expected_key
 
 
 class OpenHCSAdapter(ToolAdapter):
@@ -469,7 +310,12 @@ class OpenHCSAdapter(ToolAdapter):
 
     name = "OpenHCS"
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        global_config: GlobalPipelineConfig | None = None,
+        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    ) -> None:
         import openhcs
         from polystore.base import ensure_storage_registry, storage_registry
         from polystore.filemanager import FileManager
@@ -477,6 +323,8 @@ class OpenHCSAdapter(ToolAdapter):
         self.version = openhcs.__version__
         ensure_storage_registry()
         self._filemanager = FileManager(storage_registry)
+        self.global_config = global_config or GlobalPipelineConfig()
+        self.source_schema_image_set_selection = source_schema_image_set_selection
 
     def validate_installation(self) -> None:
         """Check OpenHCS is importable."""
@@ -489,10 +337,12 @@ class OpenHCSAdapter(ToolAdapter):
         request: OpenHCSRunRequest,
     ) -> BenchmarkResult:
         """Execute a converted CellProfiler pipeline through the OpenHCS orchestrator."""
-        from openhcs.config_framework.lazy_factory import ensure_global_config_context
+        from openhcs.config_framework.lazy_factory import (
+            ensure_global_config_context,
+            rebuild_lazy_config_with_new_global_reference,
+        )
         from openhcs.core.config import (
             AnalysisConsolidationConfig,
-            GlobalPipelineConfig,
             MaterializationBackend,
             PathPlanningConfig,
             PipelineConfig,
@@ -511,7 +361,9 @@ class OpenHCSAdapter(ToolAdapter):
         reference_url = cppipe_source.reference_url
 
         output_suffix = f"_{request.pipeline_name}_converted_cppipe"
-        output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
+        output_plate_root = (
+            request.output_dir / f"{request.dataset_path.name}{output_suffix}"
+        )
         generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
         generated_pipeline_module_name = generated_module_path.stem
         source_workspace_path = (
@@ -525,8 +377,12 @@ class OpenHCSAdapter(ToolAdapter):
         equivalence_failure_message = None
         streaming_equivalence: OpenHCSTableOnlyStreamingEquivalence | None = None
         if cache_hit is not None:
-            phase_timing.record(BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True)
-            phase_timing.record(BenchmarkPhase.EXECUTE_OPENHCS, seconds=0.0, cached=True)
+            phase_timing.record(
+                BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True
+            )
+            phase_timing.record(
+                BenchmarkPhase.EXECUTE_OPENHCS, seconds=0.0, cached=True
+            )
             phase_timing.record(
                 BenchmarkPhase.VALIDATE_RUNTIME,
                 seconds=0.0,
@@ -535,7 +391,6 @@ class OpenHCSAdapter(ToolAdapter):
             validation = cache_hit.validation
             output_roots = cache_hit.output_roots
             execution_output_root = cache_hit.execution_output_root
-            source_workspace_path = cache_hit.source_workspace_path
             axis_count = cache_hit.axis_count
             executed_axes = tuple(validation.observation.records_by_axis)
             csv_output_count = len(validation.observation.exports.table_outputs)
@@ -556,7 +411,7 @@ class OpenHCSAdapter(ToolAdapter):
                             generated_pipeline_path=generated_module_path,
                             filemanager=self._filemanager,
                             image_set_selection=(
-                                request.axis_selection.source_schema_selection()
+                                request.source_schema_image_set_selection
                             ),
                             prune_dead_unmaterialized_artifact_steps=(
                                 generation_policy.prune_dead_unmaterialized_artifact_steps
@@ -581,17 +436,24 @@ class OpenHCSAdapter(ToolAdapter):
             pipeline_config = (
                 prepared.generated_pipeline.pipeline_config or PipelineConfig()
             )
-            execution_microscope = pipeline_config.microscope or Microscope.AUTO
+            selection = request.source_schema_image_set_selection
+            if selection is not None and selection.well_filter:
+                pipeline_config = replace(
+                    pipeline_config,
+                    well_filter_config=LazyWellFilterConfig(
+                        well_filter=list(selection.well_filter),
+                    ),
+                )
+            elif selection is not None and selection.max_image_set_count is not None:
+                pipeline_config = replace(
+                    pipeline_config,
+                    well_filter_config=LazyWellFilterConfig(
+                        well_filter=selection.max_image_set_count,
+                    ),
+                )
 
-            execution_config = OpenHCSBenchmarkExecutionConfig.from_pipeline_params(
-                request.pipeline_params
-            )
-            global_config = GlobalPipelineConfig(
-                num_workers=execution_config.num_workers,
-                use_threading=execution_config.use_threading,
-                multiprocessing_start_method=(
-                    execution_config.multiprocessing_start_method
-                ),
+            global_config = replace(
+                self.global_config,
                 analysis_consolidation_config=AnalysisConsolidationConfig(
                     enabled=False,
                 ),
@@ -604,31 +466,28 @@ class OpenHCSAdapter(ToolAdapter):
                 ),
                 materialize_runtime_artifacts=request.materialize_runtime_artifacts,
                 materialization_results_path=output_plate_root / "results",
-                microscope=execution_microscope,
             )
             ensure_global_config_context(GlobalPipelineConfig, global_config)
+            pipeline_config = rebuild_lazy_config_with_new_global_reference(
+                pipeline_config,
+                global_config,
+                GlobalPipelineConfig,
+            )
             orchestrator = PipelineOrchestrator(
                 execution_plate_path,
                 pipeline_config=pipeline_config,
             )
             with phase_timing.phase(BenchmarkPhase.INITIALIZE_RUNTIME):
                 orchestrator.initialize()
-            selected_axes = request.axis_selection.resolve(
-                tuple(orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
-            )
             equivalence_reference = request.equivalence_reference_output_dir
-            if (
-                equivalence_reference is not None
-                and (
-                    not request.compare_image_outputs
-                    or _reference_has_no_images(equivalence_reference)
-                )
+            if equivalence_reference is not None and (
+                not request.compare_image_outputs
+                or _reference_has_no_images(equivalence_reference)
             ):
                 streaming_equivalence = self._run_table_only_streaming_equivalence(
                     request,
                     orchestrator=orchestrator,
                     prepared=prepared,
-                    selected_axes=selected_axes,
                     output_plate_root=output_plate_root,
                     phase_timing=phase_timing,
                     equivalence_reference=equivalence_reference,
@@ -649,7 +508,6 @@ class OpenHCSAdapter(ToolAdapter):
                         execution = execute_pipeline_direct(
                             orchestrator,
                             prepared.pipeline,
-                            well_filter=selected_axes,
                             phase_timing=phase_timing,
                         )
                 output_roots = runtime_output_roots(
@@ -681,7 +539,6 @@ class OpenHCSAdapter(ToolAdapter):
                         validation=validation,
                         output_roots=output_roots,
                         execution_output_root=execution_output_root,
-                        source_workspace_path=source_workspace_path,
                         axis_count=axis_count,
                     )
             reused_runtime_execution_cache = False
@@ -703,9 +560,8 @@ class OpenHCSAdapter(ToolAdapter):
             )
             if equivalence_report is not None:
                 pass
-            elif (
-                not request.compare_image_outputs
-                or _reference_has_no_images(equivalence_reference)
+            elif not request.compare_image_outputs or _reference_has_no_images(
+                equivalence_reference
             ):
                 with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
                     equivalence_report = (
@@ -765,11 +621,7 @@ class OpenHCSAdapter(ToolAdapter):
             "compiled_output_roots": tuple(str(root) for root in output_roots),
             "reused_runtime_execution_cache": reused_runtime_execution_cache,
             "phase_timing_records": phase_timing.payloads(),
-            "axis_selection": {
-                "axis_filter": request.axis_selection.axis_filter,
-                "max_axis_count": request.axis_selection.max_axis_count,
-                "executed_axes": executed_axes,
-            },
+            "executed_axes": executed_axes,
         }
         if request.runtime_execution_cache_manifest is not None:
             provenance["runtime_execution_cache_manifest"] = str(
@@ -780,8 +632,6 @@ class OpenHCSAdapter(ToolAdapter):
             provenance["equivalence_difference_count"] = len(
                 equivalence_report.differences if equivalence_report else ()
             )
-        if source_workspace_path is not None:
-            provenance["source_workspace"] = str(source_workspace_path)
         if reference_url is not None:
             provenance["cppipe_reference_url"] = reference_url
 
@@ -802,7 +652,6 @@ class OpenHCSAdapter(ToolAdapter):
         *,
         orchestrator: Any,
         prepared: Any,
-        selected_axes: tuple[str, ...],
         output_plate_root: Path,
         phase_timing: PhaseTimingTrace,
         equivalence_reference: Path,
@@ -840,7 +689,9 @@ class OpenHCSAdapter(ToolAdapter):
                     known_source_names=known_source_names,
                 ),
             )
-        required_measurement_keys = frozenset(reference_measurements.measurement_fact_counts)
+        required_measurement_keys = frozenset(
+            reference_measurements.measurement_fact_counts
+        )
         with ExitStack() as stack:
             for metric in request.metrics:
                 stack.enter_context(metric)
@@ -848,7 +699,6 @@ class OpenHCSAdapter(ToolAdapter):
                 execution = execute_pipeline_direct(
                     orchestrator,
                     prepared.pipeline,
-                    well_filter=selected_axes,
                     phase_timing=phase_timing,
                 )
         output_roots = runtime_output_roots(
@@ -881,14 +731,15 @@ class OpenHCSAdapter(ToolAdapter):
                 required_measurement_keys=required_measurement_keys,
                 candidate_observation_fingerprint=candidate_observation_fingerprint,
             )
-            candidate_create = (
-                lambda: RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+
+            def candidate_create() -> RuntimeMeasurementSnapshot:
+                return RuntimeMeasurementSnapshot.from_artifact_execution_observation(
                     validation.observation,
                     policy=equivalence_policy,
                     known_source_names=known_source_names,
                     required_measurement_keys=required_measurement_keys,
                 )
-            )
+
             if request.cache_candidate_measurement_snapshot:
                 candidate_snapshot = measurement_snapshot_cache.load_or_create(
                     prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
@@ -912,8 +763,8 @@ class OpenHCSAdapter(ToolAdapter):
             report=report,
             output_roots=unique_output_roots,
             execution_output_root=execution_output_root,
-            axis_count=len(selected_axes),
-            executed_axes=selected_axes,
+            axis_count=len(execution.execution_results),
+            executed_axes=tuple(validation.observation.records_by_axis),
             table_output_count=len(validation.observation.exports.table_outputs),
             image_output_count=len(validation.observation.exports.image_outputs),
         )
@@ -977,12 +828,9 @@ class OpenHCSAdapter(ToolAdapter):
             with validation_path.open("rb") as handle:
                 validation_payload = pickle.load(handle)
             validation = _validation_from_cache_payload(validation_payload)
-            if (
-                prefer_non_image_payload
-                and (
-                    non_image_validation_path is None
-                    or validation_path != non_image_validation_path
-                )
+            if prefer_non_image_payload and (
+                non_image_validation_path is None
+                or validation_path != non_image_validation_path
             ):
                 self._write_runtime_execution_non_image_cache(
                     manifest_path,
@@ -994,14 +842,10 @@ class OpenHCSAdapter(ToolAdapter):
                 validation_path,
             )
             return None
-        source_workspace_value = manifest.get("source_workspace")
         return _RuntimeExecutionCacheHit(
             validation=validation,
             output_roots=output_roots,
             execution_output_root=execution_output_root,
-            source_workspace_path=(
-                Path(str(source_workspace_value)) if source_workspace_value else None
-            ),
             axis_count=int(manifest.get("axis_count", 0)),
         )
 
@@ -1046,6 +890,7 @@ class OpenHCSAdapter(ToolAdapter):
             required_measurement_keys=required_measurement_keys,
             candidate_observation_fingerprint=candidate_observation_fingerprint,
         )
+
         def candidate_create() -> RuntimeMeasurementSnapshot:
             return RuntimeMeasurementSnapshot.from_artifact_execution_observation(
                 validation.observation,
@@ -1053,6 +898,7 @@ class OpenHCSAdapter(ToolAdapter):
                 known_source_names=known_source_names,
                 required_measurement_keys=required_measurement_keys,
             )
+
         if request.cache_candidate_measurement_snapshot:
             candidate_measurements = measurement_snapshot_cache.load_or_create(
                 prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
@@ -1096,7 +942,6 @@ class OpenHCSAdapter(ToolAdapter):
         validation: CPPipeExecutionValidation,
         output_roots: tuple[Path, ...],
         execution_output_root: Path,
-        source_workspace_path: Path | None,
         axis_count: int,
     ) -> None:
         """Persist completed OpenHCS execution state before equivalence comparison."""
@@ -1144,11 +989,6 @@ class OpenHCSAdapter(ToolAdapter):
                     ),
                     "output_roots": tuple(str(root) for root in output_roots),
                     "execution_output_root": str(execution_output_root),
-                    "source_workspace": (
-                        str(source_workspace_path)
-                        if source_workspace_path is not None
-                        else None
-                    ),
                     "axis_count": axis_count,
                 },
                 indent=2,
@@ -1164,8 +1004,7 @@ class OpenHCSAdapter(ToolAdapter):
     ) -> None:
         """Backfill a compact runtime cache payload for table-only equivalence."""
         non_image_validation_path = (
-            manifest_path.parent
-            / _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME
+            manifest_path.parent / _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME
         )
         with non_image_validation_path.open("wb") as handle:
             pickle.dump(
@@ -1228,6 +1067,7 @@ class OpenHCSAdapter(ToolAdapter):
             pipeline_params=pipeline_params,
             metrics=self._validated_metric_collectors(metrics),
             output_dir=output_dir,
+            source_schema_image_set_selection=self.source_schema_image_set_selection,
         )
         return self._run_converted_cppipe_pipeline(request)
 
@@ -1443,8 +1283,7 @@ class MeasurementSnapshotCacheStore:
         snapshot = create()
         if self.try_write(prefix=prefix, cache_key=cache_key, snapshot=snapshot):
             logger.info(
-                "Wrote semantic measurement snapshot cache %s in %.3fs "
-                "(features=%d).",
+                "Wrote semantic measurement snapshot cache %s in %.3fs (features=%d).",
                 path,
                 time.perf_counter() - started_at,
                 len(snapshot.measurement_fact_counts),
@@ -1482,7 +1321,9 @@ class MeasurementSnapshotCacheStore:
             with path.open("rb") as handle:
                 payload = pickle.load(handle)
         except Exception:
-            logger.exception("Failed to load semantic measurement snapshot cache %s", path)
+            logger.exception(
+                "Failed to load semantic measurement snapshot cache %s", path
+            )
             return None
         if not isinstance(payload, Mapping):
             return None
@@ -1615,14 +1456,8 @@ def _runtime_measurement_observation_fingerprint(
 
 
 def _runtime_execution_cache_key_for_snapshot(cache_key: object) -> object:
-    """Drop cache-helper fields that do not affect runtime measurement outputs."""
-    if not isinstance(cache_key, Mapping):
-        return cache_key
-    return {
-        key: value
-        for key, value in cache_key.items()
-        if key not in _RUNTIME_EXECUTION_CACHE_HELPER_KEYS
-    }
+    """Return the canonical runtime execution cache key for snapshot identity."""
+    return cache_key
 
 
 def _table_output_fingerprint(output_dir: Path) -> tuple[dict[str, object], ...]:
@@ -1687,17 +1522,3 @@ def _cache_jsonable(value: object) -> object:
     if isinstance(value, (set, frozenset)):
         return tuple(sorted((_cache_jsonable(item) for item in value), key=repr))
     return repr(value)
-
-
-def _normalized_axis_filter(value: object) -> tuple[str, ...]:
-    """Normalize axis filter pipeline params without stringly call-site logic."""
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        stripped = value.strip()
-        return (stripped,) if stripped else ()
-    if isinstance(value, (tuple, list, set, frozenset)):
-        return tuple(str(item) for item in value)
-    raise TypeError(
-        f"{OPENHCS_AXIS_FILTER_PARAM} must be a string or sequence of strings."
-    )

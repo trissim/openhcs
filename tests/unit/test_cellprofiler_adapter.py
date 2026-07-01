@@ -10,7 +10,6 @@ import pytest
 from PIL import Image
 
 from benchmark.adapters.cellprofiler import (
-    CELLPROFILER_EXECUTABLE_ENV,
     CELLPROFILER_FIRST_IMAGE_SET_PARAM,
     CELLPROFILER_LAST_IMAGE_SET_PARAM,
     DETERMINISTIC_PYTHONHASHSEED,
@@ -25,6 +24,7 @@ from benchmark.adapters.cellprofiler import (
     native_cellprofiler_reference_is_complete,
 )
 from benchmark.adapters.cellprofiler_installation import (
+    CELLPROFILER_EXECUTABLE_ENV,
     CellProfilerExecutableResolver,
     CellProfilerExecutableSource,
     OPENHCS_BENCHMARK_TOOL_ROOTS_ENV,
@@ -32,6 +32,7 @@ from benchmark.adapters.cellprofiler_installation import (
 from benchmark.contracts.tool_adapter import ToolNotInstalledError
 from openhcs.core.pipeline_image_schema import ImportedMetadataTable
 from openhcs.core.source_bindings import SourceBindingRuntimeContext
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 from openhcs.interop.cellprofiler.runtime.source_candidates import (
     SourceCandidatePathProjection,
 )
@@ -306,7 +307,12 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
 
     monkeypatch.setattr("benchmark.adapters.cellprofiler.subprocess.run", _run)
 
-    adapter = CellProfilerAdapter(executable="/usr/bin/cellprofiler")
+    adapter = CellProfilerAdapter(
+        executable="/usr/bin/cellprofiler",
+        source_schema_image_set_selection=SourceSchemaImageSetSelection(
+            max_image_set_count=1,
+        ),
+    )
     adapter.validate_installation()
     result = adapter.run(
         dataset_path=dataset_path,
@@ -372,7 +378,12 @@ def test_cellprofiler_adapter_runs_bounded_image_set_range(
 
     monkeypatch.setattr("benchmark.adapters.cellprofiler.subprocess.run", _run)
 
-    adapter = CellProfilerAdapter(executable="/usr/bin/cellprofiler")
+    adapter = CellProfilerAdapter(
+        executable="/usr/bin/cellprofiler",
+        source_schema_image_set_selection=SourceSchemaImageSetSelection(
+            max_image_set_count=1,
+        ),
+    )
     adapter.validate_installation()
     result = adapter.run(
         dataset_path=dataset_path,
@@ -472,7 +483,12 @@ def test_cellprofiler_adapter_file_list_preserves_selected_well_sites_and_channe
 
     monkeypatch.setattr("benchmark.adapters.cellprofiler.subprocess.run", _run)
 
-    adapter = CellProfilerAdapter(executable="/usr/bin/cellprofiler")
+    adapter = CellProfilerAdapter(
+        executable="/usr/bin/cellprofiler",
+        source_schema_image_set_selection=SourceSchemaImageSetSelection(
+            max_image_set_count=1
+        ),
+    )
     adapter.validate_installation()
     result = adapter.run(
         dataset_path=dataset_path,
@@ -480,7 +496,6 @@ def test_cellprofiler_adapter_file_list_preserves_selected_well_sites_and_channe
         pipeline_params={
             "dataset_id": "synthetic",
             "cppipe_path": str(cppipe_path),
-            "openhcs_max_axis_count": 1,
         },
         metrics=[],
         output_dir=tmp_path / "outputs",

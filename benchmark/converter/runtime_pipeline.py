@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 from openhcs.core.pipeline import Pipeline
@@ -31,14 +30,12 @@ def execute_pipeline_direct(
     orchestrator: Any,
     pipeline: Pipeline,
     *,
-    well_filter: Sequence[str] | None = None,
     phase_timing: PhaseTimingTrace | None = None,
 ) -> DirectPipelineExecution:
     """Benchmark facade over product-owned direct CellProfiler execution."""
     return execute_pipeline_direct_runtime(
         orchestrator,
         pipeline,
-        well_filter=well_filter,
         phase_timing=phase_timing,
         compile_phase=BenchmarkPhase.COMPILE_OPENHCS,
         execute_phase=BenchmarkPhase.EXECUTE_OPENHCS,

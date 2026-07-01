@@ -32,13 +32,13 @@ from benchmark.cellprofiler_comparison import (
 )
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.runner import (
-    _LEGACY_SOURCE_TREE_CACHE_KEY,
     _source_file_cache_domains,
     _source_file_has_excluded_cache_domain,
     _source_file_is_path_excluded,
     run_cellprofiler_compatibility_benchmark,
     run_cellprofiler_cppipe_parity,
 )
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 from openhcs.core.runtime_equivalence import (
     RuntimeEquivalencePolicy,
     RuntimeMeasurementFeatureKey,
@@ -246,15 +246,17 @@ def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) 
         dataset_path=tmp_path / "images",
         cppipe_path=cppipe_path,
         dataset_id="example",
-        pipeline_params={"openhcs_max_axis_count": 1},
     )
     native_reference_root = tmp_path / "native_refs"
+    selection = SourceSchemaImageSetSelection(max_image_set_count=1)
 
-    location = _native_reference_location(case, native_reference_root)
-
-    assert native_cellprofiler_sample_scope_slug(case.pipeline_params) == (
-        "samples_first1wells"
+    location = _native_reference_location(
+        case,
+        native_reference_root,
+        source_schema_image_set_selection=selection,
     )
+
+    assert native_cellprofiler_sample_scope_slug(selection) == "samples_first1wells"
     assert location.output_dir == (
         native_reference_root
         / "example_ExampleOneWell_samples_first1wells"
@@ -350,7 +352,7 @@ def test_cellprofiler_cppipe_parity_runner_invalidates_openhcs_cache_on_cppipe_c
     )
 
 
-def test_cellprofiler_cppipe_parity_runner_keeps_execution_cache_key_for_reference_change(
+def test_cellprofiler_cppipe_parity_runner_changes_execution_cache_key_for_reference_change(
     tmp_path: Path,
 ) -> None:
     dataset_path = tmp_path / "Example Fly Images"
@@ -391,57 +393,41 @@ def test_cellprofiler_cppipe_parity_runner_keeps_execution_cache_key_for_referen
     assert second_openhcs_adapter.run_count == 1
     assert (
         first_openhcs_adapter.pipeline_params["runtime_execution_cache_key"]
-        == second_openhcs_adapter.pipeline_params["runtime_execution_cache_key"]
+        != second_openhcs_adapter.pipeline_params["runtime_execution_cache_key"]
     )
 
 
-def test_openhcs_execution_cache_rejects_stale_legacy_source_tree() -> None:
-    cached_key = _execution_cache_key(source_field="source_tree", digest="old")
+def test_openhcs_execution_cache_requires_exact_current_key() -> None:
+    cached_key = _execution_cache_key(
+        source_field="execution_source_tree",
+        digest="execution",
+    )
     expected_key = _execution_cache_key(
         source_field="execution_source_tree",
-        digest="new",
-        legacy_digest="current",
+        digest="different",
     )
 
     assert not _runtime_execution_cache_key_matches(cached_key, expected_key)
 
 
-def test_openhcs_execution_cache_accepts_matching_legacy_source_tree() -> None:
-    cached_key = _execution_cache_key(source_field="source_tree", digest="current")
-    expected_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="new",
-        legacy_digest="current",
-    )
-
-    assert _runtime_execution_cache_key_matches(cached_key, expected_key)
-
-
-def test_openhcs_execution_cache_ignores_helper_source_tree_for_current_keys() -> None:
-    cached_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="execution",
-        legacy_digest="old-full",
-    )
-    expected_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="execution",
-        legacy_digest="new-full",
-    )
-
-    assert _runtime_execution_cache_key_matches(cached_key, expected_key)
-
-
-def test_measurement_snapshot_key_omits_cache_helper_source_tree() -> None:
+def test_openhcs_execution_cache_accepts_exact_current_key() -> None:
     cache_key = _execution_cache_key(
         source_field="execution_source_tree",
         digest="execution",
-        legacy_digest="full-source",
+    )
+
+    assert _runtime_execution_cache_key_matches(cache_key, cache_key)
+
+
+def test_measurement_snapshot_key_uses_runtime_cache_key_directly() -> None:
+    cache_key = _execution_cache_key(
+        source_field="execution_source_tree",
+        digest="execution",
     )
 
     snapshot_key = _runtime_execution_cache_key_for_snapshot(cache_key)
 
-    assert _LEGACY_SOURCE_TREE_CACHE_KEY not in snapshot_key
+    assert snapshot_key is cache_key
     assert snapshot_key["execution_source_tree"] == {"digest": "execution"}
 
 
@@ -451,7 +437,6 @@ def test_measurement_snapshot_keys_include_semantic_projection_fingerprint(
     cache_key = _execution_cache_key(
         source_field="execution_source_tree",
         digest="execution",
-        legacy_digest="full-source",
     )
     policy = RuntimeEquivalencePolicy()
     projection_identity = runtime_measurement_projection_cache_identity()
@@ -662,9 +647,8 @@ def _execution_cache_key(
     *,
     source_field: str,
     digest: str,
-    legacy_digest: str | None = None,
 ) -> dict[str, Any]:
-    key = {
+    return {
         "schema_version": 1,
         "tool_name": "OpenHCS",
         "tool_version": "test",
@@ -674,9 +658,6 @@ def _execution_cache_key(
         "cppipe_file": {"digest": "cppipe"},
         source_field: {"digest": digest},
     }
-    if legacy_digest is not None:
-        key[_LEGACY_SOURCE_TREE_CACHE_KEY] = {"digest": legacy_digest}
-    return key
 
 
 class _NativeReferenceAdapter(ToolAdapter):

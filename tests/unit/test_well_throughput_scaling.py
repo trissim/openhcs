@@ -290,7 +290,7 @@ def test_rerun_missing_memory_filters_completed_rows(monkeypatch, tmp_path: Path
             "name": "Example",
             "dataset_path": tmp_path / "dataset",
             "cppipe_path": tmp_path / "pipeline.cppipe",
-            "pipeline_params": {"openhcs_max_axis_count": 1},
+            "pipeline_params": {"custom_param": 1},
         },
     )()
     completed = WellThroughputResult(
@@ -371,7 +371,7 @@ def test_rerun_missing_memory_filters_completed_rows(monkeypatch, tmp_path: Path
         rerun_missing_memory=True,
     )
 
-    assert calls == [("Example", "12w_3c", {"openhcs_max_axis_count": 1})]
+    assert calls == [("Example", "12w_3c", {"custom_param": 1})]
     assert rows == (completed, rerun)
 
 
@@ -385,7 +385,7 @@ def test_run_suite_reruns_existing_error_rows(monkeypatch, tmp_path: Path) -> No
             "name": "Example",
             "dataset_path": tmp_path / "dataset",
             "cppipe_path": tmp_path / "pipeline.cppipe",
-            "pipeline_params": {"openhcs_max_axis_count": 1},
+            "pipeline_params": {"custom_param": 1},
         },
     )()
     existing_error = WellThroughputResult(
@@ -448,7 +448,7 @@ def test_run_suite_passes_memory_limit_to_case_runner(monkeypatch, tmp_path: Pat
             "name": "Example",
             "dataset_path": tmp_path / "dataset",
             "cppipe_path": tmp_path / "pipeline.cppipe",
-            "pipeline_params": {"openhcs_max_axis_count": 1},
+            "pipeline_params": {"custom_param": 1},
         },
     )()
     monkeypatch.setattr(

@@ -19,14 +19,11 @@ from typing import TYPE_CHECKING, Any
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import (
+    CellProfilerAdapter,
     native_cellprofiler_reference_is_complete,
     native_cellprofiler_reference_scope_slugs,
 )
-from benchmark.adapters.openhcs import OPENHCS_AXIS_FILTER_PARAM
-from benchmark.adapters.openhcs import OPENHCS_MAX_AXIS_COUNT_PARAM
-from benchmark.adapters.openhcs import OPENHCS_NUM_WORKERS_PARAM
-from benchmark.adapters.openhcs import OPENHCS_START_METHOD_PARAM
-from benchmark.adapters.openhcs import OPENHCS_USE_THREADING_PARAM
+from benchmark.adapters.openhcs import OpenHCSAdapter
 from benchmark.converter.execution_validation import CPPipeInfrastructureProfile
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
@@ -35,7 +32,9 @@ from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
 from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.comparison_manifest import ComparisonManifest
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.equivalence.outputs import image_paths, table_paths
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 if TYPE_CHECKING:
     from benchmark.converter.compatibility_matrix import CellProfilerCompatibilityReport
@@ -476,20 +475,13 @@ class ComparisonSuiteRunContext:
     require_native_reference: bool
     discard_openhcs_outputs: bool
     continue_on_error: bool
-    openhcs_axis_filter: tuple[str, ...]
-    openhcs_max_axis_count: int | None
-    openhcs_num_workers: int
-    openhcs_start_method: str
-    openhcs_use_threading: bool
     metric_policy: ComparisonMetricPolicy
+    openhcs_global_config: GlobalPipelineConfig
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None
 
     def validate(self) -> None:
         if self.speedup_target <= 0:
             raise ValueError("speedup_target must be positive.")
-        if self.openhcs_max_axis_count is not None and self.openhcs_max_axis_count <= 0:
-            raise ValueError("openhcs_max_axis_count must be positive.")
-        if self.openhcs_num_workers <= 0:
-            raise ValueError("openhcs_num_workers must be positive.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,6 +499,7 @@ class CellProfilerComparisonCase:
     equivalence_reference_output_dir: Path | None = None
     cellprofiler_timeout_seconds: float | None = None
     pipeline_params: Mapping[str, object] = field(default_factory=dict)
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
 
     @property
     def resolved_dataset_id(self) -> str:
@@ -568,6 +561,7 @@ class NativeCellProfilerReferenceScope:
     case: CellProfilerComparisonCase
     native_reference_root: Path
     pipeline_params: Mapping[str, object]
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
 
     @property
     def output_dir(self) -> Path:
@@ -582,6 +576,9 @@ class NativeCellProfilerReferenceScope:
                 dataset_path=self.case.dataset_path,
                 pipeline_name=self.case.name,
                 pipeline_params=effective_pipeline_params,
+                source_schema_image_set_selection=(
+                    self.source_schema_image_set_selection
+                ),
                 output_dir=Path(self.native_reference_root).resolve()
                 / _benchmark_path_slug(
                     "_".join([self.case.resolved_dataset_id, self.case.name])
@@ -726,6 +723,11 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
     default_pipeline_params = payload.get("default_pipeline_params", {})
     if not isinstance(default_pipeline_params, Mapping):
         raise ValueError("Benchmark manifest default_pipeline_params must be an object.")
+    default_source_schema_image_set_selection = (
+        _source_schema_image_set_selection_from_manifest(
+            payload.get("default_source_schema_image_set_selection"),
+        )
+    )
     cases: list[CellProfilerComparisonCase] = []
     for raw_case in raw_cases:
         if not isinstance(raw_case, Mapping):
@@ -775,6 +777,12 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
                     **dict(default_pipeline_params),
                     **dict(raw_pipeline_params),
                 },
+                source_schema_image_set_selection=(
+                    _source_schema_image_set_selection_from_manifest(
+                        raw_case.get("source_schema_image_set_selection"),
+                    )
+                    or default_source_schema_image_set_selection
+                ),
             )
         )
     return tuple(cases)
@@ -792,13 +800,10 @@ def run_comparison_suite(
     require_native_reference: bool = False,
     discard_openhcs_outputs: bool = False,
     continue_on_error: bool = False,
-    openhcs_axis_filter: Sequence[str] = (),
-    openhcs_max_axis_count: int | None = None,
-    openhcs_num_workers: int = 1,
-    openhcs_start_method: str = "fork",
-    openhcs_use_threading: bool = False,
     metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
     coverage_manifest_path: Path | None = None,
+    openhcs_global_config: GlobalPipelineConfig | None = None,
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
@@ -811,12 +816,9 @@ def run_comparison_suite(
         require_native_reference=require_native_reference,
         discard_openhcs_outputs=discard_openhcs_outputs,
         continue_on_error=continue_on_error,
-        openhcs_axis_filter=tuple(openhcs_axis_filter),
-        openhcs_max_axis_count=openhcs_max_axis_count,
-        openhcs_num_workers=openhcs_num_workers,
-        openhcs_start_method=openhcs_start_method,
-        openhcs_use_threading=openhcs_use_threading,
         metric_policy=metric_policy,
+        openhcs_global_config=openhcs_global_config or GlobalPipelineConfig(),
+        source_schema_image_set_selection=source_schema_image_set_selection,
     )
     context.validate()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1117,14 +1119,53 @@ def write_suite_metadata(
         "discard_openhcs_outputs": context.discard_openhcs_outputs,
         "continue_on_error": context.continue_on_error,
         "collect_memory_metric": context.metric_policy.collect_memory,
-        OPENHCS_AXIS_FILTER_PARAM: context.openhcs_axis_filter,
-        OPENHCS_MAX_AXIS_COUNT_PARAM: context.openhcs_max_axis_count,
-        OPENHCS_NUM_WORKERS_PARAM: context.openhcs_num_workers,
-        OPENHCS_START_METHOD_PARAM: context.openhcs_start_method,
-        OPENHCS_USE_THREADING_PARAM: context.openhcs_use_threading,
+        "source_schema_image_set_selection": _source_schema_selection_payload(
+            context.source_schema_image_set_selection
+        ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _source_schema_selection_payload(
+    selection: SourceSchemaImageSetSelection | None,
+) -> dict[str, object] | None:
+    if selection is None:
+        return None
+    return {
+        "well_filter": selection.well_filter,
+        "max_image_set_count": selection.max_image_set_count,
+    }
+
+
+def _source_schema_image_set_selection_from_manifest(
+    raw_selection: object,
+) -> SourceSchemaImageSetSelection | None:
+    if raw_selection is None:
+        return None
+    if not isinstance(raw_selection, Mapping):
+        raise ValueError(
+            "source_schema_image_set_selection must be an object when provided."
+        )
+    raw_well_filter = raw_selection.get("well_filter", ())
+    if raw_well_filter is None:
+        well_filter = ()
+    elif isinstance(raw_well_filter, str):
+        well_filter = (raw_well_filter,)
+    elif isinstance(raw_well_filter, Sequence):
+        well_filter = tuple(str(well) for well in raw_well_filter)
+    else:
+        raise ValueError(
+            "source_schema_image_set_selection.well_filter must be a string "
+            "or sequence of strings."
+        )
+    raw_max_count = raw_selection.get("max_image_set_count")
+    return SourceSchemaImageSetSelection(
+        well_filter=well_filter,
+        max_image_set_count=(
+            int(raw_max_count) if raw_max_count is not None else None
+        ),
+    )
 
 
 def _run_comparison_case(
@@ -1151,17 +1192,15 @@ def _run_comparison_case(
         pipeline_params["cellprofiler_timeout_seconds"] = (
             case.cellprofiler_timeout_seconds
         )
-    if context.openhcs_axis_filter:
-        pipeline_params[OPENHCS_AXIS_FILTER_PARAM] = context.openhcs_axis_filter
-    if context.openhcs_max_axis_count is not None:
-        pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = context.openhcs_max_axis_count
-    pipeline_params[OPENHCS_NUM_WORKERS_PARAM] = context.openhcs_num_workers
-    pipeline_params[OPENHCS_START_METHOD_PARAM] = context.openhcs_start_method
-    pipeline_params[OPENHCS_USE_THREADING_PARAM] = context.openhcs_use_threading
+    source_schema_image_set_selection = (
+        context.source_schema_image_set_selection
+        or case.source_schema_image_set_selection
+    )
     native_reference = _native_reference_location(
         case,
         context.native_reference_root,
         pipeline_params,
+        source_schema_image_set_selection=source_schema_image_set_selection,
     )
     native_reference_profile = NativeReferenceArtifactProfile.from_reference_output_dir(
         native_reference.reference_output_dir
@@ -1202,6 +1241,17 @@ def _run_comparison_case(
         equivalence_reference_output_dir=native_reference.reference_output_dir,
         native_cellprofiler_output_dir=native_reference.output_dir,
         reuse_openhcs_cache=context.reuse_openhcs_cache,
+        cellprofiler_adapter=CellProfilerAdapter(
+            source_schema_image_set_selection=(
+                source_schema_image_set_selection
+            ),
+        ),
+        openhcs_adapter=OpenHCSAdapter(
+            global_config=context.openhcs_global_config,
+            source_schema_image_set_selection=(
+                source_schema_image_set_selection
+            ),
+        ),
     )
     observation = comparison_observation_from_result(
         result,
@@ -1221,6 +1271,7 @@ def _native_reference_location(
     case: CellProfilerComparisonCase,
     native_reference_root: Path | None,
     pipeline_params: Mapping[str, object] | None = None,
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
 ) -> NativeReferenceLocation:
     if case.equivalence_reference_output_dir is not None:
         return NativeReferenceLocation(
@@ -1234,6 +1285,7 @@ def _native_reference_location(
         case=case,
         native_reference_root=Path(native_reference_root),
         pipeline_params=effective_pipeline_params,
+        source_schema_image_set_selection=source_schema_image_set_selection,
     ).resolve()
 
 

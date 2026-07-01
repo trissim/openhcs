@@ -10,7 +10,7 @@ import statistics
 import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
@@ -20,15 +20,13 @@ import psutil
 from benchmark.cellprofiler_comparison import CASE_NAME_FIELD
 from benchmark.cellprofiler_comparison import load_comparison_cases
 from benchmark.cellprofiler_comparison import MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD
-from benchmark.adapters.openhcs import OpenHCSAxisSelection
 from benchmark.contracts.comparison_manifest import ComparisonManifest
 from benchmark.metrics.memory import MemoryMetric
-from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipeline
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.constants.constants import Microscope
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
+    LazyWellFilterConfig,
     LazyPathPlanningConfig,
     MaterializationBackend,
     MultiprocessingStartMethod,
@@ -40,7 +38,10 @@ from openhcs.core.orchestrator.execution_result import RuntimeObservationMode
 from openhcs.core.progress import set_progress_queue
 from openhcs.core.source_schema_workspace import (
     expand_source_schema_workspace_wells,
-    materialize_source_schema_workspace,
+)
+from openhcs.interop.cellprofiler.source_schema_ingestion import (
+    CellProfilerSourceSchemaWorkspaceRequest,
+    prepare_cellprofiler_source_schema_workspace,
 )
 
 
@@ -2045,27 +2046,31 @@ def run_case_well_throughput(
     """Run one converted cppipe over synthetic wells in a single OpenHCS execution."""
     output_root.mkdir(parents=True, exist_ok=True)
     generated_module_path = output_root / f"{cppipe_path.stem}_openhcs.py"
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=generated_module_path,
-        prune_dead_unmaterialized_artifact_steps=True,
-        materialize_skipped_save_images=False,
-        materialize_terminal_images=False,
+    ingestion = prepare_cellprofiler_source_schema_workspace(
+        CellProfilerSourceSchemaWorkspaceRequest(
+            source_root=dataset_path,
+            cppipe_path=cppipe_path,
+            workspace_root=(
+                output_root
+                / f"{dataset_path.name}_{cppipe_path.stem}_source_workspace"
+            ),
+            generated_pipeline_path=generated_module_path,
+            prune_dead_unmaterialized_artifact_steps=True,
+            materialize_skipped_save_images=False,
+            materialize_terminal_images=False,
+            force_materialization=True,
+        )
     )
+    prepared = ingestion.prepared_pipeline
     if prepared.source_schema.is_empty:
         raise ValueError(
             f"Case {case_name} has no source schema; synthetic well expansion requires source-schema input."
         )
-
-    axis_selection = OpenHCSAxisSelection.from_pipeline_params(pipeline_params)
-    source_workspace = materialize_source_schema_workspace(
-        dataset_path,
-        output_root / f"{dataset_path.name}_{cppipe_path.stem}_source_workspace",
-        prepared.source_schema,
-        image_set_selection=axis_selection.source_schema_selection(),
-    )
+    source_workspace_path = ingestion.source_workspace_path
+    if source_workspace_path is None:
+        raise RuntimeError("Forced source-schema materialization returned no workspace.")
     well_ids = expand_source_schema_workspace_wells(
-        source_workspace.metadata_path,
+        source_workspace_path / "openhcs_metadata.json",
         _synthetic_well_ids(mode.well_count),
     )
 
@@ -2075,10 +2080,11 @@ def run_case_well_throughput(
         multiprocessing_start_method=start_method,
         analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
         materialize_runtime_artifacts=False,
-        microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = replace(
+        prepared.generated_pipeline.pipeline_config or PipelineConfig(),
+        well_filter_config=LazyWellFilterConfig(well_filter=list(well_ids)),
         path_planning_config=LazyPathPlanningConfig(
             global_output_folder=output_root,
             output_dir_suffix="_well_throughput",
@@ -2086,7 +2092,7 @@ def run_case_well_throughput(
         vfs_config=VFSConfig(materialization_backend=MaterializationBackend.DISK),
     )
     orchestrator = PipelineOrchestrator(
-        source_workspace.workspace_root,
+        source_workspace_path,
         pipeline_config=pipeline_config,
     )
     orchestrator.initialize()
@@ -2103,7 +2109,7 @@ def run_case_well_throughput(
     consumer.start()
     progress_context = {
         "execution_id": f"well-throughput::{case_name}::{time.time_ns()}",
-        "plate_id": str(source_workspace.workspace_root),
+        "plate_id": str(source_workspace_path),
         "axis_id": "",
     }
 
@@ -2129,7 +2135,6 @@ def run_case_well_throughput(
                 try:
                     compilation = orchestrator.compile_pipelines(
                         pipeline_definition=prepared.pipeline.steps,
-                        well_filter=list(well_ids),
                     )
                 finally:
                     set_progress_queue(None)

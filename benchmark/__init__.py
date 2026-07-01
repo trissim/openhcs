@@ -25,7 +25,6 @@ __all__ = (
     "get_pipeline_spec",
     "TimeMetric",
     "MemoryMetric",
-    "OpenHCSAxisSelection",
     "BenchmarkCaseProgress",
     "BenchmarkProgressEvent",
     "BenchmarkProgressEventKind",

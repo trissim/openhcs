@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from openhcs.core.source_matching import is_image_path
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -52,7 +53,9 @@ class BenchmarkCliCommand(ABC, metaclass=AutoRegisterMeta):
     def run(self, args: argparse.Namespace) -> int:
         """Execute the parsed command."""
 
-    def _parser(self, subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
+    def _parser(
+        self, subparsers: argparse._SubParsersAction
+    ) -> argparse.ArgumentParser:
         if self.command_name is None:
             raise ValueError(f"{type(self).__name__} must declare command_name.")
         parser = subparsers.add_parser(self.command_name, help=self.help_text)
@@ -119,43 +122,19 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             help="Disable OpenHCS benchmark/runtime execution cache reuse.",
         )
         parser.add_argument(
-            "--openhcs-axis",
+            "--source-schema-well",
             action="append",
-            dest="openhcs_axis_filter",
+            dest="source_schema_wells",
             default=None,
             help=(
-                "OpenHCS axis value to execute. Repeat for multiple axes. "
-                "Defaults to all axes."
+                "Source-schema well/sample to execute. Repeat for multiple "
+                "samples. Defaults to all samples."
             ),
         )
         parser.add_argument(
-            "--openhcs-max-axis-count",
+            "--source-schema-max-image-set-count",
             type=int,
-            help=(
-                "Execute only the first N OpenHCS axes after discovery/filtering. "
-                "Useful for parity/speed smoke runs on large plates."
-            ),
-        )
-        parser.add_argument(
-            "--openhcs-start-method",
-            choices=("fork", "spawn", "forkserver"),
-            default="fork",
-            help="Multiprocessing start method for OpenHCS process workers.",
-        )
-        parser.add_argument(
-            "--openhcs-num-workers",
-            type=int,
-            default=1,
-            help="Number of OpenHCS workers. Use 1 for single-worker benchmarks.",
-        )
-        parser.add_argument(
-            "--openhcs-use-threading",
-            action=argparse.BooleanOptionalAction,
-            default=False,
-            help=(
-                "Use OpenHCS ThreadPoolExecutor mode instead of process workers. "
-                "With --openhcs-num-workers 1 this is single-process execution."
-            ),
+            help="Execute only the first N source-schema samples.",
         )
         parser.add_argument(
             "--figures",
@@ -195,11 +174,10 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             require_native_reference=args.require_native_reference,
             discard_openhcs_outputs=args.discard_openhcs_outputs,
             continue_on_error=args.continue_on_error,
-            openhcs_axis_filter=tuple(args.openhcs_axis_filter or ()),
-            openhcs_max_axis_count=args.openhcs_max_axis_count,
-            openhcs_num_workers=args.openhcs_num_workers,
-            openhcs_start_method=args.openhcs_start_method,
-            openhcs_use_threading=args.openhcs_use_threading,
+            source_schema_image_set_selection=SourceSchemaImageSetSelection(
+                well_filter=tuple(args.source_schema_wells or ()),
+                max_image_set_count=args.source_schema_max_image_set_count,
+            ),
             metric_policy=ComparisonMetricPolicy(
                 collect_memory=not args.no_memory_metric,
             ),
@@ -227,7 +205,9 @@ def _filter_cases_by_name(cases, requested_names: tuple[str, ...]):
     available_names = tuple(case.name for case in cases)
     available_name_set = set(available_names)
     unknown_names = tuple(
-        name for name in dict.fromkeys(requested_names) if name not in available_name_set
+        name
+        for name in dict.fromkeys(requested_names)
+        if name not in available_name_set
     )
     if unknown_names:
         raise ValueError(
@@ -244,7 +224,9 @@ class OfficialCp3ManifestCommand(BenchmarkCliCommand):
     """Build a comparison manifest from local official CellProfiler examples."""
 
     command_name = "official-cp3-manifest"
-    help_text = "Build a comparison manifest from a local CellProfiler examples checkout."
+    help_text = (
+        "Build a comparison manifest from a local CellProfiler examples checkout."
+    )
     sort_order = 20
 
     def configure(self, subparsers: argparse._SubParsersAction) -> None:
@@ -317,9 +299,7 @@ class OfficialCp3ManifestCommand(BenchmarkCliCommand):
             if args.microscope_type is not None:
                 case["microscope_type"] = args.microscope_type
             if args.cellprofiler_timeout_seconds is not None:
-                case["cellprofiler_timeout_seconds"] = (
-                    args.cellprofiler_timeout_seconds
-                )
+                case["cellprofiler_timeout_seconds"] = args.cellprofiler_timeout_seconds
             cases.append(case)
         if args.include_dataset_registry_cases:
             registry_manifest = comparison_manifest_payload(
@@ -442,7 +422,9 @@ class BioFormatsHcsValidationCommand(BenchmarkCliCommand):
     sort_order = 40
 
     def configure(self, subparsers: argparse._SubParsersAction) -> None:
-        from benchmark.datasets.bioformats_hcs import BIOFORMATS_HCS_REGISTRY
+        from benchmark.bioformats_hcs_validation import (
+            bioformats_hcs_validation_specs,
+        )
 
         parser = self._parser(subparsers)
         parser.add_argument("--output-dir", type=Path, required=True)
@@ -457,7 +439,9 @@ class BioFormatsHcsValidationCommand(BenchmarkCliCommand):
         parser.add_argument(
             "--dataset",
             action="append",
-            choices=tuple(sorted(BIOFORMATS_HCS_REGISTRY)),
+            choices=tuple(
+                sorted(spec.id for spec in bioformats_hcs_validation_specs())
+            ),
             help="Dataset id to validate. Repeat to select multiple datasets.",
         )
         parser.add_argument(
@@ -476,24 +460,22 @@ class BioFormatsHcsValidationCommand(BenchmarkCliCommand):
 
     def run(self, args: argparse.Namespace) -> int:
         configure_headless_cpu_benchmark_runtime(args.log_level)
-        from benchmark.bioformats_hcs_validation import validate_bioformats_hcs_catalog
-        from benchmark.datasets.bioformats_hcs import (
-            BIOFORMATS_HCS_CATALOG,
-            BIOFORMATS_HCS_REGISTRY,
+        from benchmark.bioformats_hcs_validation import (
+            bioformats_hcs_validation_specs,
+            validate_bioformats_hcs_catalog,
         )
+        from benchmark.datasets.registry import DATASET_REGISTRY
 
-        rows = (
-            tuple(BIOFORMATS_HCS_REGISTRY[dataset_id] for dataset_id in args.dataset)
+        specs = (
+            tuple(DATASET_REGISTRY[dataset_id] for dataset_id in args.dataset)
             if args.dataset
-            else BIOFORMATS_HCS_CATALOG
+            else bioformats_hcs_validation_specs()
         )
         max_size_bytes = (
-            None
-            if args.max_size_mb is None
-            else int(args.max_size_mb * 1024 * 1024)
+            None if args.max_size_mb is None else int(args.max_size_mb * 1024 * 1024)
         )
         outputs = validate_bioformats_hcs_catalog(
-            rows,
+            specs,
             cache_base=args.dataset_cache_root,
             output_dir=args.output_dir,
             load_sample_count=args.load_sample_count,

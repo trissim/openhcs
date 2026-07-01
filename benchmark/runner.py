@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from tokenize import open as tokenize_open
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from benchmark.adapters.cellprofiler import (
     CellProfilerAdapter,
@@ -17,7 +17,9 @@ from benchmark.adapters.cellprofiler import (
 )
 from benchmark.adapters.openhcs import OpenHCSAdapter
 from benchmark.contracts.dataset import DatasetSpec
+from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.tool_adapter import BenchmarkResult, ToolAdapter
+from benchmark.contracts.values import BenchmarkMetricMap
 from benchmark.datasets.acquire import acquire_dataset
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.pipelines.registry import get_pipeline_spec
@@ -30,23 +32,11 @@ _OPENHCS_EXECUTION_CACHE_MANIFEST_NAME = ".openhcs_runtime_execution_cache.json"
 _SOURCE_CACHE_ROOTS = ("benchmark", "openhcs")
 _SOURCE_CACHE_FILES = ("pyproject.toml",)
 _SOURCE_CACHE_SUFFIXES = (".py", ".toml")
-_SOURCE_CACHE_EXCLUDED_DIRS = (
-    Path("benchmark") / "cellprofiler_source",
-)
+_SOURCE_CACHE_EXCLUDED_DIRS = (Path("benchmark") / "cellprofiler_source",)
 BENCHMARK_CACHE_DOMAINS = frozenset({"harness"})
 _BENCHMARK_CACHE_DOMAINS_SYMBOL = "BENCHMARK_CACHE_DOMAINS"
 _EXECUTION_SOURCE_CACHE_EXCLUDED_DOMAINS = frozenset(
     {"harness", "native_reference", "parity"}
-)
-_LEGACY_SOURCE_TREE_CACHE_KEY = "legacy_source_tree"
-_EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
-    {
-        "equivalence_reference_output_dir",
-        "runtime_execution_cache_manifest",
-        "runtime_execution_cache_key",
-        "reuse_runtime_execution_cache",
-        "cache_candidate_measurement_snapshot",
-    }
 )
 _TREE_METADATA_CHUNK_SIZE = 1024 * 1024
 
@@ -425,20 +415,14 @@ def _write_benchmark_result_cache(
 def _cached_metric_values(
     cached_metrics: object,
     *,
-    requested_metrics: list[Any],
-) -> dict[str, Any]:
+    requested_metrics: Sequence[MetricCollector],
+) -> BenchmarkMetricMap:
     """Return cached metric values only for metrics requested by this run."""
     if not isinstance(cached_metrics, Mapping):
         return {}
-    requested_names = tuple(
-        str(metric.name)
-        for metric in requested_metrics
-        if hasattr(metric, "name")
-    )
+    requested_names = tuple(metric.name for metric in requested_metrics)
     return {
-        name: cached_metrics[name]
-        for name in requested_names
-        if name in cached_metrics
+        name: cached_metrics[name] for name in requested_names if name in cached_metrics
     }
 
 
@@ -455,7 +439,7 @@ def _openhcs_cache_key(
     return {
         "schema_version": _BENCHMARK_CACHE_SCHEMA_VERSION,
         "tool_name": adapter.name,
-        "tool_version": getattr(adapter, "version", "unknown"),
+        "tool_version": adapter.version,
         "pipeline_name": pipeline_name,
         "pipeline_params": _json_ready(dict(pipeline_params)),
         "dataset_tree": _tree_metadata_fingerprint(dataset_path),
@@ -485,11 +469,9 @@ def _openhcs_execution_cache_key(
     return {
         "schema_version": _BENCHMARK_CACHE_SCHEMA_VERSION,
         "tool_name": adapter.name,
-        "tool_version": getattr(adapter, "version", "unknown"),
+        "tool_version": adapter.version,
         "pipeline_name": pipeline_name,
-        "pipeline_params": _json_ready(
-            _execution_cache_pipeline_params(pipeline_params)
-        ),
+        "pipeline_params": _json_ready(dict(pipeline_params)),
         "dataset_tree": _tree_metadata_fingerprint(dataset_path),
         "cppipe_file": (
             _file_content_fingerprint(Path(str(cppipe_path)))
@@ -499,18 +481,6 @@ def _openhcs_execution_cache_key(
         "execution_source_tree": _source_tree_fingerprint(
             excluded_cache_domains=_EXECUTION_SOURCE_CACHE_EXCLUDED_DOMAINS,
         ),
-        _LEGACY_SOURCE_TREE_CACHE_KEY: _source_tree_fingerprint(),
-    }
-
-
-def _execution_cache_pipeline_params(
-    pipeline_params: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Return pipeline params that can affect OpenHCS execution outputs."""
-    return {
-        key: value
-        for key, value in pipeline_params.items()
-        if key not in _EXECUTION_CACHE_IGNORED_PARAM_KEYS
     }
 
 
