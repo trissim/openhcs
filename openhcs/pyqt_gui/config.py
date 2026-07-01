@@ -152,11 +152,11 @@ class PerformanceMonitorConfig:
     """Configuration for the system performance monitor widget."""
 
     # Update frequency settings
-    update_fps: float = 5.0
-    """Update frequency in frames per second (FPS). Default: 5 FPS for good performance."""
+    update_fps: float = 10.0
+    """Update frequency in frames per second (FPS). Default: 10 FPS for responsive plots."""
 
-    render_fps: float = 60.0
-    """Graph render FPS for smooth interpolation (data collection stays at update_fps)."""
+    render_fps: float = 30.0
+    """Legacy render-timer cap; fixed-axis plots refresh when samples arrive."""
 
     history_duration_seconds: float = 60.0
     """Duration of historical data to display in seconds. Default: 60 seconds."""
@@ -171,6 +171,9 @@ class PerformanceMonitorConfig:
     antialiasing: bool = True
     """Enable antialiasing for smoother plot rendering."""
 
+    use_opengl: bool = True
+    """Use OpenGL-backed pyqtgraph curve rendering when available."""
+
     # Performance settings
     update_strategy: UpdateStrategy = UpdateStrategy.FIXED_RATE
     """Strategy for updating the display."""
@@ -182,12 +185,18 @@ class PerformanceMonitorConfig:
     enable_gpu_monitoring: bool = True
     """Enable GPU usage monitoring if available."""
 
+    gpu_refresh_seconds: float = 1.0
+    """Refresh interval for slow GPU provider polling; per-tick samples reuse cached values."""
+
     gpu_temperature_monitoring: bool = True
     """Enable GPU temperature monitoring if available."""
 
     # CPU monitoring settings
     cpu_frequency_monitoring: bool = True
     """Enable CPU frequency monitoring."""
+
+    cpu_frequency_refresh_seconds: float = 5.0
+    """Refresh interval for slow CPU frequency polling; per-tick samples reuse cached values."""
 
     per_core_cpu_monitoring: bool = False
     """Monitor individual CPU cores (more detailed but higher overhead)."""
@@ -220,6 +229,10 @@ class PerformanceMonitorConfig:
             raise ValueError("history_duration_seconds must be positive")
         if self.line_width <= 0:
             raise ValueError("line_width must be positive")
+        if self.gpu_refresh_seconds <= 0:
+            raise ValueError("gpu_refresh_seconds must be positive")
+        if self.cpu_frequency_refresh_seconds <= 0:
+            raise ValueError("cpu_frequency_refresh_seconds must be positive")
 
     @property
     def update_interval_seconds(self) -> float:
@@ -496,9 +509,12 @@ class PyQtGuiRuntimeContext:
 # --- Default Configuration Providers ---
 
 _DEFAULT_PERFORMANCE_MONITOR_CONFIG = PerformanceMonitorConfig(
-    update_fps=5.0,  # 5 FPS for good performance balance
+    update_fps=10.0,  # Responsive default; fixed-axis plots keep this inexpensive
+    render_fps=30.0,
     history_duration_seconds=60.0,
     plot_theme=PlotTheme.DARK,
+    antialiasing=True,
+    use_opengl=True,
     enable_gpu_monitoring=True,
 )
 
@@ -590,6 +606,7 @@ def create_high_performance_config() -> PyQtGUIConfig:
     return PyQtGUIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=30.0,  # High refresh rate
+            render_fps=30.0,
             history_duration_seconds=30.0,  # Shorter history for performance
             antialiasing=False,  # Disable for performance
             per_core_cpu_monitoring=True,  # More detailed monitoring
@@ -611,6 +628,7 @@ def create_low_resource_config() -> PyQtGUIConfig:
     return PyQtGUIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=1.0,  # Very low refresh rate
+            render_fps=1.0,
             history_duration_seconds=120.0,  # Longer history with fewer points
             antialiasing=False,
             enable_gpu_monitoring=False,  # Disable GPU monitoring

@@ -40,7 +40,6 @@ from openhcs.core.selection import (
 from polystore.base import _create_storage_registry
 from openhcs.config_framework.lazy_factory import (
     ensure_global_config_context,
-    rebuild_lazy_config_with_new_global_reference,
 )
 from openhcs.config_framework.global_config import set_saved_global_config
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
@@ -1078,20 +1077,17 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         orchestrator,
         new_global_config,
     ):
-        """Update orchestrator global config reference and rebuild pipeline config if needed."""
+        """Publish a saved global config change to an orchestrator's dependents."""
         ensure_global_config_context(GlobalPipelineConfig, new_global_config)
 
-        current_config = orchestrator.pipeline_config or PipelineConfig()
-        orchestrator.pipeline_config = rebuild_lazy_config_with_new_global_reference(
-            current_config, new_global_config, GlobalPipelineConfig
-        )
+        # Do not replace orchestrator.pipeline_config here. The registered plate
+        # ObjectState owns the live/saved PipelineConfig draft; replacing the
+        # delegate makes ObjectState treat the save as an external object
+        # replacement and rebases away unsaved per-plate edits.
         logger.info(
-            f"Rebuilt orchestrator-specific config for plate: {orchestrator.plate_path}"
+            "Refreshed orchestrator global config context for plate: %s",
+            orchestrator.plate_path,
         )
-
-        # NOTE: ObjectState now auto-detects delegate changes, so no manual sync needed.
-        # When the orchestrator's ObjectState is next accessed, it will automatically
-        # detect that pipeline_config has been replaced and re-extract parameters.
 
         effective_config = orchestrator.get_effective_config()
         self.orchestrator_config_changed.emit(

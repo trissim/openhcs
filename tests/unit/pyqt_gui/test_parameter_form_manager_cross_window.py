@@ -67,6 +67,7 @@ def test_cross_window_change_debounces_placeholder_refresh() -> None:
 
 def test_dispatcher_notifies_source_root_for_live_resolved_refresh() -> None:
     """Unsaved edits must fan out to the source root's live preview refresh."""
+    from PyQt6.QtCore import QEventLoop, QTimer
 
     class SignalRecorder:
         def __init__(self) -> None:
@@ -124,6 +125,9 @@ def test_dispatcher_notifies_source_root_for_live_resolved_refresh() -> None:
         FieldChangeDispatcher.instance().dispatch(
             FieldChangeEvent("well_filter", "B02", manager)
         )
+        loop = QEventLoop()
+        QTimer.singleShot(240, loop.quit)
+        loop.exec()
 
         assert manager.state.updated == [("step_well_filter_config.well_filter", "B02")]
         assert manager.synced == [
@@ -138,6 +142,42 @@ def test_dispatcher_notifies_source_root_for_live_resolved_refresh() -> None:
         ]
     finally:
         ObjectStateRegistry._change_callbacks[:] = previous_callbacks
+
+
+def test_registry_deferred_invalidations_coalesce_until_flush(monkeypatch) -> None:
+    """Repeated live invalidations collapse into one descendant recompute request."""
+
+    calls = []
+
+    def record_invalidation(cls, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        ObjectStateRegistry,
+        "_invalidate_by_type_and_scope_now",
+        classmethod(record_invalidation),
+    )
+    ObjectStateRegistry._deferred_invalidations.clear()
+    ObjectStateRegistry._deferred_invalidation_depth = 0
+
+    with ObjectStateRegistry.defer_live_invalidations():
+        ObjectStateRegistry.invalidate_by_type_and_scope("", str, "name")
+        ObjectStateRegistry.invalidate_by_type_and_scope("", str, "name")
+
+    assert calls == []
+    assert ObjectStateRegistry.has_deferred_invalidations()
+
+    ObjectStateRegistry.flush_deferred_invalidations()
+
+    assert calls == [
+        {
+            "scope_id": "",
+            "changed_type": str,
+            "field_name": "name",
+            "invalidate_saved": False,
+        }
+    ]
+    assert not ObjectStateRegistry.has_deferred_invalidations()
 
 
 def test_chrome_sync_refreshes_widgets_by_exact_objectstate_path() -> None:

@@ -130,10 +130,10 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             missing_port_counts=self._missing_port_counts,
         )
 
-        # Real-time progress timer for smooth UI updates during execution
+        # Coalesce progress events into redraws instead of polling while idle.
         self._progress_timer = QTimer()
+        self._progress_timer.setSingleShot(True)
         self._progress_timer.timeout.connect(self._update_from_progress)
-        self._progress_timer.start(100)  # 100ms for smooth updates
 
     def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
@@ -297,6 +297,8 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
     def _on_registry_event(self, _execution_id: str, _event: ProgressEvent) -> None:
         """Mark progress dirty when registry changes - triggers timer update."""
         self._progress_dirty = True
+        if self._progress_timer is not None and not self._progress_timer.isActive():
+            self._progress_timer.start(100)
 
     @pyqtSlot()
     def _update_from_progress(self) -> None:

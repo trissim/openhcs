@@ -377,6 +377,72 @@ class TestPlateManagerWidget:
             close_widget(widget)
             ObjectStateRegistry.clear()
 
+    def test_global_config_save_preserves_dirty_pipeline_config_delegate(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        initial_global_config = GlobalPipelineConfig(num_workers=1)
+        widget.global_config = initial_global_config
+        ensure_global_config_context(GlobalPipelineConfig, initial_global_config)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+
+        try:
+            global_state = ObjectState(initial_global_config, scope_id="")
+            ObjectStateRegistry.register(global_state, _skip_snapshot=True)
+            orchestrator = PipelineOrchestrator(
+                plate_path=plate_root,
+                pipeline_config=PipelineConfig(),
+            )
+            plate_state = ObjectState(orchestrator, scope_id=plate_scope)
+            ObjectStateRegistry.register(plate_state, _skip_snapshot=True)
+            emitted_effective_configs = []
+            widget.orchestrator_config_changed.connect(
+                lambda scope_id, config: emitted_effective_configs.append(
+                    (scope_id, config.num_workers)
+                )
+            )
+
+            plate_state.update_parameter("num_workers", 3)
+            assert plate_state.get_resolved_value("num_workers") == 3
+            assert plate_state.get_saved_resolved_value("num_workers") == 1
+            assert plate_state.dirty_fields == {"num_workers"}
+
+            global_state.update_parameter("num_workers", 7)
+            new_global_config = global_state.to_object(update_delegate=False)
+            widget._update_orchestrator_global_config(
+                plate_scope,
+                orchestrator,
+                new_global_config,
+            )
+
+            assert object.__getattribute__(
+                orchestrator.pipeline_config,
+                "num_workers",
+            ) is None
+            assert plate_state.parameters["num_workers"] == 3
+            assert plate_state._saved_parameters["num_workers"] is None
+            assert plate_state.get_resolved_value("num_workers") == 3
+            assert plate_state.get_saved_resolved_value("num_workers") == 1
+            assert plate_state.dirty_fields == {"num_workers"}
+            assert emitted_effective_configs == [(plate_scope, 7)]
+
+            global_state.mark_saved()
+
+            assert plate_state.parameters["num_workers"] == 3
+            assert plate_state._saved_parameters["num_workers"] is None
+            assert plate_state.get_resolved_value("num_workers") == 3
+            assert plate_state.get_saved_resolved_value("num_workers") == 7
+            assert plate_state.dirty_fields == {"num_workers"}
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
     def test_code_mode_omits_default_orchestrator_per_plate_config(
         self,
         monkeypatch,
