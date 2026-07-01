@@ -382,6 +382,90 @@ def _filter_patterns_by_component(
     return filter_pattern_list(patterns)
 
 
+@dataclass(frozen=True, slots=True)
+class DictPatternGroupInference:
+    """Infer grouped dict-pattern inputs from fixed components in pattern names."""
+
+    parser: "FilenameParser"
+    group_keys: tuple[str, ...]
+
+    @classmethod
+    def from_compiled_pattern(
+        cls,
+        parser: "FilenameParser",
+        compiled_pattern,
+    ) -> "DictPatternGroupInference":
+        return cls(
+            parser=parser,
+            group_keys=tuple(group.group_key for group in compiled_pattern.groups),
+        )
+
+    def grouped(
+        self,
+        patterns: Sequence[SourceCandidatePath],
+    ) -> dict[str, list[SourceCandidatePath]] | None:
+        parsed_patterns = tuple(
+            (pattern, self.parser.parse_filename(str(pattern)))
+            for pattern in patterns
+        )
+        if any(metadata is None for _, metadata in parsed_patterns):
+            return None
+
+        component = self.inferred_component(
+            tuple(metadata for _, metadata in parsed_patterns if metadata is not None)
+        )
+        if component is None:
+            return None
+
+        grouped = {group_key: [] for group_key in self.group_keys}
+        for pattern, metadata in parsed_patterns:
+            if metadata is None:
+                continue
+            grouped[str(metadata[component])].append(pattern)
+        return {key: values for key, values in grouped.items() if values}
+
+    def inferred_component(
+        self,
+        metadata_items: tuple[Mapping[str, Any], ...],
+    ) -> str | None:
+        candidates = []
+        group_keys = frozenset(self.group_keys)
+        for component in self.component_names(metadata_items):
+            values = tuple(
+                str(metadata[component])
+                for metadata in metadata_items
+                if metadata.get(component) is not None
+            )
+            if len(values) != len(metadata_items):
+                continue
+            if frozenset(values) == group_keys:
+                candidates.append(component)
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            raise ValueError(
+                "Cannot infer dict-pattern source component for GroupBy.NONE; "
+                f"multiple components match function groups {self.group_keys!r}: "
+                f"{tuple(candidates)!r}."
+            )
+        return None
+
+    def component_names(
+        self,
+        metadata_items: tuple[Mapping[str, Any], ...],
+    ) -> tuple[str, ...]:
+        parser_components = getattr(self.parser, "FILENAME_COMPONENTS", None)
+        if parser_components is not None:
+            return tuple(str(component) for component in parser_components)
+
+        names: list[str] = []
+        for metadata in metadata_items:
+            for component in metadata:
+                if component not in names:
+                    names.append(str(component))
+        return tuple(names)
+
+
 class FunctionStepExecutor:
     """Run one compiled FunctionStep plan for one multiprocessing axis."""
 
@@ -697,9 +781,26 @@ class FunctionStepExecutor:
         patterns_by_axis: Mapping[str, DiscoveredPatternCollection],
     ) -> PatternGroups:
         plan = self.plan
+        axis_patterns = patterns_by_axis[plan.axis_id]
+        if (
+            plan.group_by_value is None
+            and plan.compiled_function_pattern.is_grouped
+            and not isinstance(axis_patterns, dict)
+        ):
+            inferred_groups = DictPatternGroupInference.from_compiled_pattern(
+                self.context.microscope_handler.parser,
+                plan.compiled_function_pattern,
+            ).grouped(axis_patterns)
+            if inferred_groups is not None:
+                logger.info(
+                    "Inferred GroupBy.NONE dict-pattern groups for step '%s': %s",
+                    plan.step_name,
+                    tuple(inferred_groups),
+                )
+                axis_patterns = inferred_groups
         grouped_patterns = (
             plan.compiled_function_pattern.prepare_grouped_patterns(
-                patterns_by_axis[plan.axis_id],
+                axis_patterns,
                 default_component=plan.group_by_value,
             )
         )

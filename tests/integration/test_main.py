@@ -656,7 +656,7 @@ def _execute_pipeline_phases(
         for well_id, ctx in compiled_contexts.items():
             logger.info(f"Well {well_id}: {len(ctx.required_visualizers)} visualizers")
             for i, vis_info in enumerate(ctx.required_visualizers):
-                config = vis_info["config"]
+                config = vis_info.config
                 if hasattr(config, "port"):
                     logger.info(f"  Visualizer {i}: Napari port {config.port}")
                 else:

@@ -47,6 +47,7 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentValueDomainPayload,
     ViewerObjectDisplayConfigInput,
 )
+from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 StreamComponentMetadata = SourceComponentMetadata | None
 ComponentDisplayName: TypeAlias = str | int | float | bool | None
@@ -54,6 +55,27 @@ StreamComponentDomainMetadataItems: TypeAlias = tuple[dict[str, ComponentValue],
 
 class StreamComponentNameMetadata(dict[str, dict[str, ComponentDisplayName]]):
     """Component value display names keyed by component then raw value."""
+
+@dataclass(frozen=True, slots=True)
+class StreamScopedDisplayConfig(ViewerDisplayConfigObject):
+    """Display config restricted to components addressable by one stream request."""
+
+    base: ViewerDisplayConfigObject
+    component_order: tuple[str, ...]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(object.__getattribute__(self, "base"), name)
+
+    @property
+    def COMPONENT_ORDER(self) -> tuple[str, ...]:
+        return self.component_order
+
+    def component_modes(self) -> dict[str, str]:
+        base_modes = self.base.component_modes()
+        return {
+            component: str(base_modes[component])
+            for component in self.component_order
+        }
 
 @dataclass(frozen=True)
 class StreamComponentMessageExtraPayload(ViewerComponentMetadataPayload):
@@ -197,6 +219,25 @@ class StreamSourceComponentMetadataItems:
         return StreamViewerComponentMetadataProjector(
             component_order
         ).indexed_source_metadata(self.values)
+
+    def complete_component_order(
+        self,
+        component_order: Iterable[str],
+    ) -> tuple[str, ...]:
+        """Return components with concrete metadata in every streamed item."""
+        order = tuple(str(component) for component in component_order)
+        if not self.values:
+            return order
+        projector = StreamViewerComponentMetadataProjector(order)
+        complete: list[str] = []
+        for component in order:
+            if all(
+                metadata is not None
+                and projector.component_value(metadata, component) is not None
+                for metadata in self.values
+            ):
+                complete.append(component)
+        return tuple(complete)
 
     def include_observed_values(
         self,

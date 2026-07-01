@@ -177,6 +177,51 @@ def test_function_step_execution_does_not_prepare_callables_in_hot_path(monkeypa
     assert ("finalize", "prepared-at-compile") in events
 
 
+def test_groupby_none_dict_pattern_infers_fixed_component_groups():
+    from openhcs.core.steps.function_execution import DictPatternGroupInference
+
+    class ParserStub:
+        FILENAME_COMPONENTS = ("well", "site", "channel", "z_index", "timepoint")
+
+        def parse_filename(self, filename):
+            if "_w1_" in filename:
+                channel = "1"
+            elif "_w2_" in filename:
+                channel = "2"
+            else:
+                return None
+            return {
+                "well": "A01",
+                "site": "{iii}",
+                "channel": channel,
+                "z_index": "1",
+                "timepoint": "1",
+            }
+
+    def first(image):
+        return image
+
+    def second(image):
+        return image
+
+    compiled = compile_function_pattern({"1": first, "2": second}, {}, {})
+
+    grouped = DictPatternGroupInference.from_compiled_pattern(
+        ParserStub(),
+        compiled,
+    ).grouped(
+        (
+            "A01_s{iii}_w1_z001_t001.tif",
+            "A01_s{iii}_w2_z001_t001.tif",
+        )
+    )
+
+    assert grouped == {
+        "1": ["A01_s{iii}_w1_z001_t001.tif"],
+        "2": ["A01_s{iii}_w2_z001_t001.tif"],
+    }
+
+
 def test_build_analysis_filename_uses_pipeline_position_for_image_derived_name():
     context = ContextStub(_compiled_plan(pipeline_position=7))
     plan = FunctionStepExecutionPlan.from_context(context, 2)

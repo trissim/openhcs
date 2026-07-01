@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 import numpy as np
+from polystore.napari_stream import NapariDisplayPayload
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
@@ -58,12 +59,17 @@ class StreamingConfigStub(ViewerDisplayConfigObject):
     COMPONENT_ORDER = AllComponents.ordered_names()
     host = "127.0.0.1"
     transport_mode = "tcp"
+    colormap = SimpleNamespace(value="gray")
+    variable_size_handling = SimpleNamespace(value="pad_to_max")
 
     def __init__(self, port):
         self.port = port
 
     def component_modes(self):
         return {component: "stack" for component in self.COMPONENT_ORDER}
+
+    def get_colormap_name(self):
+        return self.colormap.value
 
     def streaming_viewer_surface(self, _context):
         return StreamingViewerSurface(
@@ -885,6 +891,162 @@ def test_materialize_artifact_outputs_uses_group_axis_for_partial_record_identit
     assert [path for _spec, _data, path in materialized] == [
         "/analysis/A01_s002_w5_z001_t001_measurements_step7.roi.zip",
     ]
+
+
+def test_materialize_artifact_outputs_uses_null_component_group_identity_for_streaming(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+        group_keys=("2",),
+        paths_by_group={
+            "2": "/memory/channel2_Nuclei.pkl",
+        },
+    )
+    group_plan = output_plan.for_group("2")
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2), dtype=np.int32),
+        source_component_metadata={
+            "well": "A01",
+            "site": "1",
+            "channel": None,
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".tif",
+        },
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(group_plan, labels, axis_id="A01"),
+        path=group_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, streaming_configs=(streaming_config_stub(),)),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s001_w2_z001_t001_Nuclei_step7.roi.zip"
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": 1,
+            "channel": 2,
+            "z_index": 1,
+            "timepoint": 1,
+        },
+    )
+
+
+def test_materialize_artifact_outputs_streams_aggregate_artifact_with_incomplete_axis(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2), dtype=np.int32),
+        source_component_metadata={
+            "well": "A01",
+            "site": "1",
+            "channel": None,
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".pkl",
+        },
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(100, 200)),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, labels, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    streaming_config = streaming_config_stub()
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, streaming_configs=(streaming_config,)),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_Nuclei_step7.roi.zip"
+    stream_request = stream_request_from_backend_kwargs(backend_kwargs)
+    assert stream_request.display_config.COMPONENT_ORDER == (
+        "z_index",
+        "timepoint",
+        "well",
+        "site",
+    )
+    assert NapariDisplayPayload.from_display_config(stream_request.display_config) == {
+        "colormap": "gray",
+        "variable_size_handling": "pad_to_max",
+    }
+    assert stream_request.source.metadata.metadata_by_index == (
+        {
+            "well": "A01",
+            "site": 1,
+            "z_index": 1,
+            "timepoint": 1,
+        },
+    )
+    assert stream_request.message_extra["component_value_domain"] == {
+        "well": ["A01"],
+        "site": [1],
+        "z_index": [1],
+        "timepoint": [1],
+    }
 
 
 def test_materialize_artifact_outputs_defaults_metadata_to_existing_json_spec(

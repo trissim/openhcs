@@ -30,8 +30,10 @@ from openhcs.core.source_image_provenance import (
 )
 from openhcs.core.source_matching import (
     source_component_metadata_value,
+    source_metadata_component,
     with_source_component_metadata,
 )
+from openhcs.core.source_metadata import SourceMetadataRoleView
 from openhcs.core.steps.function_output_identity import (
     FunctionOutputComponentIdentityAuthority,
     FunctionOutputIdentity,
@@ -47,6 +49,7 @@ from openhcs.core.steps.function_output_manifest import (
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
+    StreamScopedDisplayConfig,
     StreamSourceComponentMetadataItems,
 )
 from openhcs.core.streaming_config_factory import StreamingViewerSurface
@@ -125,6 +128,31 @@ class ArtifactMaterializationBackendPlan:
             filemanager=filemanager,
             stream_output_paths=stream_output_paths,
         ).items():
+            component_order = tuple(
+                str(component)
+                for component in viewer_surface.display_config.COMPONENT_ORDER
+            )
+            complete_component_order = source_metadata_items.complete_component_order(
+                component_order
+            )
+            if complete_component_order != component_order:
+                logger.info(
+                    "Artifact viewer stream omitting incomplete source component(s) "
+                    "%s from backend %s",
+                    tuple(
+                        component
+                        for component in component_order
+                        if component not in complete_component_order
+                    ),
+                    backend,
+                )
+                viewer_surface = replace(
+                    viewer_surface,
+                    display_config=StreamScopedDisplayConfig(
+                        base=viewer_surface.display_config,
+                        component_order=complete_component_order,
+                    ),
+                )
             stream_backend_kwargs = StreamComponentMessageExtraAuthority.from_context(
                 viewer_surface,
                 context=context,
@@ -148,6 +176,10 @@ class ArtifactStreamSourceMetadataAuthority:
         data: MaterializationValue,
         fallback_source_identity: SourceImageIdentity | None,
     ) -> StreamSourceComponentMetadataItems:
+        fallback_source_identity = (
+            fallback_source_identity
+            or ArtifactStreamSourceMetadataAuthority.payload_source_identity(data)
+        )
         emitted_identities = materialization_spec.emitted_source_identities(data)
         if emitted_identities:
             return StreamSourceComponentMetadataItems.from_source_identities(
@@ -161,6 +193,16 @@ class ArtifactStreamSourceMetadataAuthority:
                 else None,
             )
         )
+
+    @staticmethod
+    def payload_source_identity(
+        data: MaterializationValue,
+    ) -> SourceImageIdentity | None:
+        metadata = image_payload_metadata(data)
+        source_identity = metadata.source_provenance.scalar_source_identity
+        if source_identity.addressable:
+            return source_identity
+        return None
 
 class ArtifactMaterializationTargetPlan(ABC, metaclass=AutoRegisterMeta):
     """Nominal target policy for artifact materialization destinations."""
@@ -391,6 +433,58 @@ class AnalysisOutputDescriptorAuthority:
         )
 
     @classmethod
+    def record_metadata_with_runtime_group_key(
+        cls,
+        plan: FunctionStepExecutionPlan,
+        record: StoredRuntimeValue,
+        metadata: ImagePayloadMetadata,
+    ) -> ImagePayloadMetadata:
+        """Attach runtime group identity when metadata marks one missing axis."""
+        metadata = cls.record_metadata_with_runtime_plane_group(
+            plan,
+            record,
+            metadata,
+        )
+        if plan.group_by_value is not None:
+            return metadata
+        group_key = record.key.scope.group_key
+        if group_key is None:
+            return metadata
+        component = cls.single_null_source_component(metadata.source_component_metadata)
+        if component is None:
+            return metadata
+        component_metadata = dict(metadata.source_component_metadata or {})
+        component_metadata = with_source_component_metadata(
+            component_metadata,
+            component,
+            group_key,
+        )
+        return metadata.with_source_provenance(
+            metadata.source_provenance.with_source_component_metadata(
+                component_metadata
+            ),
+        )
+
+    @staticmethod
+    def single_null_source_component(
+        metadata: Mapping[str, object] | None,
+    ) -> AllComponents | None:
+        """Return the only OpenHCS component explicitly marked as missing."""
+        if metadata is None:
+            return None
+        missing_components: list[AllComponents] = []
+        for field, value in SourceMetadataRoleView(metadata).scalar_items():
+            if value is not None:
+                continue
+            component = source_metadata_component(field)
+            if component is None or component in missing_components:
+                continue
+            missing_components.append(component)
+        if len(missing_components) != 1:
+            return None
+        return missing_components[0]
+
+    @classmethod
     def record_source_descriptor(
         cls,
         context: "ProcessingContext",
@@ -402,7 +496,7 @@ class AnalysisOutputDescriptorAuthority:
         metadata = cls.record_payload_metadata(record)
         if metadata is None:
             return None
-        metadata = cls.record_metadata_with_runtime_plane_group(
+        metadata = cls.record_metadata_with_runtime_group_key(
             plan,
             record,
             metadata,
