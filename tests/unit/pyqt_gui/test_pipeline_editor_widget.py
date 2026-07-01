@@ -371,6 +371,31 @@ def test_pipeline_update_refreshes_existing_step_scope_state() -> None:
     assert resolved[0].processing_config.group_by is GroupBy.NONE
 
 
+def test_groupby_none_is_concrete_object_state_override() -> None:
+    ObjectStateRegistry.clear()
+
+    assert not (GroupBy.NONE == None)  # noqa: E711
+    assert not (None == GroupBy.NONE)  # noqa: E711
+
+    state = ObjectState(
+        FunctionStep(
+            name="IdentifyPrimaryObjects",
+            processing_config=LazyProcessingConfig(),
+        ),
+        scope_id="plate::functionstep_0",
+    )
+
+    state.update_parameter("processing_config.group_by", GroupBy.NONE)
+
+    assert state.parameters["processing_config.group_by"] is GroupBy.NONE
+    assert "processing_config.group_by" in state.signature_diff_fields
+
+    state.reset_parameter("processing_config.group_by")
+
+    assert state.parameters["processing_config.group_by"] is None
+    assert "processing_config.group_by" not in state.signature_diff_fields
+
+
 def test_pipeline_update_transfers_existing_step_scope_token_for_reapply() -> None:
     ObjectStateRegistry.clear()
     ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)

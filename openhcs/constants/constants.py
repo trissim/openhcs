@@ -140,10 +140,16 @@ def _enum_value_for_comparison(value: Any) -> Any:
 
 def _add_groupby_methods(GroupBy: Enum) -> Enum:
     """Add custom methods to GroupBy enum."""
+    def groupby_eq(self, other: Any) -> bool:
+        # GroupBy.NONE is a concrete enum value in user/config state. It must
+        # not compare equal to Python None, which is the lazy-inheritance
+        # sentinel in ObjectState and lazy dataclass fields.
+        if other is None:
+            return False
+        return self.value == _enum_value_for_comparison(other)
+
     GroupBy.component = property(lambda self: self.value)
-    GroupBy.__eq__ = (
-        lambda self, other: self.value == _enum_value_for_comparison(other)
-    )
+    GroupBy.__eq__ = groupby_eq
     GroupBy.__hash__ = lambda self: hash("GroupBy.NONE") if self.value is None else hash(self.value)
     GroupBy.__str__ = lambda self: f"GroupBy.{self.name}"
     GroupBy.__repr__ = lambda self: f"GroupBy.{self.name}"

@@ -578,6 +578,7 @@ class FuncStepContractValidator:
         step_name: str,
     ):
         """Return compiled grouping semantics after conflict normalization."""
+        variable_components = () if variable_components is None else variable_components
         if group_by and group_by.value in [vc.value for vc in variable_components]:
             from openhcs.constants import GroupBy
 
@@ -715,7 +716,11 @@ class FuncStepContractValidator:
             step_name,
         )
 
-        if orchestrator is not None and isinstance(func_pattern, dict) and group_by is not None:
+        if (
+            orchestrator is not None
+            and isinstance(func_pattern, dict)
+            and group_by not in (None, GroupBy.NONE)
+        ):
             dict_validation_result = validator.validate_dict_pattern_keys(
                 func_pattern,
                 group_by,
@@ -770,6 +775,8 @@ class FuncStepContractValidator:
                         or dict pattern key validation.
         """
         variable_components = step.processing_config.variable_components
+        if variable_components is None:
+            variable_components = ()
         group_by = step.processing_config.group_by
 
         # Extracting function pattern and name from step
@@ -822,7 +829,11 @@ class FuncStepContractValidator:
         )
 
         # Validate dict pattern keys if orchestrator is available
-        if orchestrator is not None and isinstance(func_pattern, dict) and group_by is not None:
+        if (
+            orchestrator is not None
+            and isinstance(func_pattern, dict)
+            and group_by not in (None, GroupBy.NONE)
+        ):
             dict_validation_result = validator.validate_dict_pattern_keys(
                 func_pattern, group_by, step_name, orchestrator
             )

@@ -99,6 +99,24 @@ def test_normalized_group_by_resolves_variable_component_conflict_to_none():
     )
 
 
+def test_validate_funcstep_skips_dict_key_lookup_for_groupby_none():
+    func = _function("channel_branch")
+    func.input_memory_type = "numpy"
+    func.output_memory_type = "numpy"
+    step = FunctionStep(
+        func={"1": func},
+        name="dict-none",
+        processing_config=LazyProcessingConfig(group_by=GroupBy.NONE),
+    )
+
+    def fail_component_lookup(_group_by):
+        raise AssertionError("GroupBy.NONE must not query component keys")
+
+    orchestrator = SimpleNamespace(get_component_keys=fail_component_lookup)
+
+    FuncStepContractValidator.validate_funcstep(step, orchestrator=orchestrator)
+
+
 def test_validate_required_variable_components_allows_declared_axis():
     @required_variable_components(VariableComponents.TIMEPOINT)
     def process(image):

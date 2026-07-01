@@ -177,7 +177,7 @@ class ComponentConfigurationFactory:
         This defines the current OpenHCS setup:
         - Well as multiprocessing axis
         - Site as default variable component
-        - No default fanout/group_by unless a step declares it
+        - Channel as default group_by component
         """
         # Import here to avoid circular import with constants.py
         from enum import Enum
@@ -195,5 +195,5 @@ class ComponentConfigurationFactory:
             _ComponentTemplate,
             multiprocessing_axis=_ComponentTemplate.WELL,
             default_variable=[_ComponentTemplate.SITE],
-            default_group_by=None
+            default_group_by=_ComponentTemplate.CHANNEL
         )
