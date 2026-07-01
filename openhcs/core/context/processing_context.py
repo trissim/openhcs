@@ -64,6 +64,7 @@ class ProcessingContext:
         analysis_consolidation_config: Runtime analysis consolidation settings.
         plate_metadata_config: Runtime plate metadata settings.
         auto_add_output_plate_to_plate_manager: Runtime output-plate registration flag.
+        output_plate_root: Planned runtime output plate root.
         pipeline_sequential_mode: Flag indicating pipeline-wide vs step-wide sequential processing.
         pipeline_sequential_combinations: Pre-computed sequential combinations for pipeline-wide mode.
         current_sequential_combination: Active combination during pipeline-wide sequential execution.
@@ -85,6 +86,7 @@ class ProcessingContext:
         analysis_consolidation_config: AnalysisConsolidationConfig | None = None,
         plate_metadata_config: PlateMetadataConfig | None = None,
         auto_add_output_plate_to_plate_manager: bool = False,
+        output_plate_root: str | None = None,
     ):
         """
         Initialize the processing context.
@@ -96,6 +98,7 @@ class ProcessingContext:
             analysis_consolidation_config: Analysis consolidation runtime settings.
             plate_metadata_config: Plate metadata runtime settings.
             auto_add_output_plate_to_plate_manager: Output-plate registration flag.
+            output_plate_root: Planned runtime output plate root.
         """
         self._is_frozen = False
 
@@ -133,6 +136,7 @@ class ProcessingContext:
         self.auto_add_output_plate_to_plate_manager = (
             auto_add_output_plate_to_plate_manager
         )
+        self.output_plate_root = output_plate_root
 
         self.execution_id = None
         self.plate_id = None

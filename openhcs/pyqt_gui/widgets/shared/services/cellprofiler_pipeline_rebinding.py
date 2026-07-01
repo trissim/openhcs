@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Protocol
 
 from openhcs.core.steps.function_step import FunctionStep
@@ -17,11 +17,14 @@ from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 
 
 class CellProfilerImportResultProvider(Protocol):
-    """Pipeline-editor surface required for CellProfiler runtime rebinding."""
+    """Plate/workspace surface required for CellProfiler runtime rebinding."""
 
-    current_plate: str | None
-    cellprofiler_import_result: CellProfilerPipelineImportResult | None
-    cellprofiler_import_results_by_plate: Mapping[str, CellProfilerPipelineImportResult]
+    def cellprofiler_import_result_for_plate(
+        self,
+        plate_path: str,
+    ) -> CellProfilerPipelineImportResult | None:
+        """Return the import result for one logical plate scope."""
+        ...
 
 
 class CellProfilerPipelineRuntimeBindingService:
@@ -31,7 +34,7 @@ class CellProfilerPipelineRuntimeBindingService:
     def runtime_bound_pipeline_for_plate(
         cls,
         *,
-        plate_pipeline_editor: CellProfilerImportResultProvider | None,
+        import_result_provider: CellProfilerImportResultProvider | None,
         plate_path: str,
         pipeline_steps: Sequence[FunctionStep],
     ) -> list[FunctionStep]:
@@ -41,14 +44,14 @@ class CellProfilerPipelineRuntimeBindingService:
         ):
             return steps
 
-        if plate_pipeline_editor is None:
+        if import_result_provider is None:
             raise RuntimeError(
                 "Cannot compile or run CellProfiler pipeline code without a "
-                "pipeline editor import context."
+                "CellProfiler import context."
             )
 
         import_result = cls.import_result_for_plate(
-            plate_pipeline_editor,
+            import_result_provider,
             plate_path,
         )
         if import_result is None:
@@ -67,13 +70,10 @@ class CellProfilerPipelineRuntimeBindingService:
 
     @staticmethod
     def import_result_for_plate(
-        plate_pipeline_editor: CellProfilerImportResultProvider,
+        import_result_provider: CellProfilerImportResultProvider,
         plate_path: str,
     ) -> CellProfilerPipelineImportResult | None:
         """Return the import result associated with one logical plate scope."""
-        plate_key = str(plate_path)
-        if plate_key in plate_pipeline_editor.cellprofiler_import_results_by_plate:
-            return plate_pipeline_editor.cellprofiler_import_results_by_plate[plate_key]
-        if plate_pipeline_editor.current_plate == plate_key:
-            return plate_pipeline_editor.cellprofiler_import_result
-        return None
+        return import_result_provider.cellprofiler_import_result_for_plate(
+            str(plate_path)
+        )

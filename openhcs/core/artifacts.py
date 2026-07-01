@@ -7,7 +7,7 @@ objects, measurements, relationships, and other richer runtime state.
 
 from abc import ABC
 from collections.abc import Hashable, Iterable, Mapping
-from dataclasses import astuple, dataclass, is_dataclass, replace
+from dataclasses import astuple, asdict, dataclass, fields, is_dataclass, replace
 from enum import Enum
 from typing import ClassVar, Self, cast
 
@@ -332,6 +332,20 @@ class ArtifactScope:
     z_index: str | None = None
     timepoint: str | None = None
 
+    def to_json_dict(self) -> dict[str, object]:
+        """Return the transport representation for this artifact scope."""
+        return asdict(self)
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object]) -> "ArtifactScope":
+        return cls(
+            **{
+                field.name: data[field.name]
+                for field in fields(cls)
+                if field.name in data
+            }
+        )
+
 
 @dataclass(frozen=True)
 class ArtifactKey:
@@ -341,6 +355,25 @@ class ArtifactKey:
     kind: ArtifactKind
     scope: ArtifactScope
     semantic_id: str | None = None
+
+    def to_json_dict(self) -> dict[str, object]:
+        """Return the transport representation for this artifact identity."""
+        record = asdict(self)
+        record["kind"] = self.kind.value
+        return record
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object]) -> "ArtifactKey":
+        scope = data["scope"]
+        if not isinstance(scope, Mapping):
+            raise TypeError("ArtifactKey.scope must be a mapping.")
+        semantic_id = data.get("semantic_id")
+        return cls(
+            name=str(data["name"]),
+            kind=ArtifactKind(data["kind"]),
+            scope=ArtifactScope.from_json_dict(scope),
+            semantic_id=None if semantic_id is None else str(semantic_id),
+        )
 
 
 @dataclass(frozen=True)

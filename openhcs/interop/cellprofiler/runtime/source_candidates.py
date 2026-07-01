@@ -900,6 +900,7 @@ class PipelineStartSourcePayloadRequest(PipelineStartSourceLoadRequest):
         *,
         payload: ImagePayloadValue,
         source: "ParsedSourceCandidate",
+        storage_path: str,
         load_request: PipelineStartSourceLoadRequest,
     ) -> "PipelineStartSourcePayloadRequest":
         return cls(
@@ -909,7 +910,7 @@ class PipelineStartSourcePayloadRequest(PipelineStartSourceLoadRequest):
             source_load_plan=load_request.source_load_plan,
             payload=payload,
             source_path=source.path,
-            storage_path=source.resolved_path,
+            storage_path=storage_path,
             source_metadata=source.metadata,
         )
 

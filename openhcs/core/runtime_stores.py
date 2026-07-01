@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,17 @@ class RuntimeArtifactLocation:
             raise ValueError("RuntimeArtifactLocation.path cannot be empty.")
         if not self.backend:
             raise ValueError("RuntimeArtifactLocation.backend cannot be empty.")
+
+    def to_json_dict(self) -> dict[str, object]:
+        """Return the transport representation for this runtime location."""
+        return asdict(self)
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object]) -> "RuntimeArtifactLocation":
+        return cls(
+            path=str(data["path"]),
+            backend=str(data["backend"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +174,45 @@ class StoredRuntimeValue:
     @property
     def backend(self) -> str:
         return self.location.backend
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactAddress:
+    """Runtime artifact address projected from a stored runtime value."""
+
+    key: ArtifactKey
+    location: RuntimeArtifactLocation
+    value_type: str | None = None
+
+    @classmethod
+    def from_record(cls, record: StoredRuntimeValue) -> "RuntimeArtifactAddress":
+        return cls(
+            key=record.key,
+            location=record.location,
+            value_type=type(record.value.data).__qualname__,
+        )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RuntimeArtifactAddress":
+        key = data["key"]
+        location = data["location"]
+        if not isinstance(key, Mapping):
+            raise TypeError("RuntimeArtifactAddress.key must be a mapping.")
+        if not isinstance(location, Mapping):
+            raise TypeError("RuntimeArtifactAddress.location must be a mapping.")
+        value_type = data.get("value_type")
+        return cls(
+            key=ArtifactKey.from_json_dict(key),
+            location=RuntimeArtifactLocation.from_json_dict(location),
+            value_type=None if value_type is None else str(value_type),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key.to_json_dict(),
+            "location": self.location.to_json_dict(),
+            "value_type": self.value_type,
+        }
 
 
 class RuntimeValueStore:

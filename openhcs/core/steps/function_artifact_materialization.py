@@ -15,6 +15,7 @@ from polystore.streaming.viewer_transport import ViewerStreamProducer
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.artifact_materialization_policy import (
+    NO_ARTIFACT_MATERIALIZATION,
     resolve_artifact_materialization_spec,
 )
 from openhcs.core.runtime_stores import (
@@ -742,6 +743,8 @@ def materialize_artifact_outputs(
     store = context.runtime_value_store
 
     for output_key, output_plan in plan.artifact_outputs.items():
+        if output_plan.materialization is NO_ARTIFACT_MATERIALIZATION:
+            continue
         if output_plan.materialization is None and output_plan.kind is ArtifactKind.SPECIAL:
             continue
 

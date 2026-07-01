@@ -904,11 +904,12 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
         return cls.config_type_for_key(config_key)().display_name
 
 
-from openhcs.core.streaming_config_factory import (
-    StreamingConfigBehaviorMixin,
-    StreamingViewerPresentation,
+from openhcs.core.streaming_config_declarations import (
+    FIJI_STREAMING_CONFIG_SPEC,
+    NAPARI_STREAMING_CONFIG_SPEC,
     StreamingViewerConfigSpec,
 )
+from openhcs.core.streaming_config_factory import StreamingConfigBehaviorMixin
 
 
 @abbreviation("nap")
@@ -921,16 +922,8 @@ class NapariStreamingConfig(
 ):
     """Streaming configuration for Napari."""
 
-    _streaming_config_key: ClassVar[str] = "napari_streaming_config"
-    streaming_spec: ClassVar[StreamingViewerConfigSpec] = StreamingViewerConfigSpec(
-        viewer_name="napari",
-        registry_key="napari_streaming_config",
-        display_name="Napari",
-        step_plan_output_key="napari_streaming_paths",
-        presentation=StreamingViewerPresentation("OpenHCS Napari Visualization"),
-        backend=Backend.NAPARI_STREAM,
-        visualizer_module="openhcs.runtime.napari_stream_visualizer",
-    )
+    _streaming_config_key: ClassVar[str] = NAPARI_STREAMING_CONFIG_SPEC.registry_key
+    streaming_spec: ClassVar[StreamingViewerConfigSpec] = NAPARI_STREAMING_CONFIG_SPEC
     port: int = 5555
 
 
@@ -944,16 +937,8 @@ class FijiStreamingConfig(
 ):
     """Streaming configuration for Fiji."""
 
-    _streaming_config_key: ClassVar[str] = "fiji_streaming_config"
-    streaming_spec: ClassVar[StreamingViewerConfigSpec] = StreamingViewerConfigSpec(
-        viewer_name="fiji",
-        registry_key="fiji_streaming_config",
-        display_name="Fiji",
-        step_plan_output_key="fiji_streaming_paths",
-        presentation=StreamingViewerPresentation("OpenHCS Fiji Visualization"),
-        backend=Backend.FIJI_STREAM,
-        visualizer_module="openhcs.runtime.fiji_stream_visualizer",
-    )
+    _streaming_config_key: ClassVar[str] = FIJI_STREAMING_CONFIG_SPEC.registry_key
+    streaming_spec: ClassVar[StreamingViewerConfigSpec] = FIJI_STREAMING_CONFIG_SPEC
     port: int = 5565
     fiji_executable_path: Optional[Path] = None
 

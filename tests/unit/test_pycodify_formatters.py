@@ -1,11 +1,15 @@
 """Tests for OpenHCS pycodify formatter extensions."""
 
+import ast
+import inspect
+
 from pycodify import Assignment, generate_python_source
 
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.constants import InputSource
 from openhcs.constants.constants import GroupBy
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.config import (
     DtypeConfig,
     LazyNapariStreamingConfig,
@@ -14,8 +18,46 @@ from openhcs.core.config import (
     PipelineConfig,
 )
 from openhcs.core.memory import DtypeConversion
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerProcessingContractAuthority,
+    cellprofiler_module_callable,
+)
+from openhcs.processing.backends.cellprofiler import (
+    CellProfilerFunctionCatalog,
+    cellprofiler_function_runtime_metadata,
+)
+from openhcs.processing.backends.cellprofiler.colocalization import (
+    measure_colocalization_objects,
+)
 from openhcs.processing.backends.analysis.count_cells_simple import count_cells_simple
+
+
+def configurable_test_function(image, threshold: int = 3, enabled: bool = True):
+    return image
+
+
+def _declared_cellprofiler_runtime_callable(
+    func,
+    contract: ModuleArtifactContract,
+):
+    canonical_func = CellProfilerFunctionCatalog.get_function(func.__name__)
+    metadata = cellprofiler_function_runtime_metadata(canonical_func)
+    if metadata is None:
+        processing_contract = CellProfilerProcessingContractAuthority.for_callable(
+            canonical_func
+        )
+        declared_processing_contract = processing_contract.name
+    else:
+        processing_contract = metadata.processing_contract
+        declared_processing_contract = metadata.declared_processing_contract
+    return cellprofiler_module_callable(
+        canonical_func,
+        contract,
+        processing_contract=processing_contract,
+        declared_processing_contract=declared_processing_contract,
+    )
 
 
 def _source(value, *, clean_mode: bool = True) -> str:
@@ -138,3 +180,109 @@ def test_full_lazy_dataclass_keeps_none_leaf_fields():
     assert "variable_components=None" in source
     assert "group_by=None" in source
     assert "input_source=InputSource.PREVIOUS_STEP" in source
+
+
+def test_function_pattern_clean_mode_elides_signature_default_kwargs():
+    source = generate_python_source(
+        Assignment(
+            "pattern",
+            (
+                configurable_test_function,
+                {"threshold": 9, "enabled": True},
+            ),
+        ),
+        clean_mode=True,
+    )
+
+    ast.parse(source)
+    assert "'threshold': 9" in source
+    assert "enabled" not in source
+
+
+def test_full_function_pattern_source_preserves_signature_default_kwargs():
+    source = generate_python_source(
+        Assignment(
+            "pattern",
+            (
+                configurable_test_function,
+                {"threshold": 9, "enabled": True},
+            ),
+        ),
+        clean_mode=False,
+    )
+
+    ast.parse(source)
+    assert "'threshold': 9" in source
+    assert "'enabled': True" in source
+
+
+def test_function_pattern_source_does_not_emit_declared_hidden_parameters():
+    rank_provider_default = inspect.signature(
+        measure_colocalization_objects
+    ).parameters["rank_provider"].default
+    step = FunctionStep(
+        func=(
+            measure_colocalization_objects,
+            {
+                "labels": None,
+                "rank_provider": rank_provider_default,
+            },
+        ),
+        name="MeasureColocalization",
+    )
+
+    source = generate_python_source(
+        Assignment("pipeline_steps", [step]),
+        clean_mode=False,
+    )
+
+    ast.parse(source)
+    assert "'labels': None" in source
+    assert "rank_provider" not in source
+    assert "DirectObjectColocalizationRankProvider" not in source
+
+
+def test_cellprofiler_runtime_callable_source_keeps_raw_hidden_parameters_hidden():
+    rank_provider_default = inspect.signature(
+        measure_colocalization_objects
+    ).parameters["rank_provider"].default
+    inputs = (
+        ArtifactSpec("Mito", ArtifactKind.IMAGE),
+        ArtifactSpec("Syto", ArtifactKind.IMAGE),
+        ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+    )
+    runtime_callable = _declared_cellprofiler_runtime_callable(
+        measure_colocalization_objects,
+        ModuleArtifactContract(
+            module_name="MeasureColocalization",
+            inputs=inputs,
+            runtime_artifact_inputs=inputs,
+            outputs=(
+                ArtifactSpec(
+                    "MeasureColocalization_14_measurements",
+                    ArtifactKind.MEASUREMENTS,
+                ),
+            ),
+        ),
+    )
+    step = FunctionStep(
+        func=(
+            runtime_callable,
+            {
+                "labels": None,
+                "rank_provider": rank_provider_default,
+            },
+        ),
+        name="MeasureColocalization",
+    )
+
+    source = generate_python_source(
+        Assignment("pipeline_steps", [step]),
+        clean_mode=False,
+    )
+
+    ast.parse(source)
+    assert "cellprofiler_module_callable" in source
+    assert "MeasureColocalization_14_measurements" in source
+    assert "rank_provider" not in source
+    assert "DirectObjectColocalizationRankProvider" not in source

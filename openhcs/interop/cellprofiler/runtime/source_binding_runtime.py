@@ -1168,11 +1168,17 @@ class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
                     PipelineStartSourcePayloadRequest.from_candidate(
                         payload=payload,
                         source=source,
+                        storage_path=storage_path,
                         load_request=request,
                     )
                 )
             )
-            for payload, source in zip(loaded_images, request.selected_sources)
+            for payload, source, storage_path in zip(
+                loaded_images,
+                request.selected_sources,
+                request.storage_paths,
+                strict=True,
+            )
         ]
 
 class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
@@ -1189,10 +1195,15 @@ class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
                 PipelineStartSourcePayloadRequest.from_candidate(
                     payload=cast(ImagePayloadValue, self._load_matrix(source.resolved_path)),
                     source=source,
+                    storage_path=storage_path,
                     load_request=request,
                 )
             )
-            for source in request.selected_sources
+            for source, storage_path in zip(
+                request.selected_sources,
+                request.storage_paths,
+                strict=True,
+            )
         ]
 
     def _load_matrix(self, path: str) -> ImagePayloadValue:
@@ -1230,13 +1241,21 @@ class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
                 PipelineStartSourcePayloadRequest.from_candidate(
                     payload=cast(
                         ImagePayloadValue,
-                        self._load_array(source.resolved_path, request),
+                        self._load_array(
+                            storage_path,
+                            request,
+                        ),
                     ),
                     source=source,
+                    storage_path=storage_path,
                     load_request=request,
                 )
             )
-            for source in request.selected_sources
+            for source, storage_path in zip(
+                request.selected_sources,
+                request.storage_paths,
+                strict=True,
+            )
         ]
 
     def _load_array(
@@ -1380,7 +1399,6 @@ def _load_pipeline_start_stack(
     current_image: CellProfilerCurrentImage,
 ) -> ImagePayloadValue:
     selected_paths = tuple(source.path for source in selected_sources)
-    storage_paths = tuple(source.resolved_path for source in selected_sources)
     if not selected_paths:
         raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
     current_payload_resolution = (
@@ -1399,6 +1417,12 @@ def _load_pipeline_start_stack(
         raise RuntimeError(
             "Pipeline-start source resolution requires pipeline_input_backend."
         )
+    load_request = PipelineStartSourceLoadRequest(
+        adapter=adapter,
+        selected_sources=selected_sources,
+        backend=backend,
+        source_load_plan=adapter.source_load_plan,
+    )
     processing_context = RequireProcessingContextBoundaryPolicy(adapter).context
     cache_key = PipelineStartSourcePayloadCacheKey.from_sources(
         backend=backend,
@@ -1409,14 +1433,10 @@ def _load_pipeline_start_stack(
     cache = PipelineStartSourcePayloadProcessCache.process_cache()
     loaded_payloads = cache.cached_value(cache_key)
     if loaded_payloads is None:
-        load_request = PipelineStartSourceLoadRequest(
-            adapter=adapter,
-            selected_sources=selected_sources,
-            backend=backend,
-            source_load_plan=adapter.source_load_plan,
-        )
         loaded_payloads = tuple(
-            PipelineStartSourceFileLoader.for_paths(storage_paths).load_slices(load_request)
+            PipelineStartSourceFileLoader.for_paths(
+                load_request.storage_paths
+            ).load_slices(load_request)
         )
         cache.store_value(cache_key, loaded_payloads)
     if not loaded_payloads:

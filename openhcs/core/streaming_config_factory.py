@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from openhcs.core.streaming_config_declarations import (
+    StreamingViewerConfigSpec,
+    StreamingViewerPresentation,
+)
 from objectstate import DataclassFieldAccess, get_base_config_type
 from polystore.filemanager import FileManager
 from polystore.streaming.identity import StreamProducerIdentity
@@ -69,26 +73,6 @@ class StreamingViewerSurface:
                 message_context=message_context,
             )
         )
-
-
-@dataclass(frozen=True, slots=True)
-class StreamingViewerConfigSpec:
-    """Declarative identity for one OpenHCS viewer streaming config."""
-
-    viewer_name: str
-    registry_key: str
-    display_name: str
-    step_plan_output_key: str
-    presentation: "StreamingViewerPresentation"
-    backend: Backend
-    visualizer_module: str
-
-
-@dataclass(frozen=True, slots=True)
-class StreamingViewerPresentation:
-    """Viewer-facing presentation identity."""
-
-    title: str
 
 
 @dataclass(frozen=True, slots=True)

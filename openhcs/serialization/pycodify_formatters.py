@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.steps.function_step import FunctionStep
+from python_introspect import parameter_exclusions
 from pyqt_reactive.pattern_metadata import PatternScopeToken
 from openhcs.config_framework.lazy_factory import LazyDataclass
 
@@ -224,25 +225,34 @@ class FunctionPatternTupleFormatter(SourceFormatter):
     def format(self, value, context: FormatContext) -> SourceFragment:
         func, args = value
         args = _strip_internal_pattern_metadata(args)
+        hidden_parameters = parameter_exclusions(func)
+        if hidden_parameters:
+            args = {
+                name: arg_value
+                for name, arg_value in args.items()
+                if name not in hidden_parameters
+            }
 
         if not args and context.clean_mode:
             return to_source(func, context)
 
-        try:
-            defaults = {
-                k: v.default
-                for k, v in inspect.signature(func).parameters.items()
-                if v.default is not inspect.Parameter.empty
-            }
-        except (ValueError, TypeError):
-            defaults = {}
-
         if context.clean_mode:
+            try:
+                defaults = {
+                    k: v.default
+                    for k, v in inspect.signature(func).parameters.items()
+                    if v.default is not inspect.Parameter.empty
+                }
+            except (ValueError, TypeError):
+                defaults = {}
+
             final_args = {
-                k: v for k, v in args.items() if k not in defaults or v != defaults[k]
+                k: v
+                for k, v in args.items()
+                if k not in defaults or v != defaults[k]
             }
         else:
-            final_args = {**defaults, **args}
+            final_args = args
 
         if not final_args and context.clean_mode:
             return to_source(func, context)

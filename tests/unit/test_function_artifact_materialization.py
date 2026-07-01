@@ -9,6 +9,7 @@ from polystore.streaming.viewer_transport import ViewerStreamKwarg
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_semantics import ObjectLabelDomain, RuntimePlaneAxis
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
@@ -1098,6 +1099,37 @@ def test_materialize_artifact_outputs_skips_special_without_explicit_spec(
     )
     filemanager = FileManagerStub()
     filemanager.memory[output_plan.path] = {"x": 1}
+    context = _context(filemanager)
+    materialized = []
+
+    def fake_materialize(*args, **kwargs):
+        materialized.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert materialized == []
+
+
+def test_materialize_artifact_outputs_skips_explicitly_disabled_artifact_without_record(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="ER",
+        path="/memory/ER.pkl",
+        kind=ArtifactKind.IMAGE,
+        materialization=NO_ARTIFACT_MATERIALIZATION,
+    )
+    filemanager = FileManagerStub()
     context = _context(filemanager)
     materialized = []
 
