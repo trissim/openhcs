@@ -37,8 +37,13 @@ from openhcs.core.source_bindings import (
     SourceBindingsConfig,
     StepSourceBindingsConfig,
 )
+from openhcs.core.source_binding_selection import (
+    SourceBindingMatchedImageSet,
+    SourcePatternResolutionContext,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
 def test_component_selector_coerces_existing_component_vocabulary():
@@ -395,6 +400,54 @@ def test_pipeline_start_binding_does_not_force_full_source_universe():
 
     assert universe_plan.uses_pipeline_start_binding_origin
     assert not universe_plan.requires_full_pipeline_source_universe
+
+
+def test_matched_image_set_without_match_plan_uses_selector_compatible_sources():
+    context = SourcePatternResolutionContext.from_sources(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={},
+    )
+    matched_set = SourceBindingMatchedImageSet.from_plan(
+        bindings=(
+            NamedSourceBinding(
+                alias="DNA",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="w1",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+            NamedSourceBinding(
+                alias="PH3",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="w2",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+        ),
+        match_plan=None,
+        source_context=context,
+    )
+
+    assert matched_set.expand(
+        ("A01_s001_w1_z001_t001.tif",),
+        source_universe=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+            "A01_s001_w3_z001_t001.tif",
+        ),
+    ) == ("A01_s001_w1_z001_t001.tif",)
 
 
 def test_virtual_workspace_projection_filters_source_metadata_by_axis():

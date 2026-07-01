@@ -40,6 +40,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.source_metadata import (
     SOURCE_PLANE_COUNT_FIELD,
     SOURCE_PLANE_INDEX_FIELD,
+    SourceFilterPathMetadata,
     SourceMetadataIdentityItems,
     SourceMetadataIdentityProjection,
     SourceMetadataMapping,
@@ -1355,6 +1356,7 @@ class SourceVirtualPathMetadata:
     candidate_metadata: Mapping[str, str]
     virtual_path: str | None = None
     assignment: SourceAssignmentBase | None = None
+    source_filter_paths: tuple[str, ...] = ()
 
     def metadata(self) -> SourceMetadataMapping:
         metadata = dict(self.image_set_metadata)
@@ -1366,6 +1368,11 @@ class SourceVirtualPathMetadata:
                 self.virtual_path,
                 metadata,
             ))
+        if self.source_filter_paths:
+            SourceFilterPathMetadata.from_paths(self.source_filter_paths).merge_into(
+                metadata,
+                path=self.virtual_path or "source_metadata",
+            )
         image_type = SourceAssignmentImageTypeProjection(self.assignment).image_type()
         if image_type is not None:
             merge_source_metadata(
@@ -2888,6 +2895,7 @@ def _primary_workspace_mappings(
                 candidate.metadata,
                 virtual_path=virtual_path,
                 assignment=assignment,
+                source_filter_paths=candidate.source_filter_path_identities(),
             ).metadata()
     component_values: WorkspaceComponentValues = MappingProxyType(
         {
@@ -2937,6 +2945,7 @@ def _source_artifact_anchor_workspace_mappings(
                 {"source_alias": anchor_alias},
                 anchor_candidate.metadata,
                 assignment=assignments_by_alias.get(anchor_alias),
+                source_filter_paths=anchor_candidate.source_filter_path_identities(),
             ).metadata()
         }
     )
@@ -3133,6 +3142,7 @@ def _auxiliary_workspace_mappings(
                 candidate.metadata,
                 virtual_path=virtual_path,
                 assignment=assignments_by_alias.get(alias),
+                source_filter_paths=candidate.source_filter_path_identities(),
             ).metadata()
     return MappingProxyType(mappings), MappingProxyType(source_metadata)
 

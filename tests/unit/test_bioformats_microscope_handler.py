@@ -25,14 +25,18 @@ from tests.unit.bioformats_fixture import (
 )
 
 
-def test_bioformats_handler_writes_normalized_workspace_metadata(tmp_path: Path) -> None:
+def test_bioformats_handler_writes_normalized_workspace_metadata(
+    tmp_path: Path,
+) -> None:
     write_bioformats_manifest_fixture(tmp_path)
     filemanager = bioformats_filemanager()
     handler = BioFormatsHandler(filemanager)
 
     image_dir = handler.initialize_workspace(tmp_path, filemanager)
 
-    metadata = json.loads((tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8")
+    )
     subdirectory = metadata["subdirectories"]["."]
     assert image_dir == tmp_path
     assert subdirectory["microscope_handler_name"] == "bioformats"
@@ -54,7 +58,9 @@ def test_bioformats_structured_refs_project_to_source_paths(tmp_path: Path) -> N
     write_bioformats_manifest_fixture(tmp_path)
     filemanager = bioformats_filemanager()
     BioFormatsHandler(filemanager).initialize_workspace(tmp_path, filemanager)
-    metadata = json.loads((tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8")
+    )
 
     projection = VirtualWorkspaceSourceProjection.from_openhcs_metadata(
         tmp_path,
@@ -64,9 +70,8 @@ def test_bioformats_structured_refs_project_to_source_paths(tmp_path: Path) -> N
         "A01_s001_w1_z001_t001.tif"
     ]
 
-    assert (
-        projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
-        == str(tmp_path / "stack.npy")
+    assert projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"] == str(
+        tmp_path / "stack.npy"
     )
     assert workspace_mapping_source_path(tmp_path, source_ref) == tmp_path / "stack.npy"
 
@@ -82,16 +87,15 @@ def test_bioformats_structured_refs_project_inside_pattern_runtime(
     )
     authority = VirtualWorkspaceSourceProjectionAuthority(
         plate_path=tmp_path,
-        metadata_handler=OpenHCSMetadataHandler(filemanager),
+        metadata_handlers=(OpenHCSMetadataHandler(filemanager),),
         cache=VirtualWorkspaceSourceProjectionCache(),
     )
 
     projection = authority.projection_if_available()
 
     assert projection is not None
-    assert (
-        projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
-        == str(tmp_path / "stack.npy")
+    assert projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"] == str(
+        tmp_path / "stack.npy"
     )
 
 
@@ -109,9 +113,8 @@ def test_orchestrator_exposes_prepared_virtual_source_workspace(
         str(tmp_path / "A01_s001_w1_z001_t001.tif"),
         str(tmp_path / "A01_s001_w2_z001_t001.tif"),
     )
-    assert (
-        projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"]
-        == str(tmp_path / "stack.npy")
+    assert projection.source_paths_by_virtual_path["A01_s001_w1_z001_t001.tif"] == str(
+        tmp_path / "stack.npy"
     )
 
 
@@ -120,6 +123,7 @@ def test_bioformats_metadata_handler_reports_component_values(tmp_path: Path) ->
     handler = BioFormatsMetadataHandler(bioformats_filemanager())
 
     assert handler.find_metadata_file(tmp_path) == tmp_path
+    assert handler.get_grid_dimensions(tmp_path) == (1, 1)
     assert handler.get_pixel_size(tmp_path) == 0.5
     assert handler.get_channel_values(tmp_path) == {"1": "DAPI", "2": "GFP"}
     assert handler.get_well_values(tmp_path) == {"A01": "A01"}
@@ -217,7 +221,9 @@ def test_bioformats_manifest_layout_axes_support_non_spw_hcs_layout(
     filemanager = bioformats_filemanager()
 
     BioFormatsHandler(filemanager).initialize_workspace(tmp_path, filemanager)
-    metadata = json.loads((tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (tmp_path / "openhcs_metadata.json").read_text(encoding="utf-8")
+    )
     subdirectory = metadata["subdirectories"]["."]
     backend = filemanager.registry[Backend.BIOFORMATS.value]
 

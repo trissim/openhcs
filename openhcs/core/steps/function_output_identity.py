@@ -340,7 +340,7 @@ class FunctionOutputComponentIdentityAuthority:
                 value,
             )
             for key, value in parsed.items()
-            if str(key) != "extension"
+            if str(key) != "extension" and value is not None
         }
 
     @staticmethod

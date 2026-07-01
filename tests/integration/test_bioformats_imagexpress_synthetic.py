@@ -4,7 +4,10 @@ from pathlib import Path
 import pytest
 
 from openhcs.microscopes.bioformats import BioFormatsHandler
-from openhcs.microscopes.bioformats_adapter import BioFormatsCompositeAdapter
+from openhcs.microscopes.bioformats_adapter import (
+    BioFormatsAdapterUnavailableError,
+    BioFormatsCompositeAdapter,
+)
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
 from tests.unit.bioformats_imagexpress_fixture import IMAGE_XPRESS_PLATE_FACTORY
@@ -16,7 +19,12 @@ def test_bioformats_detects_synthetic_imagexpress_plate(tmp_path: Path) -> None:
     plate = tmp_path / "plate"
     IMAGE_XPRESS_PLATE_FACTORY.create(plate)
 
-    metadata = BioFormatsCompositeAdapter().discover(plate)
+    try:
+        metadata = BioFormatsCompositeAdapter().discover(plate)
+    except BioFormatsAdapterUnavailableError as exc:
+        if "Could not initialize Fiji/Bio-Formats" in str(exc):
+            pytest.skip(str(exc))
+        raise
     sampled_wells = [
         (well.row, well.column, len(well.samples))
         for plate_record in metadata.plates

@@ -830,7 +830,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
     """Resolve all declared source aliases for one matched image-set anchor."""
 
     bindings: tuple[NamedSourceBinding, ...]
-    match_plan: SourceBindingMatchPlan
+    match_plan: SourceBindingMatchPlan | None
     identity_policy: SourceImageSetIdentityPolicy = field(
         default_factory=SourceImageSetIdentityPolicy
     )
@@ -840,7 +840,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         cls,
         *,
         bindings: Sequence[NamedSourceBinding],
-        match_plan: SourceBindingMatchPlan,
+        match_plan: SourceBindingMatchPlan | None,
         source_context: SourcePatternResolutionContext,
         plane_member_fields: frozenset[str] = frozenset(),
     ) -> "SourceBindingMatchedImageSet":
@@ -879,7 +879,8 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
                 source_universe=source_universe,
             )
         if (
-            self.match_plan.method is not SourceBindingMatchMethod.METADATA
+            self.match_plan is None
+            or self.match_plan.method is not SourceBindingMatchMethod.METADATA
             or not self.match_plan.dimensions
         ):
             return SourceBindingCandidateMatcher.compatible_candidates(
@@ -1107,6 +1108,7 @@ class SourceUniverseRuntimeState:
     source_metadata_by_path: Mapping[str, SourceMetadataMapping] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    pipeline_source_candidate_files: tuple[str, ...] = ()
 
     def with_source_metadata(
         self,
@@ -1163,6 +1165,7 @@ class SourceUniverseRuntimeState:
             source_metadata_by_path=source_metadata_by_path,
             source_metadata_is_normalized=True,
             pipeline_input_files=pipeline_source_universe.files,
+            pipeline_source_candidate_files=self.pipeline_source_candidate_files,
             pipeline_input_backend=pipeline_source_universe.backend.value,
         )
 
@@ -1338,9 +1341,38 @@ class PipelineStartSourceUniverseRequest(SourceUniverseRequest):
         state = replace(
             state,
             pipeline_start_universe=universe,
+            pipeline_source_candidate_files=self.pipeline_source_candidate_files(universe),
             load_universe=state.load_universe if load_universe is None else load_universe,
         )
         return SourceUniverseRequest.contribute_runtime_state(self, state, universe)
+
+    def pipeline_source_candidate_files(
+        self,
+        universe: SourceFileUniverse,
+    ) -> tuple[str, ...]:
+        projection = self.source_projection
+        if projection is None:
+            return universe.files
+        axis_id = None if self.requires_full_pipeline_source_universe else self.plan.axis_id
+        return tuple(
+            dict.fromkeys(
+                (
+                    *projection.pipeline_start_candidate_files(axis_id=axis_id),
+                    *self.physical_pipeline_source_candidate_files(),
+                )
+            )
+        )
+
+    def physical_pipeline_source_candidate_files(self) -> tuple[str, ...]:
+        universe_backend = self.physical_full_universe_backend()
+        return tuple(
+            str(path)
+            for path in self.context.filemanager.list_files(
+                str(self.context.input_dir),
+                universe_backend.value,
+                recursive=True,
+            )
+        )
 
     def load_universe(self) -> SourceFileUniverse | None:
         projection = self.source_projection

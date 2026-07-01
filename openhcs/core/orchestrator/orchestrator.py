@@ -597,24 +597,14 @@ class PipelineOrchestrator:
             VirtualWorkspaceSourceProjection,
             VirtualWorkspaceSourceProjectionAuthority,
         )
-        from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
-        metadata_handlers = [self.microscope_handler.metadata_handler]
-        metadata_path = plate_path / OpenHCSMetadataHandler.METADATA_FILENAME
-        if (
-            not isinstance(self.microscope_handler.metadata_handler, OpenHCSMetadataHandler)
-            and self.filemanager.exists(str(metadata_path), Backend.DISK.value)
-        ):
-            metadata_handlers.append(OpenHCSMetadataHandler(self.filemanager))
-
-        for metadata_handler in metadata_handlers:
-            projection = VirtualWorkspaceSourceProjectionAuthority(
-                plate_path=plate_path,
-                metadata_handler=metadata_handler,
-            ).projection_if_available()
-            if projection is not None:
-                return projection
-
+        projection = VirtualWorkspaceSourceProjectionAuthority.from_plate_metadata(
+            plate_path=plate_path,
+            metadata_handler=self.microscope_handler.metadata_handler,
+            filemanager=self.filemanager,
+        ).projection_if_available()
+        if projection is not None:
+            return projection
         return VirtualWorkspaceSourceProjection.empty(plate_path)
 
     def source_workspace_files(self, axis_id: str | None = None) -> tuple[str, ...]:

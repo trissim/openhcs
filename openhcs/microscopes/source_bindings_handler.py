@@ -98,7 +98,6 @@ class SourceBindingsHandler(MicroscopeHandler):
         filemanager: FileManager,
     ) -> Path:
         from openhcs.core.source_schema_workspace import (
-            SourceSchemaCandidateDiscoveryMode,
             materialize_source_schema_workspace,
         )
 
@@ -112,7 +111,6 @@ class SourceBindingsHandler(MicroscopeHandler):
             source_backend=Backend.DISK,
             workspace_backend=Backend.DISK,
             source_files=self._list_source_files(plate_root, filemanager),
-            candidate_discovery_mode=SourceSchemaCandidateDiscoveryMode.LOCAL_FILES,
         )
         self._register_virtual_workspace_backend(plate_root, filemanager)
         return plate_root

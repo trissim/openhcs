@@ -113,7 +113,6 @@ from openhcs.core.pipeline.step_snapshot import (
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     CompiledSourceUniversePlan,
-    SourceBindingCompilationRequest,
     StepSourceBindingsConfig,
 )
 from openhcs.core.source_load_plan import SourceLoadPlan
@@ -563,7 +562,6 @@ class PipelineCompiler:
             current_plan.source_binding_plan = (
                 PipelineCompiler._compile_source_binding_plan(
                     snapshot.source_bindings,
-                    current_plan,
                 )
             )
             current_plan.source_universe_plan = (
@@ -615,20 +613,8 @@ class PipelineCompiler:
     @staticmethod
     def _compile_source_binding_plan(
         source_bindings: StepSourceBindingsConfig,
-        current_plan: CompiledStepPlan,
     ) -> CompiledSourceBindingPlan:
-        if current_plan.compiled_function_pattern is None:
-            return SourceBindingCompilationRequest(
-                config=source_bindings,
-            ).compile()
-        return SourceBindingCompilationRequest.from_module_contracts(
-            config=source_bindings,
-            contracts=tuple(
-                invocation.contract.module_artifact_contract
-                for invocation in current_plan.compiled_function_pattern.iter_invocations()
-                if invocation.contract.module_artifact_contract is not None
-            ),
-        ).compile()
+        return CompiledSourceBindingPlan.from_config(source_bindings)
 
     @staticmethod
     def _compile_source_universe_plan(

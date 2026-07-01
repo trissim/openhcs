@@ -23,7 +23,9 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.source_metadata import (
     ORIGINAL_SOURCE_METADATA_FIELD,
+    SOURCE_FILTER_PATHS_METADATA_FIELD,
     OriginalSourceMetadata,
+    SourceFilterPathMetadata,
     SourceMetadataMapping,
     SourceMetadataRoleView,
     SourceMetadataScalar,
@@ -538,8 +540,16 @@ def merge_source_metadata(
     """Merge extracted metadata into a target map, failing on conflicts."""
 
     for key, value in additions.items():
+        if value is None:
+            continue
         if key == ORIGINAL_SOURCE_METADATA_FIELD:
             OriginalSourceMetadata.from_reserved_value(
+                value,
+                path=path,
+            ).merge_into(target, path=path)
+            continue
+        if key == SOURCE_FILTER_PATHS_METADATA_FIELD:
+            SourceFilterPathMetadata.from_reserved_value(
                 value,
                 path=path,
             ).merge_into(target, path=path)

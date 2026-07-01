@@ -9,6 +9,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar
 
+from openhcs.constants import Backend
 from openhcs.core.source_metadata import SourceMetadataMapping
 from openhcs.core.source_matching import (
     source_component_metadata_values,
@@ -17,6 +18,7 @@ from openhcs.core.source_matching import (
 from openhcs.core.source_schema_workspace import (
     source_schema_metadata_with_virtual_components,
 )
+from openhcs.core.source_path_identity import source_path_identity_key
 from openhcs.core.virtual_workspace_metadata import (
     OpenHCSMetadataPayload,
     OpenHCSMetadataSubdirectories,
@@ -32,6 +34,7 @@ from openhcs.microscopes.openhcs import (
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.microscopes.microscope_interfaces import MetadataHandler
+    from polystore.filemanager import FileManager
 
 
 LookupValueT = TypeVar("LookupValueT")
@@ -153,11 +156,40 @@ class VirtualWorkspaceSourceProjection:
         metadata = self.source_metadata_by_path.get(source_path)
         if metadata is not None:
             return metadata
+        for virtual_path in self.virtual_paths_for_source_path(lookup):
+            metadata = self.source_metadata_by_path.get(virtual_path)
+            if metadata is not None:
+                return metadata
+            metadata = self.source_metadata_by_path.get(
+                self._loadable_virtual_path(virtual_path)
+            )
+            if metadata is not None:
+                return metadata
+            metadata = source_schema_filename_metadata(virtual_path)
+            if metadata is not None:
+                return metadata
         for key in lookup.candidates():
             metadata = source_schema_filename_metadata(key)
             if metadata is not None:
                 return metadata
         return None
+
+    def virtual_paths_for_source_path(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+    ) -> tuple[str, ...]:
+        """Return virtual paths whose physical source path matches the lookup."""
+
+        source_path_identities = frozenset(
+            source_path_identity_key(candidate)
+            for candidate in lookup.candidates()
+        )
+        return tuple(
+            virtual_path
+            for virtual_path, source_path in self.source_paths_by_virtual_path.items()
+            if not Path(virtual_path).is_absolute()
+            and source_path_identity_key(source_path) in source_path_identities
+        )
 
     def pipeline_start_files(self, *, axis_id: str | None = None) -> tuple[str, ...]:
         """Return loadable virtual source paths for one runtime source universe."""
@@ -165,14 +197,7 @@ class VirtualWorkspaceSourceProjection:
         if cached is not None:
             return cached
 
-        relative_virtual_paths = tuple(
-            virtual_path
-            for virtual_path in self.source_paths_by_virtual_path
-            if not Path(virtual_path).is_absolute()
-        )
-        if not relative_virtual_paths:
-            relative_virtual_paths = tuple(self.source_paths_by_virtual_path)
-
+        relative_virtual_paths = self.relative_virtual_paths()
         selected = tuple(
             virtual_path
             for virtual_path in relative_virtual_paths
@@ -186,6 +211,33 @@ class VirtualWorkspaceSourceProjection:
         )
         self._pipeline_start_files_by_axis[axis_id] = result
         return result
+
+    def pipeline_start_candidate_files(
+        self,
+        *,
+        axis_id: str | None = None,
+    ) -> tuple[str, ...]:
+        """Return physical source paths for pipeline-start selector matching."""
+
+        return tuple(
+            dict.fromkeys(
+                str(self.source_paths_by_virtual_path[virtual_path])
+                for virtual_path in self.relative_virtual_paths()
+                if self._path_belongs_to_axis(virtual_path, axis_id)
+            )
+        )
+
+    def relative_virtual_paths(self) -> tuple[str, ...]:
+        """Return canonical relative virtual paths for source projection traversal."""
+
+        relative_virtual_paths = tuple(
+            virtual_path
+            for virtual_path in self.source_paths_by_virtual_path
+            if not Path(virtual_path).is_absolute()
+        )
+        if relative_virtual_paths:
+            return relative_virtual_paths
+        return tuple(self.source_paths_by_virtual_path)
 
     def filtered_by_axis(
         self,
@@ -319,7 +371,7 @@ class VirtualWorkspaceSourceProjectionAuthority:
     """Projection authority for source-workspace metadata owned by a plate handler."""
 
     plate_path: Path
-    metadata_handler: "MetadataHandler"
+    metadata_handlers: tuple["MetadataHandler", ...]
     cache: VirtualWorkspaceSourceProjectionCache | None = None
 
     @classmethod
@@ -329,34 +381,77 @@ class VirtualWorkspaceSourceProjectionAuthority:
         *,
         cache: VirtualWorkspaceSourceProjectionCache | None = None,
     ) -> "VirtualWorkspaceSourceProjectionAuthority":
-        return cls(
+        return cls.from_plate_metadata(
             plate_path=Path(context.plate_path),
             metadata_handler=context.microscope_handler.metadata_handler,
+            filemanager=context.filemanager,
             cache=cache,
         )
 
-    def metadata_document(self) -> OpenHCSMetadataPayload | None:
-        metadata = self.metadata_handler.source_workspace_metadata_document(
-            self.plate_path
+    @classmethod
+    def from_plate_metadata(
+        cls,
+        *,
+        plate_path: Path,
+        metadata_handler: "MetadataHandler",
+        filemanager: "FileManager",
+        cache: VirtualWorkspaceSourceProjectionCache | None = None,
+    ) -> "VirtualWorkspaceSourceProjectionAuthority":
+        """Build projection authority from the plate-level metadata owners."""
+
+        return cls(
+            plate_path=plate_path,
+            metadata_handlers=cls._plate_metadata_handlers(
+                plate_path,
+                metadata_handler,
+                filemanager,
+            ),
+            cache=cache,
         )
-        if metadata is None:
-            return None
-        if not isinstance(metadata, Mapping):
-            raise RuntimeError("Source workspace metadata document must be a mapping.")
-        return metadata
+
+    @staticmethod
+    def _plate_metadata_handlers(
+        plate_path: Path,
+        metadata_handler: "MetadataHandler",
+        filemanager: "FileManager",
+    ) -> tuple["MetadataHandler", ...]:
+        """Return metadata handlers that can own source-workspace metadata."""
+
+        from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+
+        handlers: list["MetadataHandler"] = [metadata_handler]
+        metadata_path = plate_path / OpenHCSMetadataHandler.METADATA_FILENAME
+        if (
+            not isinstance(handlers[0], OpenHCSMetadataHandler)
+            and filemanager.exists(str(metadata_path), Backend.DISK.value)
+        ):
+            handlers.append(OpenHCSMetadataHandler(filemanager))
+        return tuple(handlers)
+
+    def metadata_documents(self) -> tuple[OpenHCSMetadataPayload, ...]:
+        documents: list[OpenHCSMetadataPayload] = []
+        for metadata_handler in self.metadata_handlers:
+            metadata = metadata_handler.source_workspace_metadata_document(
+                self.plate_path
+            )
+            if metadata is None:
+                continue
+            if not isinstance(metadata, Mapping):
+                raise RuntimeError("Source workspace metadata document must be a mapping.")
+            documents.append(metadata)
+        return tuple(documents)
 
     def projection_if_available(self) -> VirtualWorkspaceSourceProjection | None:
-        metadata = self.metadata_document()
-        if metadata is None:
-            return None
-        if not OpenHCSMetadataSubdirectories(metadata).has_workspace_mapping():
-            return None
-        if self.cache is None:
-            return VirtualWorkspaceSourceProjection.from_openhcs_metadata(
-                self.plate_path,
-                metadata,
-            )
-        return self.cache.projection_for(self.plate_path, metadata)
+        for metadata in self.metadata_documents():
+            if not OpenHCSMetadataSubdirectories(metadata).has_workspace_mapping():
+                continue
+            if self.cache is None:
+                return VirtualWorkspaceSourceProjection.from_openhcs_metadata(
+                    self.plate_path,
+                    metadata,
+                )
+            return self.cache.projection_for(self.plate_path, metadata)
+        return None
 
     def projection_or_empty(self) -> VirtualWorkspaceSourceProjection:
         projection = self.projection_if_available()

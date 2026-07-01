@@ -296,7 +296,7 @@ def test_compiler_disabled_source_bindings_stay_inert_without_contract_requireme
     assert session.plan(0).source_binding_plan.is_empty
 
 
-def test_compiler_freezes_contract_required_source_binding_subset():
+def test_compiler_freezes_enabled_source_binding_set_without_contract_filtering():
     binding = NamedSourceBinding(alias="DNA")
     unused_binding = NamedSourceBinding(alias="Unused")
     step = FunctionStep(func=_external_source_consumer, name="source-bound")
@@ -304,6 +304,7 @@ def test_compiler_freezes_contract_required_source_binding_subset():
         0,
         source_bindings=StepSourceBindingsConfig(
             bindings=(binding, unused_binding),
+            enabled=True,
         ),
     )
     session = CompilationSession.from_context(
@@ -322,7 +323,7 @@ def test_compiler_freezes_contract_required_source_binding_subset():
 
     PipelineCompiler._supplement_step_plans(session)
 
-    assert session.plan(0).source_binding_plan.bindings == (binding,)
+    assert session.plan(0).source_binding_plan.bindings == (binding, unused_binding)
 
 
 def test_compiler_pipeline_scope_prevents_cross_pipeline_source_binding_inheritance(

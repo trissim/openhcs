@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 ORIGINAL_SOURCE_METADATA_FIELD = "OpenHCSOriginalSourceMetadata"
+SOURCE_FILTER_PATHS_METADATA_FIELD = "OpenHCSSourceFilterPaths"
 SOURCE_PLANE_INDEX_FIELD = "source_plane_index"
 SOURCE_PLANE_COUNT_FIELD = "source_plane_count"
 
@@ -119,6 +120,58 @@ class OriginalSourceMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceFilterPathMetadata:
+    """Source path identities that file selector clauses may target."""
+
+    paths: tuple[str, ...]
+
+    @classmethod
+    def from_paths(
+        cls,
+        paths: tuple[str, ...],
+    ) -> "SourceFilterPathMetadata":
+        return cls(tuple(dict.fromkeys(str(path) for path in paths if str(path))))
+
+    @classmethod
+    def from_reserved_value(
+        cls,
+        value: SourceMetadataValue,
+        *,
+        path: str,
+    ) -> "SourceFilterPathMetadata":
+        if not isinstance(value, Mapping):
+            raise RuntimeError(
+                f"{SOURCE_FILTER_PATHS_METADATA_FIELD} for {path!r} must be a mapping, "
+                f"got {type(value).__name__}."
+            )
+        return cls.from_paths(
+            tuple(str(path_value) for _key, path_value in sorted(value.items()))
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        return {str(index): path for index, path in enumerate(self.paths)}
+
+    def merge_into(
+        self,
+        target: dict[str, SourceMetadataValue],
+        *,
+        path: str,
+    ) -> None:
+        existing = target.get(SOURCE_FILTER_PATHS_METADATA_FIELD)
+        merged = (
+            ()
+            if existing is None
+            else SourceFilterPathMetadata.from_reserved_value(
+                existing,
+                path=path,
+            ).paths
+        )
+        target[SOURCE_FILTER_PATHS_METADATA_FIELD] = SourceFilterPathMetadata.from_paths(
+            (*merged, *self.paths)
+        ).as_dict()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceMetadataRoleView:
     """Role-aware metadata view for literal selectors versus component axes."""
 
@@ -143,6 +196,15 @@ class SourceMetadataRoleView:
             original_metadata,
             path=ORIGINAL_SOURCE_METADATA_FIELD,
         ).fields
+
+    def source_filter_paths(self) -> tuple[str, ...]:
+        source_filter_paths = self.metadata.get(SOURCE_FILTER_PATHS_METADATA_FIELD)
+        if source_filter_paths is None:
+            return ()
+        return SourceFilterPathMetadata.from_reserved_value(
+            source_filter_paths,
+            path=SOURCE_FILTER_PATHS_METADATA_FIELD,
+        ).paths
 
 
 @dataclass(frozen=True, slots=True)

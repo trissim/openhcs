@@ -19,7 +19,6 @@ from python_introspect.enableable import EnableableMeta
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.components.validation import convert_enum_by_value
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.source_metadata import (
     SourceMetadataIdentityItems,
@@ -716,87 +715,6 @@ class StepSourceBindingsConfig(
 
 
 @dataclass(frozen=True, slots=True)
-class SourceBindingCompilationRequest:
-    """Compiler request for freezing step source bindings into runtime plans."""
-
-    config: StepSourceBindingsConfig
-    required_aliases: tuple[str, ...] = ()
-
-    @classmethod
-    def from_module_contracts(
-        cls,
-        *,
-        config: StepSourceBindingsConfig,
-        contracts: tuple[ModuleArtifactContract, ...],
-    ) -> "SourceBindingCompilationRequest":
-        bindings = config.binding_declarations
-        if config.enabled or not bindings:
-            return cls(config=config)
-        binding_kinds = tuple(
-            dict.fromkeys(binding.artifact_kind for binding in bindings)
-        )
-        required_aliases: list[str] = []
-        for contract in contracts:
-            if not isinstance(contract, ModuleArtifactContract):
-                raise TypeError(
-                    "SourceBindingCompilationRequest.contracts must contain "
-                    "ModuleArtifactContract values, got "
-                    f"{type(contract).__name__}."
-                )
-            for artifact_kind in binding_kinds:
-                required_aliases.extend(contract.external_input_names(artifact_kind))
-        return cls(config=config, required_aliases=tuple(required_aliases))
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.config, StepSourceBindingsConfig):
-            raise TypeError(
-                "SourceBindingCompilationRequest.config must be "
-                f"StepSourceBindingsConfig, got {type(self.config).__name__}."
-            )
-        if self.config.enabled is None:
-            raise ValueError(
-                "SourceBindingCompilationRequest requires ObjectState-resolved "
-                "StepSourceBindingsConfig.enabled; unresolved lazy enabled=None "
-                "cannot be compiled."
-            )
-        object.__setattr__(
-            self,
-            "required_aliases",
-            tuple(
-                dict.fromkeys(
-                    alias
-                    for alias in (
-                        str(required_alias).strip()
-                        for required_alias in self.required_aliases
-                    )
-                    if alias
-                )
-            ),
-        )
-
-    def compile(self) -> "CompiledSourceBindingPlan":
-        """Return the immutable runtime source-binding plan for this step."""
-        if self.config.enabled:
-            return CompiledSourceBindingPlan.from_enabled_config(self.config)
-        if self.config.is_empty or not self.required_aliases:
-            return CompiledSourceBindingPlan.empty()
-
-        required_aliases = frozenset(self.required_aliases)
-        bindings = tuple(
-            binding
-            for binding in self.config.binding_declarations
-            if binding.alias in required_aliases
-        )
-        if not bindings:
-            return CompiledSourceBindingPlan.empty()
-        return CompiledSourceBindingPlan(
-            bindings=bindings,
-            metadata_rules=self.config.metadata_rule_declarations,
-            match_plan=self.config.match_plan,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class CompiledSourceBindingPlan(_SourceBindingPlanBase):
     """Immutable compile-time source binding plan for one step."""
 
@@ -812,7 +730,20 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
         cls,
         config: StepSourceBindingsConfig,
     ) -> "CompiledSourceBindingPlan":
-        return SourceBindingCompilationRequest(config=config).compile()
+        if not isinstance(config, StepSourceBindingsConfig):
+            raise TypeError(
+                "CompiledSourceBindingPlan.config must be "
+                f"StepSourceBindingsConfig, got {type(config).__name__}."
+            )
+        if config.enabled is None:
+            raise ValueError(
+                "CompiledSourceBindingPlan requires ObjectState-resolved "
+                "StepSourceBindingsConfig.enabled; unresolved lazy enabled=None "
+                "cannot be compiled."
+            )
+        if config.enabled:
+            return cls.from_enabled_config(config)
+        return cls.empty()
 
     @classmethod
     def from_enabled_config(
@@ -1013,6 +944,7 @@ class SourceBindingRuntimeContext:
         default_factory=lambda: MappingProxyType({})
     )
     pipeline_input_files: tuple[str, ...] = ()
+    pipeline_source_candidate_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
     source_binding_context: InitVar["SourceBindingRuntimeContext | None"] = None
     source_metadata_is_normalized: InitVar[bool] = False
@@ -1098,6 +1030,11 @@ class SourceBindingRuntimeContext:
             )
             object.__setattr__(
                 self,
+                "pipeline_source_candidate_files",
+                source_binding_context.pipeline_source_candidate_files,
+            )
+            object.__setattr__(
+                self,
                 "pipeline_input_backend",
                 source_binding_context.pipeline_input_backend,
             )
@@ -1173,6 +1110,15 @@ class SourceBindingRuntimeContext:
             "pipeline_input_files",
             tuple(self.pipeline_input_files),
         )
+        object.__setattr__(
+            self,
+            "pipeline_source_candidate_files",
+            tuple(
+                self.pipeline_source_candidate_files
+                or self.pipeline_input_files
+                or self.step_input_files
+            ),
+        )
         if self.pipeline_input_backend is not None:
             object.__setattr__(
                 self,
@@ -1211,6 +1157,7 @@ class SourceBindingRuntimeContext:
         if cached is None:
             cached = (
                 self.step_input_dir,
+                tuple(sorted(self.pipeline_source_candidate_files)),
                 tuple(sorted(self.step_input_source_paths.items())),
                 tuple(sorted(self.virtual_source_paths_by_identity.items())),
             )
@@ -1271,13 +1218,6 @@ class SourceBindingRuntimeContext:
             identity.append((path, metadata))
         return tuple(identity)
 
-    @property
-    def pipeline_source_candidate_files(self) -> tuple[str, ...]:
-        """Return the source universe used for pipeline-origin source matching."""
-        if self.pipeline_input_files:
-            return self.pipeline_input_files
-        return self.step_input_files
-
     def source_candidate_file_universes(self) -> tuple[tuple[str, ...], ...]:
         """Return distinct non-empty file universes that may be source-parsed."""
         return tuple(
@@ -1306,6 +1246,7 @@ class SourceBindingRuntimeContext:
             dict[str, str],
             dict[str, dict[str, str]],
             tuple[str, ...],
+            tuple[str, ...],
             str | None,
         ],
     ]:
@@ -1325,6 +1266,7 @@ class SourceBindingRuntimeContext:
                     for path, metadata in self.source_metadata_by_path.items()
                 },
                 self.pipeline_input_files,
+                self.pipeline_source_candidate_files,
                 self.pipeline_input_backend,
             ),
         )
