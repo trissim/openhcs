@@ -8,6 +8,7 @@ from typing import ClassVar
 
 import numpy as np
 
+from openhcs.constants.constants import GroupBy
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.core.image_shapes import is_color_image_slice
@@ -289,6 +290,18 @@ class CorrectIlluminationApplyModule(
         return True
 
     @classmethod
+    def source_image_types_by_alias(cls, module: "ModuleBlock") -> dict[str, str]:
+        from openhcs.core.pipeline_image_schema import (
+            IlluminationFunctionImageTypeSourceRole,
+        )
+
+        return {
+            name: IlluminationFunctionImageTypeSourceRole.image_type()
+            for value in setting_values(module, "Select the illumination function")
+            for name in split_symbol_names(value)
+        }
+
+    @classmethod
     def postprocess_bound_settings(
         cls,
         module: "ModuleBlock",
@@ -387,6 +400,7 @@ class CorrectIlluminationCalculateModule(
 ):
     module_name = 'CorrectIlluminationCalculate'
     function_name = 'correct_illumination_calculate'
+    allowed_group_by = (GroupBy.NONE, GroupBy.CHANNEL)
     validated = True
     contract = 'flexible'
     confidence = 1.0

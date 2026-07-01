@@ -730,6 +730,15 @@ class CellProfilerModule(ABC, metaclass=AutoRegisterMeta):
         return ()
 
     @classmethod
+    def source_image_types_by_alias(
+        cls,
+        module: "ModuleBlock",
+    ) -> Mapping[str, str]:
+        """Return source-image role refinements implied by this module's inputs."""
+        del module
+        return {}
+
+    @classmethod
     def resolve_function(
         cls,
         module: "ModuleBlock",

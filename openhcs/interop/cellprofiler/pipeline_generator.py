@@ -1149,9 +1149,8 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
     SourceSelector,
-    StepSourceBindingsConfig,
 )
-from openhcs.core.config import LazyProcessingConfig
+from openhcs.core.config import LazyProcessingConfig, LazyStepSourceBindingsConfig
 from openhcs.constants.constants import VariableComponents, GroupBy
 from openhcs.constants.constants import AllComponents
 from openhcs.constants.input_source import InputSource

@@ -59,6 +59,7 @@ class CellProfilerSourceSchemaWorkspaceRequest:
     prune_dead_unmaterialized_artifact_steps: bool = False
     materialize_skipped_save_images: bool = True
     materialize_terminal_images: bool = True
+    force_materialization: bool = False
 
     @classmethod
     def from_paths(
@@ -79,6 +80,7 @@ class CellProfilerSourceSchemaWorkspaceRequest:
         prune_dead_unmaterialized_artifact_steps: bool = False,
         materialize_skipped_save_images: bool = True,
         materialize_terminal_images: bool = True,
+        force_materialization: bool = False,
     ) -> "CellProfilerSourceSchemaWorkspaceRequest":
         normalized_cppipe_path = Path(cppipe_path)
         normalized_generated_pipeline_path = Path(generated_pipeline_path)
@@ -104,6 +106,7 @@ class CellProfilerSourceSchemaWorkspaceRequest:
             ),
             materialize_skipped_save_images=materialize_skipped_save_images,
             materialize_terminal_images=materialize_terminal_images,
+            force_materialization=force_materialization,
         )
 
     def __post_init__(self) -> None:
@@ -222,6 +225,8 @@ def prepare_cellprofiler_source_schema_workspace(
         )
     pipeline_config = prepared.generated_pipeline.pipeline_config
     if (
+        not request.force_materialization
+        and
         pipeline_config is not None
         and pipeline_config.microscope is Microscope.SOURCE_BINDINGS
     ):

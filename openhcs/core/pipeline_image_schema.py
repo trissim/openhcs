@@ -795,7 +795,10 @@ class PipelineImageSchemaSourceBindingsProjection:
 class PipelineImageSchemaBuilder:
     """Mutable accumulator for pipeline-level source schema declarations."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        source_image_types_by_alias: Mapping[str, str] | None = None,
+    ) -> None:
         self.images_rule: ImagesRule | None = None
         self.image_plane_sources: list[ImagePlaneSource] = []
         self.source_image_stack = SourceImageStackPlan()
@@ -803,6 +806,7 @@ class PipelineImageSchemaBuilder:
         self.imported_metadata_tables: list[ImportedMetadataTable] = []
         self.assignments_by_alias: dict[str, ImageAssignment] = {}
         self.source_artifacts_by_alias: dict[str, SourceArtifactAssignment] = {}
+        self.source_image_types_by_alias = dict(source_image_types_by_alias or {})
         self.match_plan: SourceBindingMatchPlan | None = None
         self.grouping: GroupingPlan | None = None
 
@@ -828,6 +832,11 @@ class PipelineImageSchemaBuilder:
     def add_image_plane_source(self, source: ImagePlaneSource) -> None:
         if source not in self.image_plane_sources:
             self.image_plane_sources.append(source)
+
+    def source_image_type_for_alias(self, alias: str, default: str) -> str:
+        """Return the declared source image type for an alias."""
+
+        return self.source_image_types_by_alias.get(alias, default)
 
     def declare_source_image_stack(
         self,

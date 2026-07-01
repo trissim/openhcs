@@ -19,6 +19,7 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     MetadataSelector,
     NamedSourceBinding,
+    SourceFilterClause,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
     SourceBindingMatchMethod,
@@ -46,7 +47,10 @@ from openhcs.core.source_path_identity import (
     source_path_identity_key,
     source_paths_equal,
 )
-from openhcs.core.source_metadata import SourceMetadataIdentityProjection
+from openhcs.core.source_metadata import (
+    SourceMetadataIdentityProjection,
+    SourceMetadataRoleView,
+)
 from openhcs.core.runtime_values import (
     ImagePayloadSourceMetadataContext,
     image_payload_metadata,
@@ -552,7 +556,7 @@ class CellProfilerImageNumberResolver:
     def pipeline_paths(self) -> tuple[str, ...]:
         return tuple(
             path
-            for path in self.adapter.source_binding_context.pipeline_input_files
+            for path in self.adapter.source_binding_context.pipeline_source_candidate_files
             if is_image_path(path)
         )
 
@@ -1531,6 +1535,8 @@ def _merge_missing_source_metadata(
     additions: ParsedSourceMetadata,
 ) -> None:
     for key, value in additions.items():
+        if value is None:
+            continue
         if key not in metadata:
             metadata[key] = str(value)
 
@@ -1619,9 +1625,31 @@ class SourceCandidateMatcher:
                 selector_resolution.inherited_component_items,
             )
             and cls.matches_metadata(candidate, binding.selector.metadata)
-            and source_filters_match(candidate.resolved_path, binding.selector.filters)
+            and cls.matches_source_filters(candidate, binding.selector.filters)
         )
         return cache.store_value(cache_key, matched)
+
+    @classmethod
+    def matches_source_filters(
+        cls,
+        candidate: ParsedSourceCandidate,
+        filters: tuple[SourceFilterClause, ...],
+    ) -> bool:
+        return any(
+            source_filters_match(path, filters)
+            for path in cls.source_filter_paths(candidate)
+        )
+
+    @staticmethod
+    def source_filter_paths(candidate: ParsedSourceCandidate) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                (
+                    *candidate.paths,
+                    *SourceMetadataRoleView(candidate.metadata).source_filter_paths(),
+                )
+            )
+        )
 
     @staticmethod
     def match_candidates_cache_key(
@@ -1801,10 +1829,30 @@ class SourceCandidateMatcher:
         cls,
         source_binding_plan: CompiledSourceBindingPlan,
         step_input_candidates: tuple[ParsedSourceCandidate, ...],
+        *,
+        binding: NamedSourceBinding,
+        target_candidates: tuple[ParsedSourceCandidate, ...],
     ) -> Mapping[str, str]:
         if source_binding_plan.match_plan is not None:
             return MappingProxyType({})
-        return cls.inherited_scope_components(step_input_candidates)
+        current_scope = cls.inherited_scope_components(step_input_candidates)
+        if not current_scope:
+            return current_scope
+        selector_candidates = cls.match_candidates(
+            candidates=target_candidates,
+            binding=binding,
+            inherit_components={},
+        )
+        if not selector_candidates:
+            return current_scope
+        return MappingProxyType(
+            dict(
+                cls.current_scope_items_present_in_target(
+                    current_scope,
+                    selector_candidates,
+                )
+            )
+        )
 
     @classmethod
     def match_plan_candidates(
@@ -2075,6 +2123,8 @@ def source_candidate_summary(
     return tuple(
         {
             "path": candidate.path,
+            "resolved_path": candidate.resolved_path,
+            "source_filter_paths": SourceCandidateMatcher.source_filter_paths(candidate),
             "metadata": dict(candidate.metadata),
         }
         for candidate in candidates[:5]

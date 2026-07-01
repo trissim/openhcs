@@ -328,6 +328,7 @@ class _SymbolTableBuilder:
         )
         return StepSourceBindingsConfig(
             bindings=bindings,
+            enabled=True,
         )
 
     def external_image(self, name: str) -> CellProfilerSymbol:
@@ -703,22 +704,24 @@ class ArtifactSpecLiteralAuthority:
         return f"ArtifactSpec({', '.join(args)})"
 
 
-def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
+def step_source_bindings_literal(config: StepSourceBindingsConfig) -> str:
     """Render a deterministic Python literal for generated step source bindings."""
     if config.is_empty:
         return "EMPTY_SOURCE_BINDINGS"
-    return _source_bindings_literal(config, "StepSourceBindingsConfig")
+    field_literals = _source_bindings_field_literals(config)
+    if config.enabled is True:
+        field_literals.append("enabled=True")
+    return f"LazyStepSourceBindingsConfig({', '.join(field_literals)})"
 
 
 def source_bindings_config_literal(config: SourceBindingsConfig) -> str:
     """Render a deterministic Python literal for generated pipeline source bindings."""
-    return _source_bindings_literal(config, "SourceBindingsConfig")
+    return f"SourceBindingsConfig({', '.join(_source_bindings_field_literals(config))})"
 
 
-def _source_bindings_literal(
+def _source_bindings_field_literals(
     config: SourceBindingsConfig,
-    constructor_name: str,
-) -> str:
+) -> list[str]:
     """Render source-binding payload fields for one config declaration."""
     field_literals: list[str] = []
     if config.source_filters:
@@ -748,7 +751,7 @@ def _source_bindings_literal(
         field_literals.append(
             f"match_plan={_source_binding_match_plan_literal(config.match_plan)}"
         )
-    return f"{constructor_name}({', '.join(field_literals)})"
+    return field_literals
 
 
 def _named_source_binding_literal(binding: NamedSourceBinding) -> str:

@@ -16,6 +16,7 @@ from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
+    GrayscaleImageTypeSourceRole,
     ImageAssignment,
     ImagePlaneSource,
     ImportedMetadataJoin,
@@ -558,7 +559,9 @@ class SetupModuleCompiler(ABC, metaclass=AutoRegisterMeta):
 def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
     """Compile setup modules into a typed pipeline-level image schema."""
     module_tuple = tuple(modules)
-    builder = PipelineImageSchemaBuilder()
+    builder = PipelineImageSchemaBuilder(
+        source_image_types_by_alias=_source_image_types_by_alias(module_tuple)
+    )
     for module in module_tuple:
         if not module.enabled:
             continue
@@ -567,6 +570,31 @@ def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
             compiler.compile(module, builder)
     _compile_embedded_image_plane_sources(module_tuple, builder)
     return builder.build()
+
+
+def _source_image_types_by_alias(
+    modules: Sequence[ModuleBlock],
+) -> Mapping[str, str]:
+    from openhcs.processing.backends.cellprofiler.module_classes import (
+        CellProfilerModule,
+    )
+
+    image_types: dict[str, str] = {}
+    for module in modules:
+        if not module.enabled:
+            continue
+        module_type = CellProfilerModule.for_module(module.name)
+        if module_type is None:
+            continue
+        for alias, image_type in module_type.source_image_types_by_alias(module).items():
+            existing = image_types.get(alias)
+            if existing is not None and existing != image_type:
+                raise ValueError(
+                    f"Source image alias {alias!r} has conflicting image-type "
+                    f"declarations: {existing!r} != {image_type!r}."
+                )
+            image_types[alias] = image_type
+    return image_types
 
 
 def _compile_embedded_image_plane_sources(
@@ -633,17 +661,39 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
                 continue
             filters = _load_images_source_filters(module, block)
             selector = SourceSelector(filters=filters)
-            state.declare_assignment(
-                ImageAssignment(
-                    alias=alias,
-                    image_type="Grayscale image",
-                    selector=selector,
-                    origin=(
-                        cellprofiler_source_binding_origin_policy()
-                        .origin_for_selector(selector)
-                    ),
-                )
+            image_type = state.source_image_type_for_alias(
+                alias,
+                GrayscaleImageTypeSourceRole.image_type(),
             )
+            if image_type_participates_in_image_stack(image_type):
+                state.declare_assignment(
+                    ImageAssignment(
+                        alias=alias,
+                        image_type=image_type,
+                        selector=selector,
+                        origin=(
+                            cellprofiler_source_binding_origin_policy()
+                            .origin_for_selector(selector)
+                        ),
+                    )
+                )
+            else:
+                state.declare_source_artifact(
+                    SourceArtifactAssignment(
+                        alias=alias,
+                        artifact_kind=image_type_artifact_kind(image_type),
+                        selector=selector,
+                        origin=(
+                            cellprofiler_source_binding_origin_policy()
+                            .origin_for_source_artifact(
+                                image_type_artifact_kind(image_type),
+                                image_type,
+                                selector,
+                            )
+                        ),
+                        payload_type=image_type,
+                    )
+                )
             _compile_load_images_metadata_rules(block, filters, state)
 
 

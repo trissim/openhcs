@@ -924,7 +924,9 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CellProfilerModuleContractBinding" not in generated.code
     assert "_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {" not in generated.code
     assert "ModuleArtifactContract(" not in generated.code
-    assert "source_bindings=StepSourceBindingsConfig(" in generated.code
+    assert "source_bindings=LazyStepSourceBindingsConfig(" in generated.code
+    assert "enabled=True" in generated.code
+    assert "source_bindings=StepSourceBindingsConfig(" not in generated.code
     assert generated.runtime_module_contracts_by_module_num[
         2
     ].runtime_artifact_inputs[0].name == "Nuclei"

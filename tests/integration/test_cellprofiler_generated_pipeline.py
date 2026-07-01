@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import os
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
+    LazyWellFilterConfig,
     LazyPathPlanningConfig,
     MaterializationBackend,
     PipelineConfig,
@@ -48,6 +50,23 @@ from PIL import Image
 from scipy.io import savemat
 
 
+def _generated_pipeline_config(
+    prepared,
+    *,
+    path_planning_config: LazyPathPlanningConfig,
+    vfs_config: VFSConfig,
+    well_filter_config: LazyWellFilterConfig | None = None,
+) -> PipelineConfig:
+    config = prepared.generated_pipeline.pipeline_config or PipelineConfig()
+    overrides = {
+        "path_planning_config": path_planning_config,
+        "vfs_config": vfs_config,
+    }
+    if well_filter_config is not None:
+        overrides["well_filter_config"] = well_filter_config
+    return replace(config, **overrides)
+
+
 def test_cppipe_generated_pipeline_executes_through_orchestrator(
     tmp_path: Path,
 ) -> None:
@@ -60,7 +79,8 @@ def test_cppipe_generated_pipeline_executes_through_orchestrator(
 
     global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -105,7 +125,8 @@ def test_bbbc021_cppipe_generated_pipeline_executes_named_channel_bindings(
         microscope=Microscope.BBBC021,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -163,7 +184,8 @@ def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
         microscope=Microscope.BBBC021,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -183,10 +205,14 @@ def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
     generated_images = sorted(
         (_generated_output_root(plate_path) / "images").glob("*.tif")
     )
-    assert [path.name for path in generated_images] == [
-        "A01_s1_w1_z001_t001.tif",
-        "A01_s1_w2_z001_t001.tif",
-        "A01_s1_w4_z001_t001.tif",
+    assert [path.name for path in generated_images] == ["A01_s1_w4_z001_t001.tif"]
+    generated_artifacts = sorted(
+        (_generated_output_root(plate_path) / "images_results").glob("*_slice_000.tif")
+    )
+    assert [path.name for path in generated_artifacts] == [
+        "A01_s1_w1_z001_t001_IllumDAPI_step0_slice_000.tif",
+        "A01_s1_w2_z001_t001_IllumActin_step1_slice_000.tif",
+        "A01_s1_w4_z001_t001_IllumTubulin_step2_slice_000.tif",
     ]
 
 
@@ -203,7 +229,10 @@ def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
     )
 
     raw_assignment = prepared.source_schema.resolved_assignment_for_alias("Raw")
-    illum_assignment = prepared.source_schema.resolved_assignment_for_alias("Illum")
+    illum_assignment = prepared.source_schema.resolved_source_artifact_for_alias(
+        "Illum",
+        ArtifactKind.IMAGE,
+    )
     assert raw_assignment is not None
     assert raw_assignment.origin is SourceBindingOrigin.PIPELINE_START
     assert illum_assignment is not None
@@ -215,7 +244,8 @@ def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
         microscope=Microscope.IMAGEXPRESS,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -277,7 +307,8 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
 
     global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -356,7 +387,8 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -430,12 +462,16 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
+        ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=list(effective_well_filter),
         ),
     )
     orchestrator = PipelineOrchestrator(
@@ -447,7 +483,6 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=list(effective_well_filter),
     )
 
     assert all(
@@ -518,6 +553,9 @@ def test_official_examplefly_cppipe_executes_measurement_math_classification(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=["A01"],
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -528,7 +566,6 @@ def test_official_examplefly_cppipe_executes_measurement_math_classification(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
     )
 
     assert all(
@@ -660,6 +697,9 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=["A01"],
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -670,7 +710,6 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
     )
 
     assert all(
@@ -732,6 +771,9 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=["A01"],
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -742,7 +784,6 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
     )
 
     assert all(
@@ -801,6 +842,9 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=["A01"],
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -811,7 +855,6 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
     )
 
     assert all(
@@ -918,6 +961,9 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=["A01"],
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -928,7 +974,6 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
     )
 
     assert all(
@@ -1014,6 +1059,10 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
         tmp_path / "official_illumination_openhcs_workspace",
         prepared.source_schema,
     )
+    effective_well_filter = _effective_source_schema_well_filter(
+        workspace,
+        requested_well_filter=("A01",),
+    )
 
     global_config = GlobalPipelineConfig(
         num_workers=1,
@@ -1028,6 +1077,9 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=list(effective_well_filter),
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -1035,14 +1087,9 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
     )
     orchestrator.initialize()
 
-    effective_well_filter = _effective_source_schema_well_filter(
-        workspace,
-        requested_well_filter=("A01",),
-    )
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=list(effective_well_filter),
     )
 
     assert all(
@@ -1434,7 +1481,8 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
 
     global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -1491,6 +1539,7 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
         "parent_id",
         "child_id",
         "slice_index",
+        "slice_count",
     ]
     assert _matching_header(
         headers_by_name,
@@ -1580,7 +1629,7 @@ def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
         axis_id="A01",
     )
     assert calculate_math_records
-    assert calculate_math_records[0].value.data[0].output_name == "PercentPositive"
+    assert calculate_math_records[0].value.data[0]["output_name"] == "PercentPositive"
 
 
 def _generate_plate(plate_path: Path) -> Path:
@@ -1700,7 +1749,7 @@ def _write_bbbc021_image(path: Path, *, seed: int, signal: int) -> None:
         0,
         65535,
     ).astype(np.uint16)
-    Image.fromarray(image).save(path)
+    tifffile.imwrite(path, image, description="spatial-calibration-x: 1.0")
 
 
 def _write_examplehuman_image(path: Path, *, seed: int, signal: int) -> None:
@@ -1828,6 +1877,9 @@ def _execute_official_cellprofiler3_pipeline(
         vfs_config=VFSConfig(
             materialization_backend=MaterializationBackend.DISK,
         ),
+        well_filter_config=LazyWellFilterConfig(
+            well_filter=list(effective_well_filter),
+        ),
     )
     orchestrator = PipelineOrchestrator(
         workspace.workspace_root,
@@ -1838,7 +1890,6 @@ def _execute_official_cellprofiler3_pipeline(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=list(effective_well_filter),
     )
     validate_cppipe_execution(
         prepared,

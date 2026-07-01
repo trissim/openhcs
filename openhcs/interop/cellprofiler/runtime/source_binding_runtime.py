@@ -697,8 +697,10 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
     origin_key = SourceBindingOrigin.PIPELINE_START.value
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> ImagePayloadValue:
-        pipeline_input_files = request.adapter.source_binding_context.pipeline_input_files
-        if not pipeline_input_files:
+        pipeline_source_candidate_files = (
+            request.adapter.source_binding_context.pipeline_source_candidate_files
+        )
+        if not pipeline_source_candidate_files:
             raise NotImplementedError(
                 f"CellProfiler source alias '{request.alias}' needs pipeline-start "
                 "selector resolution, but no pipeline-start file universe was "
@@ -707,19 +709,24 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         step_input_candidates = request.adapter.source_candidates(
             request.adapter.source_binding_context.current_step_input_files
         )
-        inherit_components = SourceCandidateMatcher.pipeline_start_inherited_components(
-            request.adapter.source_binding_plan,
-            step_input_candidates,
-        )
         match_started_at = time.perf_counter()
         selected_files = self._current_step_matched_candidates(
             request,
             step_input_candidates=step_input_candidates,
-            inherit_components=inherit_components,
         )
         parsed_candidates = step_input_candidates
         if not selected_files:
-            parsed_candidates = request.adapter.source_candidates(pipeline_input_files)
+            parsed_candidates = request.adapter.source_candidates(
+                pipeline_source_candidate_files
+            )
+            inherit_components = (
+                SourceCandidateMatcher.pipeline_start_inherited_components(
+                    request.adapter.source_binding_plan,
+                    step_input_candidates,
+                    binding=request.binding,
+                    target_candidates=parsed_candidates,
+                )
+            )
             initially_matched = SourceCandidateMatcher.match_candidates(
                 candidates=parsed_candidates,
                 binding=request.binding,
@@ -775,7 +782,6 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         request: SourceBindingResolutionRequest,
         *,
         step_input_candidates: tuple[ParsedSourceCandidate, ...],
-        inherit_components: Mapping[str, str],
     ) -> tuple[ParsedSourceCandidate, ...]:
         """Resolve pipeline-start aliases from the current input universe when possible."""
         if not step_input_candidates:
@@ -785,6 +791,12 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             request.binding,
         ):
             return ()
+        inherit_components = SourceCandidateMatcher.pipeline_start_inherited_components(
+            request.adapter.source_binding_plan,
+            step_input_candidates,
+            binding=request.binding,
+            target_candidates=step_input_candidates,
+        )
         current_matches = SourceCandidateMatcher.match_candidates(
             candidates=step_input_candidates,
             binding=request.binding,

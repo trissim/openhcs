@@ -38,7 +38,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.source_matching import source_metadata_component
 from openhcs.interop.cellprofiler.symbol_table import (
     ModuleArtifactContracts,
-    source_bindings_literal,
+    step_source_bindings_literal,
 )
 from openhcs.processing.backends.cellprofiler.library import (
     require_function,
@@ -1093,7 +1093,7 @@ def generated_function_step_semantic_argument_lines(
     if not artifact_contract.source_bindings.is_empty:
         lines.append(
             "        source_bindings="
-            f"{source_bindings_literal(artifact_contract.source_bindings)},"
+            f"{step_source_bindings_literal(artifact_contract.source_bindings)},"
         )
     return tuple(lines)
 

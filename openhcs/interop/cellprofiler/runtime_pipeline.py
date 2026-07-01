@@ -11,7 +11,7 @@ import time
 from types import ModuleType
 from typing import Any
 
-from openhcs.constants import Backend, MULTIPROCESSING_AXIS
+from openhcs.constants import Backend
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.compilation_session import (
     PIPELINE_SOURCE_SCHEMA_METADATA_KEY,
@@ -191,16 +191,11 @@ def execute_pipeline_direct(
     orchestrator: Any,
     pipeline: Pipeline,
     *,
-    well_filter: Sequence[str] | None = None,
     phase_timing: Any | None = None,
     compile_phase: Any | None = None,
     execute_phase: Any | None = None,
 ) -> DirectPipelineExecution:
     """Compile and execute a pipeline through the direct orchestrator path."""
-    wells = list(well_filter or orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
-    if not wells:
-        raise RuntimeError("No wells found for pipeline execution.")
-
     progress_bridge = DirectExecutionProgressBridge(
         queue=DirectExecutionProgressSink(),
     )
@@ -210,7 +205,6 @@ def execute_pipeline_direct(
         with _optional_phase(phase_timing, compile_phase):
             compilation_result = orchestrator.compile_pipelines(
                 pipeline_definition=pipeline,
-                well_filter=wells,
         )
         execution_bundle = compilation_result["execution_bundle"]
         compiled_contexts = execution_bundle.runtime_contexts

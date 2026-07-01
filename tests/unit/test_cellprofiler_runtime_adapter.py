@@ -38,6 +38,7 @@ from openhcs.interop.cellprofiler.runtime.source_candidates import (
     PipelineStartSourcePayloadRequest,
     ParsedSourceCandidate,
     ParsedSourceCandidateCollection,
+    SourceCandidateMatcher,
 )
 from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
     NumpyArraySourceFileLoader,
@@ -72,6 +73,7 @@ from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
 from openhcs.core.source_metadata import ORIGINAL_SOURCE_METADATA_FIELD
+from openhcs.core.source_metadata import SourceFilterPathMetadata
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -456,6 +458,56 @@ def test_image_number_resolver_uses_group_start_for_multi_source_payloads():
             ("/source/site2.tif", "/source/site1.tif")
         )
         == 1
+    )
+
+
+def test_source_candidate_matcher_matches_filters_across_path_identity():
+    target = ParsedSourceCandidate(
+        path="A01_s001_w2_z001_t001.tif",
+        resolved_path="/workspace/A01_s001_w2_z001_t001.tif",
+        virtual_path="A01_s001_w2_z001_t001.tif",
+        filename="A01_s001_w2_z001_t001.tif",
+        metadata={
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "timepoint": "1",
+            "OpenHCSSourceFilterPaths": SourceFilterPathMetadata.from_paths(
+                ("../ExamplePercentPositive/images/PercentPositive_A01_s001_w1d1.tif",)
+            ).as_dict(),
+        },
+    )
+    candidates = (
+        ParsedSourceCandidate(
+            path="/source/PercentPositive_A01_s001_w0d0.tif",
+            resolved_path="/workspace/A01_s001_w1_z001_t001.tif",
+            virtual_path="A01_s001_w1_z001_t001.tif",
+            filename="A01_s001_w1_z001_t001.tif",
+            metadata={"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+        ),
+        target,
+    )
+    binding = NamedSourceBinding(
+        alias="OrigGreen",
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.CONTAINS,
+                    value="w1d1.tif",
+                ),
+            )
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+
+    assert (
+        SourceCandidateMatcher.match_candidates(
+            candidates=candidates,
+            binding=binding,
+            inherit_components={},
+        )
+        == (target,)
     )
 
 

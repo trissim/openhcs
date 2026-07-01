@@ -881,7 +881,9 @@ def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
         skipped_modules=setup_modules,
     )
 
-    assert "source_bindings=StepSourceBindingsConfig(" in generated.code
+    assert "source_bindings=LazyStepSourceBindingsConfig(" in generated.code
+    assert "enabled=True" in generated.code
+    assert "source_bindings=StepSourceBindingsConfig(" not in generated.code
     assert "# CellProfiler artifact inputs: image:DAPI, image:GFP" in generated.code
     assert "VariableComponents.CHANNEL" in generated.code
     assert "input_source=InputSource.PIPELINE_START" in generated.code
