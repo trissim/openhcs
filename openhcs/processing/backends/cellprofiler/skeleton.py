@@ -137,7 +137,7 @@ class ObjectSkeletonSliceMeasurement:
         if self.fill_small_holes:
             combined_skeleton = remove_small_holes(
                 combined_skeleton,
-                max_size=self.maximum_hole_size,
+                area_threshold=self.maximum_hole_size,
             )
         combined_skeleton = skeletonize(combined_skeleton)
         outside_skeleton = combined_skeleton & (dilated_labels == 0)

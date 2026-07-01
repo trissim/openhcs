@@ -898,7 +898,7 @@ class FillObjectHolesStrategy(FillObjectsModeStrategy):
             obj_mask = request.label_array == label_int
             filled_mask = remove_small_holes(
                 obj_mask,
-                max_size=int(max_hole_area),
+                area_threshold=int(max_hole_area),
                 connectivity=1,
             )
             filled_labels[filled_mask] = label_int
@@ -1686,7 +1686,7 @@ class HoleRemovalDiameterPolicy:
 
         result = skimage.morphology.remove_small_holes(
             self.binary_image(image),
-            max_size=self.threshold,
+            area_threshold=self.threshold,
         )
         return result.astype(np.float32)
 
