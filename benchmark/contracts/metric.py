@@ -1,7 +1,11 @@
 """Metric collector abstract base class for benchmark platform."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Self
+
+from benchmark.contracts.values import BenchmarkMetricValue
 
 
 class MetricCollector(ABC):
@@ -18,7 +22,7 @@ class MetricCollector(ABC):
     """
 
     @abstractmethod
-    def __enter__(self) -> 'MetricCollector':
+    def __enter__(self) -> Self:
         """Start metric collection."""
         pass
 
@@ -28,6 +32,6 @@ class MetricCollector(ABC):
         pass
 
     @abstractmethod
-    def get_result(self) -> Any:
+    def get_result(self) -> BenchmarkMetricValue:
         """Get collected metric value."""
         pass

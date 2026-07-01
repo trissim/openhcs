@@ -1,5 +1,7 @@
 """Dataset contracts for benchmark platform."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
@@ -28,7 +30,7 @@ class DatasetSourceKind(Enum):
     GIT_SPARSE_WITH_ARCHIVES = "git_sparse_with_archives"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DatasetSourceSpec:
     """Nominal description of where a benchmark dataset comes from."""
 
@@ -40,7 +42,7 @@ class DatasetSourceSpec:
     tls_verify: bool = True
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BenchmarkCategory:
     """Semantic report category attached to a benchmark case declaration."""
 
@@ -48,7 +50,7 @@ class BenchmarkCategory:
     module: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CellProfilerBenchmarkCaseSpec:
     """Dataset-relative CellProfiler benchmark case."""
 
@@ -63,7 +65,7 @@ class CellProfilerBenchmarkCaseSpec:
     cellprofiler_timeout_seconds: float | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DatasetSpec:
     """
     Immutable dataset specification.
@@ -71,6 +73,7 @@ class DatasetSpec:
     This is the contract all benchmark datasets must satisfy.
     Adding a new dataset = defining a new DatasetSpec instance.
     """
+
     id: str
     """Unique identifier (e.g., 'BBBC021', 'BBBC038')"""
 
@@ -121,6 +124,7 @@ class AcquiredDataset:
 
     This is what tool adapters receive.
     """
+
     id: str
     path: Path
     microscope_type: str

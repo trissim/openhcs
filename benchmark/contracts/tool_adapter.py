@@ -1,26 +1,36 @@
 """Tool adapter abstract base class for benchmark platform."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Sequence
 from pathlib import Path
 from dataclasses import dataclass
 
+from benchmark.contracts.metric import MetricCollector
+from benchmark.contracts.values import (
+    BenchmarkMetricMap,
+    BenchmarkParameterMap,
+    BenchmarkProvenanceMap,
+)
 
-@dataclass
+
+@dataclass(frozen=True, slots=True)
 class BenchmarkResult:
     """
     Normalized result from any tool execution.
 
     All tool adapters must return this structure.
     """
+
     tool_name: str
     dataset_id: str
     pipeline_name: str
-    metrics: dict[str, Any]
+    metrics: BenchmarkMetricMap
     output_path: Path
     success: bool
     error_message: str | None = None
-    provenance: dict[str, Any] | None = None
+    provenance: BenchmarkProvenanceMap | None = None
 
 
 class ToolAdapter(ABC):
@@ -50,9 +60,9 @@ class ToolAdapter(ABC):
         self,
         dataset_path: Path,
         pipeline_name: str,
-        pipeline_params: dict[str, Any],
-        metrics: list[Any],
-        output_dir: Path
+        pipeline_params: BenchmarkParameterMap,
+        metrics: Sequence[MetricCollector],
+        output_dir: Path,
     ) -> BenchmarkResult:
         """
         Execute tool on dataset with specified pipeline.
@@ -72,19 +82,23 @@ class ToolAdapter(ABC):
 
 class ToolAdapterError(Exception):
     """Base exception for tool adapter errors."""
+
     pass
 
 
 class ToolNotInstalledError(ToolAdapterError):
     """Tool not installed or not found."""
+
     pass
 
 
 class ToolVersionError(ToolAdapterError):
     """Tool version incompatible."""
+
     pass
 
 
 class ToolExecutionError(ToolAdapterError):
     """Tool execution failed."""
+
     pass

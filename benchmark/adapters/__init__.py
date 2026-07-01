@@ -2,27 +2,42 @@
 
 from __future__ import annotations
 
-import importlib
-from typing import Any
+__all__ = ("CellProfilerAdapter", "OpenHCSAdapter")
+
+_EXPORT_NAMES = frozenset(__all__)
+_MISSING_EXPORT = object()
 
 
-_PUBLIC_EXPORTS: dict[str, tuple[str, str]] = {
-    "CellProfilerAdapter": (
-        "benchmark.adapters.cellprofiler",
-        "CellProfilerAdapter",
-    ),
-    "OpenHCSAdapter": ("benchmark.adapters.openhcs", "OpenHCSAdapter"),
-}
+def _adapter_export_modules():
+    import benchmark.adapters.openhcs as openhcs_adapter
+
+    yield openhcs_adapter
+
+    import benchmark.adapters.cellprofiler as cellprofiler_adapter
+
+    yield cellprofiler_adapter
 
 
-def __getattr__(name: str) -> Any:
-    """Load adapter classes on demand."""
-    if name not in _PUBLIC_EXPORTS:
+def resolve_adapter_export(name: str):
+    """Resolve one public adapter export from its owning module."""
+    if name not in _EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, attribute_name = _PUBLIC_EXPORTS[name]
-    value = getattr(importlib.import_module(module_name), attribute_name)
-    globals()[name] = value
-    return value
+    existing = globals().get(name, _MISSING_EXPORT)
+    if existing is not _MISSING_EXPORT:
+        return existing
+    for module in _adapter_export_modules():
+        namespace = vars(module)
+        if name in namespace:
+            value = namespace[name]
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = tuple(_PUBLIC_EXPORTS)
+def __getattr__(name: str):
+    """Resolve public adapter re-exports from their owning modules on demand."""
+    return resolve_adapter_export(name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _EXPORT_NAMES)

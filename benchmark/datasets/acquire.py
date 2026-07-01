@@ -61,7 +61,9 @@ class DatasetFileDownloader:
             try:
                 response.raise_for_status()
             except Exception as exc:  # pragma: no cover - network failure path
-                raise DatasetAcquisitionError(f"Failed to download {url}: {exc}") from exc
+                raise DatasetAcquisitionError(
+                    f"Failed to download {url}: {exc}"
+                ) from exc
 
             total = int(response.headers.get("content-length", 0))
             progress = tqdm(
@@ -112,7 +114,10 @@ class DatasetArchiveMaterializer:
                     if target_path.exists():
                         continue
                     target_path.parent.mkdir(parents=True, exist_ok=True)
-                    with archive.open(member, "r") as source, target_path.open("wb") as target:
+                    with (
+                        archive.open(member, "r") as source,
+                        target_path.open("wb") as target,
+                    ):
                         shutil.copyfileobj(source, target)
         except zipfile.BadZipFile as exc:
             raise DatasetAcquisitionError(f"Corrupted zip archive: {zip_path}") from exc
@@ -125,13 +130,16 @@ class DatasetValidationStrategy(ABC, metaclass=AutoRegisterMeta):
     """Registered validator for one DatasetValidationRule."""
 
     __registry_key__ = "validation_rule"
-    validation_rule: str | None = None
+    validation_rule: DatasetValidationRule | None = None
 
     @classmethod
     def for_rule(cls, rule: DatasetValidationRule) -> "DatasetValidationStrategy":
-        strategy_type = cls.__registry__.get(rule.value)
-        if strategy_type is None:
-            raise DatasetAcquisitionError(f"Unknown validation rule '{rule.name}'")
+        try:
+            strategy_type = cls.__registry__[rule]
+        except KeyError as exc:
+            raise DatasetAcquisitionError(
+                f"Unknown validation rule '{rule.name}'"
+            ) from exc
         return strategy_type()
 
     @abstractmethod
@@ -142,7 +150,7 @@ class DatasetValidationStrategy(ABC, metaclass=AutoRegisterMeta):
 class ImageCountValidationStrategy(DatasetValidationStrategy):
     """Validate by image-count tolerance."""
 
-    validation_rule = DatasetValidationRule.IMAGE_COUNT.value
+    validation_rule = DatasetValidationRule.IMAGE_COUNT
 
     def validate(self, context: DatasetValidationContext) -> int:
         return _validate_count(context.data_dir, context.spec.expected_count)
@@ -151,7 +159,7 @@ class ImageCountValidationStrategy(DatasetValidationStrategy):
 class ManifestValidationStrategy(DatasetValidationStrategy):
     """Validate by dataset manifest."""
 
-    validation_rule = DatasetValidationRule.MANIFEST.value
+    validation_rule = DatasetValidationRule.MANIFEST
 
     def validate(self, context: DatasetValidationContext) -> int:
         if context.spec.manifest_path is None:
@@ -167,7 +175,7 @@ class ManifestValidationStrategy(DatasetValidationStrategy):
 class NonEmptyValidationStrategy(DatasetValidationStrategy):
     """Validate by checking the acquired tree is non-empty."""
 
-    validation_rule = DatasetValidationRule.NON_EMPTY.value
+    validation_rule = DatasetValidationRule.NON_EMPTY
 
     def validate(self, context: DatasetValidationContext) -> int:
         return _validate_non_empty(context.data_dir)
@@ -177,19 +185,26 @@ class DatasetSourceHandler(ABC, metaclass=AutoRegisterMeta):
     """Registered acquisition implementation for one source family."""
 
     __registry_key__ = "source_kind"
-    source_kind: str | None = None
+    source_kind: DatasetSourceKind | None = None
     downloader: DatasetFileDownloader = DEFAULT_DATASET_FILE_DOWNLOADER
-    archive_materializer: DatasetArchiveMaterializer = DEFAULT_DATASET_ARCHIVE_MATERIALIZER
+    archive_materializer: DatasetArchiveMaterializer = (
+        DEFAULT_DATASET_ARCHIVE_MATERIALIZER
+    )
 
     @classmethod
     def for_source(cls, source: DatasetSourceSpec) -> "DatasetSourceHandler":
-        handler_type = cls.__registry__.get(source.kind.value)
-        if handler_type is None:
-            raise DatasetAcquisitionError(f"Unsupported dataset source: {source.kind.name}")
+        try:
+            handler_type = cls.__registry__[source.kind]
+        except KeyError as exc:
+            raise DatasetAcquisitionError(
+                f"Unsupported dataset source: {source.kind.name}"
+            ) from exc
         return handler_type()
 
     @abstractmethod
-    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+    def acquire(
+        self, context: DatasetAcquisitionContext, source: DatasetSourceSpec
+    ) -> bool:
         """Acquire into context.data_dir and return whether cached data was reused."""
 
     def download_archives(
@@ -204,7 +219,9 @@ class DatasetSourceHandler(ABC, metaclass=AutoRegisterMeta):
             )
 
         context.archive_dir.mkdir(parents=True, exist_ok=True)
-        archive_paths = tuple(context.archive_dir / Path(url).name for url in source.urls)
+        archive_paths = tuple(
+            context.archive_dir / Path(url).name for url in source.urls
+        )
         cached = all(path.exists() for path in archive_paths)
         for url, archive_path in zip(source.urls, archive_paths, strict=True):
             if not archive_path.exists():
@@ -219,9 +236,11 @@ class DatasetSourceHandler(ABC, metaclass=AutoRegisterMeta):
 class ArchiveUrlSourceHandler(DatasetSourceHandler):
     """Acquire one or more URL archives into the dataset cache."""
 
-    source_kind = DatasetSourceKind.ARCHIVE_URLS.value
+    source_kind = DatasetSourceKind.ARCHIVE_URLS
 
-    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+    def acquire(
+        self, context: DatasetAcquisitionContext, source: DatasetSourceSpec
+    ) -> bool:
         context.archive_dir.mkdir(parents=True, exist_ok=True)
         if context.data_dir.exists():
             return True
@@ -250,9 +269,11 @@ class ArchiveUrlSourceHandler(DatasetSourceHandler):
 class UrlFilesSourceHandler(DatasetSourceHandler):
     """Acquire one or more plain files into the dataset cache."""
 
-    source_kind = DatasetSourceKind.URL_FILES.value
+    source_kind = DatasetSourceKind.URL_FILES
 
-    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+    def acquire(
+        self, context: DatasetAcquisitionContext, source: DatasetSourceSpec
+    ) -> bool:
         if not source.urls:
             raise DatasetAcquisitionError(
                 f"Dataset {context.spec.id!r} has no file URLs to acquire."
@@ -272,9 +293,11 @@ class UrlFilesSourceHandler(DatasetSourceHandler):
 class GitSparseWithArchiveUrlsSourceHandler(DatasetSourceHandler):
     """Acquire sparse repository files plus companion dataset archives."""
 
-    source_kind = DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES.value
+    source_kind = DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES
 
-    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+    def acquire(
+        self, context: DatasetAcquisitionContext, source: DatasetSourceSpec
+    ) -> bool:
         cached_repo = GitSparseSourceHandler().acquire(context, source)
         archive_paths, cached_archives = self.download_archives(context, source)
 
@@ -296,9 +319,11 @@ class GitSparseWithArchiveUrlsSourceHandler(DatasetSourceHandler):
 class GitSparseSourceHandler(DatasetSourceHandler):
     """Acquire selected paths from a git repository."""
 
-    source_kind = DatasetSourceKind.GIT_SPARSE.value
+    source_kind = DatasetSourceKind.GIT_SPARSE
 
-    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+    def acquire(
+        self, context: DatasetAcquisitionContext, source: DatasetSourceSpec
+    ) -> bool:
         if not source.git_url:
             raise DatasetAcquisitionError(
                 f"Dataset {context.spec.id!r} uses git_sparse without git_url."
@@ -329,7 +354,9 @@ class GitSparseSourceHandler(DatasetSourceHandler):
             self._run_git(clone_command, None)
 
         if source.sparse_paths:
-            self._run_git(["sparse-checkout", "set", *source.sparse_paths], context.data_dir)
+            self._run_git(
+                ["sparse-checkout", "set", *source.sparse_paths], context.data_dir
+            )
         if source.git_ref == "HEAD":
             self._run_git(["pull", "--ff-only"], context.data_dir)
         else:
@@ -349,7 +376,9 @@ class GitSparseSourceHandler(DatasetSourceHandler):
             )
         except subprocess.CalledProcessError as exc:
             detail = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-            raise DatasetAcquisitionError(f"git {' '.join(args)} failed: {detail}") from exc
+            raise DatasetAcquisitionError(
+                f"git {' '.join(args)} failed: {detail}"
+            ) from exc
 
 
 def _extract_zip(zip_path: Path, target_dir: Path) -> None:
@@ -384,7 +413,9 @@ def _count_images(root: Path) -> int:
 def _validate_count(root: Path, expected: int) -> int:
     """Validate image count within ±5% tolerance."""
     if expected is None:
-        raise DatasetAcquisitionError("expected_count must be provided for count validation")
+        raise DatasetAcquisitionError(
+            "expected_count must be provided for count validation"
+        )
 
     found = _count_images(root)
     lower = int(expected * 0.95)
@@ -411,7 +442,9 @@ def _validate_manifest(root: Path, manifest: Path) -> int:
         if not (root / relative).exists():
             missing.append(relative)
     if missing:
-        raise DatasetAcquisitionError(f"{len(missing)} files listed in manifest are missing")
+        raise DatasetAcquisitionError(
+            f"{len(missing)} files listed in manifest are missing"
+        )
     return count
 
 
@@ -458,7 +491,10 @@ def acquire_dataset(
 
     # Composite sources must still visit the source handler, because one side of
     # the source can be present while the other still needs materialization.
-    if extract_dir.exists() and source.kind is not DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES:
+    if (
+        extract_dir.exists()
+        and source.kind is not DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES
+    ):
         try:
             _materialize_nested_archives(extract_dir)
             image_count = _validate_dataset(spec, extract_dir)

@@ -35,9 +35,12 @@ from benchmark.datasets.registry import (
 
 
 def test_validation_rules_are_registered_by_enum() -> None:
-    assert DatasetValidationStrategy.for_rule(
-        DatasetValidationRule.NON_EMPTY
-    ).validation_rule == DatasetValidationRule.NON_EMPTY.value
+    assert (
+        DatasetValidationStrategy.for_rule(
+            DatasetValidationRule.NON_EMPTY
+        ).validation_rule
+        is DatasetValidationRule.NON_EMPTY
+    )
 
 
 def test_benchmark_dataset_paths_default_to_persistent_user_cache(
@@ -69,7 +72,7 @@ def test_source_handlers_are_registered_by_enum() -> None:
 
     assert (
         DatasetSourceHandler.for_source(source).source_kind
-        == DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES.value
+        is DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES
     )
 
 
