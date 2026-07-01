@@ -223,10 +223,6 @@ def _validate_unique_module_names(module_type: type["CellProfilerModule"]) -> No
         )
 
 
-class CellProfilerDebugViewModule(ABC):
-    """Marker parent for module declarations with CellProfiler debug sections."""
-
-
 class ArtifactContractModule(ABC, metaclass=AutoRegisterMeta):
     """Nominal marker for module declarations that own artifact flow."""
 
@@ -1039,30 +1035,6 @@ class CellProfilerModule(ABC, metaclass=AutoRegisterMeta):
         return DefaultMeasurementRecordModule.measurement_record(request)
 
 
-class IdentifyPrimaryObjectsDebugViewModule(CellProfilerDebugViewModule):
-    """Marker parent for primary-object debug sections."""
-
-
-class MeasurementDebugViewModule(CellProfilerDebugViewModule):
-    """Marker parent for measurement debug sections."""
-
-
-class RelationshipDebugViewModule(CellProfilerDebugViewModule):
-    """Marker parent for relationship debug sections."""
-
-
-class ObjectDebugViewModule(CellProfilerDebugViewModule):
-    """Marker parent for object debug sections."""
-
-
-class ImageProcessingDebugViewModule(CellProfilerDebugViewModule):
-    """Marker parent for image-processing debug sections."""
-
-
-class DisplayExportDebugViewModule(CellProfilerDebugViewModule):
-    """Marker parent for display/export debug sections."""
-
-
 class PlaneRuntimeArtifactModule(ABC):
     """Parent for modules that consume source-aligned runtime artifacts by plane."""
 
@@ -1079,7 +1051,7 @@ class ComposedImageObjectMeasurementExecutionModule(
     """Parent for object measurements that consume composed image payloads."""
 
 
-class ObjectMeasurementRowsModule(MeasurementDebugViewModule, CellProfilerModule):
+class ObjectMeasurementRowsModule(CellProfilerModule):
     """Parent for modules whose declaration is also the object-row policy."""
 
     @classmethod
@@ -1092,7 +1064,7 @@ class ObjectMeasurementRowsModule(MeasurementDebugViewModule, CellProfilerModule
         )
 
 
-class InfrastructureCellProfilerModule(DisplayExportDebugViewModule, CellProfilerModule):
+class InfrastructureCellProfilerModule(CellProfilerModule):
     """Parent for modules handled as OpenHCS import/runtime infrastructure."""
 
     @classmethod
@@ -2018,13 +1990,6 @@ __all__ = (
     "StructuringElementSettingsModule",
     "structuring_element_bound_kwargs",
     "ScopedMeasurementModule",
-    "CellProfilerDebugViewModule",
-    "DisplayExportDebugViewModule",
-    "ImageProcessingDebugViewModule",
-    "ObjectDebugViewModule",
-    "RelationshipDebugViewModule",
-    "MeasurementDebugViewModule",
-    "IdentifyPrimaryObjectsDebugViewModule",
     "PerObjectMeasurementExecutionModule",
     "ComposedImageObjectMeasurementExecutionModule",
     "PlaneRuntimeArtifactModule",

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
-    MeasurementDebugViewModule,
-)
+    )
 
 
-class CalculateStatisticsModule(MeasurementDebugViewModule, CellProfilerModule):
+class CalculateStatisticsModule(CellProfilerModule):
     module_name = 'CalculateStatistics'
     function_name = 'calculate_statistics'
     validated = True

@@ -35,10 +35,12 @@ from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
 from openhcs.interop.cellprofiler.runtime.source_candidates import (
     CellProfilerImageNumberResolver,
     PipelineStartSourceLoadRequest,
+    PipelineStartSourcePayloadRequest,
     ParsedSourceCandidate,
     ParsedSourceCandidateCollection,
 )
 from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
+    NumpyArraySourceFileLoader,
     SourceBindingAxisPlaneResolution,
     StepInputSourcePayloadCacheKey,
 )
@@ -293,6 +295,53 @@ def test_pipeline_start_load_request_uses_backend_appropriate_storage_paths():
 
     assert virtual_request.storage_paths == (candidate.path,)
     assert disk_request.storage_paths == (candidate.resolved_path,)
+
+    payload_request = PipelineStartSourcePayloadRequest.from_candidate(
+        payload=np.zeros((1, 1), dtype=np.float32),
+        source=candidate,
+        storage_path=virtual_request.storage_paths[0],
+        load_request=virtual_request,
+    )
+
+    assert payload_request.storage_path == candidate.path
+    assert payload_request.metadata_source_path == candidate.path
+
+
+def test_numpy_pipeline_start_loader_uses_request_storage_paths(monkeypatch):
+    candidate = ParsedSourceCandidate(
+        path="_source/IllumHoechst/001_20585_IllumHoechst.npy",
+        resolved_path="_source/IllumHoechst/20585_IllumHoechst.npy",
+        virtual_path="_source/IllumHoechst/001_20585_IllumHoechst.npy",
+        filename="001_20585_IllumHoechst.npy",
+        metadata={"source_alias": "IllumHoechst"},
+    )
+    request = PipelineStartSourceLoadRequest(
+        adapter=None,
+        selected_sources=(candidate,),
+        backend=Backend.VIRTUAL_WORKSPACE.value,
+        source_load_plan=SourceLoadPlan(),
+    )
+    loaded_paths: list[str] = []
+
+    def fake_load_array(
+        self: NumpyArraySourceFileLoader,
+        path: str,
+        load_request: PipelineStartSourceLoadRequest,
+    ) -> np.ndarray:
+        del self, load_request
+        loaded_paths.append(path)
+        return np.zeros((1, 1), dtype=np.float32)
+
+    monkeypatch.setattr(
+        NumpyArraySourceFileLoader,
+        "_load_array",
+        fake_load_array,
+    )
+
+    payloads = NumpyArraySourceFileLoader().load_slices(request)
+
+    assert loaded_paths == [candidate.path]
+    assert len(payloads) == 1
 
 
 def test_step_input_payload_cache_key_projects_nested_source_metadata():

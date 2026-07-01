@@ -18,6 +18,7 @@ from types import ModuleType
 from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import parameter_exclusions, set_parameter_exclusions
 
 from openhcs.processing.backends.cellprofiler.library import (
     coerce_absorbed_processing_contract,
@@ -295,6 +296,9 @@ def _make_processing_wrapper(
         module_name=module_name,
         source_function=func,
     )
+    hidden_parameters = parameter_exclusions(func)
+    if hidden_parameters:
+        set_parameter_exclusions(wrapper, hidden_parameters)
     return wrapper
 
 

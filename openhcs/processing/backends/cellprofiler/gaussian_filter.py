@@ -12,7 +12,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -25,7 +24,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
 
-class GaussianFilterModule(ImageProcessingDebugViewModule, CellProfilerModule):
+class GaussianFilterModule(CellProfilerModule):
     module_name = 'GaussianFilter'
     function_name = 'gaussian_filter'
     validated = True

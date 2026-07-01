@@ -24,7 +24,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -122,7 +121,6 @@ class ImageMathSpecialInputPolicy(TrailingImageSpecialInputPolicy):
 
 class ImageMathModule(
     ImageMathSpecialInputPolicy,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
     ArtifactContractModule,
 ):

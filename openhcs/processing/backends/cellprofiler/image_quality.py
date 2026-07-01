@@ -17,7 +17,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    MeasurementDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -44,7 +43,6 @@ class ImageQualityThresholdMethod(Enum):
 
 
 class MeasureImageQualityModule(
-    MeasurementDebugViewModule,
     CellProfilerModule,
     ArtifactContractModule,
 ):

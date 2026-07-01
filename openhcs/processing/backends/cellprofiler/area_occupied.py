@@ -25,7 +25,6 @@ from openhcs.core.pipeline.function_contracts import (
 from openhcs.processing.materialization import csv_materializer
 from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
-    MeasurementDebugViewModule,
     ModuleSettingsSourceModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -43,7 +42,6 @@ from openhcs.interop.cellprofiler.runtime.object_input_policies import (
 
 class MeasureImageAreaOccupiedBinaryModule(
     ObjectRowsInputPolicy,
-    MeasurementDebugViewModule,
     ModuleSettingsSourceModule,
 ):
     module_name = 'MeasureImageAreaOccupiedBinary'

@@ -10,7 +10,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -26,7 +25,6 @@ from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum
 class EnhanceEdgesModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'EnhanceEdges'

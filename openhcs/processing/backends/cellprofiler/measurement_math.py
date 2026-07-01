@@ -58,7 +58,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    MeasurementDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -612,7 +611,6 @@ class CalculateMathModule(
     HomogeneousObjectNameMeasurementRecordMixin,
     TableMeasurementRecordRowsMixin,
     NoSourceMeasurementRecordMixin,
-    MeasurementDebugViewModule,
     CalculateMathInputPolicy,
     BinderSettingsSourceModule,
 ):

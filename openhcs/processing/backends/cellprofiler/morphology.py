@@ -58,12 +58,10 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
-    ObjectDebugViewModule,
     ObjectLineageTransformContractModule,
     PlaneRuntimeArtifactModule,
     ScopedMeasurementModule,
@@ -144,7 +142,6 @@ class ClosingModule(ImageStructuringElementModule):
 
 class ObjectTransformContractModule(
     PlaneRuntimeArtifactModule,
-    ObjectDebugViewModule,
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
@@ -170,7 +167,6 @@ class ObjectTransformContractModule(
 
 
 class ObjectLineageTransformModule(
-    ObjectDebugViewModule,
     ObjectLineageTransformContractModule,
 ):
     """Shared declaration for object transforms that also emit parent-child lineage."""
@@ -451,7 +447,6 @@ class ExpandOrShrinkObjectsModule(
     PlaneRuntimeArtifactModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
-    ObjectDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'ExpandOrShrinkObjects'
@@ -7158,7 +7153,7 @@ class FillObjectsModule(CellProfilerModule):
     contract = 'unknown'
     confidence = 1.0
 
-class MorphModule(ImageProcessingDebugViewModule, CellProfilerModule):
+class MorphModule(CellProfilerModule):
     module_name = 'Morph'
     function_name = 'morph'
     validated = True

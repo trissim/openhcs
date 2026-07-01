@@ -18,8 +18,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
     ImageMeasurementInputModule,
-    ImageProcessingDebugViewModule,
-    MeasurementDebugViewModule,
     ModuleSettingsSourceModule,
     ObjectMeasurementInputModule,
     ScopedMeasurementModule,
@@ -77,7 +75,6 @@ class RescaleIntensityMethod(Enum):
 class MeasureImageIntensityModule(
     ImageMeasurementInputModule,
     ObjectMeasurementInputModule,
-    MeasurementDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'MeasureImageIntensity'
@@ -124,7 +121,6 @@ class MeasureImageIntensityModule(
 class RescaleIntensityModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'RescaleIntensity'

@@ -24,8 +24,7 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
-)
+    )
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
@@ -122,7 +121,6 @@ def enhance_or_suppress_features(
 class EnhanceOrSuppressFeaturesModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = "EnhanceOrSuppressFeatures"

@@ -22,7 +22,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BoundModuleSettings,
     CellProfilerModule,
     ModuleSettingsSourceModule,
-    ObjectDebugViewModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
@@ -68,7 +67,6 @@ class ConvertObjectsToImageSpecialInputPolicy(
 
 class ConvertObjectsToImageModule(
     ConvertObjectsToImageSpecialInputPolicy,
-    ObjectDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'ConvertObjectsToImage'
@@ -317,7 +315,7 @@ def convert_objects_to_image(
     )
 
 
-class ConvertImageToObjectsModule(ObjectDebugViewModule, CellProfilerModule):
+class ConvertImageToObjectsModule(CellProfilerModule):
     module_name = 'ConvertImageToObjects'
     function_name = 'convert_image_to_objects'
     validated = True

@@ -1,26 +1,15 @@
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.debug import DebugArtifactRef, DebugCursor, DebugSnapshot
-from openhcs.core.debug_views import DebugViewModel
+from openhcs.core.debug_views import DebugViewModel, DebugViewSectionKind
 from openhcs.interop.cellprofiler.debug_views import (
     CellProfilerDebugView,
-    DeclaredCellProfilerDebugView,
     DefaultCellProfilerDebugView,
-    declared_debug_view_modules,
-)
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    CellProfilerModule,
-    IdentifyPrimaryObjectsDebugViewModule,
-    MeasurementDebugViewModule,
-    RelationshipDebugViewModule,
 )
 
 
 class CellProfilerDebugViewFixture:
-    """Nominal authority for CellProfiler debug-view test products."""
-
     SNAPSHOT_ID = "snap"
     MEASURE_IMAGE_INTENSITY = "MeasureImageIntensity"
-    IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
 
     @staticmethod
     def cursor(
@@ -56,7 +45,19 @@ class CellProfilerDebugViewFixture:
         )
 
 
-def test_cellprofiler_debug_view_registry_returns_default_renderer():
+def section_by_kind(
+    view: DebugViewModel,
+    kind: DebugViewSectionKind,
+):
+    return next(section for section in view.sections if section.kind is kind)
+
+
+def table_row_mapping(section):
+    assert section.table is not None
+    return dict(zip(section.table.columns, section.table.rows[0], strict=True))
+
+
+def test_cellprofiler_debug_view_uses_generic_snapshot_sections():
     cursor = CellProfilerDebugViewFixture.cursor(
         step_index=0,
         invocation_name=CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY,
@@ -85,102 +86,43 @@ def test_cellprofiler_debug_view_registry_returns_default_renderer():
     )
     view = renderer.build_view_model(snapshot)
 
-    assert isinstance(renderer, DeclaredCellProfilerDebugView)
-    assert isinstance(view, DebugViewModel)
-    assert view.title == "MeasureImageIntensity"
-    assert view.sections[0].table is not None
-    assert ("axis", "A01") in view.sections[0].table.rows
-    assert view.sections[1].table is not None
-    assert view.sections[1].table.rows == (
-        (
-            "ImageMeasurements",
-            "measurements",
-            "debug/snap/ImageMeasurements.csv",
-            "",
-            "csv",
-        ),
+    assert isinstance(renderer, DefaultCellProfilerDebugView)
+    assert view.title == CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY
+    assert tuple(section.kind for section in view.sections) == (
+        DebugViewSectionKind.SUMMARY,
+        DebugViewSectionKind.SOURCES,
+        DebugViewSectionKind.OUTPUT_ARTIFACTS,
+        DebugViewSectionKind.MEASUREMENTS,
+        DebugViewSectionKind.TIMING,
     )
+    assert "axis: A01" in section_by_kind(view, DebugViewSectionKind.SUMMARY).text
+    assert section_by_kind(view, DebugViewSectionKind.SOURCES).text == "A01_s1_w1.tif"
+    output_row = table_row_mapping(
+        section_by_kind(view, DebugViewSectionKind.OUTPUT_ARTIFACTS)
+    )
+    assert output_row["kind"] == ArtifactKind.MEASUREMENTS.value
+    assert output_row["name"] == "ImageMeasurements"
+    assert output_row["storage_ref"] == "debug/snap/ImageMeasurements.csv"
+    assert output_row["dtype"] == "csv"
+    measurement_row = table_row_mapping(
+        section_by_kind(view, DebugViewSectionKind.MEASUREMENTS)
+    )
+    assert measurement_row == output_row
+    assert section_by_kind(view, DebugViewSectionKind.TIMING).text == "0.125000s"
 
 
-def test_identify_primary_objects_debug_view_lists_output_artifacts():
+def test_snapshot_sections_are_derived_from_present_debug_payloads():
     cursor = CellProfilerDebugViewFixture.cursor(
         step_index=1,
-        invocation_name=CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS,
-    )
-    snapshot = DebugSnapshot(
-        snapshot_id=CellProfilerDebugViewFixture.SNAPSHOT_ID,
-        cursor=cursor,
-        step_name="identify",
-        callable_name=CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS,
-        output_artifact_refs=(
-            CellProfilerDebugViewFixture.artifact_ref(
-                kind=ArtifactKind.OBJECT_LABELS,
-                name="Nuclei",
-                cursor=cursor,
-                extension="zarr",
-                shape=(1, 64, 64),
-                dtype="uint16",
-            ),
-        ),
-        timing_seconds=0.25,
-    )
-
-    renderer = CellProfilerDebugView.for_module(
-        CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS
-    )
-    view = renderer.build_view_model(snapshot)
-
-    assert isinstance(renderer, DeclaredCellProfilerDebugView)
-    assert issubclass(
-        CellProfilerModule.for_module(CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS),
-        IdentifyPrimaryObjectsDebugViewModule,
-    )
-    assert view.title == CellProfilerDebugViewFixture.IDENTIFY_PRIMARY_OBJECTS
-    assert view.sections[0].table is not None
-    assert view.sections[0].table.rows == (
-        ("Nuclei", "debug/snap/Nuclei.zarr", "1x64x64", "uint16"),
-    )
-    assert view.sections[3].text == "0.250000s"
-
-
-def test_measurement_debug_view_prioritizes_measurement_outputs():
-    cursor = CellProfilerDebugViewFixture.cursor(
-        step_index=2,
-        invocation_name=CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY,
-    )
-    measurements_ref = CellProfilerDebugViewFixture.artifact_ref(
-        kind=ArtifactKind.MEASUREMENTS,
-        name="Intensity",
-        cursor=cursor,
-        extension="csv",
-    )
-    snapshot = DebugSnapshot(
-        snapshot_id=CellProfilerDebugViewFixture.SNAPSHOT_ID,
-        cursor=cursor,
-        step_name="measure",
-        callable_name=CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY,
-        measurement_refs=(measurements_ref,),
-    )
-
-    renderer = CellProfilerDebugView.for_module(
-        CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY
-    )
-    view = renderer.build_view_model(snapshot)
-
-    assert isinstance(renderer, DeclaredCellProfilerDebugView)
-    assert issubclass(
-        CellProfilerModule.for_module(CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY),
-        MeasurementDebugViewModule,
-    )
-    assert view.sections[1].title == "Measurement Outputs"
-    assert view.sections[1].table is not None
-    assert view.sections[1].table.rows[0][0] == "Intensity"
-
-
-def test_relationship_debug_view_prioritizes_relationship_outputs():
-    cursor = CellProfilerDebugViewFixture.cursor(
-        step_index=3,
         invocation_name="RelateObjects",
+    )
+    input_ref = CellProfilerDebugViewFixture.artifact_ref(
+        kind=ArtifactKind.OBJECT_LABELS,
+        name="Nuclei",
+        cursor=cursor,
+        extension="zarr",
+        shape=(1, 64, 64),
+        dtype="uint16",
     )
     relationship_ref = CellProfilerDebugViewFixture.artifact_ref(
         kind=ArtifactKind.RELATIONSHIPS,
@@ -193,81 +135,28 @@ def test_relationship_debug_view_prioritizes_relationship_outputs():
         cursor=cursor,
         step_name="relate",
         callable_name="RelateObjects",
+        input_artifact_refs=(input_ref,),
         relationship_refs=(relationship_ref,),
+        exception="boom",
     )
 
-    renderer = CellProfilerDebugView.for_module("RelateObjects")
-    view = renderer.build_view_model(snapshot)
+    view = CellProfilerDebugView.for_module("RelateObjects").build_view_model(snapshot)
 
-    assert isinstance(renderer, DeclaredCellProfilerDebugView)
-    assert issubclass(
-        CellProfilerModule.for_module("RelateObjects"),
-        RelationshipDebugViewModule,
+    assert tuple(section.kind for section in view.sections) == (
+        DebugViewSectionKind.SUMMARY,
+        DebugViewSectionKind.INPUT_ARTIFACTS,
+        DebugViewSectionKind.RELATIONSHIPS,
+        DebugViewSectionKind.ERROR,
     )
-    assert view.sections[1].title == "Relationship Outputs"
-    assert view.sections[1].table is not None
-    assert view.sections[1].table.rows[0][0] == "ParentChild"
-
-
-def test_table_driven_debug_view_covers_major_cellprofiler_module_families():
-    cursor = CellProfilerDebugViewFixture.cursor(
-        step_index=4,
-        invocation_name="MeasureObjectIntensity",
+    input_row = table_row_mapping(
+        section_by_kind(view, DebugViewSectionKind.INPUT_ARTIFACTS)
     )
-    measurement_ref = CellProfilerDebugViewFixture.artifact_ref(
-        kind=ArtifactKind.MEASUREMENTS,
-        name="ObjectIntensity",
-        cursor=cursor,
-        extension="csv",
+    assert input_row["kind"] == ArtifactKind.OBJECT_LABELS.value
+    assert input_row["name"] == "Nuclei"
+    assert input_row["shape"] == "1, 64, 64"
+    relationship_row = table_row_mapping(
+        section_by_kind(view, DebugViewSectionKind.RELATIONSHIPS)
     )
-    snapshot = DebugSnapshot(
-        snapshot_id=CellProfilerDebugViewFixture.SNAPSHOT_ID,
-        cursor=cursor,
-        step_name="measure_objects",
-        callable_name="MeasureObjectIntensity",
-        measurement_refs=(measurement_ref,),
-    )
-
-    renderer = CellProfilerDebugView.for_module("MeasureObjectIntensity")
-    view = renderer.build_view_model(snapshot)
-
-    assert isinstance(renderer, DeclaredCellProfilerDebugView)
-    assert view.title == "MeasureObjectIntensity"
-    assert view.sections[1].title == "Measurement Outputs"
-
-
-def test_display_export_debug_view_includes_artifact_overview():
-    cursor = CellProfilerDebugViewFixture.cursor(
-        step_index=5,
-        invocation_name="SaveImages",
-    )
-    image_ref = CellProfilerDebugViewFixture.artifact_ref(
-        kind=ArtifactKind.IMAGE,
-        name="SavedImage",
-        cursor=cursor,
-        extension="tif",
-    )
-    snapshot = DebugSnapshot(
-        snapshot_id=CellProfilerDebugViewFixture.SNAPSHOT_ID,
-        cursor=cursor,
-        step_name="save",
-        callable_name="SaveImages",
-        input_artifact_refs=(image_ref,),
-    )
-
-    renderer = CellProfilerDebugView.for_module("SaveImages")
-    view = renderer.build_view_model(snapshot)
-
-    assert isinstance(renderer, DeclaredCellProfilerDebugView)
-    assert view.sections[1].title == "Artifact Overview"
-    assert ("inputs", "1") in view.sections[1].table.rows
-
-
-def test_declared_debug_view_modules_are_discovered_from_module_registry():
-    module_names = {
-        module_type.module_name for module_type in declared_debug_view_modules()
-    }
-
-    assert "IdentifyPrimaryObjects" in module_names
-    assert "MeasureImageIntensity" in module_names
-    assert "RelateObjects" in module_names
+    assert relationship_row["kind"] == ArtifactKind.RELATIONSHIPS.value
+    assert relationship_row["name"] == "ParentChild"
+    assert section_by_kind(view, DebugViewSectionKind.ERROR).text == "boom"

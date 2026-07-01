@@ -31,8 +31,7 @@ from openhcs.core.runtime_values import (
 from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
     BinderSettingsSourceModule,
-    ImageProcessingDebugViewModule,
-)
+    )
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
@@ -98,7 +97,6 @@ class CropModule(
     TableMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
     ProducedImageMeasurementRecordMixin,
-    ImageProcessingDebugViewModule,
     BinderSettingsSourceModule,
 ):
     module_name = 'Crop'

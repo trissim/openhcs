@@ -36,7 +36,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ObjectArtifactInputModule,
     ScopedMeasurementModule,
@@ -141,7 +140,6 @@ class MaskImageModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
     ObjectArtifactInputModule,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'MaskImage'
@@ -178,7 +176,6 @@ class MaskImageModule(
 class ResizeModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     BinderSettingsSourceModule,
 ):
     module_name = 'Resize'

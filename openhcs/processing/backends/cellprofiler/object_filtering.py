@@ -61,7 +61,6 @@ from openhcs.processing.materialization import csv_materializer, segmentation_ma
 from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
     ModuleSettingsSourceModule,
-    ObjectDebugViewModule,
     PlaneRuntimeArtifactModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -362,7 +361,6 @@ class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
 class FilterObjectsModule(
     PlaneRuntimeArtifactModule,
     FilterObjectsInputPolicy,
-    ObjectDebugViewModule,
     ModuleSettingsSourceModule,
 ):
     module_name = 'FilterObjects'

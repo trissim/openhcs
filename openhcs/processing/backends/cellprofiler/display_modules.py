@@ -19,14 +19,13 @@ from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
 from openhcs.processing.backends.cellprofiler.module_classes import (
     BoundModuleSettings,
     CellProfilerModule,
-    DisplayExportDebugViewModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
     ObjectArtifactInputModule,
 )
 
 
-class DisplayModule(DisplayExportDebugViewModule, CellProfilerModule):
+class DisplayModule(CellProfilerModule):
     """Parent for CellProfiler display/export debug sections."""
 
 

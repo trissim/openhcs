@@ -55,8 +55,7 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
     BoundModuleSettings,
     CellProfilerModule,
-    MeasurementDebugViewModule,
-)
+    )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -1438,7 +1437,6 @@ class MeasureObjectNeighborsModule(
     TableMeasurementRecordRowsMixin,
     NoSourceMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
-    MeasurementDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'MeasureObjectNeighbors'

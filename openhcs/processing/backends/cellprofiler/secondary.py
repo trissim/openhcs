@@ -60,7 +60,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BoundModuleSettings,
     CellProfilerModule,
     ModuleSettingsSourceModule,
-    ObjectDebugViewModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
@@ -90,7 +89,6 @@ class IdentifyTertiaryObjectsModule(
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
-    ObjectDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'IdentifyTertiaryObjects'
@@ -1244,7 +1242,6 @@ class IdentifySecondaryObjectsModule(
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
-    ObjectDebugViewModule,
     ThresholdSettingsModule,
 ):
     module_name = 'IdentifySecondaryObjects'

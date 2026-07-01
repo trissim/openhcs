@@ -31,8 +31,7 @@ from openhcs.interop.cellprofiler.settings_binder import (
 from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
     BoundModuleSettings,
-    IdentifyPrimaryObjectsDebugViewModule,
-)
+    )
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     CurrentPayloadMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
@@ -590,8 +589,7 @@ class IdentifyPrimaryObjectsModule(
     CurrentPayloadMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
     ThresholdSettingsModule,
-    IdentifyPrimaryObjectsDebugViewModule,
-):
+    ):
     module_name = "IdentifyPrimaryObjects"
     function_name = "identify_primary_objects"
     validated = True

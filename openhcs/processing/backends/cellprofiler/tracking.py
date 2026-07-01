@@ -26,7 +26,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ModuleSettingsSourceModule,
     ObjectMeasurementRowsModule,
-    RelationshipDebugViewModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
@@ -69,7 +68,6 @@ class TrackObjectsModule(
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     FieldsFromRowsMeasurementRecordMixin,
-    RelationshipDebugViewModule,
     ObjectLabelDrivenPrimaryImageInputPolicy,
     ObjectMeasurementRowsModule,
     TrackObjectsObjectMeasurementRowPolicy,

@@ -23,8 +23,7 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BoundModuleSettings,
     CellProfilerModule,
     PlaneRuntimeArtifactModule,
-    RelationshipDebugViewModule,
-)
+    )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
@@ -174,7 +173,6 @@ class RelateObjectsModule(
     SourceNameOnlyMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
     RelateObjectsSpecialInputPolicy,
-    RelationshipDebugViewModule,
     PrimaryObjectInputRelationshipDistanceModule,
     CellProfilerModule,
 ):

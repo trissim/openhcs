@@ -20,7 +20,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -63,7 +62,6 @@ class MedianFilterExecutionDomainContract(SourceVolumetricPixelDataExecutionCont
 class MedianfilterModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'Medianfilter'

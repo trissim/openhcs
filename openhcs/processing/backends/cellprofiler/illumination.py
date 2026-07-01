@@ -50,7 +50,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -259,7 +258,6 @@ class CorrectIlluminationApplyModule(
     CorrectIlluminationApplyMainFlowReplacementMixin,
     CorrectIlluminationApplyImageOutputSourcePayloadMixin,
     CorrectIlluminationApplyImageOutputValueMixin,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'CorrectIlluminationApply'
@@ -385,7 +383,6 @@ class IlluminationCalculationScopeExecutionModePolicy(CellProfilerInvocationExec
 class CorrectIlluminationCalculateModule(
     CorrectIlluminationCalculateMainFlowReplacementMixin,
     IlluminationCalculationScopeExecutionModePolicy,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'CorrectIlluminationCalculate'

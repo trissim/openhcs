@@ -14,7 +14,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -30,7 +29,7 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
 )
 
-class ReducenoiseModule(ImageProcessingDebugViewModule, CellProfilerModule):
+class ReducenoiseModule(CellProfilerModule):
     module_name = 'Reducenoise'
     function_name = 'reducenoise'
     validated = True
@@ -54,7 +53,6 @@ class ReducenoiseModule(ImageProcessingDebugViewModule, CellProfilerModule):
 class SmoothModule(
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    ImageProcessingDebugViewModule,
     CellProfilerModule,
 ):
     module_name = 'Smooth'

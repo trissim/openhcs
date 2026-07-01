@@ -28,7 +28,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
     BinderSettingsSourceModule,
     CellProfilerModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -67,7 +66,7 @@ class ChannelCompositeExecutionModePolicy(CellProfilerInvocationExecutionModePol
         return ImagePayloadExecutionMode.FULL_STACK
 
 
-class ColorToGrayModule(ChannelCompositeExecutionModePolicy, ImageProcessingDebugViewModule, BinderSettingsSourceModule):
+class ColorToGrayModule(ChannelCompositeExecutionModePolicy, BinderSettingsSourceModule):
     module_name = 'ColorToGray'
     function_name = 'color_to_gray'
     validated = True
@@ -314,7 +313,7 @@ class ColorToGrayModule(ChannelCompositeExecutionModePolicy, ImageProcessingDebu
         return assembler.assemble_contract(module, builder, inputs=[image], outputs=outputs)
 
 
-class GrayToColorModule(ImageProcessingDebugViewModule, BinderSettingsSourceModule):
+class GrayToColorModule(BinderSettingsSourceModule):
     module_name = 'GrayToColor'
     function_name = 'gray_to_color'
     validated = True
@@ -620,7 +619,7 @@ class GrayToColorModule(ImageProcessingDebugViewModule, BinderSettingsSourceModu
         return assembler.assemble_contract(module, builder, inputs=inputs, outputs=[output])
 
 
-class UnmixColorsModule(ImageProcessingDebugViewModule, ModuleSettingsSourceModule):
+class UnmixColorsModule(ModuleSettingsSourceModule):
     module_name = 'UnmixColors'
     function_name = 'unmix_colors'
     validated = True
@@ -1531,7 +1530,7 @@ def _coerce_custom_absorbance(
     return float(red), float(green), float(blue)
 
 
-class InvertForPrintingModule(ImageProcessingDebugViewModule, CellProfilerModule):
+class InvertForPrintingModule(CellProfilerModule):
     module_name = 'InvertForPrinting'
     function_name = 'invert_for_printing'
     validated = True

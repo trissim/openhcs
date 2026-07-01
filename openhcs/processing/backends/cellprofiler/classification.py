@@ -36,7 +36,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    MeasurementDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -188,7 +187,6 @@ class ClassifyObjectsSingleMeasurementModule(
     NoSourceMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
     ClassifyObjectsMeasurementInputPolicy,
-    MeasurementDebugViewModule,
     BinderSettingsSourceModule,
 ):
     module_name = 'ClassifyObjectsSingleMeasurement'

@@ -20,6 +20,7 @@ import numpy as np
 from python_introspect import (
     Enableable,
     mark_enableable,
+    parameter_exclusions,
     set_parameter_exclusions,
     set_signature_analysis_target,
 )
@@ -574,6 +575,7 @@ class CellProfilerRuntimeCallable:
         set_parameter_exclusions(
             self,
             (
+                *parameter_exclusions(raw_func),
                 CellProfilerRuntimeAdapter.require_parameter_name(),
                 RuntimeInvocationOptions.require_parameter_name(),
                 *runtime_plan.bound_parameter_names,

@@ -48,7 +48,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -124,7 +123,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 
 class OverlayOutlinesModule(
     OverlayOutlinesInputPolicy,
-    ImageProcessingDebugViewModule,
     ModuleSettingsSourceModule,
 ):
     module_name = 'OverlayOutlines'

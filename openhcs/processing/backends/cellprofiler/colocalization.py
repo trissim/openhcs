@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 
+from python_introspect import set_parameter_exclusions
+
 from openhcs.core.measurement_row_materialization import (
     MEASUREMENT_OBJECT_LABEL_FIELD,
     MEASUREMENT_OBJECT_NAME_FIELD,
@@ -2376,6 +2378,9 @@ def measure_colocalization_objects(
         object_label_context=object_label_context,
         rank_provider=rank_provider,
     )
+
+
+set_parameter_exclusions(measure_colocalization_objects, ("rank_provider",))
 
 
 @dataclass(frozen=True)

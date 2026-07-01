@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
-from types import MappingProxyType
-from typing import Callable, Mapping
+import json
+from typing import ClassVar, Mapping, cast
 
-from openhcs.core.debug import DebugArtifactRef, DebugInvocationParameter
-from openhcs.core.runtime_stores import RuntimeValueStore, StoredRuntimeValue
+from metaclass_registry import AutoRegisterMeta
 
-DebugViewRowBuilder = Callable[[object], tuple[str, ...]]
+from openhcs.core.debug import DebugArtifactRef, DebugInvocationParameter, DebugSnapshot
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactAddress,
+    RuntimeValueStore,
+    StoredRuntimeValue,
+)
 
 
 class DebugViewTableProjection(Enum):
@@ -21,96 +26,392 @@ class DebugViewTableProjection(Enum):
     RUNTIME_VALUE_RECORDS = "runtime_value_records"
 
 
-@dataclass(frozen=True, slots=True)
-class DebugViewTableProjectionSpec:
-    """Authoritative constructor variant for a debug table projection."""
+class DebugViewSectionKind(str, Enum):
+    """Closed renderer-independent debug inspector section family."""
 
-    projection: DebugViewTableProjection
-    columns: tuple[str, ...]
-    row_builder: DebugViewRowBuilder
+    SUMMARY = "summary"
+    SOURCES = "sources"
+    INPUT_ARTIFACTS = "input_artifacts"
+    OUTPUT_ARTIFACTS = "output_artifacts"
+    PREVIEW_ARTIFACTS = "preview_artifacts"
+    INVOCATION_PARAMETERS = "invocation_parameters"
+    RUNTIME_VALUES = "runtime_values"
+    MEASUREMENTS = "measurements"
+    RELATIONSHIPS = "relationships"
+    TIMING = "timing"
+    ERROR = "error"
 
-    def table_for(self, values: tuple[object, ...]) -> "DebugViewTable":
-        return DebugViewTable(
-            columns=self.columns,
-            rows=tuple(self.row_builder(value) for value in values),
+
+class DebugViewSectionDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal declaration for one debug inspector section kind."""
+
+    __registry_key__ = "kind"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[DebugViewSectionKind, type["DebugViewSectionDeclarationBase"]]
+    ] = {}
+
+    kind: ClassVar[DebugViewSectionKind | None] = None
+    title_words: ClassVar[tuple[str, ...]]
+
+    @classmethod
+    def require_kind(cls) -> DebugViewSectionKind:
+        if cls.kind is None:
+            raise TypeError(f"{cls.__name__} does not declare a section kind.")
+        return cls.kind
+
+    @classmethod
+    def for_kind(
+        cls,
+        kind: DebugViewSectionKind,
+    ) -> type["DebugViewSectionDeclarationBase"]:
+        return cls.__registry__[kind]
+
+    @classmethod
+    def default_title(cls) -> str:
+        return " ".join(cls.title_words)
+
+    @classmethod
+    def registered_sections(cls) -> tuple[type["DebugViewSectionDeclarationBase"], ...]:
+        return tuple(
+            cls.__registry__[kind]
+            for kind in DebugViewSectionKind
+            if kind in cls.__registry__
         )
 
-
-def artifact_ref_row(value: object) -> tuple[str, ...]:
-    if not isinstance(value, DebugArtifactRef):
-        raise TypeError(
-            "artifact_ref_row requires DebugArtifactRef, "
-            f"got {type(value).__name__}."
+    @classmethod
+    def section_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewSection | None":
+        table = cls.table_for_snapshot(snapshot)
+        text = cls.text_for_snapshot(snapshot)
+        if table is None and text is None:
+            return None
+        section = DebugViewSection(
+            kind=cls.require_kind(),
+            title=cls.default_title(),
+            table=table,
+            text=text,
         )
-    return (
-        value.name,
-        value.kind.value,
-        value.storage_ref,
-        "" if value.shape is None else "x".join(map(str, value.shape)),
-        value.dtype or "",
-    )
+        if section.is_empty and not cls.show_empty_snapshot_section():
+            return None
+        return section
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        del snapshot
+        return None
+
+    @classmethod
+    def text_for_snapshot(cls, snapshot: DebugSnapshot) -> str | None:
+        del snapshot
+        return None
+
+    @classmethod
+    def show_empty_snapshot_section(cls) -> bool:
+        return False
+
+    @classmethod
+    @abstractmethod
+    def empty_message(cls) -> str:
+        """Return section-level empty text."""
 
 
-def invocation_parameter_row(value: object) -> tuple[str, ...]:
-    if not isinstance(value, DebugInvocationParameter):
-        raise TypeError(
-            "invocation_parameter_row requires DebugInvocationParameter, "
-            f"got {type(value).__name__}."
-        )
-    return (value.name, value.value_repr)
+class AvailableEmptySection:
+    """Section empty-message strategy for absent available values."""
+
+    empty_subject: ClassVar[str]
+    empty_verb: ClassVar[str] = "are"
+
+    @classmethod
+    def empty_message(cls) -> str:
+        return f"No {cls.empty_subject} {cls.empty_verb} available."
 
 
-def runtime_value_record_row(value: object) -> tuple[str, ...]:
-    if not isinstance(value, StoredRuntimeValue):
-        raise TypeError(
-            "runtime_value_record_row requires StoredRuntimeValue, "
-            f"got {type(value).__name__}."
-        )
-    key = value.key
-    scope = key.scope
-    return (
-        key.name,
-        key.kind.value,
-        scope.axis_id,
-        scope.group_key or "",
-        value.backend,
-        value.path,
-        key.semantic_id or "",
-        type(value.value.data).__qualname__,
-    )
+class ReportedEmptySection:
+    """Section empty-message strategy for absent reported values."""
+
+    empty_subject: ClassVar[str]
+
+    @classmethod
+    def empty_message(cls) -> str:
+        return f"No {cls.empty_subject} was reported."
 
 
-DEBUG_VIEW_TABLE_PROJECTIONS: Mapping[
-    DebugViewTableProjection,
-    DebugViewTableProjectionSpec,
-] = MappingProxyType(
-    {
-        DebugViewTableProjection.ARTIFACT_REFS: DebugViewTableProjectionSpec(
-            projection=DebugViewTableProjection.ARTIFACT_REFS,
-            columns=("Artifact", "Kind", "Storage ref", "Shape", "DType"),
-            row_builder=artifact_ref_row,
-        ),
-        DebugViewTableProjection.INVOCATION_PARAMETERS: DebugViewTableProjectionSpec(
-            projection=DebugViewTableProjection.INVOCATION_PARAMETERS,
-            columns=("Parameter", "Value"),
-            row_builder=invocation_parameter_row,
-        ),
-        DebugViewTableProjection.RUNTIME_VALUE_RECORDS: DebugViewTableProjectionSpec(
-            projection=DebugViewTableProjection.RUNTIME_VALUE_RECORDS,
-            columns=(
-                "Name",
-                "Kind",
-                "Axis",
-                "Group",
-                "Backend",
-                "Path",
-                "Semantic",
-                "Value type",
+class SummaryDebugViewSection(AvailableEmptySection, DebugViewSectionDeclarationBase):
+    kind = DebugViewSectionKind.SUMMARY
+    title_words = ("Summary",)
+    empty_subject = "summary values"
+
+    @classmethod
+    def text_for_snapshot(cls, snapshot: DebugSnapshot) -> str:
+        values = (
+            ("step", snapshot.step_name),
+            ("callable", snapshot.callable_name or ""),
+            ("axis", snapshot.axis_id or ""),
+            ("cursor", snapshot.cursor.invocation_key or ""),
+            (
+                "timing_seconds",
+                (
+                    ""
+                    if snapshot.timing_seconds is None
+                    else f"{snapshot.timing_seconds:.6f}"
+                ),
             ),
-            row_builder=runtime_value_record_row,
-        ),
-    }
-)
+        )
+        return "\n".join(f"{name}: {value}" for name, value in values)
+
+    @classmethod
+    def show_empty_snapshot_section(cls) -> bool:
+        return True
+
+
+class SourcesDebugViewSection(AvailableEmptySection, DebugViewSectionDeclarationBase):
+    kind = DebugViewSectionKind.SOURCES
+    title_words = ("Sources",)
+    empty_subject = "source paths"
+
+    @classmethod
+    def text_for_snapshot(cls, snapshot: DebugSnapshot) -> str | None:
+        if not snapshot.source_paths:
+            return None
+        return "\n".join(snapshot.source_paths)
+
+
+class InputArtifactsDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.INPUT_ARTIFACTS
+    title_words = ("Input", "Artifacts")
+    empty_subject = "input artifacts"
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        return artifact_refs_snapshot_table(snapshot.input_artifact_refs)
+
+
+class OutputArtifactsDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.OUTPUT_ARTIFACTS
+    title_words = ("Output", "Artifacts")
+    empty_subject = "output artifacts"
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        return artifact_refs_snapshot_table(snapshot.output_artifact_refs)
+
+
+class PreviewArtifactsDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.PREVIEW_ARTIFACTS
+    title_words = ("Preview", "Artifacts")
+    empty_subject = "preview artifacts"
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        return artifact_refs_snapshot_table(snapshot.preview_refs)
+
+
+class InvocationParametersDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.INVOCATION_PARAMETERS
+    title_words = ("Invocation", "Parameters")
+    empty_subject = "invocation parameters"
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        if not snapshot.invocation_parameters:
+            return None
+        return DebugViewTable.from_projection(
+            DebugViewTableProjection.INVOCATION_PARAMETERS,
+            snapshot.invocation_parameters,
+        )
+
+
+class RuntimeValuesDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.RUNTIME_VALUES
+    title_words = ("Runtime", "Values")
+    empty_subject = "runtime values"
+
+
+class MeasurementsDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.MEASUREMENTS
+    title_words = ("Measurements",)
+    empty_subject = "measurements"
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        return artifact_refs_snapshot_table(snapshot.measurement_refs)
+
+
+class RelationshipsDebugViewSection(
+    AvailableEmptySection,
+    DebugViewSectionDeclarationBase,
+):
+    kind = DebugViewSectionKind.RELATIONSHIPS
+    title_words = ("Relationships",)
+    empty_subject = "relationships"
+
+    @classmethod
+    def table_for_snapshot(cls, snapshot: DebugSnapshot) -> "DebugViewTable | None":
+        return artifact_refs_snapshot_table(snapshot.relationship_refs)
+
+
+class TimingDebugViewSection(AvailableEmptySection, DebugViewSectionDeclarationBase):
+    kind = DebugViewSectionKind.TIMING
+    title_words = ("Timing",)
+    empty_subject = "timing value"
+    empty_verb = "is"
+
+    @classmethod
+    def text_for_snapshot(cls, snapshot: DebugSnapshot) -> str | None:
+        if snapshot.timing_seconds is None:
+            return None
+        return f"{snapshot.timing_seconds:.6f}s"
+
+
+class ErrorDebugViewSection(ReportedEmptySection, DebugViewSectionDeclarationBase):
+    kind = DebugViewSectionKind.ERROR
+    title_words = ("Error",)
+    empty_subject = "error"
+
+    @classmethod
+    def text_for_snapshot(cls, snapshot: DebugSnapshot) -> str | None:
+        return snapshot.exception
+
+
+class DebugViewTableProjectionDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal declaration for one debug table projection."""
+
+    __registry_key__ = "projection"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[
+            DebugViewTableProjection,
+            type["DebugViewTableProjectionDeclarationBase"],
+        ]
+    ] = {}
+
+    projection: ClassVar[DebugViewTableProjection | None] = None
+    value_type: ClassVar[type]
+    record_type: ClassVar[type | None] = None
+    empty_message: ClassVar[str]
+    supports_artifact_actions: ClassVar[bool] = False
+
+    @classmethod
+    def require_projection(cls) -> DebugViewTableProjection:
+        if cls.projection is None:
+            raise TypeError(f"{cls.__name__} does not declare a table projection.")
+        return cls.projection
+
+    @classmethod
+    def for_projection(
+        cls,
+        projection: DebugViewTableProjection,
+    ) -> type["DebugViewTableProjectionDeclarationBase"]:
+        return cls.__registry__[projection]
+
+    @classmethod
+    def table_for(cls, values: tuple[object, ...]) -> "DebugViewTable":
+        records = tuple(cls.table_record(value) for value in values)
+        columns = cls.table_columns()
+        return DebugViewTable(
+            columns=columns,
+            rows=tuple(cls.table_row(record, columns) for record in records),
+            projection=cls.require_projection(),
+            empty_message=cls.empty_message(),
+        )
+
+    @classmethod
+    def table_columns(cls) -> tuple[str, ...]:
+        record_type = cls.require_record_type()
+        return dataclass_record_columns(record_type)
+
+    @classmethod
+    def require_record_type(cls) -> type:
+        return cls.value_type if cls.record_type is None else cls.record_type
+
+    @classmethod
+    def table_record(cls, value: object) -> object:
+        return cls.require_value(value)
+
+    @classmethod
+    def table_row(cls, record: object, columns: tuple[str, ...]) -> tuple[str, ...]:
+        return dataclass_record_cells(record, columns)
+
+    @classmethod
+    def require_value(cls, value: object) -> object:
+        if not isinstance(value, cls.value_type):
+            raise TypeError(
+                f"{cls.__name__} requires {cls.value_type.__name__}, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    @classmethod
+    def empty_message(cls) -> str:
+        return "No rows are available."
+
+
+class AvailableEmptyTable:
+    """Table empty-message strategy for absent available rows."""
+
+    empty_subject: ClassVar[str]
+
+    @classmethod
+    def empty_message(cls) -> str:
+        return f"No {cls.empty_subject} are available."
+
+
+class ArtifactActionDebugTable:
+    """Trait for debug tables whose rows identify viewable/exportable artifacts."""
+
+    supports_artifact_actions: ClassVar[bool] = True
+
+
+class ArtifactRefsDebugViewTable(
+    ArtifactActionDebugTable,
+    AvailableEmptyTable,
+    DebugViewTableProjectionDeclarationBase,
+):
+    projection = DebugViewTableProjection.ARTIFACT_REFS
+    value_type = DebugArtifactRef
+    empty_subject = "artifact references"
+
+
+class InvocationParametersDebugViewTable(
+    AvailableEmptyTable,
+    DebugViewTableProjectionDeclarationBase,
+):
+    projection = DebugViewTableProjection.INVOCATION_PARAMETERS
+    value_type = DebugInvocationParameter
+    empty_subject = "invocation parameters"
+
+
+class RuntimeValueRecordsDebugViewTable(
+    AvailableEmptyTable,
+    DebugViewTableProjectionDeclarationBase,
+):
+    projection = DebugViewTableProjection.RUNTIME_VALUE_RECORDS
+    value_type = StoredRuntimeValue
+    record_type = RuntimeArtifactAddress
+    empty_subject = "runtime values"
+
+    @classmethod
+    def table_record(cls, value: object) -> RuntimeArtifactAddress:
+        runtime_value = cast(StoredRuntimeValue, cls.require_value(value))
+        return RuntimeArtifactAddress.from_record(runtime_value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +420,8 @@ class DebugViewTable:
 
     columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    projection: DebugViewTableProjection | None = None
+    empty_message: str | None = None
 
     @classmethod
     def from_projection(
@@ -126,35 +429,119 @@ class DebugViewTable:
         projection: DebugViewTableProjection,
         values: tuple[object, ...],
     ) -> "DebugViewTable":
-        return DEBUG_VIEW_TABLE_PROJECTIONS[projection].table_for(values)
+        return DebugViewTableProjectionDeclarationBase.for_projection(
+            projection
+        ).table_for(values)
+
+    @classmethod
+    def from_dataclass_records(
+        cls,
+        *,
+        record_type: type,
+        records: tuple[object, ...],
+        empty_message: str | None = None,
+        projection: DebugViewTableProjection | None = None,
+    ) -> "DebugViewTable":
+        columns = dataclass_record_columns(record_type)
+        return cls(
+            columns=columns,
+            rows=tuple(dataclass_record_cells(record, columns) for record in records),
+            projection=projection,
+            empty_message=empty_message,
+        )
 
     def to_json_dict(self) -> dict[str, object]:
         return {
             "columns": list(self.columns),
             "rows": [list(row) for row in self.rows],
+            "projection": None if self.projection is None else self.projection.value,
+            "empty_message": self.empty_message,
         }
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object]) -> "DebugViewTable":
+        projection_value = data["projection"]
         return cls(
             columns=tuple(str(column) for column in data["columns"]),
             rows=tuple(
                 tuple(str(value) for value in row)
                 for row in data["rows"]
             ),
+            projection=(
+                None
+                if projection_value is None
+                else DebugViewTableProjection(str(projection_value))
+            ),
+            empty_message=(
+                None
+                if data["empty_message"] is None
+                else str(data["empty_message"])
+            ),
         )
+
+
+def _debug_table_cell_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, Enum):
+        return str(value.value)
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    if isinstance(value, tuple):
+        return ", ".join(_debug_table_cell_text(item) for item in value)
+    if is_dataclass(value):
+        return json.dumps(asdict(value), default=str, sort_keys=True)
+    if isinstance(value, Mapping):
+        return json.dumps(dict(value), default=str, sort_keys=True)
+    return str(value)
+
+
+def dataclass_record_columns(record_type: type) -> tuple[str, ...]:
+    if not is_dataclass(record_type):
+        raise TypeError(
+            "dataclass_record_columns requires a dataclass record type, "
+            f"got {record_type!r}."
+        )
+    return tuple(field.name for field in fields(record_type))
+
+
+def dataclass_record_cells(record: object, columns: tuple[str, ...]) -> tuple[str, ...]:
+    if not is_dataclass(record):
+        raise TypeError(
+            "dataclass_record_cells requires dataclass table records, "
+            f"got {type(record).__name__}."
+        )
+    mapping = asdict(record)
+    return tuple(_debug_table_cell_text(mapping[column]) for column in columns)
+
+
+def artifact_refs_snapshot_table(
+    refs: tuple[DebugArtifactRef, ...],
+) -> DebugViewTable | None:
+    if not refs:
+        return None
+    return DebugViewTable.from_projection(DebugViewTableProjection.ARTIFACT_REFS, refs)
 
 
 @dataclass(frozen=True, slots=True)
 class DebugViewSection:
     """One named debug view section."""
 
+    kind: DebugViewSectionKind
     title: str
     table: DebugViewTable | None = None
     text: str | None = None
 
+    @property
+    def is_empty(self) -> bool:
+        return (
+            (self.table is None or not self.table.rows)
+            and not self.text
+        )
+
     def to_json_dict(self) -> dict[str, object]:
         return {
+            "kind": self.kind.value,
             "title": self.title,
             "table": None if self.table is None else self.table.to_json_dict(),
             "text": self.text,
@@ -166,6 +553,7 @@ class DebugViewSection:
         if table is not None and not isinstance(table, Mapping):
             raise TypeError("DebugViewSection.table must be a mapping or None.")
         return cls(
+            kind=DebugViewSectionKind(str(data["kind"])),
             title=str(data["title"]),
             table=(
                 None
@@ -184,6 +572,23 @@ class DebugViewModel:
     sections: tuple[DebugViewSection, ...]
 
     @classmethod
+    def from_debug_snapshot(
+        cls,
+        snapshot: DebugSnapshot,
+        *,
+        title: str | None = None,
+    ) -> "DebugViewModel":
+        return cls(
+            title=title or snapshot.callable_name or snapshot.step_name,
+            sections=tuple(
+                section
+                for declaration in DebugViewSectionDeclarationBase.registered_sections()
+                for section in (declaration.section_for_snapshot(snapshot),)
+                if section is not None
+            ),
+        )
+
+    @classmethod
     def from_runtime_value_store(
         cls,
         store: RuntimeValueStore,
@@ -195,11 +600,15 @@ class DebugViewModel:
                 "DebugViewModel.from_runtime_value_store requires RuntimeValueStore, "
                 f"got {type(store).__name__}."
             )
+        section_declaration = DebugViewSectionDeclarationBase.for_kind(
+            DebugViewSectionKind.RUNTIME_VALUES
+        )
         return cls(
             title=title,
             sections=(
                 DebugViewSection(
-                    "Runtime Value Store",
+                    kind=DebugViewSectionKind.RUNTIME_VALUES,
+                    title=section_declaration.default_title(),
                     table=DebugViewTable.from_projection(
                         DebugViewTableProjection.RUNTIME_VALUE_RECORDS,
                         store.values(),

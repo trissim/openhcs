@@ -54,7 +54,6 @@ from openhcs.processing.backends.cellprofiler.module_classes import (
     ArtifactContractModule,
     BoundModuleSettings,
     CellProfilerModule,
-    ImageProcessingDebugViewModule,
     LastRepeatedSettingValuePolicy,
     RepeatedSettingValuePolicy,
 )
@@ -3355,7 +3354,7 @@ class LegacyCellProfilerThresholdVersionAuthority(ABC):
         return version is not None and version <= 10
 
 
-class ThresholdSettingsModule(ImageProcessingDebugViewModule, CellProfilerModule):
+class ThresholdSettingsModule(CellProfilerModule):
     """Module parent for declarations that consume CellProfiler threshold rows."""
 
     include_threshold_advanced_setting: ClassVar[bool] = False
