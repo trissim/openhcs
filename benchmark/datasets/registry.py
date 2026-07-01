@@ -11,6 +11,7 @@ from metaclass_registry import AutoRegisterMeta
 from benchmark.contracts.dataset import (
     ArchiveFormat,
     BenchmarkCategory,
+    BenchmarkDatasetTag,
     CellProfilerBenchmarkCaseSpec,
     DatasetSourceKind,
     DatasetSourceSpec,
@@ -46,6 +47,7 @@ class BenchmarkDatasetDeclaration(ABC, metaclass=AutoRegisterMeta):
     manifest_path: ClassVar[Path | None] = None
     source: ClassVar[DatasetSourceSpec | None] = None
     benchmark_cases: ClassVar[tuple[CellProfilerBenchmarkCaseSpec, ...]] = ()
+    tags: ClassVar[frozenset[BenchmarkDatasetTag]] = frozenset()
 
     @classmethod
     def to_spec(cls) -> DatasetSpec:
@@ -64,6 +66,7 @@ class BenchmarkDatasetDeclaration(ABC, metaclass=AutoRegisterMeta):
             manifest_path=cls.manifest_path,
             source=cls.source,
             benchmark_cases=cls.benchmark_cases,
+            tags=cls.tags,
         )
 
 
@@ -420,6 +423,9 @@ class CellProfiler4BenchmarkSupplementDataset(BenchmarkDatasetDeclaration):
             module_category="Object set algebra",
         ),
     )
+
+
+from benchmark.datasets import bioformats_hcs as _bioformats_hcs_declarations  # noqa: E402,F401
 
 
 def dataset_declarations() -> tuple[type[BenchmarkDatasetDeclaration], ...]:

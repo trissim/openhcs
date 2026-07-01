@@ -6,8 +6,22 @@ from typing import Any
 
 from benchmark.cellprofiler_comparison import load_comparison_cases
 from benchmark.contracts.comparison_manifest import ComparisonManifest
-from benchmark.contracts.manifest_acquisition import GitSparseRootAcquisitionStrategy
+from benchmark.contracts.manifest_acquisition import (
+    GitSparseRootAcquisitionStrategy,
+    ManifestRootAcquisitionKind,
+    ManifestRootAcquisitionSpec,
+    ManifestRootAcquisitionStrategy,
+)
 from benchmark.datasets.cache import default_benchmark_dataset_cache_root
+
+
+def test_manifest_root_acquisition_strategies_are_registered_by_enum() -> None:
+    assert (
+        ManifestRootAcquisitionStrategy.for_spec(
+            ManifestRootAcquisitionSpec(kind=ManifestRootAcquisitionKind.GIT_SPARSE)
+        ).kind
+        is ManifestRootAcquisitionKind.GIT_SPARSE
+    )
 
 
 def test_manifest_default_kind_resolves_shared_benchmark_cache(

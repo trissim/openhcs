@@ -30,6 +30,12 @@ class DatasetSourceKind(Enum):
     GIT_SPARSE_WITH_ARCHIVES = "git_sparse_with_archives"
 
 
+class BenchmarkDatasetTag(Enum):
+    """Semantic tags for selecting benchmark dataset subsets."""
+
+    BIOFORMATS_HCS_VALIDATION = "bioformats_hcs_validation"
+
+
 @dataclass(frozen=True, slots=True)
 class DatasetSourceSpec:
     """Nominal description of where a benchmark dataset comes from."""
@@ -106,6 +112,9 @@ class DatasetSpec:
 
     benchmark_cases: tuple[CellProfilerBenchmarkCaseSpec, ...] = ()
     """Dataset-relative .cppipe benchmark cases materialized after acquisition."""
+
+    tags: frozenset[BenchmarkDatasetTag] = frozenset()
+    """Semantic tags for dataset subsets that share benchmark workflows."""
 
     def acquisition_source(self) -> DatasetSourceSpec:
         """Return the normalized acquisition source for this dataset."""

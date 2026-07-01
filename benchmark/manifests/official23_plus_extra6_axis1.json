@@ -185,10 +185,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "3D segmentation + measurement",
       "name": "cp_tutorial_3d_monolayer",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 2
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 2
+      }
     },
     {
       "assay_category": "Cell Painting morphology",
@@ -199,10 +199,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "Advanced segmentation + measurement",
       "name": "cp_tutorial_advanced_segmentation_final",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     },
     {
       "assay_category": "Cell Painting quality control",
@@ -213,10 +213,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "Image quality measurement",
       "name": "cp_tutorial_quality_control",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     },
     {
       "assay_category": "Cell morphology",
@@ -227,10 +227,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "Segmentation + intensity measurement",
       "name": "cp_tutorial_beginner_segmentation_final",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     },
     {
       "assay_category": "Pixel classification",
@@ -241,10 +241,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "Pixel classification",
       "name": "cp_tutorial_pixel_based_classification",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     },
     {
       "assay_category": "Translocation assay",
@@ -255,10 +255,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "Segmentation + classification",
       "name": "cp_tutorial_translocation_final",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     },
     {
       "assay_category": "Object-combination benchmark",
@@ -269,10 +269,10 @@
       "microscope_type": "cellprofiler4_benchmark",
       "module_category": "Object set algebra",
       "name": "cp4_supplement_combine_objects",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     }
   ]
 }

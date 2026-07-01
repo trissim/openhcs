@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -95,18 +96,21 @@ class ManifestRootAcquisitionStrategy(ABC, metaclass=AutoRegisterMeta):
     """Registered materializer for one benchmark-manifest root source family."""
 
     __registry_key__ = "kind"
-    kind: str | None = None
+    __skip_if_no_key__ = True
+
+    kind: ClassVar[ManifestRootAcquisitionKind | None] = None
 
     @classmethod
     def for_spec(
         cls,
         spec: ManifestRootAcquisitionSpec,
     ) -> "ManifestRootAcquisitionStrategy":
-        strategy_type = cls.__registry__.get(spec.kind.value)
-        if strategy_type is None:
+        try:
+            strategy_type = cls.__registry__[spec.kind]
+        except KeyError as exc:
             raise ManifestAcquisitionError(
-                f"Unsupported manifest root acquisition kind {spec.kind.value!r}."
-            )
+                f"Unsupported manifest root acquisition kind {spec.kind.name}."
+            ) from exc
         return strategy_type()
 
     @abstractmethod
@@ -117,7 +121,7 @@ class ManifestRootAcquisitionStrategy(ABC, metaclass=AutoRegisterMeta):
 class DatasetRegistryRootAcquisitionStrategy(ManifestRootAcquisitionStrategy):
     """Materialize DatasetSpec-backed cases into a benchmark dataset cache root."""
 
-    kind = ManifestRootAcquisitionKind.DATASET_REGISTRY.value
+    kind = ManifestRootAcquisitionKind.DATASET_REGISTRY
 
     def materialize(self, request: ManifestRootAcquisitionRequest) -> None:
         from benchmark.datasets.acquire import acquire_dataset
@@ -141,7 +145,7 @@ class DatasetRegistryRootAcquisitionStrategy(ManifestRootAcquisitionStrategy):
 class GitSparseRootAcquisitionStrategy(ManifestRootAcquisitionStrategy):
     """Materialize a manifest root from a sparse git checkout."""
 
-    kind = ManifestRootAcquisitionKind.GIT_SPARSE.value
+    kind = ManifestRootAcquisitionKind.GIT_SPARSE
 
     def materialize(self, request: ManifestRootAcquisitionRequest) -> None:
         if not request.spec.git_url:
@@ -215,40 +219,36 @@ def manifest_auto_acquire_enabled() -> bool:
     return raw_value not in {"0", "false", "no", "off"}
 
 
-def materialize_manifest_roots(
-    roots: Mapping[str, object],
-    raw_cases: object,
+def materialize_manifest_root(
+    *,
+    root_name: str,
+    root_path: Path,
+    acquisition_spec: ManifestRootAcquisitionSpec,
+    requirements: tuple[ManifestRootRequirement, ...],
 ) -> None:
-    """Materialize all acquisition-enabled roots required by manifest cases."""
-    if not isinstance(raw_cases, Sequence) or isinstance(raw_cases, (str, bytes)):
+    """Materialize one acquisition-enabled manifest root when required paths miss."""
+    request = ManifestRootAcquisitionRequest(
+        root_name=root_name,
+        root_path=root_path,
+        spec=acquisition_spec,
+        requirements=requirements,
+    )
+    if not request.missing_requirements():
         return
-    requirements_by_root = _requirements_by_root(raw_cases)
-    for root_name, root in roots.items():
-        acquisition_spec = getattr(root, "acquisition", None)
-        if acquisition_spec is None:
-            continue
-        request = ManifestRootAcquisitionRequest(
-            root_name=root_name,
-            root_path=getattr(root, "path"),
-            spec=acquisition_spec,
-            requirements=tuple(requirements_by_root.get(root_name, ())),
+    ManifestRootAcquisitionStrategy.for_spec(acquisition_spec).materialize(request)
+    missing_after = request.missing_requirements()
+    if missing_after:
+        missing_lines = ", ".join(
+            f"{item.case_name}:{item.path_key}={item.relative_path}"
+            for item in missing_after[:5]
         )
-        if not request.missing_requirements():
-            continue
-        ManifestRootAcquisitionStrategy.for_spec(acquisition_spec).materialize(request)
-        missing_after = request.missing_requirements()
-        if missing_after:
-            missing_lines = ", ".join(
-                f"{item.case_name}:{item.path_key}={item.relative_path}"
-                for item in missing_after[:5]
-            )
-            raise ManifestAcquisitionError(
-                f"Manifest root {root_name!r} materialized but still misses "
-                f"{len(missing_after)} required paths: {missing_lines}"
-            )
+        raise ManifestAcquisitionError(
+            f"Manifest root {root_name!r} materialized but still misses "
+            f"{len(missing_after)} required paths: {missing_lines}"
+        )
 
 
-def _requirements_by_root(
+def manifest_root_requirements_by_root(
     raw_cases: Sequence[object],
 ) -> ManifestRootRequirementMap:
     """Collect root-relative path requirements from manifest cases."""

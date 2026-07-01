@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
 from dataclasses import dataclass
+from typing import ClassVar
 
 from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.values import (
@@ -43,6 +44,9 @@ class ToolAdapter(ABC):
         name: str - Tool name (e.g., 'OpenHCS', 'CellProfiler')
         version: str - Tool version string
     """
+
+    name: ClassVar[str]
+    version: str = "unknown"
 
     @abstractmethod
     def validate_installation(self) -> None:

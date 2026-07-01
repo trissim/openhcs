@@ -11,8 +11,9 @@ from typing import TypeAlias
 
 from benchmark.contracts.manifest_acquisition import (
     ManifestRootAcquisitionSpec,
+    manifest_root_requirements_by_root,
     manifest_auto_acquire_enabled,
-    materialize_manifest_roots,
+    materialize_manifest_root,
 )
 from benchmark.datasets.cache import BenchmarkPathRootKind, resolve_benchmark_path_root
 
@@ -130,8 +131,7 @@ class ComparisonManifestPathResolver:
             root = self.roots.get(str(root_key))
             if root is None:
                 raise ValueError(
-                    f"Benchmark case references unknown {path_key}_root "
-                    f"{root_key!r}."
+                    f"Benchmark case references unknown {path_key}_root {root_key!r}."
                 )
             return root.path / path
         return path
@@ -163,11 +163,33 @@ class ComparisonManifest:
             else materialize_roots
         )
         if should_materialize:
-            materialize_manifest_roots(path_resolver.roots, payload.get("cases"))
+            materialize_manifest_path_roots(
+                path_resolver.roots,
+                payload.get("cases"),
+            )
         return cls(
             path=manifest_path,
             payload=payload,
             path_resolver=path_resolver,
+        )
+
+
+def materialize_manifest_path_roots(
+    roots: Mapping[str, ManifestPathRoot],
+    raw_cases: JSONValue | None,
+) -> None:
+    """Materialize typed manifest path roots that declare acquisition."""
+    if not isinstance(raw_cases, Sequence) or isinstance(raw_cases, (str, bytes)):
+        return
+    requirements_by_root = manifest_root_requirements_by_root(raw_cases)
+    for root in roots.values():
+        if root.acquisition is None:
+            continue
+        materialize_manifest_root(
+            root_name=root.name,
+            root_path=root.path,
+            acquisition_spec=root.acquisition,
+            requirements=tuple(requirements_by_root.get(root.name, ())),
         )
 
 

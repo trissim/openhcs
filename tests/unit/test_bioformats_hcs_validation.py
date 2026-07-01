@@ -1,26 +1,26 @@
 from pathlib import Path
 
 from benchmark.bioformats_hcs_validation import (
+    bioformats_hcs_validation_specs,
     validate_acquired_bioformats_hcs_dataset,
 )
 from benchmark.contracts.dataset import (
     AcquiredDataset,
     ArchiveFormat,
+    BenchmarkDatasetTag,
     DatasetSourceKind,
     DatasetSourceSpec,
     DatasetSpec,
     DatasetValidationRule,
 )
-from benchmark.datasets.bioformats_hcs import (
-    BioFormatsHcsAxisExpectation,
-    BIOFORMATS_HCS_REGISTRY,
-    BioFormatsHcsCatalogRow,
-)
+from benchmark.datasets.registry import DATASET_REGISTRY
 from tests.unit.bioformats_fixture import write_bioformats_manifest_fixture
 
 
-def test_bioformats_hcs_catalog_rows_are_url_file_sources() -> None:
-    assert set(BIOFORMATS_HCS_REGISTRY) == {
+def test_bioformats_hcs_validation_specs_are_tagged_url_file_sources() -> None:
+    specs = {spec.id: spec for spec in bioformats_hcs_validation_specs()}
+
+    assert set(specs) == {
         "ome_tiff_hcs_companion",
         "cellomics_bbbc001_a03",
         "cellomics_bbbc017_nirhta001_a01",
@@ -47,36 +47,28 @@ def test_bioformats_hcs_catalog_rows_are_url_file_sources() -> None:
         "cv7000_idr0093_b02_site1_three_channels",
         "cv7000_idr0093_b03_site1_three_channels",
     }
-    for row in BIOFORMATS_HCS_REGISTRY.values():
-        assert row.spec.acquisition_source().kind is DatasetSourceKind.URL_FILES
-        assert row.spec.acquisition_source().urls
+    assert DATASET_REGISTRY["ome_tiff_hcs_companion"].tags == frozenset(
+        {BenchmarkDatasetTag.BIOFORMATS_HCS_VALIDATION}
+    )
+    for spec in specs.values():
+        assert spec.microscope_type == "bioformats"
+        assert BenchmarkDatasetTag.BIOFORMATS_HCS_VALIDATION in spec.tags
+        assert spec.acquisition_source().kind is DatasetSourceKind.URL_FILES
+        assert spec.acquisition_source().urls
 
 
 def test_validate_acquired_bioformats_hcs_dataset_reports_projection_metrics(
     tmp_path: Path,
 ) -> None:
     write_bioformats_manifest_fixture(tmp_path)
-    row = BioFormatsHcsCatalogRow(
-        display_name="Fixture",
-        vendor="Synthetic",
-        format_name="Bio-Formats manifest fixture",
-        source_page="https://example.test/fixture",
-        notes="",
-        axes=BioFormatsHcsAxisExpectation(
-            wells=("A01",),
-            sites=("1",),
-            channels=("1", "2"),
-            z_indexes=("1",),
-        ),
-        spec=DatasetSpec(
-            id="fixture",
-            urls=[],
-            size_bytes=128,
-            archive_format=ArchiveFormat.ZIP,
-            microscope_type="bioformats",
-            validation_rule=DatasetValidationRule.NON_EMPTY,
-            source=DatasetSourceSpec(kind=DatasetSourceKind.URL_FILES),
-        ),
+    spec = DatasetSpec(
+        id="fixture",
+        urls=[],
+        size_bytes=128,
+        archive_format=ArchiveFormat.ZIP,
+        microscope_type="bioformats",
+        validation_rule=DatasetValidationRule.NON_EMPTY,
+        source=DatasetSourceSpec(kind=DatasetSourceKind.URL_FILES),
     )
     acquired = AcquiredDataset(
         id="fixture",
@@ -87,7 +79,7 @@ def test_validate_acquired_bioformats_hcs_dataset_reports_projection_metrics(
     )
 
     result = validate_acquired_bioformats_hcs_dataset(
-        row,
+        spec,
         acquired,
         load_sample_count=1,
     )
@@ -100,10 +92,12 @@ def test_validate_acquired_bioformats_hcs_dataset_reports_projection_metrics(
     assert result.channel_count == 2
     assert result.z_count == 1
     assert result.timepoint_count == 1
-    assert result.axis_projection.expected.wells == ("A01",)
-    assert result.axis_projection.observed.wells == ("A01",)
-    assert result.axis_projection.expected.channels == ("1", "2")
-    assert result.axis_projection.observed.channels == ("1", "2")
+    assert result.grid_dimensions == (1, 1)
+    assert result.wells == ("A01",)
+    assert result.sites == ("1",)
+    assert result.channels == ("1", "2")
+    assert result.z_indexes == ("1",)
+    assert result.timepoints == ("1",)
     assert result.loaded_plane_count == 1
     assert result.load_shapes == ("3x4",)
     assert result.load_dtypes == ("uint16",)

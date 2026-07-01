@@ -9,10 +9,10 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "Starter nuclei segmentation",
       "name": "cp_tutorial_translocation_start",
-      "pipeline_params": {
-        "openhcs_max_axis_count": 1
-      },
-      "value_only": true
+      "value_only": true,
+      "source_schema_image_set_selection": {
+        "max_image_set_count": 1
+      }
     }
   ]
 }

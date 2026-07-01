@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Self
+from typing import ClassVar, Self
 
 from benchmark.contracts.values import BenchmarkMetricValue
 
@@ -20,6 +20,8 @@ class MetricCollector(ABC):
     Subclasses must define class attribute:
         name: str - Metric name (e.g., 'execution_time', 'peak_memory_mb')
     """
+
+    name: ClassVar[str]
 
     @abstractmethod
     def __enter__(self) -> Self:
