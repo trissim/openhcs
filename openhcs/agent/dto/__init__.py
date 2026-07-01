@@ -190,6 +190,11 @@ __all__ = (
     "UiMutationReceipt",
     "UiMutationRequestToken",
     "UiMutationRequestTokenCarrier",
+    "UiLiveOverviewItem",
+    "UiLiveOverviewMetric",
+    "UiLiveOverviewSection",
+    "UiLiveOverviewSeverity",
+    "UiLiveOverviewState",
     "UiObjectStateFieldListQuery",
     "UiObjectStateFieldListOptions",
     "UiObjectStateFieldListResult",
@@ -244,6 +249,7 @@ __all__ = (
     "UiWindowFocusResult",
     "UiWindowIdentity",
     "UiWindowManagerScope",
+    "UiWindowSemanticMarker",
     "UiWindowNavigateRequest",
     "UiWindowNavigateResult",
     "UiWindowOpenPolicy",
@@ -251,6 +257,7 @@ __all__ = (
     "UiWindowSnapshotRequest",
     "UiWindowSnapshotResult",
     "UiWindowSummary",
+    "MainWindowWidgetIdentity",
     "ManagedWindowWidgetIdentity",
 )
 

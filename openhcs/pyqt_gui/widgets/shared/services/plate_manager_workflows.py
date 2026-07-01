@@ -7,7 +7,7 @@ from enum import Enum
 import logging
 from typing import TYPE_CHECKING, Self
 
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.steps.function_step import FunctionStep
@@ -16,6 +16,9 @@ from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,
 )
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
+from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineObjectStateBinding,
+)
 from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
     CellProfilerPipelineRuntimeBindingService,
 )
@@ -338,6 +341,10 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             orchestrator = ObjectStateRegistry.get_object(plate_key)
             if orchestrator:
                 orchestrator.apply_pipeline_config(pipeline_config)
+                self._update_pipeline_config_delegate_state(
+                    plate_key,
+                    pipeline_config,
+                )
                 effective_config = orchestrator.get_effective_config()
                 self.manager.orchestrator_config_changed.emit(
                     str(orchestrator.plate_path),
@@ -359,20 +366,44 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
                 last_pipeline_config
             )
 
-    def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
-        plate_pipeline_editor = self.manager.plate_pipeline_editor
-        if plate_pipeline_editor is None:
-            logger.warning("No pipeline editor available to update pipeline data")
-            self.manager.pipeline_data_changed.emit()
-            return
+    @staticmethod
+    def _pipeline_config_delegate_state(plate_key: str) -> ObjectState:
+        state = ObjectStateRegistry.get_by_scope(plate_key)
+        if state is None:
+            raise RuntimeError(
+                "Per-plate PipelineConfig update requires an existing orchestrator "
+                f"ObjectState for scope {plate_key!r}."
+            )
+        if not state.has_delegate:
+            raise RuntimeError(
+                "Per-plate PipelineConfig update requires an orchestrator "
+                "ObjectState delegated to pipeline_config; got "
+                f"{type(state.object_instance).__name__} at scope {plate_key!r}."
+            )
+        if not isinstance(state.saved_object, PipelineConfig):
+            raise RuntimeError(
+                "Per-plate PipelineConfig update requires a PipelineConfig delegate; "
+                f"got {type(state.saved_object).__name__} at scope {plate_key!r}."
+            )
+        return state
 
-        current_plate = plate_pipeline_editor.current_plate
+    @classmethod
+    def _update_pipeline_config_delegate_state(
+        cls,
+        plate_key: str,
+        pipeline_config: PipelineConfig,
+    ) -> None:
+        cls._pipeline_config_delegate_state(plate_key).update_object_instance(
+            pipeline_config
+        )
+
+    def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
         for plate_path, pipeline_steps in pipeline_data.items():
             pipeline_steps = self.runtime_bound_pipeline_for_plate(
                 plate_path,
                 pipeline_steps,
             )
-            plate_pipeline_editor.update_pipeline_for_plate(
+            PipelineObjectStateBinding.update_plate_steps(
                 plate_path,
                 pipeline_steps,
             )
@@ -382,22 +413,13 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
                 len(pipeline_steps),
             )
             self.invalidate_orchestrator_compilation_state(plate_path)
-
-            if plate_path != current_plate:
-                continue
-            plate_pipeline_editor.pipeline_steps = pipeline_steps
-            plate_pipeline_editor.update_item_list()
-            plate_pipeline_editor.pipeline_changed.emit(pipeline_steps)
-            GuiEventBusBroadcaster(self.manager.event_bus).pipeline_changed(
-                pipeline_steps
-            )
-            plate_pipeline_editor.status_message.emit(
-                f"Loaded {len(pipeline_steps)} steps from plate-manager code document"
-            )
-            logger.debug(
-                "Triggered UI cascade refresh for current plate: %s",
-                plate_path,
-            )
+            if plate_path == self.manager.selected_plate_path:
+                GuiEventBusBroadcaster(self.manager.event_bus).pipeline_changed(
+                    pipeline_steps
+                )
+                self.manager.status_message.emit(
+                    f"Loaded {len(pipeline_steps)} steps from plate-manager code document"
+                )
 
         self.manager.pipeline_data_changed.emit()
 
@@ -408,7 +430,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
     ) -> list[FunctionStep]:
         """Preserve generated CellProfiler artifact bindings through code mode."""
         return CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
-            plate_pipeline_editor=self.manager.plate_pipeline_editor,
+            import_result_provider=self.manager,
             plate_path=plate_path,
             pipeline_steps=pipeline_steps,
         )

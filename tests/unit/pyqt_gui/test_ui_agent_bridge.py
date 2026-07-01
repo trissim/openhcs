@@ -53,7 +53,15 @@ from openhcs.core.config import (
     PipelineConfig,
 )
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
-from openhcs.core.debug import DebugCommand, DebugCommandType, DebugSession
+from openhcs.core.debug import (
+    DebugCommand,
+    DebugCommandType,
+    DebugCursor,
+    DebugEventType,
+    DebugProgressContext,
+    DebugSession,
+    DebugTerminalSummary,
+)
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
@@ -96,6 +104,17 @@ from openhcs.core.progress.projection import (
     PlateRuntimeProjection,
     PlateRuntimeState,
 )
+from openhcs.core.progress.debug_projection import DebugRuntimeProjection
+from openhcs.core.progress.debug_projection import (
+    RuntimeProjectionBuilder,
+    RuntimeProjectionSource,
+)
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
     ManagerExecutionState,
@@ -105,9 +124,16 @@ from openhcs.pyqt_gui.widgets.pipeline_editor import (
     PipelineEditorAction,
     PipelineEditorWidget,
 )
-from openhcs.pyqt_gui.widgets.debug_toolbar import (
+from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    PipelineDebugPauseBoundaryState,
+    PipelineDebugSessionContext,
+    PipelineDebugTargetState,
+)
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
     DebugToolbarAuxiliaryAction,
-    DebugToolbarWidget,
+    PipelineDebugActionDeclarationBase,
+    StepDebugAction,
 )
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
@@ -473,11 +499,39 @@ class FakePlateManager:
     def action_code_plate(self) -> None:
         self.code_action_count += 1
 
+    def debug_session_for_plate(self, plate_path: str):
+        del plate_path
+        return None
+
+    def debug_terminal_summary_for_plate(self, plate_path: str):
+        del plate_path
+        return None
+
+    def debug_session_context_for_plate(
+        self,
+        plate_path: str,
+    ) -> PipelineDebugSessionContext:
+        target = PipelineDebugTargetState(
+            current_plate_scope_id=plate_path,
+            pipeline_scope_id=PipelineScopeIdentity.from_plate_scope(
+                plate_path,
+            ).scope_id,
+            initialized=True,
+            compiled=plate_path in self.plate_compiled_data,
+            terminal_status=None,
+        )
+        return PipelineDebugSessionContext(
+            target=target,
+            session=self.debug_session_for_plate(plate_path),
+            terminal_summary=self.debug_terminal_summary_for_plate(plate_path),
+            pause_boundaries=PipelineDebugPauseBoundaryState(),
+            manager_execution_state=self.execution_state,
+        )
+
 
 class FakePipelineEditor:
     BUTTON_CONFIGS = PipelineEditorWidget.BUTTON_CONFIGS
     STATE_BINDING = PipelineEditorWidget.STATE_BINDING
-    DEBUG_COMMAND_ROUTES = PipelineEditorWidget.DEBUG_COMMAND_ROUTES
     ACTION_ROUTES = {
         PipelineEditorAction.ADD_STEP: WidgetActionRoute(
             PipelineEditorAction.ADD_STEP,
@@ -519,9 +573,14 @@ class FakePipelineEditor:
             for action in self.ACTION_ROUTES
         }
         self.debug_toolbar = DebugToolbarWidget()
-        self.debug_toolbar.set_controls_enabled(bool(current_plate))
-        self.debug_toolbar.set_runtime_inspection_enabled(False)
         self.debug_session_state = None
+        self.debug_terminal_summary = None
+        self.debug_runtime_projection_state = DebugRuntimeProjection.empty()
+        self.initialized = bool(current_plate)
+        self.compiled = bool(current_plate)
+        self.manager_execution_state = ManagerExecutionState.IDLE
+        self.terminal_status = None
+        self.debug_toolbar.set_debug_session_context(self.debug_session_context())
         self.debug_workflow = FakePipelineDebugWorkflow()
         self.add_count = 0
         self.delete_count = 0
@@ -543,6 +602,35 @@ class FakePipelineEditor:
             for index, step in enumerate(self.pipeline_steps)
             if index in selected
         )
+
+    def debug_session_context(self) -> PipelineDebugSessionContext:
+        target = None
+        if self.current_plate:
+            target = PipelineDebugTargetState(
+                current_plate_scope_id=self.current_plate,
+                pipeline_scope_id=PipelineScopeIdentity.from_plate_scope(
+                    self.current_plate
+                ).scope_id,
+                initialized=self.initialized,
+                compiled=self.compiled,
+                terminal_status=self.terminal_status,
+            )
+        return PipelineDebugSessionContext(
+            target=target,
+            session=self.debug_session_state,
+            terminal_summary=self.debug_terminal_summary,
+            pause_boundaries=PipelineDebugPauseBoundaryState(
+                pause_step_indices=tuple(
+                    index
+                    for index, step in enumerate(self.pipeline_steps)
+                    if step.debug_pause
+                )
+            ),
+            manager_execution_state=self.manager_execution_state,
+        )
+
+    def debug_runtime_projection(self) -> DebugRuntimeProjection:
+        return self.debug_runtime_projection_state
 
     def action_add(self) -> None:
         self.add_count += 1
@@ -2355,11 +2443,8 @@ def test_pipeline_debug_toolbar_actions_are_exposed_from_toolbar_declarations() 
         if action.identity.widget_id == widget_id
     }
     expected_action_ids = {
-        *(spec.command_type.value for spec in DebugToolbarWidget.command_specs()),
-        *(
-            spec.action_type.value
-            for spec in DebugToolbarWidget.AUXILIARY_ACTION_SPECS
-        ),
+        declaration.action_id()
+        for declaration in PipelineDebugActionDeclarationBase.toolbar_actions()
     }
 
     assert set(actions) == expected_action_ids
@@ -2367,9 +2452,7 @@ def test_pipeline_debug_toolbar_actions_are_exposed_from_toolbar_declarations() 
     restart_action = actions[DebugCommandType.RESTART.value]
     stop_action = actions[DebugCommandType.STOP.value]
     runtime_action = actions[DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value]
-    assert step_action.title == DebugToolbarWidget.command_spec(
-        DebugCommandType.STEP
-    ).label
+    assert step_action.title == StepDebugAction.label
     assert step_action.enabled is True
     assert step_action.confirmation_required is True
     assert restart_action.enabled is False
@@ -2381,6 +2464,28 @@ def test_pipeline_debug_toolbar_actions_are_exposed_from_toolbar_declarations() 
     assert runtime_action.enabled is False
     assert runtime_action.disabled_error is not None
     assert runtime_action.disabled_error.code == "debug_session_required"
+
+
+def test_pipeline_debug_toolbar_projects_pending_execution_to_bridge_actions() -> None:
+    QtApplicationAuthority.app()
+    manager = FakePipelineEditor()
+    manager.manager_execution_state = ManagerExecutionState.RUNNING
+    manager.debug_toolbar.set_debug_session_context(manager.debug_session_context())
+    bridge = _pipeline_editor_bridge(manager)
+    widget_id = PipelineDebugToolbarWidgetIdentity.require_value()
+    actions = {
+        action.identity.action_id: action
+        for action in bridge.list_actions().actions
+        if action.identity.widget_id == widget_id
+    }
+
+    step_action = actions[DebugCommandType.STEP.value]
+    stop_action = actions[DebugCommandType.STOP.value]
+
+    assert step_action.enabled is False
+    assert step_action.disabled_error is not None
+    assert step_action.disabled_error.code == "debug_execution_pending"
+    assert stop_action.enabled is True
 
 
 def test_pipeline_debug_toolbar_action_invoke_routes_to_debug_workflow() -> None:
@@ -2429,8 +2534,7 @@ def test_pipeline_debug_toolbar_runtime_values_action_requires_debug_session() -
     bridge = _pipeline_editor_bridge(manager)
     widget_id = PipelineDebugToolbarWidgetIdentity.require_value()
     manager.debug_session_state = DebugSession.create(plate_id=PLATE_SCOPE_ID)
-    manager.debug_toolbar.set_debug_session_active(True)
-    manager.debug_toolbar.set_runtime_inspection_enabled(True)
+    manager.debug_toolbar.set_debug_session_context(manager.debug_session_context())
     action = next(
         action
         for action in bridge.list_actions().actions
@@ -2455,6 +2559,193 @@ def test_pipeline_debug_toolbar_runtime_values_action_requires_debug_session() -
     assert action.confirmation_required is False
     assert result.status == "accepted"
     assert manager.debug_workflow.runtime_inspections == 1
+
+
+def test_pipeline_debug_session_state_surface_projects_context_and_actions() -> None:
+    QtApplicationAuthority.app()
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="scope-from-manager-hook-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    manager = FakePipelineEditor()
+    manager.debug_session_state = DebugSession.create(
+        plate_id=PLATE_SCOPE_ID,
+        execution_id="exec-1",
+        axis_id="A01",
+    ).with_cursor(cursor)
+    bridge = _pipeline_editor_bridge(manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PIPELINE_DEBUG_SESSION.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+    actions = {
+        action["action_id"]: action
+        for action in state.payload["actions"]
+    }
+
+    assert state.summary.surface_id == UiStateSurfaceId.PIPELINE_DEBUG_SESSION.value
+    assert state.payload["phase"] == "active_session"
+    assert state.payload["current_plate_scope_id"] == PLATE_SCOPE_ID
+    assert state.payload["pipeline_scope_id"] == (
+        PipelineScopeIdentity.from_plate_scope(PLATE_SCOPE_ID).scope_id
+    )
+    assert state.payload["active_session_id"] == manager.debug_session_state.debug_session_id
+    assert state.payload["execution_id"] == "exec-1"
+    assert state.payload["axis_id"] == "A01"
+    assert state.payload["cursor"]["step_scope_id"] == "scope-from-manager-hook-1"
+    assert actions[DebugCommandType.RESTART.value]["enabled"] is True
+    assert actions[DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value]["enabled"] is True
+    assert actions[DebugCommandType.STEP.value]["label"] == StepDebugAction.label
+
+
+def test_pipeline_debug_session_state_surface_projects_runtime_frame() -> None:
+    QtApplicationAuthority.app()
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="scope-from-manager-hook-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    session = DebugSession(
+        debug_session_id="debug-1",
+        plate_id=PLATE_SCOPE_ID,
+        execution_id="exec-1",
+        axis_id="A01",
+    ).with_cursor(cursor)
+    progress_event = ProgressEvent(
+        identity=ProgressIdentity(
+            execution_id="exec-1",
+            plate_id=PLATE_SCOPE_ID,
+            axis_id="A01",
+            step_name="IdentifyPrimaryObjects",
+        ),
+        phase=ProgressPhase.PATTERN_GROUP,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+        completed=1,
+        total=1,
+        timestamp=123.0,
+        pid=1234,
+        context=DebugProgressContext(
+            debug_session_id="debug-1",
+            snapshot_id="snapshot-1",
+            cursor=cursor,
+            event_type=DebugEventType.AFTER_INVOCATION,
+            snapshot_store_ref="/debug",
+        ).to_progress_context(),
+    )
+    manager = FakePipelineEditor()
+    manager.debug_session_state = session
+    manager.debug_runtime_projection_state = RuntimeProjectionBuilder().build(
+        RuntimeProjectionSource(
+            events_by_execution={"exec-1": [progress_event]},
+            session=session,
+        )
+    ).debug
+    bridge = _pipeline_editor_bridge(manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PIPELINE_DEBUG_SESSION.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    assert state.payload["current_frame"]["debug_session_id"] == "debug-1"
+    assert state.payload["current_frame"]["snapshot_id"] == "snapshot-1"
+    assert state.payload["current_frame"]["event_type"] == "after_invocation"
+    assert state.payload["current_frame"]["progress_identity"]["axis_id"] == "A01"
+    assert state.payload["last_frame"] == state.payload["current_frame"]
+
+
+def test_pipeline_debug_session_state_surface_projects_terminal_summary() -> None:
+    QtApplicationAuthority.app()
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="scope-from-manager-hook-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    manager = FakePipelineEditor()
+    manager.debug_terminal_summary = DebugTerminalSummary(
+        debug_session_id="debug-1",
+        plate_id=PLATE_SCOPE_ID,
+        terminal_status="complete",
+        cursor=cursor,
+        command_type=DebugCommandType.STEP,
+        axis_id="A01",
+        snapshot_id="snapshot-1",
+        snapshot_store_ref="/debug",
+    )
+    bridge = _pipeline_editor_bridge(manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PIPELINE_DEBUG_SESSION.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    assert state.payload["phase"] == "terminal_complete"
+    assert state.payload["active_session_id"] is None
+    assert state.payload["terminal_summary"]["debug_session_id"] == "debug-1"
+    assert state.payload["terminal_summary"]["command_type"] == "step"
+    assert state.payload["terminal_summary"]["cursor"]["step_index"] == 1
+
+
+def test_pipeline_debug_session_state_surface_retire_matching_local_session() -> None:
+    QtApplicationAuthority.app()
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="scope-from-manager-hook-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    manager = FakePipelineEditor()
+    manager.debug_session_state = DebugSession.create(
+        plate_id=PLATE_SCOPE_ID,
+        execution_id="exec-1",
+        axis_id="A01",
+    ).with_cursor(cursor).with_command(DebugCommandType.STEP)
+    manager.debug_terminal_summary = DebugTerminalSummary(
+        debug_session_id=manager.debug_session_state.debug_session_id,
+        plate_id=PLATE_SCOPE_ID,
+        terminal_status="complete",
+        cursor=cursor,
+        command_type=DebugCommandType.STEP,
+        axis_id="A01",
+        snapshot_id="snapshot-1",
+        snapshot_store_ref="/debug",
+    )
+    bridge = _pipeline_editor_bridge(manager)
+
+    state = bridge.get_state_surface(
+        UiStateSurfaceRequest(
+            surface_id=UiStateSurfaceId.PIPELINE_DEBUG_SESSION.value,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+    actions = {
+        action["action_id"]: action
+        for action in state.payload["actions"]
+    }
+
+    assert state.payload["phase"] == "terminal_complete"
+    assert state.payload["active_session_id"] is None
+    assert state.payload["execution_id"] is None
+    assert state.payload["cursor"] is None
+    assert state.payload["terminal_summary"]["debug_session_id"] == (
+        manager.debug_session_state.debug_session_id
+    )
+    assert actions[DebugCommandType.RUN.value]["label"] == "Start Debug"
+    assert actions[DebugCommandType.RESTART.value]["enabled"] is False
+    assert actions[DebugCommandType.STOP.value]["enabled"] is False
+    assert actions[DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value]["enabled"] is False
 
 
 def test_pipeline_editor_state_surface_projects_steps_and_selection(monkeypatch) -> None:

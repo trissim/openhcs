@@ -12,12 +12,19 @@ from typing import Any, Callable, Protocol
 from objectstate import patch_lazy_constructors, spawn_thread_with_context
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.debug import DebugCommandType, DebugSession, FileManagerDebugSnapshotStore
+from openhcs.core.debug import (
+    DebugCommandType,
+    DebugCursor,
+    DebugSession,
+    FileManagerDebugSnapshotStore,
+)
+from openhcs.core.debug_views import DebugViewModel
 from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     CellProfilerPipelineRuntimeRebinder,
 )
+from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
 from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
 from PyQt6.QtWidgets import QFileDialog
@@ -28,6 +35,9 @@ from pyqt_reactive.widgets.shared.manager_workflows import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
     GuiEventBusBroadcaster,
+)
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
+    PipelineDebugActionDeclarationBase,
 )
 
 
@@ -224,12 +234,10 @@ class PipelineEditorDebugWorkflow:
     editor: Any
 
     def handle_command(self, command) -> None:
-        route = self.editor.DEBUG_COMMAND_ROUTES.get(command.command_type)
-        if route is None:
-            raise RuntimeError(
-                f"Unhandled debug command route: {command.command_type.value}"
-            )
-        route.dispatch(self.editor)
+        declaration = PipelineDebugActionDeclarationBase.for_command_type(
+            command.command_type
+        )
+        declaration.dispatch_editor(self.editor)
 
     def run_command(
         self,
@@ -245,15 +253,16 @@ class PipelineEditorDebugWorkflow:
         self.editor.status_message.emit(
             f"Submitting debug {command_label} for {self.editor.current_plate}"
         )
+        start_step_index = self.start_step_index(command_type)
+        start_after_invocation_key = self.start_after_invocation_key(command_type)
+        self.editor.debug_terminal_summary = None
         PipelineEditorCoroutineRunner(self.editor).submit(
             self.editor.plate_manager.action_run_debug_plate(
                 self.editor.current_plate,
                 command_type=command_type,
                 pause_step_indices=self.pause_step_indices(),
-                start_step_index=self.start_step_index(command_type),
-                start_after_invocation_key=self.start_after_invocation_key(
-                    command_type
-                ),
+                start_step_index=start_step_index,
+                start_after_invocation_key=start_after_invocation_key,
             )
         )
 
@@ -265,55 +274,80 @@ class PipelineEditorDebugWorkflow:
         )
 
     def start_step_index(self, command_type: DebugCommandType) -> int:
-        session = self.editor.debug_session_state
-        if (
-            command_type is DebugCommandType.RESTART
-            and session is not None
-            and session.dirty_from_cursor is not None
-        ):
-            return session.dirty_from_cursor.step_index
-        if (
-            command_type is DebugCommandType.STEP
-            and session is not None
-            and session.cursor is not None
-        ):
-            return session.cursor.step_index
+        cursor = self._replay_cursor(command_type)
+        if cursor is not None:
+            return cursor.step_index
         return 0
 
     def start_after_invocation_key(
         self,
         command_type: DebugCommandType,
     ) -> str | None:
+        cursor = self._replay_cursor(command_type)
+        if cursor is None:
+            return None
+        return cursor.invocation_key
+
+    def _replay_cursor(self, command_type: DebugCommandType) -> DebugCursor | None:
         session = self.editor.debug_session_state
+        if (
+            command_type is DebugCommandType.RESTART
+            and session is not None
+            and session.dirty_from_cursor is not None
+        ):
+            return session.dirty_from_cursor
         if (
             command_type is DebugCommandType.STEP
             and session is not None
             and session.cursor is not None
         ):
-            return session.cursor.invocation_key
+            return session.cursor
+        if command_type is DebugCommandType.STEP:
+            terminal_summary = None
+            if self.editor.current_plate and self.editor.plate_manager is not None:
+                terminal_summary = (
+                    self.editor.plate_manager.debug_terminal_summary_for_plate(
+                        self.editor.current_plate
+                    )
+                )
+            if terminal_summary is None:
+                terminal_summary = self.editor.debug_terminal_summary
+            if terminal_summary is not None:
+                return terminal_summary.cursor
         return None
 
     def stop_command(self) -> None:
         if self.editor.plate_manager is None:
             self.editor.status_message.emit("Debug stop requires a connected Plate Manager.")
             return
-        self.editor.plate_manager.action_stop_execution()
+        self.editor.plate_manager.action_stop_execution(force=True)
         self.editor.status_message.emit("Requested debug execution stop.")
 
     def show_runtime_inspection(self) -> None:
-        if self.editor.plate_manager is None or self.editor.debug_session_state is None:
+        if self.editor.plate_manager is None:
+            self.editor.status_message.emit(
+                "Runtime inspection requires an active debug session."
+            )
+            return
+        session = self.editor.debug_session_context().active_session
+        if session is None:
             self.editor.status_message.emit(
                 "Runtime inspection requires an active debug session."
             )
             return
         PipelineEditorCoroutineRunner(self.editor).submit(
-            self._show_runtime_inspection()
+            self._show_runtime_inspection(session)
         )
 
-    async def _show_runtime_inspection(self) -> None:
+    async def _show_runtime_inspection(self, session: DebugSession) -> None:
         view_model = await self.editor.plate_manager.action_inspect_debug_runtime(
-            debug_session_id=self.editor.debug_session_state.debug_session_id,
+            debug_session_id=session.debug_session_id,
         )
+        UiThreadDispatcher().post(
+            lambda: self._render_runtime_inspection(view_model)
+        )
+
+    def _render_runtime_inspection(self, view_model: DebugViewModel) -> None:
         if self.editor.debug_inspector_window is None:
             self.editor.debug_inspector_window = DebugInspectorWindow(self.editor)
             self.editor.debug_inspector_window.artifact_export_requested.connect(
@@ -345,24 +379,69 @@ class PipelineEditorDebugWorkflow:
             self.editor.debug_inspector_window.artifact_open_requested.connect(
                 self.handle_artifact_open_request
             )
-        self.editor.debug_session_state = DebugSession(
+        active_session = None
+        if self.editor.plate_manager is not None:
+            active_session = self.editor.plate_manager.debug_session_for_plate(
+                notification.progress_event.plate_id
+            )
+        terminal_summary = self.editor.debug_terminal_summary
+        loaded_session = DebugSession(
             debug_session_id=debug_context.debug_session_id,
             plate_id=notification.progress_event.plate_id,
             axis_id=notification.progress_event.axis_id,
             snapshot_store_ref=snapshot_store_ref,
             snapshot_store_backend=snapshot_store_backend,
-        ).with_cursor(debug_context.cursor)
+        )
+        if active_session is not None:
+            self.editor.debug_session_state = (
+                active_session.with_snapshot_store(
+                    snapshot_store_ref=snapshot_store_ref,
+                    snapshot_store_backend=snapshot_store_backend,
+                    axis_id=notification.progress_event.axis_id,
+                ).with_cursor(debug_context.cursor)
+            )
+            self.editor.debug_terminal_summary = None
+        elif (
+            terminal_summary is not None
+            and terminal_summary.debug_session_id == debug_context.debug_session_id
+        ):
+            self.editor.debug_session_state = None
+        else:
+            self.editor.debug_session_state = loaded_session.with_cursor(
+                debug_context.cursor
+            )
+        self.editor.update_item_list()
         self.editor.update_button_states()
         if notification.snapshot is not None:
             self.editor.debug_inspector_window.set_snapshot(notification.snapshot)
+            if (
+                terminal_summary is not None
+                and terminal_summary.debug_session_id == debug_context.debug_session_id
+            ):
+                self.editor.debug_terminal_summary = terminal_summary.with_snapshot(
+                    snapshot=notification.snapshot,
+                    snapshot_id=snapshot_id,
+                    snapshot_store_ref=snapshot_store_ref,
+                    snapshot_store_backend=snapshot_store_backend,
+                )
         elif snapshot_store_backend is None:
-            self.editor.debug_inspector_window.load_snapshot(
+            snapshot = self.editor.debug_inspector_window.load_snapshot(
                 root_path=snapshot_store_ref,
                 debug_session_id=debug_context.debug_session_id,
                 snapshot_id=snapshot_id,
             )
+            if (
+                terminal_summary is not None
+                and terminal_summary.debug_session_id == debug_context.debug_session_id
+            ):
+                self.editor.debug_terminal_summary = terminal_summary.with_snapshot(
+                    snapshot=snapshot,
+                    snapshot_id=snapshot_id,
+                    snapshot_store_ref=snapshot_store_ref,
+                    snapshot_store_backend=snapshot_store_backend,
+                )
         else:
-            self.editor.debug_inspector_window.load_snapshot_from_store(
+            snapshot = self.editor.debug_inspector_window.load_snapshot_from_store(
                 store=FileManagerDebugSnapshotStore(
                     filemanager=self.editor.service_adapter.get_file_manager(),
                     backend=snapshot_store_backend,
@@ -371,6 +450,16 @@ class PipelineEditorDebugWorkflow:
                 ),
                 snapshot_id=snapshot_id,
             )
+            if (
+                terminal_summary is not None
+                and terminal_summary.debug_session_id == debug_context.debug_session_id
+            ):
+                self.editor.debug_terminal_summary = terminal_summary.with_snapshot(
+                    snapshot=snapshot,
+                    snapshot_id=snapshot_id,
+                    snapshot_store_ref=snapshot_store_ref,
+                    snapshot_store_backend=snapshot_store_backend,
+                )
         self.editor.debug_inspector_window.show()
         self.editor.debug_inspector_window.raise_()
         self.editor.status_message.emit(

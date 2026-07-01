@@ -2,6 +2,22 @@
 
 Date: 2026-06-30
 
+## Status
+
+Historical/superseded plan. Do not implement directly.
+
+The canonical debugger UX/runtime direction now lives in:
+
+- `docs/plans/debugger_session_ux_rework_plan_20260630.md`
+- `docs/plans/debugger_runtime_projection_api_plan_20260701.md`
+
+This file is retained only as background for why the action surface moved out of
+`DebugToolbarWidget`. Several API drafts below predate the current SSOT rules
+and contain patterns that are no longer allowed: module-level
+`*_STATE_IDENTITY` constants, auxiliary action enums parallel to command
+declarations, widget-specific action protocols, and flat DTO field mirroring.
+If this file conflicts with the newer plans, the newer plans win.
+
 ## Problem
 
 The current pipeline debugger UI exposes commands, but it does not expose the
@@ -93,8 +109,8 @@ the projection. Promote those specs into nominal action declaration classes in a
 separate module, then have the widget, bridge, and MCP state surface query the
 AutoRegisterMeta-backed declaration registry.
 
-After the migration, `DebugToolbarWidget` must own Qt rendering only. It should
-not own the semantic list of debugger actions.
+After the migration, `DebugToolbarWidget` owns Qt rendering only. It must not
+own the semantic list of debugger actions.
 
 ## pyqt-reactive Reuse
 
@@ -388,7 +404,7 @@ with a list of strings.
 
 Move the existing dispatch functions and `PipelineDebugCommandRoute` authority
 out of `pipeline_editor.py` during this step. `PipelineEditorDebugWorkflow`
-should dispatch through the declaration registry:
+must dispatch through the declaration registry:
 
 ```python
 class PipelineEditorDebugWorkflow:
@@ -818,8 +834,8 @@ class PipelineDebugSessionStateSurfaceIdentityDeclaration(
     widget_identity = PipelineDebugToolbarWidgetIdentity
 ```
 
-This should be enough for generated identity enums because the file already
-uses `AutoRegisterMeta`. Do not add a manual enum list.
+This is enough for generated identity enums because the file already uses
+`AutoRegisterMeta`. Do not add a manual enum list.
 
 ### Pipeline Editor Bridge Provider
 
@@ -1056,7 +1072,7 @@ def _selection_revision_token(self) -> str:
     return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 ```
 
-The only string comparison left in the provider should be selecting the action
+The only string comparison left in the provider is selecting the action
 by `action_id` supplied by the bridge request. That is an ABI lookup, not
 semantic classification.
 
@@ -1454,7 +1470,7 @@ Projected actions:
 
 - all actions disabled with `INITIALIZED_PLATE_REQUIRED`.
 
-No command should check a Qt button's enabled state in the bridge.
+No command checks a Qt button's enabled state in the bridge.
 
 ### 3. Initialized But Not Compiled
 
@@ -1501,7 +1517,7 @@ Projected actions:
 
 Qt:
 
-- bottom toolbar should show useful start controls immediately after compile.
+- bottom toolbar shows useful start controls immediately after compile.
 
 MCP:
 
@@ -1708,7 +1724,7 @@ registries.
 
 ### No Semantic Mirrors
 
-These should return no matches outside tests and the new projection module:
+These commands must return no matches outside tests and the new projection module:
 
 ```bash
 rg -n "debug_session_required" openhcs/pyqt_gui/services/ui_bridge_pipeline_editor.py
@@ -1723,7 +1739,7 @@ rg -n "Start Debug|Inspect Data|Run to Pause Marker|Restart From Cursor" openhcs
 Expected:
 
 - dynamic labels appear on declaration classes and tests only;
-- bridge dispatch should not mention leaf debug commands or auxiliary actions;
+- bridge dispatch must not mention leaf debug commands or auxiliary actions;
 - MCP renderers do not hardcode debug command labels.
 
 ### State Surface Registration

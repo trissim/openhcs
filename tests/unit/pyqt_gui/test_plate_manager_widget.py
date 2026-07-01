@@ -20,12 +20,25 @@ from openhcs.constants.constants import OrchestratorState
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_binding_context import SourceBindingContext
+from openhcs.core.source_bindings import (
+    LazyStepSourceBindingsConfig,
+    MetadataSelector,
+    NamedSourceBinding,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
+    SourceBindingsConfig,
+    SourceSelector,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineObjectStateBinding,
+)
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
@@ -129,10 +142,8 @@ class TestPlateManagerWidget:
         close_widget(widget)
 
     def test_loads_cellprofiler_pipeline_into_empty_plate(self, monkeypatch) -> None:
+        ObjectStateRegistry.clear()
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
-        pipeline_editor = PlatePipelineEditorRecorder()
-        pipeline_editor.current_plate = "/plate"
-        widget.pipeline_editor = pipeline_editor
         widget.selected_plate_path = "/plate"
 
         widget._load_cellprofiler_pipeline_from_workspace(
@@ -142,21 +153,19 @@ class TestPlateManagerWidget:
             ),
         )
 
-        assert pipeline_editor.updated_pipeline == (
-            "/plate",
-            pipeline_editor.pipeline_steps,
-        )
-        assert len(pipeline_editor.pipeline_steps) == 1
-        assert pipeline_editor.changed_steps == pipeline_editor.pipeline_steps
-        assert pipeline_editor.source_binding_context is not None
-        assert pipeline_editor.source_binding_context.logical_plate_id == "/plate"
-        assert pipeline_editor.source_binding_context.display_plate_root == Path(
+        pipeline_steps = PipelineObjectStateBinding.steps_for_plate("/plate")
+        assert [step.name for step in pipeline_steps] == ["Imported"]
+        context = widget.source_binding_context_for_plate("/plate")
+        assert context is not None
+        assert context.logical_plate_id == "/plate"
+        assert context.display_plate_root == Path(
             "/source"
         )
-        assert pipeline_editor.source_binding_context.execution_plate_path == Path(
+        assert context.execution_plate_path == Path(
             "/execution"
         )
         close_widget(widget)
+        ObjectStateRegistry.clear()
 
     def test_compile_validator_requires_initialized_orchestrator(self) -> None:
         plate_scope = "/plate"
@@ -259,11 +268,12 @@ class TestPlateManagerWidget:
         self,
         monkeypatch,
     ) -> None:
+        ObjectStateRegistry.clear()
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
-        pipeline_editor = PlatePipelineEditorRecorder(
-            existing_steps=(FunctionStep(func=lambda image: image, name="Existing"),)
+        PipelineObjectStateBinding.update_plate_steps(
+            "/plate",
+            [FunctionStep(func=lambda image: image, name="Existing")],
         )
-        widget.pipeline_editor = pipeline_editor
 
         widget._load_cellprofiler_pipeline_from_workspace(
             "/plate",
@@ -272,12 +282,80 @@ class TestPlateManagerWidget:
             ),
         )
 
-        assert pipeline_editor.updated_pipeline is not None
-        assert pipeline_editor.updated_pipeline[0] == "/plate"
-        assert pipeline_editor.updated_pipeline[1][0].name == "Imported"
-        assert pipeline_editor.get_pipeline_for_plate("/plate")[0].name == "Imported"
-        assert pipeline_editor.changed_steps is None
+        assert PipelineObjectStateBinding.steps_for_plate("/plate")[0].name == "Imported"
         close_widget(widget)
+        ObjectStateRegistry.clear()
+
+    def test_cellprofiler_import_applies_pipeline_config_to_orchestrator_state(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        match_plan = SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER)
+        pipeline_config = PipelineConfig(
+            source_bindings_config=SourceBindingsConfig(match_plan=match_plan),
+        )
+        step = FunctionStep(
+            func=lambda image: image,
+            name="Imported",
+            source_bindings=LazyStepSourceBindingsConfig(
+                enabled=False,
+                bindings=(
+                    NamedSourceBinding(
+                        alias="OrigDNA",
+                        selector=SourceSelector(
+                            metadata=(
+                                MetadataSelector(
+                                    field="ChannelNumber",
+                                    value="1",
+                                ),
+                            )
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        try:
+            widget._create_orchestrator_for_plate(plate_scope, plate_root=plate_root)
+            widget._load_cellprofiler_pipeline_from_workspace(
+                plate_scope,
+                CellProfilerWorkspaceResultFixture.with_steps(
+                    (step,),
+                    pipeline_config=pipeline_config,
+                ),
+            )
+
+            plate_state = ObjectStateRegistry.get_by_scope(plate_scope)
+            binding = PipelineObjectStateBinding.for_plate(plate_scope)
+            assert plate_state is not None
+            assert binding is not None
+            assert widget.plate_configs[plate_scope] == pipeline_config
+            assert (
+                plate_state.get_saved_resolved_value(
+                    "source_bindings_config.match_plan"
+                )
+                == match_plan
+            )
+
+            step_scope_id = binding.step_scope_ids[0]
+            step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
+            assert step_state is not None
+            snapshot = StepSnapshot.from_resolved_step(
+                index=0,
+                step=step_state.to_object(),
+                step_state=step_state,
+            )
+            assert snapshot.source_bindings.match_plan == match_plan
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_plate_selection_seeds_cellprofiler_pipeline_before_editor_signal(
         self,
@@ -286,8 +364,6 @@ class TestPlateManagerWidget:
     ) -> None:
         ObjectStateRegistry.clear()
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
-        pipeline_editor = PlatePipelineEditorRecorder()
-        widget.pipeline_editor = pipeline_editor
         service_adapter = PlateManagerServiceStub()
         ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
         plate_root = tmp_path / "plate"
@@ -309,7 +385,7 @@ class TestPlateManagerWidget:
         signal_observations = []
         widget.plate_selected.connect(
             lambda _plate_path: signal_observations.append(
-                pipeline_editor.updated_pipeline
+                PipelineObjectStateBinding.steps_for_plate(plate_scope)
             )
         )
 
@@ -317,10 +393,7 @@ class TestPlateManagerWidget:
         widget.plate_selected.emit(plate_scope)
 
         assert signal_observations
-        observed_scope, observed_steps = signal_observations[0]
-        assert observed_scope == plate_scope
-        assert [step.name for step in observed_steps] == ["Second"]
-        assert pipeline_editor.pipeline_steps == []
+        assert [step.name for step in signal_observations[0]] == ["Second"]
         close_widget(widget)
         ObjectStateRegistry.clear()
 
@@ -616,11 +689,8 @@ class TestPlateManagerWidget:
             ),
             artifact_contracts=(contract,),
         )
-        editor = PlatePipelineEditorRecorder()
-        editor.current_plate = plate_scope
-        editor.cellprofiler_import_result = import_result
-        editor.cellprofiler_import_results_by_plate[plate_scope] = import_result
-        manager = PlateManagerCodeWorkflowHarness(editor)
+        manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
+        manager._cellprofiler_import_results_by_plate[plate_scope] = import_result
         raw_step = FunctionStep(
             func=(cellprofiler_backend.crop, {"crop_shape": "Rectangle"}),
             name="Crop",
@@ -628,12 +698,11 @@ class TestPlateManagerWidget:
 
         PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [raw_step]})
 
-        updated_scope, updated_steps = editor.updated_pipeline
+        updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
         rebound_func = updated_steps[0].func[0]
         rebound_contract = CallableContract.from_callable(
             rebound_func,
         ).module_artifact_contract
-        assert updated_scope == plate_scope
         assert rebound_func.__name__ == "crop"
         assert rebound_contract == contract
 
@@ -670,25 +739,21 @@ class TestPlateManagerWidget:
             ),
             name="Crop",
         )
-        editor = PlatePipelineEditorRecorder()
-        manager = PlateManagerCodeWorkflowHarness(editor)
+        manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
 
         PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [bound_step]})
 
-        updated_scope, updated_steps = editor.updated_pipeline
+        updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
         updated_func = updated_steps[0].func[0]
         updated_contract = CallableContract.from_callable(
             updated_func,
         ).module_artifact_contract
-        assert updated_scope == plate_scope
         assert updated_contract == contract
 
     def test_code_mode_pipeline_change_clears_stale_execution_state(self) -> None:
         ObjectStateRegistry.clear()
         plate_scope = "/plate"
-        editor = PlatePipelineEditorRecorder()
-        editor.current_plate = plate_scope
-        manager = PlateManagerCodeWorkflowHarness(editor)
+        manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
         manager.plate_compiled_data[plate_scope] = ("compiled",)
         manager.plate_execution_ids[plate_scope] = "execution-1"
         manager.plate_terminal_activity_status.mark_terminal(
@@ -723,7 +788,7 @@ class TestPlateManagerWidget:
             assert manager.orchestrator_state_changed.emissions == [
                 (plate_scope, "READY")
             ]
-            assert editor.status_message.messages == [
+            assert manager.status_message.messages == [
                 "Loaded 1 steps from plate-manager code document"
             ]
         finally:
@@ -733,6 +798,10 @@ class TestPlateManagerWidget:
         self,
     ) -> None:
         manager = PlateManagerWidget.__new__(PlateManagerWidget)
+        manager._execution_state = ManagerExecutionState.IDLE
+        manager.manager_execution_state_changed = (
+            PlateManagerExecutionStateSignalRecorder()
+        )
         manager.execution_state = ManagerExecutionState.FORCE_KILL_READY
         manager.current_execution_id = "execution-1"
         manager.execution_server_info = SimpleNamespace(
@@ -834,14 +903,19 @@ class PlatePipelineEditorRecorder:
 class PlateManagerCodeWorkflowHarness:
     """Minimal plate-manager surface consumed by PlateManagerCodeWorkflow."""
 
-    def __init__(self, editor: PlatePipelineEditorRecorder) -> None:
-        self.plate_pipeline_editor = editor
+    def __init__(self, selected_plate_path: str | None = None) -> None:
+        self.selected_plate_path = selected_plate_path
         self.pipeline_data_changed = PlatePipelineDataChangedSignalRecorder()
         self.orchestrator_state_changed = PlateOrchestratorStateChangedSignalRecorder()
         self.event_bus = PlateManagerEventBusRecorder()
+        self.status_message = PlatePipelineStatusSignalRecorder()
         self.plate_compiled_data = {}
         self.plate_execution_ids = {}
         self.plate_terminal_activity_status = ExecutionBatchRuntime()
+        self._cellprofiler_import_results_by_plate = {}
+
+    def cellprofiler_import_result_for_plate(self, plate_path: str):
+        return self._cellprofiler_import_results_by_plate.get(str(plate_path))
 
     def clear_plate_execution_tracking(
         self,
@@ -864,6 +938,16 @@ class PlatePipelineDataChangedSignalRecorder:
 
     def emit(self) -> None:
         self.count += 1
+
+
+class PlateManagerExecutionStateSignalRecorder:
+    """Signal-like recorder for manager execution state changes."""
+
+    def __init__(self) -> None:
+        self.states = []
+
+    def emit(self, state: ManagerExecutionState) -> None:
+        self.states.append(state)
 
 
 class PlateOrchestratorStateChangedSignalRecorder:
@@ -891,7 +975,7 @@ class CellProfilerWorkspaceResultFixture:
     """Minimal CellProfiler workspace result carrying prepared pipeline steps."""
 
     @classmethod
-    def with_steps(cls, steps):
+    def with_steps(cls, steps, pipeline_config: PipelineConfig | None = None):
         return InputWorkspacePreparationResult(
             original_source_root=Path("/source"),
             execution_plate_path=Path("/execution"),
@@ -902,6 +986,7 @@ class CellProfilerWorkspaceResultFixture:
                 import_result=SimpleNamespace(
                     pipeline=CellProfilerPipelineFixture(steps=steps),
                     source_schema=PipelineImageSchema.empty(),
+                    pipeline_config=pipeline_config,
                 ),
             ),
         )

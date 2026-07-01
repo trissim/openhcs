@@ -624,13 +624,6 @@ class OpenHCSMainWindow(QMainWindow):
         self.time_travel_widget = TimeTravelWidget(color_scheme=color_scheme)
         bottom_control_layout.addWidget(self.time_travel_widget)
 
-        debug_toolbar = self.pipeline_editor_widget.debug_toolbar
-        if debug_toolbar is not None:
-            pipeline_layout = self.pipeline_editor_widget.layout()
-            if pipeline_layout is not None:
-                pipeline_layout.removeWidget(debug_toolbar)
-            bottom_control_layout.addWidget(debug_toolbar)
-
         self.status_bar.addWidget(self.bottom_control_panel, 1)
 
         self._status_progress_bar = QProgressBar()

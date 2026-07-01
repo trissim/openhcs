@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeAlias
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import QItemSelectionModel, QModelIndex, Qt, QTimer
 from PyQt6.QtWidgets import QAbstractButton, QAbstractItemView, QApplication, QWidget
+from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
 from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
 from pyqt_reactive.services.widget_tree_projection import (
@@ -48,6 +49,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeRequest,
     UiActionInvokeResult,
     UiActionSummary,
+    UiLiveOverviewItem,
+    UiLiveOverviewMetric,
+    UiLiveOverviewSection,
+    UiLiveOverviewSeverity,
     UiMutationReceipt,
     UiWindowCatalog,
     UiWindowCloseRequest,
@@ -59,6 +64,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateRequest,
     UiWindowNavigateResult,
     UiWindowOperationRequest,
+    UiWindowSemanticMarker,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
@@ -79,6 +85,7 @@ from openhcs.runtime.qt_window_snapshot import (
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiActionProviderABC,
     UiActionProviderIdentity,
+    UiLiveOverviewWidget,
     UiWindowProviderABC,
     UiWindowProviderIdentity,
 )
@@ -320,6 +327,56 @@ class WindowCatalogProjectionABC(
             windows=self.summaries(),
         )
 
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        windows = self.summaries()
+        error_dialogs = tuple(
+            window
+            for window in windows
+            if UiWindowSemanticMarker.ERROR_DIALOG.value in window.semantic_markers
+        )
+        return (
+            UiLiveOverviewSection(
+                section_id=self.identity.provider_id,
+                title=self.identity.title,
+                summary=f"{len(windows)} windows",
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="windows",
+                        label="windows",
+                        value=str(len(windows)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="visible",
+                        label="visible",
+                        value=str(sum(1 for window in windows if window.visible)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="error_dialogs",
+                        label="error dialogs",
+                        value=str(len(error_dialogs)),
+                    ),
+                ),
+                items=tuple(self._overview_window_item(window) for window in windows),
+            ),
+        )
+
+    @staticmethod
+    def _overview_window_item(window: UiWindowSummary) -> UiLiveOverviewItem:
+        is_error_dialog = (
+            UiWindowSemanticMarker.ERROR_DIALOG.value in window.semantic_markers
+        )
+        return UiLiveOverviewItem(
+            label=window.title,
+            status=window.window_kind,
+            detail=f"visible={window.visible} focusable={window.focusable}",
+            severity=(
+                UiLiveOverviewSeverity.ERROR.value
+                if is_error_dialog
+                else UiLiveOverviewSeverity.INFO.value
+            ),
+            source_window_id=window.window_id,
+        )
+
     @abstractmethod
     def summaries(self) -> tuple[UiWindowSummary, ...]:
         """Return the windows currently visible through this projection."""
@@ -437,6 +494,12 @@ class EmbeddedWindowRoute(FocusableWindowRouteMixin):
 
     def widget(self) -> QWidget:
         return self.widget_supplier()
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        widget = self.widget()
+        if isinstance(widget, UiLiveOverviewWidget):
+            return widget.overview_sections()
+        return ()
 
     def target(self, *, create_if_missing: bool) -> WindowProjectionTarget | None:
         del create_if_missing
@@ -1032,6 +1095,7 @@ class QtTopLevelWindowProjection(
             visible=widget.isVisible(),
             focusable=True,
             manager_scope=None,
+            semantic_markers=cls._semantic_markers(widget),
         )
 
     @staticmethod
@@ -1067,6 +1131,15 @@ class QtTopLevelWindowProjection(
         if title:
             return title
         return type(widget).__name__
+
+    @staticmethod
+    def _semantic_markers(widget: QWidget) -> tuple[str, ...]:
+        if (
+            isinstance(widget, QMessageBox)
+            and widget.icon() is QMessageBox.Icon.Critical
+        ):
+            return (UiWindowSemanticMarker.ERROR_DIALOG.value,)
+        return ()
 
 
 class UiWindowSnapshotResultFactory:
@@ -2249,6 +2322,14 @@ class UiWindowProjectionService(
             route.summary()
             for route in route_index.managed_routes
         ) + self._dynamic.summaries(route_index)
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        route_index = self._route_index()
+        return WindowCatalogProjectionABC.overview_sections(self) + tuple(
+            section
+            for route in route_index.embedded_routes
+            for section in route.overview_sections()
+        )
 
     def handles(self, window_id: str) -> bool:
         identity = UiWindowIdentity(window_id=window_id)

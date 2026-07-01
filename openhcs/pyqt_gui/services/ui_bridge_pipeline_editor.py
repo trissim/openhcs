@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from enum import Enum
 
 from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
@@ -15,23 +16,34 @@ from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeResult,
     UiActionSummary,
     UiCodeDocumentSelectionMode,
+    UiDebugActionState,
+    UiDebugCursorState,
+    UiDebugRuntimeFrameState,
+    UiDebugTerminalSummaryState,
+    UiLiveOverviewItem,
+    UiLiveOverviewMetric,
+    UiLiveOverviewSection,
+    UiLiveOverviewSeverity,
     UiMutationReceipt,
+    UiPipelineDebugSessionState,
     UiPipelineEditorState,
     UiPipelineEditorStepState,
+    UiProgressIdentityState,
     UiStateSurfaceDocument,
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
 )
 from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
     PipelineDebugToolbarWidgetIdentity,
     PipelineEditorStateSurfaceIdentityDeclaration,
     PipelineEditorWidgetIdentity,
     PlateManagerStateSurfaceIdentityDeclaration,
 )
-from openhcs.core.debug import DebugCommand, DebugCommandType
 from openhcs.agent.serialization import to_jsonable
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
+from openhcs.core.progress.debug_projection import DebugRuntimeFrame
 from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiActionProviderABC,
@@ -48,9 +60,12 @@ from openhcs.pyqt_gui.widgets.pipeline_editor import (
     PipelineEditorAction,
     PipelineEditorActionTargetMode,
 )
-from openhcs.pyqt_gui.widgets.debug_toolbar import (
-    DebugToolbarAuxiliaryAction,
-    DebugToolbarWidget,
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    DebugActionRenderModel,
+    DebugToolbarActionProjector,
+)
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
+    DebugActionDisabledReason,
 )
 from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
     commit_focused_widget_edits,
@@ -63,13 +78,21 @@ from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
 PIPELINE_EDITOR_STATE_TITLE = "Pipeline editor state"
 PIPELINE_EDITOR_ACTIONS_TITLE = "Pipeline editor actions"
 PIPELINE_DEBUG_TOOLBAR_ACTIONS_TITLE = "Pipeline debug toolbar actions"
+PIPELINE_DEBUG_SESSION_STATE_TITLE = "Pipeline debug session state"
 PIPELINE_EDITOR_STATE_PAYLOAD_SCHEMA = "openhcs.ui.pipeline_editor_state.v1"
+PIPELINE_DEBUG_SESSION_STATE_PAYLOAD_SCHEMA = (
+    "openhcs.ui.pipeline_debug_session_state.v1"
+)
 PLATE_MANAGER_STATE_SURFACE_ID = PlateManagerStateSurfaceIdentityDeclaration.require_value()
 PIPELINE_EDITOR_WIDGET_ID = PipelineEditorWidgetIdentity.require_value()
 PIPELINE_DEBUG_TOOLBAR_WIDGET_ID = PipelineDebugToolbarWidgetIdentity.require_value()
 PIPELINE_EDITOR_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
     PipelineEditorStateSurfaceIdentityDeclaration,
     title=PIPELINE_EDITOR_STATE_TITLE,
+)
+PIPELINE_DEBUG_SESSION_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
+    title=PIPELINE_DEBUG_SESSION_STATE_TITLE,
 )
 
 
@@ -348,6 +371,7 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
     _related_state_surface_ids = (
         PLATE_MANAGER_STATE_SURFACE_ID,
         PipelineEditorStateSurfaceIdentityDeclaration.require_value(),
+        PipelineDebugSessionStateSurfaceIdentityDeclaration.require_value(),
     )
 
     def __init__(self, manager) -> None:
@@ -360,24 +384,23 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
         )
 
     def summary(self, action_id: str) -> UiActionSummary:
-        title, side_effects, confirmation_required = self._action_declaration(action_id)
-        target_scope_ids = self._target_scope_ids()
-        availability_error = self._availability_error(action_id)
+        model = self._model(action_id)
+        availability_error = self._availability_error(model)
         return UiActionSummary(
             schema_version=SCHEMA_VERSION,
             identity=UiActionIdentity(
                 widget_id=self.identity.widget_id,
                 action_id=action_id,
             ),
-            title=title,
+            title=model.label,
             enabled=availability_error is None,
             disabled_error=availability_error,
             invocation_mode="sync",
-            side_effects=side_effects,
-            confirmation_required=confirmation_required,
+            side_effects=model.side_effects,
+            confirmation_required=model.confirmation_required,
             selection_mode="current_pipeline",
-            current_selection_count=len(target_scope_ids),
-            target_scope_ids=target_scope_ids,
+            current_selection_count=len(model.target_scope_ids),
+            target_scope_ids=model.target_scope_ids,
             selection_revision_token=self._selection_revision_token(),
             related_state_surface_ids=self._related_state_surface_ids,
         )
@@ -388,12 +411,8 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             return self._invoke_error(request, guard_error)
 
         try:
-            command_type = self._command_type(request.action_id)
-            if command_type is not None:
-                self._manager.debug_workflow.handle_command(DebugCommand(command_type))
-            else:
-                self._auxiliary_action(request.action_id)
-                self._manager.debug_workflow.show_runtime_inspection()
+            model = self._model(request.action_id)
+            model.declaration.invoke_workflow(self._manager.debug_workflow)
         except Exception as exc:
             return self._invoke_error(
                 request,
@@ -416,100 +435,37 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
 
     @staticmethod
     def _action_ids() -> tuple[str, ...]:
-        command_ids = tuple(
-            spec.command_type.value for spec in DebugToolbarWidget.command_specs()
+        return tuple(
+            declaration.action_id()
+            for declaration in DebugToolbarActionProjector.declarations()
         )
-        auxiliary_ids = tuple(
-            spec.action_type.value
-            for spec in DebugToolbarWidget.AUXILIARY_ACTION_SPECS
+
+    def _models(self) -> tuple[DebugActionRenderModel, ...]:
+        return DebugToolbarActionProjector.render_models(
+            self._manager.debug_session_context()
         )
-        return (*command_ids, *auxiliary_ids)
+
+    def _model(self, action_id: str) -> DebugActionRenderModel:
+        for model in self._models():
+            if model.action_id == action_id:
+                return model
+        raise ValueError(f"Debug toolbar action is not declared: {action_id!r}")
 
     @staticmethod
-    def _action_declaration(
-        action_id: str,
-    ) -> tuple[str, tuple[str, ...], bool]:
-        command_type = PipelineDebugToolbarActionProvider._command_type(action_id)
-        if command_type is not None:
-            spec = DebugToolbarWidget.command_spec(command_type)
-            return spec.label, spec.side_effects, spec.confirmation_required
-        auxiliary_action = PipelineDebugToolbarActionProvider._auxiliary_action(
-            action_id
-        )
-        spec = DebugToolbarWidget.auxiliary_action_spec(auxiliary_action)
-        return spec.label, spec.side_effects, spec.confirmation_required
-
-    @staticmethod
-    def _command_type(action_id: str) -> DebugCommandType | None:
-        try:
-            command_type = DebugCommandType(action_id)
-        except ValueError:
+    def _availability_error(model: DebugActionRenderModel) -> AgentError | None:
+        if model.disabled_reason is None:
             return None
-        toolbar_command_types = {
-            spec.command_type for spec in DebugToolbarWidget.command_specs()
-        }
-        if command_type not in toolbar_command_types:
-            raise ValueError(f"Debug command is not exposed by the toolbar: {action_id}")
-        return command_type
-
-    @staticmethod
-    def _auxiliary_action(action_id: str) -> DebugToolbarAuxiliaryAction:
-        return DebugToolbarAuxiliaryAction(action_id)
-
-    def _availability_error(self, action_id: str) -> AgentError | None:
-        if not self._target_scope_ids():
-            return AgentError(
-                code="debug_target_required",
-                message="Debug toolbar actions require an initialized current plate.",
-                hint=(
-                    "Inspect plate_manager.state and pipeline_editor.state; add and "
-                    "initialize a plate before invoking debug controls."
-                ),
-            )
-
-        toolbar = self._manager.debug_toolbar
-        command_type = self._command_type(action_id)
-        if command_type is not None:
-            spec = DebugToolbarWidget.command_spec(command_type)
-            if (
-                spec.requires_active_debug_session
-                and self._manager.debug_session_state is None
-            ):
-                return AgentError(
-                    code="debug_session_required",
-                    message=f"{spec.label} requires an active debug session.",
-                    hint=(
-                        "Run or step the compiled pipeline in debug mode before "
-                        f"invoking {spec.label!r}."
-                    ),
-                )
-            if (
-                command_type not in self._manager.DEBUG_COMMAND_ROUTES
-                or toolbar is None
-                or not toolbar.command_enabled(command_type)
-            ):
-                return self._disabled_error(action_id)
-            return None
-
-        auxiliary_action = self._auxiliary_action(action_id)
-        if auxiliary_action is DebugToolbarAuxiliaryAction.RUNTIME_VALUES:
-            if self._manager.debug_session_state is None:
-                return AgentError(
-                    code="debug_session_required",
-                    message="Runtime inspection requires an active debug session.",
-                    hint="Run or step the pipeline in debug mode before inspecting runtime values.",
-                )
-        if toolbar is None or not toolbar.auxiliary_action_enabled(auxiliary_action):
-            return self._disabled_error(action_id)
-        return None
+        return PipelineDebugToolbarActionProvider._agent_error_from_reason(
+            model.disabled_reason
+        )
 
     def _guard_error(self, request: UiActionInvokeRequest) -> AgentError | None:
         try:
-            self._action_declaration(request.action_id)
+            model = self._model(request.action_id)
         except Exception as exc:
             return AgentError.from_exception("unknown_ui_action", exc)
 
-        target_scope_ids = self._target_scope_ids()
+        target_scope_ids = model.target_scope_ids
         if request.selected_scope_ids and request.selected_scope_ids != target_scope_ids:
             return AgentError(
                 code="stale_ui_action_selection",
@@ -528,11 +484,10 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
                     "was planned."
                 ),
             )
-        availability_error = self._availability_error(request.action_id)
+        availability_error = self._availability_error(model)
         if availability_error is not None:
             return availability_error
-        summary = self.summary(request.action_id)
-        if summary.confirmation_required and request.confirmation_is_required():
+        if model.confirmation_required and request.confirmation_is_required():
             return AgentError(
                 code="confirmation_required",
                 message=(
@@ -560,36 +515,454 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             errors=(error,),
         )
 
-    def _disabled_error(self, action_id: str) -> AgentError:
+    @staticmethod
+    def _agent_error_from_reason(reason: DebugActionDisabledReason) -> AgentError:
         return AgentError(
-            code="ui_action_disabled",
-            message=f"{self.identity.widget_id} action {action_id!r} is disabled.",
-            hint=(
-                "Inspect pipeline_editor.state and plate_manager.state; debug "
-                "controls require an initialized and compiled current plate."
-            ),
+            code=reason.code,
+            message=reason.message,
+            hint=reason.hint,
         )
 
     def _target_scope_ids(self) -> tuple[str, ...]:
-        if not self._manager.current_plate:
-            return ()
-        return (
-            PipelineScopeIdentity.from_plate_scope(
-                self._manager.current_plate
-            ).scope_id,
+        return DebugToolbarActionProjector.target_scope_ids(
+            self._manager.debug_session_context()
         )
 
     def _selection_revision_token(self) -> str:
-        session = self._manager.debug_session_state
-        session_id = None if session is None else session.debug_session_id
+        models = self._models()
         parts = (
             self.identity.widget_id,
-            self._action_ids(),
-            self._target_scope_ids(),
+            tuple(
+                (
+                    model.action_id,
+                    model.enabled,
+                    None
+                    if model.disabled_reason is None
+                    else model.disabled_reason.code,
+                    model.target_scope_ids,
+                )
+                for model in models
+            ),
             ObjectStateRegistry.get_token(),
-            session_id,
         )
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
+
+
+class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
+    """Pollable PipelineEditor debug-session state backed by shared projection."""
+
+    identity = PIPELINE_DEBUG_SESSION_STATE_IDENTITY
+
+    def __init__(
+        self,
+        manager,
+        *,
+        snapshot_provider: UiBridgeSnapshotProviderABC,
+    ) -> None:
+        self._manager = manager
+        self._snapshot_provider = snapshot_provider
+
+    def summary(self) -> UiStateSurfaceSummary:
+        target_scope_ids = self._target_scope_ids()
+        return UiStateSurfaceSummary(
+            schema_version=SCHEMA_VERSION,
+            identity=self.identity.as_surface_identity(),
+            title=self.identity.title,
+            widget_id=self.identity.widget_id,
+            readable=True,
+            supported_selection_modes=("all",),
+            current_selection_count=len(target_scope_ids),
+            total_scope_count=1 if target_scope_ids else 0,
+        )
+
+    def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
+        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        try:
+            state = self._state()
+        except Exception as exc:
+            return self._state_error(
+                request,
+                (AgentError.from_exception("ui_state_surface_read_failed", exc),),
+            )
+
+        revision_token = self._revision_token(state, selection_mode=selection_mode)
+        state = replace(
+            state,
+            current_revision_token=revision_token,
+            current_snapshot=self._snapshot_provider.current_snapshot(),
+            unchanged=request.base_revision_token == revision_token,
+        )
+        return self._document_from_state(state, selection_mode=selection_mode)
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        state = self._state()
+        disabled_actions = tuple(
+            action for action in state.actions if action.disabled_error is not None
+        )
+        items = []
+        if state.terminal_summary is not None:
+            items.append(
+                UiLiveOverviewItem(
+                    label="terminal debug session",
+                    status=state.terminal_summary.terminal_status,
+                    detail=self._terminal_summary_detail(state),
+                    severity=UiLiveOverviewSeverity.WARNING.value,
+                    source_surface_id=self.identity.surface_id,
+                    source_widget_id=PipelineDebugToolbarWidgetIdentity.require_value(),
+                )
+            )
+        items.extend(
+            self._disabled_action_item(action)
+            for action in disabled_actions
+        )
+        return (
+            UiLiveOverviewSection(
+                section_id=self.identity.surface_id,
+                title=self.identity.title,
+                summary=state.phase,
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="phase",
+                        label="phase",
+                        value=state.phase,
+                    ),
+                    UiLiveOverviewMetric(
+                        key="compiled",
+                        label="compiled",
+                        value=str(state.compiled),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="actions",
+                        label="actions",
+                        value=str(len(state.actions)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="disabled",
+                        label="disabled",
+                        value=str(len(disabled_actions)),
+                    ),
+                ),
+                items=tuple(items),
+            ),
+        )
+
+    def _state(self) -> UiPipelineDebugSessionState:
+        context = self._manager.debug_session_context()
+        target = context.target
+        session = context.active_session
+        actions = tuple(self._action_state(model) for model in self._models())
+        debug_projection = self._manager.debug_runtime_projection()
+        return UiPipelineDebugSessionState(
+            schema_version=SCHEMA_VERSION,
+            summary=self.summary(),
+            object_state_token=ObjectStateRegistry.get_token(),
+            current_plate_scope_id=(
+                None if target is None else target.current_plate_scope_id
+            ),
+            pipeline_scope_id=None if target is None else target.pipeline_scope_id,
+            manager_execution_state=context.manager_execution_state.value,
+            initialized=False if target is None else target.initialized,
+            compiled=False if target is None else target.compiled,
+            phase=DebugToolbarActionProjector.phase(context).value,
+            active_session_id=None if session is None else session.debug_session_id,
+            execution_id=None if session is None else session.execution_id,
+            axis_id=None if session is None else session.axis_id,
+            selected_source_group=(
+                None if session is None else session.selected_source_group
+            ),
+            snapshot_store_ref=None if session is None else session.snapshot_store_ref,
+            snapshot_store_backend=(
+                None if session is None else session.snapshot_store_backend
+            ),
+            terminal_status=None if target is None else target.terminal_status,
+            cursor=(
+                None
+                if session is None
+                else self._cursor_state(session.cursor, session.dirty_from_cursor)
+            ),
+            terminal_summary=self._terminal_summary_state(context),
+            actions=actions,
+            current_frame=self._runtime_frame_state(debug_projection.current_frame),
+            last_frame=self._runtime_frame_state(debug_projection.last_frame),
+            selected_scope_ids=self._target_scope_ids(),
+            current_revision_token=self._snapshot_provider.revision_token(
+                self.identity.revision_key
+            ),
+            current_snapshot=self._snapshot_provider.current_snapshot(),
+        )
+
+    def _models(self) -> tuple[DebugActionRenderModel, ...]:
+        return DebugToolbarActionProjector.render_models(
+            self._manager.debug_session_context()
+        )
+
+    @staticmethod
+    def _terminal_summary_detail(state: UiPipelineDebugSessionState) -> str | None:
+        summary = state.terminal_summary
+        if summary is None:
+            return None
+        parts = [
+            f"plate={summary.plate_scope_id}",
+            f"command={summary.command_type}",
+        ]
+        if summary.step_name is not None:
+            parts.append(f"step={summary.step_name}")
+        if summary.callable_name is not None:
+            parts.append(f"callable={summary.callable_name}")
+        return " ".join(parts)
+
+    @staticmethod
+    def _disabled_action_item(action: UiDebugActionState) -> UiLiveOverviewItem:
+        disabled = action.disabled_error
+        return UiLiveOverviewItem(
+            label=action.label,
+            status=None if disabled is None else disabled.code,
+            detail=None if disabled is None else disabled.message,
+            severity=UiLiveOverviewSeverity.INFO.value,
+            source_surface_id=PIPELINE_DEBUG_SESSION_STATE_IDENTITY.surface_id,
+            source_widget_id=PipelineDebugToolbarWidgetIdentity.require_value(),
+        )
+
+    @classmethod
+    def _action_state(cls, model: DebugActionRenderModel) -> UiDebugActionState:
+        return UiDebugActionState(
+            action_id=model.action_id,
+            label=model.label,
+            placement=model.placement.value,
+            enabled=model.enabled,
+            side_effects=model.side_effects,
+            confirmation_required=model.confirmation_required,
+            requires_active_debug_session=model.requires_active_debug_session,
+            disabled_error=(
+                None
+                if model.disabled_reason is None
+                else PipelineDebugToolbarActionProvider._agent_error_from_reason(
+                    model.disabled_reason
+                )
+            ),
+            selected_scope_ids=model.target_scope_ids,
+        )
+
+    @staticmethod
+    def _cursor_state(cursor, dirty_from_cursor) -> UiDebugCursorState | None:
+        if cursor is None:
+            return None
+        return UiDebugCursorState(
+            step_index=cursor.step_index,
+            step_scope_id=cursor.step_scope_id,
+            group_key=cursor.group_key,
+            invocation_key=cursor.invocation_key,
+            pattern_group_identity=cursor.pattern_group_identity,
+            dirty=dirty_from_cursor == cursor,
+        )
+
+    def _terminal_summary_state(
+        self,
+        context,
+    ) -> UiDebugTerminalSummaryState | None:
+        summary = context.terminal_summary
+        if summary is None:
+            return None
+        return UiDebugTerminalSummaryState(
+            debug_session_id=summary.debug_session_id,
+            plate_scope_id=summary.plate_id,
+            terminal_status=summary.terminal_status,
+            command_type=None if summary.command_type is None else summary.command_type.value,
+            axis_id=summary.axis_id,
+            snapshot_id=summary.snapshot_id,
+            snapshot_store_ref=summary.snapshot_store_ref,
+            snapshot_store_backend=summary.snapshot_store_backend,
+            step_name=summary.step_name,
+            callable_name=summary.callable_name,
+            cursor=self._cursor_state(summary.cursor, None),
+            completed_at_unix=summary.completed_at_unix,
+        )
+
+    @classmethod
+    def _runtime_frame_state(
+        cls,
+        frame: DebugRuntimeFrame | None,
+    ) -> UiDebugRuntimeFrameState | None:
+        if frame is None:
+            return None
+        identity = frame.progress_identity
+        context = frame.record.context
+        cursor_state = cls._cursor_state(frame.cursor, None)
+        if cursor_state is None:
+            raise ValueError("Debug runtime frame cursor projection is required.")
+        return UiDebugRuntimeFrameState(
+            debug_session_id=frame.record.session_id,
+            snapshot_store_ref=context.snapshot_store_ref,
+            snapshot_store_backend=context.snapshot_store_backend,
+            progress_identity=UiProgressIdentityState(
+                execution_id=identity.execution_id,
+                plate_id=identity.plate_id,
+                axis_id=identity.axis_id,
+                step_name=identity.step_name,
+            ),
+            cursor=cursor_state,
+            event_type=frame.event_type.value,
+            step_name=frame.step_name,
+            callable_name=frame.callable_name,
+            snapshot_id=frame.snapshot_id,
+            timestamp=frame.record.event.timestamp,
+        )
+
+    def _target_scope_ids(self) -> tuple[str, ...]:
+        return DebugToolbarActionProjector.target_scope_ids(
+            self._manager.debug_session_context()
+        )
+
+    def _revision_token(
+        self,
+        state: UiPipelineDebugSessionState,
+        *,
+        selection_mode: str,
+    ) -> str:
+        action_parts = tuple(
+            (
+                action.action_id,
+                action.enabled,
+                None
+                if action.disabled_error is None
+                else action.disabled_error.code,
+                action.selected_scope_ids,
+            )
+            for action in state.actions
+        )
+        cursor_parts = None
+        if state.cursor is not None:
+            cursor_parts = (
+                state.cursor.step_index,
+                state.cursor.step_scope_id,
+                state.cursor.group_key,
+                state.cursor.invocation_key,
+                state.cursor.pattern_group_identity,
+                state.cursor.dirty,
+            )
+        parts = (
+            self.identity.revision_key,
+            str(state.object_state_token),
+            self._snapshot_provider.current_branch_head_snapshot_id(),
+            str(ObjectStateRegistry.get_current_snapshot_index()),
+            selection_mode,
+            state.current_plate_scope_id,
+            state.pipeline_scope_id,
+            state.manager_execution_state,
+            state.initialized,
+            state.compiled,
+            state.phase,
+            state.active_session_id,
+            state.execution_id,
+            state.axis_id,
+            state.selected_source_group,
+            state.snapshot_store_ref,
+            state.snapshot_store_backend,
+            state.terminal_status,
+            cursor_parts,
+            None
+            if state.terminal_summary is None
+            else (
+                state.terminal_summary.debug_session_id,
+                state.terminal_summary.terminal_status,
+                state.terminal_summary.command_type,
+                state.terminal_summary.axis_id,
+                state.terminal_summary.snapshot_id,
+                state.terminal_summary.snapshot_store_ref,
+                state.terminal_summary.snapshot_store_backend,
+                state.terminal_summary.step_name,
+                state.terminal_summary.callable_name,
+                state.terminal_summary.completed_at_unix,
+            ),
+            self._frame_revision_parts(state.current_frame),
+            self._frame_revision_parts(state.last_frame),
+            action_parts,
+        )
+        return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _frame_revision_parts(
+        frame: UiDebugRuntimeFrameState | None,
+    ) -> tuple | None:
+        if frame is None:
+            return None
+        return (
+            frame.debug_session_id,
+            frame.progress_identity.execution_id,
+            frame.progress_identity.plate_id,
+            frame.progress_identity.axis_id,
+            frame.progress_identity.step_name,
+            frame.cursor.step_index,
+            frame.cursor.step_scope_id,
+            frame.cursor.group_key,
+            frame.cursor.invocation_key,
+            frame.cursor.pattern_group_identity,
+            frame.event_type,
+            frame.step_name,
+            frame.callable_name,
+            frame.snapshot_id,
+            frame.snapshot_store_ref,
+            frame.snapshot_store_backend,
+            frame.timestamp,
+        )
+
+    def _state_error(
+        self,
+        request: UiStateSurfaceRequest,
+        errors: tuple[AgentError, ...],
+    ) -> UiStateSurfaceDocument:
+        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        state = UiPipelineDebugSessionState(
+            schema_version=SCHEMA_VERSION,
+            summary=self.summary(),
+            object_state_token=ObjectStateRegistry.get_token(),
+            current_plate_scope_id=None,
+            pipeline_scope_id=None,
+            manager_execution_state="unknown",
+            initialized=False,
+            compiled=False,
+            phase="unavailable",
+            active_session_id=None,
+            execution_id=None,
+            axis_id=None,
+            selected_source_group=None,
+            snapshot_store_ref=None,
+            snapshot_store_backend=None,
+            terminal_status=None,
+            cursor=None,
+            terminal_summary=None,
+            actions=(),
+            selected_scope_ids=(),
+            current_revision_token=self._snapshot_provider.revision_token(
+                self.identity.revision_key
+            ),
+            current_snapshot=self._snapshot_provider.current_snapshot(),
+            errors=errors,
+        )
+        return self._document_from_state(state, selection_mode=selection_mode)
+
+    @staticmethod
+    def _document_from_state(
+        state: UiPipelineDebugSessionState,
+        *,
+        selection_mode: str,
+    ) -> UiStateSurfaceDocument:
+        payload = to_jsonable(state)
+        if not isinstance(payload, dict):
+            raise TypeError("Debug session state payload did not serialize to an object.")
+        return UiStateSurfaceDocument(
+            schema_version=state.schema_version,
+            summary=state.summary,
+            payload_schema=PIPELINE_DEBUG_SESSION_STATE_PAYLOAD_SCHEMA,
+            payload=payload,
+            current_revision_token=state.current_revision_token,
+            current_snapshot=state.current_snapshot,
+            selection_mode=selection_mode,
+            selected_scope_ids=state.selected_scope_ids,
+            unchanged=state.unchanged,
+            warnings=state.warnings,
+            errors=state.errors,
+        )
 
 
 class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
@@ -863,6 +1236,12 @@ class PipelineEditorBridgeProviderSet(UiBridgeProviderSetABC):
     def register(self, context: UiBridgeRegistrationContext) -> None:
         context.registry.register_state_surface_provider(
             PipelineEditorStateSurfaceProvider(
+                self._manager,
+                snapshot_provider=context.snapshot_provider,
+            )
+        )
+        context.registry.register_state_surface_provider(
+            PipelineDebugSessionStateSurfaceProvider(
                 self._manager,
                 snapshot_provider=context.snapshot_provider,
             )

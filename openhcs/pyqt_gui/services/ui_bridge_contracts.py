@@ -17,6 +17,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentSummary,
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
+    UiLiveOverviewSection,
     UiMutationReceipt,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeListRequest,
@@ -59,6 +60,13 @@ class UiBridgeRegistryKeyMixin:
     __skip_if_no_key__ = True
 
     registry_key: ClassVar[str | None] = None
+
+
+class UiLiveOverviewWidget:
+    """Nominal widget capability for UI-owned live overview contributions."""
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        return ()
 
 
 class UiCodeDocumentProviderABC(ABC):
@@ -109,6 +117,10 @@ class UiStateSurfaceProviderABC(ABC):
     @abstractmethod
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
         raise NotImplementedError
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        """Return agent-facing live-overview sections owned by this provider."""
+        return ()
 
 
 class UiActionProviderABC(ABC):
@@ -168,6 +180,10 @@ class UiWindowProviderABC(ABC):
         request: UiWidgetActionInvokeRequest,
     ) -> UiWidgetActionInvokeResult:
         raise NotImplementedError
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        """Return agent-facing live-overview sections owned by this provider."""
+        return ()
 
 
 class UiObjectStateScopeProviderABC(ABC):

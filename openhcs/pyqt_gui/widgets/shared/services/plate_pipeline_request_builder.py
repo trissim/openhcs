@@ -165,7 +165,7 @@ class PlatePipelineRequestBuilder:
         )
         definition_pipeline = (
             CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
-                plate_pipeline_editor=self._host.plate_pipeline_editor,
+                import_result_provider=self._host,
                 plate_path=plate_path,
                 pipeline_steps=definition_pipeline,
             )

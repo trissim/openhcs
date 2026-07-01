@@ -8,6 +8,7 @@ from typing import Callable
 
 from openhcs.core.debug import DebugProgressContext, DebugSnapshot
 from openhcs.core.progress import ProgressEvent
+from openhcs.core.progress.debug_projection import DebugProgressRecord
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,10 @@ class DebugProgressNotificationService:
         return True
 
     def notify_from_progress_event(self, event: ProgressEvent, *, zmq_client) -> None:
-        debug_context = self._debug_context_from_event(event)
-        if debug_context is None or debug_context.snapshot_id is None:
+        debug_record = DebugProgressRecord.from_progress_event(event)
+        if debug_record is None or debug_record.snapshot_id is None:
             return
+        debug_context = debug_record.context
         notification = DebugSnapshotAvailableNotification(
             progress_event=event,
             debug_context=debug_context,
@@ -54,17 +56,6 @@ class DebugProgressNotificationService:
         )
         for listener in tuple(self._listeners):
             listener(notification)
-
-    @staticmethod
-    def _debug_context_from_event(
-        event: ProgressEvent,
-    ) -> DebugProgressContext | None:
-        if not event.context:
-            return None
-        try:
-            return DebugProgressContext.from_progress_context(event.context)
-        except (KeyError, TypeError, ValueError):
-            return None
 
     @staticmethod
     def _read_debug_snapshot_from_server(

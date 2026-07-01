@@ -68,6 +68,11 @@ class PipelineDebugToolbarWidgetIdentity(UiWidgetIdentityDeclaration):
     enum_member_name = "PIPELINE_DEBUG_TOOLBAR"
 
 
+class MainWindowWidgetIdentity(UiWidgetIdentityDeclaration):
+    value = "main_window"
+    enum_member_name = "MAIN_WINDOW"
+
+
 class ManagedWindowWidgetIdentity(UiWidgetIdentityDeclaration):
     value = "managed_window"
     enum_member_name = "MANAGED_WINDOW"
@@ -91,3 +96,19 @@ class PipelineEditorStateSurfaceIdentityDeclaration(
     value = "pipeline_editor.state"
     enum_member_name = "PIPELINE_EDITOR"
     widget_identity = PipelineEditorWidgetIdentity
+
+
+class PipelineDebugSessionStateSurfaceIdentityDeclaration(
+    UiStateSurfaceIdentityDeclarationBase
+):
+    value = "pipeline_debug_toolbar.session"
+    enum_member_name = "PIPELINE_DEBUG_SESSION"
+    widget_identity = PipelineDebugToolbarWidgetIdentity
+
+
+class UiLiveOverviewStateSurfaceIdentityDeclaration(
+    UiStateSurfaceIdentityDeclarationBase
+):
+    value = "ui_live_overview.state"
+    enum_member_name = "UI_LIVE_OVERVIEW"
+    widget_identity = MainWindowWidgetIdentity

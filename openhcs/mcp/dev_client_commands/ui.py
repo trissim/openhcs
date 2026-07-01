@@ -13,6 +13,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiSelectedPlateWorkflowKind,
 )
 from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
     PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
 )

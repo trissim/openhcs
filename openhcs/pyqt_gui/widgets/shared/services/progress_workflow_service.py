@@ -8,9 +8,11 @@ from typing import Callable
 from PyQt6.QtCore import QTimer
 
 from openhcs.core.progress import ProgressEvent
-from openhcs.core.progress.projection import (
-    ExecutionRuntimeProjection,
-    build_execution_runtime_projection,
+from openhcs.core.debug_session_projection import DebugSessionProjectionContext
+from openhcs.core.progress.debug_projection import (
+    RuntimeProjectionBuilder,
+    RuntimeProjectionBundle,
+    RuntimeProjectionSource,
 )
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
@@ -53,6 +55,9 @@ class ProgressWorkflowService:
         debug_notifications: DebugProgressNotificationService,
         status_presenter: ExecutionServerStatusPresenter,
         live_measurements: LiveMeasurementProgressNotificationService | None = None,
+        debug_session_context_provider: (
+            Callable[[], DebugSessionProjectionContext | None] | None
+        ) = None,
         on_dirty: Callable[[], None] | None = None,
         start_timer: bool = True,
     ) -> None:
@@ -64,7 +69,10 @@ class ProgressWorkflowService:
             live_measurements or LiveMeasurementProgressNotificationService()
         )
         self._status_presenter = status_presenter
-        self._runtime_projection = ExecutionRuntimeProjection()
+        self._debug_session_context_provider = debug_session_context_provider
+        self._runtime_projection_builder = RuntimeProjectionBuilder()
+        self._runtime_projection_bundle = RuntimeProjectionBundle.empty()
+        self._runtime_projection = self._runtime_projection_bundle.execution
         self._progress_dirty = False
         self._on_dirty = on_dirty
         self._server_info_poller = IntervalSnapshotPoller[ExecutionServerInfo](
@@ -92,10 +100,10 @@ class ProgressWorkflowService:
         self._progress_coalesce_timer = None
 
     def reset_for_new_batch(self) -> None:
-        self._runtime_projection = reset_progress_views_for_new_batch(
-            self._host,
-            projection=ExecutionRuntimeProjection(),
+        self._runtime_projection_bundle = reset_progress_views_for_new_batch(
+            self._host
         )
+        self._runtime_projection = self._runtime_projection_bundle.execution
         self._server_info_poller.reset()
         self.mark_dirty()
 
@@ -119,10 +127,20 @@ class ProgressWorkflowService:
             execution_id: progress_tracker.get_events(execution_id)
             for execution_id in progress_tracker.get_execution_ids()
         }
-        self._runtime_projection = build_execution_runtime_projection(
-            events_by_execution
+        debug_context = self._debug_session_context()
+        self._runtime_projection_bundle = self._runtime_projection_builder.build(
+            RuntimeProjectionSource(
+                events_by_execution=events_by_execution,
+                session=None if debug_context is None else debug_context.active_session,
+                terminal_summary=(
+                    None if debug_context is None else debug_context.terminal_summary
+                ),
+                snapshots=() if debug_context is None else debug_context.snapshots,
+            )
         )
+        self._runtime_projection = self._runtime_projection_bundle.execution
         self._host.runtime_progress_projection = self._runtime_projection
+        self._host.debug_runtime_projection = self._runtime_projection_bundle.debug
         self._host.execution_server_info = self.server_info_snapshot()
         self._emit_execution_server_status()
         self._host.update_item_list()
@@ -158,6 +176,11 @@ class ProgressWorkflowService:
 
     def server_info_snapshot(self) -> ExecutionServerInfo | None:
         return self._server_info_poller.get_snapshot_copy()
+
+    def _debug_session_context(self) -> DebugSessionProjectionContext | None:
+        if self._debug_session_context_provider is None:
+            return None
+        return self._debug_session_context_provider()
 
     def _emit_execution_server_status(self) -> None:
         status_view = self._status_presenter.build_status_text(

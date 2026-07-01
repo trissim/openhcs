@@ -27,9 +27,11 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowCatalog,
 )
 from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
     PipelineEditorStateSurfaceIdentityDeclaration,
     PlateManagerStateSurfaceIdentityDeclaration,
     UiBridgeIdentityDeclaration,
+    UiLiveOverviewStateSurfaceIdentityDeclaration,
     UiStateSurfaceIdentityDeclarationBase,
 )
 from openhcs.mcp.dev_client_rendering import (
@@ -356,6 +358,82 @@ class UiStateSurfaceRenderer(McpDevOutputRenderer):
         return "\n".join(lines)
 
 
+class UiLiveOverviewStateSurfaceRenderer(UiStateSurfacePayloadRenderer):
+    """Compact renderer for the live UI overview surface."""
+
+    surface_identity = UiLiveOverviewStateSurfaceIdentityDeclaration
+
+    @classmethod
+    def render(cls, response: JsonObject) -> str:
+        payload = McpDevPayloadProjection.first_tool_payload(response)
+        if payload is None:
+            return json.dumps(response, indent=2, sort_keys=True)
+        errors = McpDevPayloadProjection.sequence_of_mappings(payload.get("errors"))
+        if errors:
+            return "\n".join(("UI live overview: unavailable", *cls._error_lines(errors)))
+        state_payload = McpDevPayloadProjection.nested_mapping(payload, "payload")
+        sections = McpDevPayloadProjection.sequence_of_mappings(
+            state_payload.get("sections")
+        )
+        lines = [
+            f"UI live overview: sections={len(sections)}",
+            f"Revision: {McpDevPayloadProjection.text(state_payload.get('current_revision_token'))}",
+        ]
+        for section in sections:
+            lines.extend(cls._section_lines(section))
+        return "\n".join(lines)
+
+    @classmethod
+    def _section_lines(cls, section: Mapping[str, JsonValue]) -> list[str]:
+        metrics = McpDevPayloadProjection.sequence_of_mappings(section.get("metrics"))
+        items = McpDevPayloadProjection.sequence_of_mappings(section.get("items"))
+        metric_text = " ".join(
+            f"{McpDevPayloadProjection.text(metric.get('label'))}="
+            f"{McpDevPayloadProjection.text(metric.get('value'))}"
+            for metric in metrics
+        )
+        title = McpDevPayloadProjection.text(section.get("title"))
+        summary = McpDevPayloadProjection.text(section.get("summary"))
+        lines = [f"{title}: {summary} {metric_text}".rstrip()]
+        lines.extend(cls._item_lines(items))
+        return lines
+
+    @staticmethod
+    def _item_lines(items: tuple[Mapping[str, JsonValue], ...]) -> list[str]:
+        lines: list[str] = []
+        for item in items:
+            parts = [
+                f"severity={McpDevPayloadProjection.text(item.get('severity'))}",
+            ]
+            if item.get("status") is not None:
+                parts.append(f"status={McpDevPayloadProjection.text(item.get('status'))}")
+            if item.get("detail") is not None:
+                parts.append(f"detail={McpDevPayloadProjection.text(item.get('detail'))}")
+            if item.get("source_surface_id") is not None:
+                parts.append(
+                    "surface="
+                    f"{McpDevPayloadProjection.text(item.get('source_surface_id'))}"
+                )
+            if item.get("source_window_id") is not None:
+                parts.append(
+                    "window="
+                    f"{McpDevPayloadProjection.text(item.get('source_window_id'))}"
+                )
+            lines.append(
+                f"- {McpDevPayloadProjection.text(item.get('label'))}: "
+                + " ".join(parts)
+            )
+        return lines
+
+    @staticmethod
+    def _error_lines(errors: tuple[Mapping[str, JsonValue], ...]) -> tuple[str, ...]:
+        return tuple(
+            f"- {McpDevPayloadProjection.text(error.get('code'))}: "
+            f"{McpDevPayloadProjection.text(error.get('message'))}"
+            for error in errors[:3]
+        )
+
+
 class PlateManagerStateSurfaceRenderer(UiStateSurfacePayloadRenderer):
     """Compact renderer for PlateManager state-surface rows."""
 
@@ -544,6 +622,126 @@ class PipelineEditorStateSurfaceRenderer(UiStateSurfacePayloadRenderer):
             f"{McpDevPayloadProjection.text(error.get('message'))}"
             for error in errors[:3]
         )
+
+
+class PipelineDebugSessionStateSurfaceRenderer(UiStateSurfacePayloadRenderer):
+    """Compact renderer for PipelineEditor debug-session state."""
+
+    surface_identity = PipelineDebugSessionStateSurfaceIdentityDeclaration
+
+    @classmethod
+    def render(cls, response: JsonObject) -> str:
+        payload = McpDevPayloadProjection.first_tool_payload(response)
+        if payload is None:
+            return json.dumps(response, indent=2, sort_keys=True)
+        errors = McpDevPayloadProjection.sequence_of_mappings(payload.get("errors"))
+        if errors:
+            return "\n".join(("Pipeline debug: unavailable", *cls._error_lines(errors)))
+        state_payload = McpDevPayloadProjection.nested_mapping(payload, "payload")
+        actions = McpDevPayloadProjection.sequence_of_mappings(state_payload.get("actions"))
+        cursor = McpDevPayloadProjection.nested_mapping(state_payload, "cursor")
+        lines = [
+            (
+                "Pipeline debug: "
+                f"phase={McpDevPayloadProjection.text(state_payload.get('phase'))} "
+                f"plate={McpDevPayloadProjection.text(state_payload.get('current_plate_scope_id'))} "
+                f"pipeline={McpDevPayloadProjection.text(state_payload.get('pipeline_scope_id'))} "
+                f"manager={McpDevPayloadProjection.text(state_payload.get('manager_execution_state'))}"
+            ),
+            (
+                "Target: "
+                f"initialized={McpDevPayloadProjection.text(state_payload.get('initialized'))} "
+                f"compiled={McpDevPayloadProjection.text(state_payload.get('compiled'))} "
+                f"terminal={McpDevPayloadProjection.text(state_payload.get('terminal_status'))}"
+            ),
+            (
+                "Session: "
+                f"id={McpDevPayloadProjection.text(state_payload.get('active_session_id'))} "
+                f"execution={McpDevPayloadProjection.text(state_payload.get('execution_id'))} "
+                f"axis={McpDevPayloadProjection.text(state_payload.get('axis_id'))} "
+                f"source_group={McpDevPayloadProjection.text(state_payload.get('selected_source_group'))}"
+            ),
+            f"Revision: {McpDevPayloadProjection.text(state_payload.get('current_revision_token'))}",
+        ]
+        if cursor:
+            lines.append(
+                "Cursor: "
+                f"step={McpDevPayloadProjection.text(cursor.get('step_index'))} "
+                f"scope={McpDevPayloadProjection.text(cursor.get('step_scope_id'))} "
+                f"group={McpDevPayloadProjection.text(cursor.get('group_key'))} "
+                f"invocation={McpDevPayloadProjection.text(cursor.get('invocation_key'))} "
+                f"dirty={McpDevPayloadProjection.text(cursor.get('dirty'))}"
+            )
+        current_frame = McpDevPayloadProjection.nested_mapping(
+            state_payload,
+            "current_frame",
+        )
+        last_frame = McpDevPayloadProjection.nested_mapping(
+            state_payload,
+            "last_frame",
+        )
+        if current_frame:
+            lines.append(cls._frame_line("Current frame", current_frame))
+        if last_frame and last_frame != current_frame:
+            lines.append(cls._frame_line("Last frame", last_frame))
+        if actions:
+            lines.append("Actions:")
+            lines.extend(cls._action_lines(actions))
+        return "\n".join(lines)
+
+    @classmethod
+    def _frame_line(
+        cls,
+        label: str,
+        frame: Mapping[str, JsonValue],
+    ) -> str:
+        progress_identity = McpDevPayloadProjection.nested_mapping(
+            frame,
+            "progress_identity",
+        )
+        cursor = McpDevPayloadProjection.nested_mapping(frame, "cursor")
+        return (
+            f"{label}: "
+            f"event={McpDevPayloadProjection.text(frame.get('event_type'))} "
+            f"step={McpDevPayloadProjection.text(frame.get('step_name'))} "
+            f"callable={McpDevPayloadProjection.text(frame.get('callable_name'))} "
+            f"axis={McpDevPayloadProjection.text(progress_identity.get('axis_id'))} "
+            f"snapshot={McpDevPayloadProjection.text(frame.get('snapshot_id'))} "
+            f"invocation={McpDevPayloadProjection.text(cursor.get('invocation_key'))}"
+        )
+
+    @classmethod
+    def _action_lines(
+        cls,
+        actions: tuple[Mapping[str, JsonValue], ...],
+    ) -> list[str]:
+        lines: list[str] = []
+        for action in actions:
+            disabled = McpDevPayloadProjection.nested_mapping(action, "disabled_error")
+            suffix = ""
+            if disabled:
+                suffix = (
+                    " disabled="
+                    f"{McpDevPayloadProjection.text(disabled.get('code'))}"
+                )
+            lines.append(
+                "- "
+                f"{McpDevPayloadProjection.text(action.get('action_id'))}: "
+                f"enabled={McpDevPayloadProjection.text(action.get('enabled'))} "
+                f"placement={McpDevPayloadProjection.text(action.get('placement'))} "
+                f"title={McpDevPayloadProjection.quoted_text(action.get('label'))}"
+                f"{suffix}"
+            )
+        return lines
+
+    @staticmethod
+    def _error_lines(errors: tuple[Mapping[str, JsonValue], ...]) -> tuple[str, ...]:
+        return tuple(
+            f"- {McpDevPayloadProjection.text(error.get('code'))}: "
+            f"{McpDevPayloadProjection.text(error.get('message'))}"
+            for error in errors[:3]
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class WidgetTreeOutlineOptions:

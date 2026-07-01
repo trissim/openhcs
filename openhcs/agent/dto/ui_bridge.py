@@ -20,7 +20,9 @@ from openhcs.core.selection import (
 )
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
+    MainWindowWidgetIdentity as MainWindowWidgetIdentity,
     ManagedWindowWidgetIdentity as ManagedWindowWidgetIdentity,
+    PipelineDebugSessionStateSurfaceIdentityDeclaration as PipelineDebugSessionStateSurfaceIdentityDeclaration,
     PipelineEditorStateSurfaceIdentityDeclaration as PipelineEditorStateSurfaceIdentityDeclaration,
     PipelineEditorWidgetIdentity as PipelineEditorWidgetIdentity,
     PlateManagerOrchestratorCodeDocumentIdentity as PlateManagerOrchestratorCodeDocumentIdentity,
@@ -29,6 +31,7 @@ from openhcs.agent.ui_bridge_identities import (
     UiBridgeIdentityDeclaration as UiBridgeIdentityDeclaration,
     UiCodeDocumentIdentityDeclaration as UiCodeDocumentIdentityDeclaration,
     UiOwnedByWidgetIdentityDeclaration as UiOwnedByWidgetIdentityDeclaration,
+    UiLiveOverviewStateSurfaceIdentityDeclaration as UiLiveOverviewStateSurfaceIdentityDeclaration,
     UiStateSurfaceIdentityDeclarationBase as UiStateSurfaceIdentityDeclarationBase,
     UiWidgetIdentityDeclaration as UiWidgetIdentityDeclaration,
 )
@@ -671,6 +674,8 @@ class UiPlateManagerRowState:
     output_plate_root: str | None = None
     source_plate_scope_id: str | None = None
     source_plate_root: str | None = None
+    debug_phase: str | None = None
+    debug_session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -719,6 +724,149 @@ class UiPipelineEditorState(
     current_plate_scope_id: str | None
     pipeline_scope_id: str | None
     steps: tuple[UiPipelineEditorStepState, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UiDebugActionState(SelectedScopeIdsCarrier):
+    action_id: str
+    label: str
+    placement: str
+    enabled: bool
+    side_effects: tuple[str, ...]
+    confirmation_required: bool
+    requires_active_debug_session: bool
+    disabled_error: AgentError | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiDebugCursorState:
+    step_index: int
+    step_scope_id: str | None
+    group_key: str | None
+    invocation_key: str | None
+    pattern_group_identity: str | None
+    dirty: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UiDebugTerminalSummaryState:
+    debug_session_id: str
+    plate_scope_id: str
+    terminal_status: str
+    command_type: str | None
+    axis_id: str | None
+    snapshot_id: str | None
+    snapshot_store_ref: str | None
+    snapshot_store_backend: str | None
+    step_name: str | None
+    callable_name: str | None
+    cursor: UiDebugCursorState | None
+    completed_at_unix: float | None
+
+
+@dataclass(frozen=True)
+class UiDebugSessionIdentityCarrier:
+    debug_session_id: str
+
+
+@dataclass(frozen=True)
+class UiDebugSnapshotStoreRefCarrier:
+    snapshot_store_ref: str | None
+    snapshot_store_backend: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class UiProgressIdentityState:
+    execution_id: str
+    plate_id: str
+    axis_id: str
+    step_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class UiDebugRuntimeFrameState(
+    UiDebugSessionIdentityCarrier,
+    UiDebugSnapshotStoreRefCarrier,
+):
+    progress_identity: UiProgressIdentityState
+    cursor: UiDebugCursorState
+    event_type: str
+    step_name: str
+    callable_name: str | None
+    snapshot_id: str | None
+    timestamp: float
+
+
+@dataclass(frozen=True, slots=True)
+class UiPipelineDebugSessionState(
+    UiStateSurfaceEnvelope,
+    UiCodeDocumentCurrentRevision,
+    UiCurrentSnapshotState,
+    SelectedScopeIdsCarrier,
+):
+    object_state_token: int
+    current_plate_scope_id: str | None
+    pipeline_scope_id: str | None
+    manager_execution_state: str
+    initialized: bool
+    compiled: bool
+    phase: str
+    active_session_id: str | None
+    execution_id: str | None
+    axis_id: str | None
+    selected_source_group: str | None
+    snapshot_store_ref: str | None
+    snapshot_store_backend: str | None
+    terminal_status: str | None
+    cursor: UiDebugCursorState | None
+    terminal_summary: UiDebugTerminalSummaryState | None
+    actions: tuple[UiDebugActionState, ...]
+    current_frame: UiDebugRuntimeFrameState | None = None
+    last_frame: UiDebugRuntimeFrameState | None = None
+
+
+class UiLiveOverviewSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class UiLiveOverviewMetric:
+    key: str
+    label: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class UiLiveOverviewItem:
+    label: str
+    status: str | None = None
+    detail: str | None = None
+    severity: str = UiLiveOverviewSeverity.INFO.value
+    source_surface_id: str | None = None
+    source_window_id: str | None = None
+    source_widget_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiLiveOverviewSection:
+    section_id: str
+    title: str
+    summary: str
+    metrics: tuple[UiLiveOverviewMetric, ...] = ()
+    items: tuple[UiLiveOverviewItem, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class UiLiveOverviewState(
+    UiStateSurfaceEnvelope,
+    UiCodeDocumentCurrentRevision,
+    UiCurrentSnapshotState,
+    SelectedScopeIdsCarrier,
+):
+    object_state_token: int
+    sections: tuple[UiLiveOverviewSection, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -865,6 +1013,10 @@ class UiWindowManagerScope:
     @classmethod
     def from_identity(cls, identity: UiWindowIdentity) -> "UiWindowManagerScope":
         return cls(value=identity.window_id)
+
+
+class UiWindowSemanticMarker(str, Enum):
+    ERROR_DIALOG = "error_dialog"
 
 
 @dataclass(frozen=True, slots=True)

@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -28,8 +27,15 @@ from openhcs.core.debug import (
     LocalDebugSnapshotStore,
 )
 from openhcs.core.config import StreamingConfig
-from openhcs.core.debug_views import DebugViewModel, DebugViewSection, DebugViewTable
+from openhcs.core.debug_views import (
+    DebugViewModel,
+    DebugViewSection,
+    DebugViewSectionDeclarationBase,
+    DebugViewTable,
+    DebugViewTableProjectionDeclarationBase,
+)
 from openhcs.interop.cellprofiler.debug_views import CellProfilerDebugView
+from pyqt_reactive.widgets.shared import ActionTabSpec, ActionTabbedWindowBody
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,30 +97,19 @@ class DebugInspectorWindow(QDialog):
         self.setModal(False)
         self.resize(900, 650)
 
-        layout = QVBoxLayout(self)
+        self._layout = QVBoxLayout(self)
         self.title_label = QLabel("No debug snapshot selected")
         self.title_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        layout.addWidget(self.title_label)
+        self._layout.addWidget(self.title_label)
 
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.section_container = QWidget()
-        self.section_layout = QVBoxLayout(self.section_container)
-        self.section_layout.addStretch(1)
-        self.scroll_area.setWidget(self.section_container)
-        layout.addWidget(self.scroll_area)
+        self.tab_body = ActionTabbedWindowBody(parent=self)
+        self._layout.addWidget(self.tab_body, 1)
 
     def set_snapshot(self, snapshot: DebugSnapshot) -> None:
         self.current_snapshot = snapshot
         self.set_view_model(self.snapshot_renderer(snapshot))
-        artifact_group = self._artifact_actions_widget(snapshot)
-        if artifact_group is not None:
-            self.section_layout.insertWidget(
-                self.section_layout.count() - 1,
-                artifact_group,
-            )
 
     def set_inspection_view_model(self, view_model: DebugViewModel) -> None:
         """Render a non-snapshot debug inspection view."""
@@ -152,11 +147,14 @@ class DebugInspectorWindow(QDialog):
 
     def set_view_model(self, view_model: DebugViewModel) -> None:
         self.title_label.setText(view_model.title)
-        self._clear_sections()
+        self._replace_tab_body()
         for section in view_model.sections:
-            self.section_layout.insertWidget(
-                self.section_layout.count() - 1,
-                self._section_widget(section),
+            self.tab_body.add_tab(
+                ActionTabSpec(
+                    label=section.title,
+                    content=self._section_widget(section),
+                    actions=self._section_actions_widget(section),
+                )
             )
 
     @staticmethod
@@ -164,24 +162,42 @@ class DebugInspectorWindow(QDialog):
         renderer = CellProfilerDebugView.for_module(snapshot.callable_name)
         return renderer.build_view_model(snapshot)
 
-    def _clear_sections(self) -> None:
-        while self.section_layout.count() > 1:
-            item = self.section_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+    def _replace_tab_body(self) -> None:
+        self._layout.removeWidget(self.tab_body)
+        self.tab_body.deleteLater()
+        self.tab_body = ActionTabbedWindowBody(parent=self)
+        self._layout.addWidget(self.tab_body, 1)
 
     def _section_widget(self, section: DebugViewSection) -> QWidget:
-        group = QGroupBox(section.title)
-        layout = QVBoxLayout(group)
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        section_declaration = DebugViewSectionDeclarationBase.for_kind(section.kind)
         if section.table is not None:
+            if not section.table.rows:
+                layout.addWidget(
+                    QLabel(section.table.empty_message or section_declaration.empty_message())
+                )
             layout.addWidget(self._table_widget(section.table))
         if section.text is not None:
             text = QTextEdit()
             text.setReadOnly(True)
             text.setPlainText(section.text)
             layout.addWidget(text)
-        return group
+        if section.table is None and section.text is None:
+            layout.addWidget(QLabel(section_declaration.empty_message()))
+        return widget
+
+    def _section_actions_widget(self, section: DebugViewSection) -> QWidget | None:
+        if self.current_snapshot is None or section.table is None:
+            return None
+        if section.table.projection is None:
+            return None
+        table_declaration = DebugViewTableProjectionDeclarationBase.for_projection(
+            section.table.projection
+        )
+        if not table_declaration.supports_artifact_actions:
+            return None
+        return self._artifact_actions_widget(self.current_snapshot)
 
     @staticmethod
     def _table_widget(table: DebugViewTable) -> QTableWidget:

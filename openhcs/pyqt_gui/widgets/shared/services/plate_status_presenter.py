@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Optional
 
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
-from openhcs.core.progress.projection import PlateRuntimeProjection, PlateRuntimeState
+from openhcs.core.debug_session_projection import (
+    DebugSessionPhase,
+    DebugSessionPhaseDeclarationBase,
+)
+from openhcs.core.progress.projection import PlateRuntimeProjection
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     TerminalExecutionStatus,
 )
@@ -28,13 +32,13 @@ class PlateStatusPresenter:
         OrchestratorState.EXEC_FAILED: "❌ Exec Failed",
         OrchestratorState.EXECUTING: "🔄 Executing",
     }
-    RUNTIME_STATE_LABELS = {
-        PlateRuntimeState.COMPILING: "⏳ Compiling",
-        PlateRuntimeState.COMPILED: "✅ Compiled",
-        PlateRuntimeState.FAILED: "❌ Failed",
-        PlateRuntimeState.COMPLETE: "✅ Complete",
-        PlateRuntimeState.EXECUTING: "⚙️ Executing",
-    }
+    @classmethod
+    def build_debug_status_prefix(
+        cls,
+        *,
+        debug_phase: DebugSessionPhase,
+    ) -> str:
+        return DebugSessionPhaseDeclarationBase.for_phase(debug_phase).status_prefix
 
     @classmethod
     def build_status_prefix(
@@ -74,7 +78,4 @@ class PlateStatusPresenter:
 
     @staticmethod
     def _format_runtime_plate_status(plate: PlateRuntimeProjection) -> str:
-        label = PlateStatusPresenter.RUNTIME_STATE_LABELS.get(plate.state)
-        if label is None:
-            return ""
-        return f"{label} {plate.percent:.1f}%"
+        return plate.formatted_status

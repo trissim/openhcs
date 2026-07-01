@@ -12,6 +12,7 @@ from openhcs.core.debug import (
     DebugProgressEventRequest,
     DebugReplayMode,
 )
+from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactScope
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
@@ -68,10 +69,10 @@ from openhcs.core.progress import (
     ProgressStatus,
 )
 from openhcs.core.progress.live_measurements import (
-    LiveMeasurementArtifactAddress,
     LiveMeasurementProgressPayload,
     LiveMeasurementTablePreview,
 )
+from openhcs.core.runtime_stores import RuntimeArtifactAddress, RuntimeArtifactLocation
 from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 from zmqruntime.execution import BatchSubmitWaitEngine
 
@@ -374,20 +375,22 @@ def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
     calls = []
 
     class Host:
-        plate_pipeline_editor = object()
-
         def get_pipeline_definition(self, plate_path: str):
             calls.append(("definition", plate_path))
             return [raw_step]
 
+        def cellprofiler_import_result_for_plate(self, plate_path: str):
+            del plate_path
+            return None
+
     def rebind(**kwargs):
         calls.append(
-            (
-                "rebind",
-                kwargs["plate_pipeline_editor"],
-                kwargs["plate_path"],
-                kwargs["pipeline_steps"],
-            )
+                (
+                    "rebind",
+                    kwargs["import_result_provider"],
+                    kwargs["plate_path"],
+                    kwargs["pipeline_steps"],
+                )
         )
         return [rebound_step]
 
@@ -403,10 +406,10 @@ def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
     )
 
     assert pipeline == [rebound_step]
-    assert calls == [
-        ("definition", "/tmp/plate"),
-        ("rebind", Host.plate_pipeline_editor, "/tmp/plate", [raw_step]),
-    ]
+    assert calls[0] == ("definition", "/tmp/plate")
+    assert calls[1][0] == "rebind"
+    assert isinstance(calls[1][1], Host)
+    assert calls[1][2:] == ("/tmp/plate", [raw_step])
 
 
 def test_compile_transport_rejects_unresolved_module_objects():
@@ -730,10 +733,34 @@ class RecordingProgressTracker:
     def register_event(self, execution_id, event) -> None:
         self.events.append((execution_id, event))
 
+    def get_execution_ids(self):
+        return tuple(dict.fromkeys(execution_id for execution_id, _event in self.events))
+
+    def get_events(self, execution_id):
+        return [event for event_id, event in self.events if event_id == execution_id]
+
+    def clear_execution(self, execution_id) -> None:
+        self.events = [
+            (event_id, event)
+            for event_id, event in self.events
+            if event_id != execution_id
+        ]
+
 
 class BatchWorkflowHostHarness:
     def __init__(self) -> None:
         self._progress_tracker = RecordingProgressTracker()
+        self.runtime_progress_projection = None
+        self.debug_runtime_projection = None
+        self.execution_server_info = None
+        self.statuses = []
+        self.item_updates = 0
+
+    def emit_status(self, status: str) -> None:
+        self.statuses.append(status)
+
+    def update_item_list(self) -> None:
+        self.item_updates += 1
 
 
 def _progress_service(
@@ -814,6 +841,45 @@ def test_on_progress_notifies_debug_snapshot_listeners() -> None:
     assert notifications[0].debug_context.snapshot_store_ref == "/tmp/debug"
 
 
+def test_rebuild_runtime_projection_stores_debug_projection_bundle() -> None:
+    host = BatchWorkflowHostHarness()
+    client_service = SimpleNamespace(zmq_client=None)
+    service, _debug_notifications = _progress_service(
+        host=host,
+        client_service=client_service,
+        on_dirty=lambda: None,
+    )
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="step-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    event = DebugEvent(
+        event_type=DebugEventType.AFTER_INVOCATION,
+        cursor=cursor,
+        step_name="IdentifyPrimaryObjects",
+        callable_name="IdentifyPrimaryObjects",
+        axis_id="A01",
+    )
+    progress_event = DebugProgressEventRequest(
+        debug_session_id="debug-1",
+        debug_event=event,
+        execution_id="exec-1",
+        plate_id="plate-1",
+        snapshot_id="snapshot-1",
+        snapshot_store_ref="/tmp/debug",
+    ).to_progress_event()
+
+    service.on_progress(progress_event.to_dict())
+    service.rebuild_runtime_projection()
+
+    assert host.runtime_progress_projection.get_plate("plate-1", "exec-1") is not None
+    assert len(host.debug_runtime_projection.records) == 1
+    assert host.debug_runtime_projection.current_frame.snapshot_id == "snapshot-1"
+    assert host.item_updates == 1
+
+
 def test_on_progress_notifies_live_measurement_listeners() -> None:
     host = BatchWorkflowHostHarness()
     client_service = SimpleNamespace(zmq_client=None)
@@ -829,12 +895,16 @@ def test_on_progress_notifies_live_measurement_listeners() -> None:
     payload = LiveMeasurementProgressPayload(
         previews=(
             LiveMeasurementTablePreview(
-                address=LiveMeasurementArtifactAddress(
-                    name="Measure",
-                    kind="measurements",
-                    axis_id="A01",
-                    path="/memory/measure.pkl",
-                    backend="memory",
+                address=RuntimeArtifactAddress(
+                    key=ArtifactKey(
+                        name="Measure",
+                        kind=ArtifactKind.MEASUREMENTS,
+                        scope=ArtifactScope(axis_id="A01"),
+                    ),
+                    location=RuntimeArtifactLocation(
+                        path="/memory/measure.pkl",
+                        backend="memory",
+                    ),
                 ),
                 columns=("mean",),
                 rows=({"mean": 3.0},),

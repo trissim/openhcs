@@ -73,7 +73,7 @@ from openhcs.mcp.control_timeout import (
     McpViewerCommandTimeoutPolicy,
     McpViewerTimeoutPolicy,
 )
-from openhcs.runtime.viewer_protocol import (
+from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,

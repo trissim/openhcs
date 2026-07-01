@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.config import NapariStreamingConfig
+from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugCommand,
@@ -18,8 +19,10 @@ from openhcs.core.debug import (
     DebugProgressContext,
     DebugReplayMode,
     DebugSession,
+    DebugTerminalSummary,
     FileManagerDebugSnapshotStore,
 )
+from openhcs.core.debug_views import DebugViewModel
 from openhcs.pyqt_gui.windows.debug_inspector_window import (
     DebugArtifactMaterializeRequest,
 )
@@ -35,6 +38,15 @@ from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
 )
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    PipelineDebugPauseBoundaryState,
+    PipelineDebugSessionContext,
+    PipelineDebugTargetState,
+)
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
+    PipelineDebugActionDeclarationBase,
+    PipelineDebugCommandActionDeclaration,
+)
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorDebugWorkflow,
     PipelineEditorFunctionPresentation,
@@ -53,9 +65,37 @@ class QtApplicationHarness:
         return cls.app_instance
 
 
+def debug_toolbar_context(
+    *,
+    initialized: bool = True,
+    compiled: bool = True,
+    session: DebugSession | None = None,
+    terminal_summary: DebugTerminalSummary | None = None,
+    manager_execution_state: ManagerExecutionState = ManagerExecutionState.IDLE,
+    pause_step_indices: tuple[int, ...] = (1,),
+) -> PipelineDebugSessionContext:
+    return PipelineDebugSessionContext(
+        target=PipelineDebugTargetState(
+            current_plate_scope_id="plate",
+            pipeline_scope_id="plate::pipeline",
+            initialized=initialized,
+            compiled=compiled,
+        ),
+        session=session,
+        terminal_summary=terminal_summary,
+        pause_boundaries=PipelineDebugPauseBoundaryState(pause_step_indices),
+        manager_execution_state=manager_execution_state,
+    )
+
+
+def active_debug_session() -> DebugSession:
+    return DebugSession.create(plate_id="plate")
+
+
 def test_debug_toolbar_emits_typed_command() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
+    toolbar.set_debug_session_context(debug_toolbar_context())
     commands: list[DebugCommand] = []
     toolbar.command_requested.connect(commands.append)
 
@@ -67,29 +107,34 @@ def test_debug_toolbar_emits_typed_command() -> None:
 def test_debug_toolbar_debug_button_runs_debug_execution() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
+    toolbar.set_debug_session_context(debug_toolbar_context())
     commands: list[DebugCommand] = []
     toolbar.command_requested.connect(commands.append)
 
     toolbar.buttons[DebugCommandType.RUN].click()
 
-    assert toolbar.buttons[DebugCommandType.RUN].text() == "Debug"
+    assert toolbar.buttons[DebugCommandType.RUN].text() == "Start Debug"
+    assert toolbar.phase_label.text() == "Ready"
     assert commands == [DebugCommand(DebugCommandType.RUN)]
 
 
-def test_debug_toolbar_moves_secondary_commands_to_menu() -> None:
+def test_debug_toolbar_renders_secondary_commands_as_session_buttons() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
+    toolbar.set_debug_session_context(debug_toolbar_context())
     commands: list[DebugCommand] = []
     toolbar.command_requested.connect(commands.append)
 
     assert DebugCommandType.TOGGLE not in toolbar.buttons
-    assert DebugCommandType.CHOOSE_SOURCE_GROUP not in toolbar.buttons
+    assert DebugCommandType.CHOOSE_SOURCE_GROUP in toolbar.buttons
     assert DebugCommandType.RANDOM_SOURCE_GROUP not in toolbar.buttons
-    assert DebugCommandType.STOP not in toolbar.buttons
+    assert DebugCommandType.STOP in toolbar.buttons
 
-    toolbar.menu_actions[DebugCommandType.CHOOSE_SOURCE_GROUP].trigger()
-    toolbar.set_debug_session_active(True)
-    toolbar.menu_actions[DebugCommandType.STOP].trigger()
+    toolbar.buttons[DebugCommandType.CHOOSE_SOURCE_GROUP].click()
+    toolbar.set_debug_session_context(
+        debug_toolbar_context(session=active_debug_session())
+    )
+    toolbar.buttons[DebugCommandType.STOP].click()
 
     assert commands == [
         DebugCommand(DebugCommandType.CHOOSE_SOURCE_GROUP),
@@ -103,10 +148,11 @@ def test_debug_toolbar_runtime_inspection_action_emits_separate_signal() -> None
     requests = []
     toolbar.runtime_inspection_requested.connect(lambda: requests.append("runtime"))
 
-    assert toolbar.runtime_inspection_action is not None
-    toolbar.set_debug_session_active(True)
-    toolbar.set_runtime_inspection_enabled(True)
-    toolbar.runtime_inspection_action.trigger()
+    assert toolbar.runtime_inspection_button is not None
+    toolbar.set_debug_session_context(
+        debug_toolbar_context(session=active_debug_session())
+    )
+    toolbar.runtime_inspection_button.click()
 
     assert requests == ["runtime"]
 
@@ -115,39 +161,95 @@ def test_debug_toolbar_enables_controls_together() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
 
-    toolbar.set_controls_enabled(False)
-
     assert all(not button.isEnabled() for button in toolbar.buttons.values())
-    assert not toolbar.menu_button.isEnabled()
-    assert toolbar.runtime_inspection_action is not None
-    assert not toolbar.runtime_inspection_action.isEnabled()
-    assert all(not action.isEnabled() for action in toolbar.menu_actions.values())
+    assert toolbar.runtime_inspection_button is not None
+    assert not toolbar.runtime_inspection_button.isEnabled()
 
 
 def test_debug_toolbar_session_only_controls_follow_active_session() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
+    toolbar.set_debug_session_context(debug_toolbar_context())
 
     assert toolbar.buttons[DebugCommandType.RUN].isEnabled()
     assert toolbar.buttons[DebugCommandType.STEP].isEnabled()
-    assert toolbar.menu_actions[DebugCommandType.CHOOSE_SOURCE_GROUP].isEnabled()
+    assert toolbar.buttons[DebugCommandType.CHOOSE_SOURCE_GROUP].isEnabled()
     assert not toolbar.buttons[DebugCommandType.RESTART].isEnabled()
-    assert not toolbar.menu_actions[DebugCommandType.STOP].isEnabled()
-    assert toolbar.runtime_inspection_action is not None
-    assert not toolbar.runtime_inspection_action.isEnabled()
+    assert not toolbar.buttons[DebugCommandType.STOP].isEnabled()
+    assert toolbar.runtime_inspection_button is not None
+    assert not toolbar.runtime_inspection_button.isEnabled()
 
-    toolbar.set_debug_session_active(True)
+    toolbar.set_debug_session_context(
+        debug_toolbar_context(session=active_debug_session())
+    )
 
+    assert toolbar.phase_label.text() == "Debug Active"
+    assert toolbar.buttons[DebugCommandType.RUN].text() == "Continue"
     assert toolbar.buttons[DebugCommandType.RESTART].isEnabled()
-    assert toolbar.menu_actions[DebugCommandType.STOP].isEnabled()
-    assert toolbar.runtime_inspection_action.isEnabled()
+    assert toolbar.buttons[DebugCommandType.STOP].isEnabled()
+    assert toolbar.runtime_inspection_button.isEnabled()
+
+
+def test_debug_toolbar_terminal_summary_retire_matching_local_session() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+    session = active_debug_session()
+    cursor = DebugCursor(
+        step_index=0,
+        step_scope_id="step-0",
+        group_key="default",
+        invocation_key="default:0:correct_illumination_apply",
+    )
+    session = session.with_cursor(cursor).with_command(DebugCommandType.STEP)
+    terminal_summary = DebugTerminalSummary(
+        debug_session_id=session.debug_session_id,
+        plate_id="plate",
+        terminal_status="complete",
+        cursor=cursor,
+        command_type=DebugCommandType.STEP,
+        axis_id=session.axis_id,
+        snapshot_id="snapshot-1",
+        snapshot_store_ref="/debug",
+    )
+
+    toolbar.set_debug_session_context(
+        debug_toolbar_context(
+            session=session,
+            terminal_summary=terminal_summary,
+        )
+    )
+
+    assert toolbar.phase_label.text() == "Debug Complete"
+    assert toolbar.buttons[DebugCommandType.RUN].text() == "Start Debug"
+    assert not toolbar.buttons[DebugCommandType.RESTART].isEnabled()
+    assert not toolbar.buttons[DebugCommandType.STOP].isEnabled()
+    assert toolbar.runtime_inspection_button is not None
+    assert not toolbar.runtime_inspection_button.isEnabled()
+
+
+def test_debug_toolbar_projects_pending_execution_state() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+    toolbar.set_debug_session_context(
+        debug_toolbar_context(
+            manager_execution_state=ManagerExecutionState.RUNNING,
+        )
+    )
+
+    assert not toolbar.buttons[DebugCommandType.RUN].isEnabled()
+    assert not toolbar.buttons[DebugCommandType.STEP].isEnabled()
+    assert not toolbar.buttons[DebugCommandType.RESTART].isEnabled()
+    assert not toolbar.buttons[DebugCommandType.CHOOSE_SOURCE_GROUP].isEnabled()
+    assert toolbar.buttons[DebugCommandType.STOP].isEnabled()
+    assert toolbar.runtime_inspection_button is not None
+    assert not toolbar.runtime_inspection_button.isEnabled()
 
 
 def test_debug_toolbar_omits_random_source_group_action() -> None:
     QtApplicationHarness.app()
     toolbar = DebugToolbarWidget()
 
-    assert DebugCommandType.RANDOM_SOURCE_GROUP not in toolbar.menu_actions
+    assert DebugCommandType.RANDOM_SOURCE_GROUP not in toolbar.buttons
 
 
 def test_debug_toolbar_uses_shared_button_panel_styling() -> None:
@@ -158,6 +260,19 @@ def test_debug_toolbar_uses_shared_button_panel_styling() -> None:
 
     assert toolbar.button_panel is not None
     assert "color: red" in toolbar.buttons[DebugCommandType.STEP].styleSheet()
+
+
+def test_debug_toolbar_disables_run_to_pause_without_pause_boundary() -> None:
+    QtApplicationHarness.app()
+    toolbar = DebugToolbarWidget()
+
+    toolbar.set_debug_session_context(debug_toolbar_context(pause_step_indices=()))
+
+    assert not toolbar.buttons[DebugCommandType.RUN_TO_PAUSE].isEnabled()
+    assert (
+        "debug-pause step"
+        in toolbar.buttons[DebugCommandType.RUN_TO_PAUSE].toolTip()
+    )
 
 
 class StatusSignalRecorder:
@@ -175,9 +290,11 @@ class PlateManagerStopRecorder:
 
     def __init__(self) -> None:
         self.stop_calls = 0
+        self.force_values: list[bool | None] = []
 
-    def action_stop_execution(self) -> None:
+    def action_stop_execution(self, force: bool | None = None) -> None:
         self.stop_calls += 1
+        self.force_values.append(force)
 
 
 class PlateManagerRunRecorder:
@@ -185,12 +302,45 @@ class PlateManagerRunRecorder:
 
     def __init__(self) -> None:
         self.run_calls = []
+        self.terminal_summary = None
+        self.debug_session_state = None
+        self.execution_state = ManagerExecutionState.IDLE
 
     async def action_run_debug_plate(self, plate_path, **kwargs):
         self.run_calls.append((plate_path, kwargs))
 
     async def action_export_debug_artifact(self, **kwargs) -> None:
         self.run_calls.append(("export", kwargs))
+
+    async def action_inspect_debug_runtime(self, *, debug_session_id: str):
+        return DebugViewModel(
+            title=f"Runtime {debug_session_id}",
+            sections=(),
+        )
+
+    def debug_terminal_summary_for_plate(self, plate_path: str):
+        del plate_path
+        return self.terminal_summary
+
+    def debug_session_for_plate(self, plate_path: str):
+        del plate_path
+        return self.debug_session_state
+
+    def debug_session_context_for_plate(
+        self,
+        plate_path: str,
+    ) -> PipelineDebugSessionContext:
+        return PipelineDebugSessionContext(
+            target=PipelineDebugTargetState(
+                current_plate_scope_id=plate_path,
+                pipeline_scope_id="plate::pipeline",
+                initialized=True,
+                compiled=True,
+            ),
+            session=self.debug_session_for_plate(plate_path),
+            terminal_summary=self.debug_terminal_summary_for_plate(plate_path),
+            manager_execution_state=self.execution_state,
+        )
 
 
 class DebugBatchWorkflowRecorder:
@@ -217,10 +367,17 @@ class PlateManagerDebugHarness:
 
     def __init__(self) -> None:
         self._active_debug_sessions = {}
-        self._plate_pipeline_editor = None
+        self._debug_terminal_summaries_by_plate = {}
+        self.manager_execution_state_changed = StatusSignalRecorder()
+        self.execution_state = ManagerExecutionState.IDLE
         self._batch_workflow_service = DebugBatchWorkflowRecorder()
         self.execution_error = StatusSignalRecorder()
         self.export_calls = []
+        self.item_updates = 0
+        self.button_updates = 0
+        self.plate_terminal_activity_status = SimpleNamespace(
+            terminal_status=lambda plate_path: None
+        )
 
     def get_selected_items(self) -> list[dict[str, str]]:
         return []
@@ -228,12 +385,27 @@ class PlateManagerDebugHarness:
     async def action_export_debug_artifact(self, **kwargs) -> None:
         self.export_calls.append(kwargs)
 
+    def debug_session_for_plate(self, plate_path: str) -> DebugSession | None:
+        return self._active_debug_sessions.get(plate_path)
+
+    def debug_terminal_summary_for_plate(self, plate_path: str):
+        del plate_path
+        return None
+
+    def update_item_list(self) -> None:
+        self.item_updates += 1
+
+    def update_button_states(self) -> None:
+        self.button_updates += 1
+
 
 class PipelineEditorDebugStateRecorder:
     """Pipeline-editor state used by terminal debug-session cleanup tests."""
 
     def __init__(self, session: DebugSession) -> None:
+        self.current_plate = None if session.plate_id is None else session.plate_id
         self.debug_session_state: DebugSession | None = session
+        self.debug_terminal_summary = None
         self.item_updates = 0
         self.button_updates = 0
 
@@ -260,7 +432,6 @@ class PipelineEditorHarnessBase(metaclass=AutoRegisterMeta):
     __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
     registry_key = None
-    DEBUG_COMMAND_ROUTES = PipelineEditorWidget.DEBUG_COMMAND_ROUTES
 
     def __init__(self, plate_manager) -> None:
         self.plate_manager = plate_manager
@@ -287,10 +458,15 @@ class PipelineEditorRunHarness(PipelineEditorHarnessBase):
         super().__init__(PlateManagerRunRecorder())
         self.current_plate = "plate"
         self.debug_session_state = None
+        self.debug_terminal_summary = None
+        self.debug_inspector_window = None
         self.pipeline_steps = [
             FunctionStep(func=lambda image: image, name="first"),
             FunctionStep(func=lambda image: image, name="pause", debug_pause=True),
         ]
+
+    def debug_session_context(self) -> PipelineDebugSessionContext:
+        return PipelineEditorWidget.debug_session_context(self)
 
 
 class PipelineEditorDirtyHarness(PipelineEditorHarnessBase):
@@ -312,6 +488,7 @@ class PipelineEditorDirtyHarness(PipelineEditorHarnessBase):
         self.debug_session_state = DebugSession.create(plate_id="plate").with_cursor(
             cursor
         )
+        self.debug_terminal_summary = None
 
     def save_pipeline_for_plate(self, plate, steps) -> None:
         self.saved.append((plate, steps))
@@ -330,8 +507,12 @@ class DebugInspectorRecorder:
         self.store_loads = []
         self.show_calls = 0
         self.raise_calls = 0
+        self.inspection_view_models = []
         self.artifact_export_requested = SignalConnectRecorder()
         self.artifact_open_requested = SignalConnectRecorder()
+
+    def set_inspection_view_model(self, view_model) -> None:
+        self.inspection_view_models.append(view_model)
 
     def set_snapshot(self, snapshot) -> None:
         self.snapshots.append(snapshot)
@@ -373,11 +554,16 @@ class PipelineEditorSnapshotHarness:
         self.service_adapter = self
         self.plate_manager = None
         self.debug_session_state = None
+        self.debug_terminal_summary = None
         self.debug_workflow = PipelineEditorDebugWorkflow(self)
         self.button_state_updates = 0
+        self.item_updates = 0
 
     def get_file_manager(self) -> FileManagerRecorder:
         return self.filemanager
+
+    def update_item_list(self) -> None:
+        self.item_updates += 1
 
     def update_button_states(self) -> None:
         self.button_state_updates += 1
@@ -435,6 +621,7 @@ def test_pipeline_editor_routes_stop_debug_command_to_plate_manager() -> None:
     harness.debug_workflow.handle_command(DebugCommand(DebugCommandType.STOP))
 
     assert plate_manager.stop_calls == 1
+    assert plate_manager.force_values == [True]
     assert harness.status_message.messages == ["Requested debug execution stop."]
 
 
@@ -500,15 +687,11 @@ def test_plate_manager_completion_clears_matching_pipeline_editor_debug_session(
     manager = PlateManagerDebugHarness()
     session = DebugSession.create(plate_id=plate_path)
     manager._active_debug_sessions[plate_path] = session
-    editor = PipelineEditorDebugStateRecorder(session)
-    manager._plate_pipeline_editor = editor
 
     PlateManagerWidget._clear_debug_session_for_plate(manager, plate_path)
 
     assert plate_path not in manager._active_debug_sessions
-    assert editor.debug_session_state is None
-    assert editor.item_updates == 1
-    assert editor.button_updates == 1
+    assert manager._debug_terminal_summaries_by_plate == {}
 
 
 def test_pipeline_editor_routes_step_debug_command_to_bounded_run(monkeypatch) -> None:
@@ -527,7 +710,12 @@ def test_pipeline_editor_routes_step_debug_command_to_bounded_run(monkeypatch) -
 
 
 def test_pipeline_editor_has_route_for_every_debug_command() -> None:
-    assert set(PipelineEditorWidget.DEBUG_COMMAND_ROUTES) == set(DebugCommandType)
+    command_types = {
+        declaration.command_type()
+        for declaration in PipelineDebugActionDeclarationBase.__registry__.values()
+        if issubclass(declaration, PipelineDebugCommandActionDeclaration)
+    }
+    assert command_types == set(DebugCommandType)
 
 
 def test_streaming_preview_label_is_declared_on_config_class() -> None:
@@ -588,6 +776,125 @@ def test_pipeline_editor_step_advances_from_current_debug_invocation() -> None:
         harness.debug_workflow.start_after_invocation_key(DebugCommandType.STEP)
         == "default:0:segment"
     )
+
+
+def test_pipeline_editor_step_replays_from_terminal_debug_cursor(monkeypatch) -> None:
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
+
+    monkeypatch.setattr(
+        pipeline_editor_workflows,
+        "PipelineEditorCoroutineRunner",
+        ImmediatePipelineEditorCoroutineRunner,
+    )
+    harness = PipelineEditorRunHarness()
+    cursor = DebugCursor(
+        step_index=2,
+        step_scope_id="step-2",
+        group_key="default",
+        invocation_key="default:0:measure",
+    )
+    harness.plate_manager.terminal_summary = DebugTerminalSummary(
+        debug_session_id="debug-terminal",
+        plate_id="plate",
+        terminal_status="complete",
+        cursor=cursor,
+        command_type=DebugCommandType.STEP,
+        axis_id="A01",
+    )
+
+    harness.debug_workflow.run_command(DebugCommandType.STEP)
+
+    assert harness.plate_manager.run_calls == [
+        (
+            "plate",
+            {
+                "command_type": DebugCommandType.STEP,
+                "pause_step_indices": (1,),
+                "start_step_index": 2,
+                "start_after_invocation_key": "default:0:measure",
+            },
+        )
+    ]
+
+
+def test_pipeline_editor_context_uses_manager_terminal_state_over_stale_local_session() -> None:
+    harness = PipelineEditorRunHarness()
+    local_cursor = DebugCursor(
+        step_index=0,
+        step_scope_id="step-0",
+        group_key="default",
+        invocation_key="default:0:first",
+    )
+    harness.debug_session_state = DebugSession.create(
+        plate_id="plate",
+        execution_id="old-exec",
+        axis_id="A01",
+    ).with_cursor(local_cursor)
+    terminal_cursor = DebugCursor(
+        step_index=2,
+        step_scope_id="step-2",
+        group_key="default",
+        invocation_key="default:0:measure",
+    )
+    harness.plate_manager.terminal_summary = DebugTerminalSummary(
+        debug_session_id="debug-terminal",
+        plate_id="plate",
+        terminal_status="complete",
+        cursor=terminal_cursor,
+        command_type=DebugCommandType.STEP,
+        axis_id="A01",
+    )
+
+    context = PipelineEditorWidget.debug_session_context(harness)
+
+    assert context.active_session is None
+    assert context.phase.value == "terminal_complete"
+    assert context.terminal_summary is harness.plate_manager.terminal_summary
+
+
+def test_pipeline_editor_runtime_inspection_posts_render_from_active_context(
+    monkeypatch,
+) -> None:
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
+
+    class ImmediateUiThreadDispatcher:
+        def post(self, callback) -> None:
+            callback()
+
+    monkeypatch.setattr(
+        pipeline_editor_workflows,
+        "PipelineEditorCoroutineRunner",
+        ImmediatePipelineEditorCoroutineRunner,
+    )
+    monkeypatch.setattr(
+        pipeline_editor_workflows,
+        "UiThreadDispatcher",
+        ImmediateUiThreadDispatcher,
+    )
+    monkeypatch.setattr(
+        pipeline_editor_workflows,
+        "DebugInspectorWindow",
+        DebugInspectorRecorder,
+    )
+    harness = PipelineEditorRunHarness()
+    session = DebugSession.create(
+        plate_id="plate",
+        execution_id="exec-1",
+        axis_id="A01",
+    )
+    harness.debug_session_state = session
+
+    harness.debug_workflow.show_runtime_inspection()
+
+    inspector = harness.debug_inspector_window
+    assert inspector.inspection_view_models == [
+        DebugViewModel(
+            title=f"Runtime {session.debug_session_id}",
+            sections=(),
+        )
+    ]
+    assert inspector.show_calls == 1
+    assert inspector.raise_calls == 1
 
 
 def test_pipeline_editor_marks_debug_session_dirty_on_pipeline_change() -> None:
@@ -666,6 +973,8 @@ def test_pipeline_editor_loads_vfs_debug_snapshot_store(monkeypatch) -> None:
     assert store.filemanager is harness.filemanager
     assert store.backend == "memory"
     assert snapshot_id == "snap-1"
+    assert harness.item_updates == 1
+    assert harness.button_state_updates == 1
 
 
 def test_pipeline_editor_connects_debug_inspector_artifact_actions(monkeypatch) -> None:

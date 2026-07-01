@@ -22,7 +22,7 @@ from openhcs.agent.dto.execution import (
 )
 from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
 from openhcs.agent.serialization import to_jsonable
-from openhcs.runtime.viewer_protocol import (
+from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
     ViewerControlWireValue,
     ViewerPayloadControlOptions,

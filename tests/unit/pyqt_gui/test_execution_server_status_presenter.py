@@ -39,6 +39,10 @@ def test_execution_server_status_presenter_includes_projection_counts():
     )
     projection = ExecutionRuntimeProjection(
         by_plate_latest={"/tmp/p1": plate_one, "/tmp/p2": plate_two},
+        state_counts={
+            PlateRuntimeState.COMPILING: 1,
+            PlateRuntimeState.EXECUTING: 1,
+        },
         compiling_count=1,
         executing_count=1,
         compiled_count=0,
@@ -67,6 +71,7 @@ def test_execution_server_status_presenter_includes_failed_projection_count():
     )
     projection = ExecutionRuntimeProjection(
         by_plate_latest={"/tmp/p3": failed_plate},
+        state_counts={PlateRuntimeState.FAILED: 1},
         failed_count=1,
         overall_percent=10.0,
     )

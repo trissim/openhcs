@@ -4543,15 +4543,8 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
     import openhcs.mcp.dev_client as dev_client
     import openhcs.mcp.dev_client_core as dev_client_core
 
-    class FakeStdioContext:
-        async def __aenter__(self):
-            return object(), object()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeClientSession:
-        def __init__(self, read_stream, write_stream):
+    class FakeMcpDevStdioSession:
+        def __init__(self, server_spec, server_stderr):
             pass
 
         async def __aenter__(self):
@@ -4560,7 +4553,7 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def initialize(self):
+        async def initialize(self, *, timeout_seconds):
             return None
 
     calls: list[dev_client.McpDevToolCall] = []
@@ -4600,10 +4593,9 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
 
     monkeypatch.setattr(
         dev_client_core,
-        "stdio_client",
-        lambda parameters, **kwargs: FakeStdioContext(),
+        "McpDevStdioSession",
+        FakeMcpDevStdioSession,
     )
-    monkeypatch.setattr(dev_client_core, "ClientSession", FakeClientSession)
     monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
@@ -9725,6 +9717,91 @@ def test_mcp_dev_client_pipeline_editor_state_surface_renders_compact_steps():
     ) in rendered
 
 
+def test_mcp_dev_client_pipeline_debug_session_surface_renders_runtime_frame():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    parser = dev_client._build_parser()
+    args = parser.parse_args(("state-surface", "pipeline_debug_toolbar.session"))
+    frame = {
+        "debug_session_id": "debug-1",
+        "snapshot_store_ref": "/debug",
+        "snapshot_store_backend": None,
+        "progress_identity": {
+            "execution_id": "exec-1",
+            "plate_id": "/tmp/plate-a",
+            "axis_id": "A01",
+            "step_name": "IdentifyPrimaryObjects",
+        },
+        "cursor": {
+            "step_index": 1,
+            "step_scope_id": "/tmp/plate-a::functionstep_1",
+            "group_key": "default",
+            "invocation_key": "default:0:IdentifyPrimaryObjects",
+            "pattern_group_identity": None,
+            "dirty": False,
+        },
+        "event_type": "after_invocation",
+        "step_name": "IdentifyPrimaryObjects",
+        "callable_name": "identify_primary_objects",
+        "snapshot_id": "snapshot-1",
+        "timestamp": 123.0,
+    }
+    response = {
+        "errors": [],
+        "results": [
+            {
+                "tool": "openhcs_ui_get_state_surface",
+                "mcp_error": False,
+                "payloads": [
+                    {
+                        "errors": [],
+                        "summary": {
+                            "identity": {
+                                "surface_id": "pipeline_debug_toolbar.session",
+                            },
+                        },
+                        "payload": {
+                            "current_revision_token": "rev-debug",
+                            "current_plate_scope_id": "/tmp/plate-a",
+                            "pipeline_scope_id": "/tmp/plate-a::pipeline",
+                            "manager_execution_state": "running",
+                            "initialized": True,
+                            "compiled": True,
+                            "phase": "active_session",
+                            "active_session_id": "debug-1",
+                            "execution_id": "exec-1",
+                            "axis_id": "A01",
+                            "selected_source_group": None,
+                            "snapshot_store_ref": "/debug",
+                            "snapshot_store_backend": None,
+                            "terminal_status": None,
+                            "cursor": frame["cursor"],
+                            "terminal_summary": None,
+                            "current_frame": frame,
+                            "last_frame": frame,
+                            "actions": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    rendered = dev_client.McpDevCommandSpec.for_name(
+        "state-surface"
+    ).render_response(response, args)
+
+    assert "Pipeline debug: phase=active_session" in rendered
+    assert (
+        "Current frame: event=after_invocation step=IdentifyPrimaryObjects "
+        "callable=identify_primary_objects axis=A01 snapshot=snapshot-1 "
+        "invocation=default:0:IdentifyPrimaryObjects"
+    ) in rendered
+
+
 def test_mcp_dev_client_pipeline_editor_state_omits_missing_function_ids():
     if importlib.util.find_spec("mcp") is None:
         return
@@ -10001,15 +10078,8 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
     import openhcs.mcp.dev_client as dev_client
     import openhcs.mcp.dev_client_core as dev_client_core
 
-    class FakeStdioContext:
-        async def __aenter__(self):
-            return object(), object()
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-    class FakeClientSession:
-        def __init__(self, read_stream, write_stream):
+    class FakeMcpDevStdioSession:
+        def __init__(self, server_spec, server_stderr):
             self.initialized = False
 
         async def __aenter__(self):
@@ -10018,7 +10088,7 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
         async def __aexit__(self, exc_type, exc, traceback):
             return False
 
-        async def initialize(self):
+        async def initialize(self, *, timeout_seconds):
             self.initialized = True
 
     calls: list[dev_client.McpDevToolCall] = []
@@ -10064,10 +10134,9 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
 
     monkeypatch.setattr(
         dev_client_core,
-        "stdio_client",
-        lambda parameters, **kwargs: FakeStdioContext(),
+        "McpDevStdioSession",
+        FakeMcpDevStdioSession,
     )
-    monkeypatch.setattr(dev_client_core, "ClientSession", FakeClientSession)
     monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
@@ -10133,15 +10202,8 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
     import openhcs.mcp.dev_client as dev_client
     import openhcs.mcp.dev_client_core as dev_client_core
 
-    class FakeStdioContext:
-        async def __aenter__(self):
-            return object(), object()
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-    class FakeClientSession:
-        def __init__(self, read_stream, write_stream):
+    class FakeMcpDevStdioSession:
+        def __init__(self, server_spec, server_stderr):
             pass
 
         async def __aenter__(self):
@@ -10150,7 +10212,7 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
         async def __aexit__(self, exc_type, exc, traceback):
             return False
 
-        async def initialize(self):
+        async def initialize(self, *, timeout_seconds):
             return None
 
     state_call_count = 0
@@ -10200,10 +10262,9 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
 
     monkeypatch.setattr(
         dev_client_core,
-        "stdio_client",
-        lambda parameters, **kwargs: FakeStdioContext(),
+        "McpDevStdioSession",
+        FakeMcpDevStdioSession,
     )
-    monkeypatch.setattr(dev_client_core, "ClientSession", FakeClientSession)
     monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
@@ -10332,15 +10393,8 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
     import openhcs.mcp.dev_client as dev_client
     import openhcs.mcp.dev_client_core as dev_client_core
 
-    class FakeStdioContext:
-        async def __aenter__(self):
-            return object(), object()
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-    class FakeClientSession:
-        def __init__(self, read_stream, write_stream):
+    class FakeMcpDevStdioSession:
+        def __init__(self, server_spec, server_stderr):
             pass
 
         async def __aenter__(self):
@@ -10349,7 +10403,7 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
         async def __aexit__(self, exc_type, exc, traceback):
             return False
 
-        async def initialize(self):
+        async def initialize(self, *, timeout_seconds):
             return None
 
     calls: list[dev_client.McpDevToolCall] = []
@@ -10399,10 +10453,9 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
 
     monkeypatch.setattr(
         dev_client_core,
-        "stdio_client",
-        lambda parameters, **kwargs: FakeStdioContext(),
+        "McpDevStdioSession",
+        FakeMcpDevStdioSession,
     )
-    monkeypatch.setattr(dev_client_core, "ClientSession", FakeClientSession)
     monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
@@ -13023,14 +13076,17 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     monkeypatch.setenv("XDG_DATA_HOME", "/tmp/test-data-home")
     monkeypatch.setenv("OPENHCS_UNRELATED_TEST_VALUE", "ignored")
 
-    parameters = dev_client.McpDevServerSpec(sys.executable).parameters()
+    environment = dev_client.McpDevServerSpec(sys.executable).environment()
 
-    assert parameters.env == {
-        "DISPLAY": ":0",
-        "XAUTHORITY": "/tmp/test.Xauthority",
-        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/dbus-test",
-        "XDG_DATA_HOME": "/tmp/test-data-home",
-    }
+    assert environment["DISPLAY"] == ":0"
+    assert environment["XAUTHORITY"] == "/tmp/test.Xauthority"
+    assert environment["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/tmp/dbus-test"
+    assert environment["XDG_DATA_HOME"] == "/tmp/test-data-home"
+    assert "OPENHCS_UNRELATED_TEST_VALUE" not in environment
+    assert dev_client.McpDevServerSpec(sys.executable).process_args() == (
+        "-m",
+        "openhcs.mcp",
+    )
 
 
 def test_mcp_dev_client_reports_startup_transport_failure():

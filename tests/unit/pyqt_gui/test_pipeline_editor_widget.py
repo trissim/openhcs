@@ -21,13 +21,22 @@ from openhcs.core.config import (
     PipelineConfig,
 )
 from openhcs.core.debug import DebugCommandType
+from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineObjectStateBinding,
+)
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    PipelineDebugPauseBoundaryState,
+    PipelineDebugSessionContext,
+    PipelineDebugTargetState,
+)
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorListWorkflow,
 )
@@ -97,15 +106,51 @@ class EventBusRecorder:
         self.pipeline_emissions.append(pipeline_steps)
 
 
+class PlateTerminalStatusRecorder:
+    """Minimal terminal-status surface read by PipelineEditor debug projection."""
+
+    def __init__(self) -> None:
+        self.terminal_status_by_plate: dict[str, object] = {}
+
+
 class PlateManagerDefinitionChangeRecorder:
     """Minimal plate-manager surface for pipeline invalidation notifications."""
 
     def __init__(self) -> None:
         self.changed_plates: list[str] = []
         self.plate_compiled_data: dict[str, object] = {}
+        self.plate_terminal_activity_status = PlateTerminalStatusRecorder()
+        self.execution_state = ManagerExecutionState.IDLE
 
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         self.changed_plates.append(plate_path)
+
+    def cellprofiler_import_result_for_plate(self, plate_path: str):
+        del plate_path
+        return None
+
+    def debug_session_context_for_plate(
+        self,
+        plate_path: str,
+    ) -> PipelineDebugSessionContext:
+        target = PipelineDebugTargetState(
+            current_plate_scope_id=plate_path,
+            pipeline_scope_id=f"{plate_path}::pipeline",
+            initialized=True,
+            compiled=plate_path in self.plate_compiled_data,
+            terminal_status=None,
+        )
+        return PipelineDebugSessionContext(
+            target=target,
+            session=None,
+            terminal_summary=None,
+            pause_boundaries=PipelineDebugPauseBoundaryState(),
+            manager_execution_state=self.execution_state,
+        )
+
+    def debug_terminal_summary_for_plate(self, plate_path: str):
+        del plate_path
+        return None
 
 
 class PlateManagerCompiledStateRecorder:
@@ -113,6 +158,34 @@ class PlateManagerCompiledStateRecorder:
 
     def __init__(self) -> None:
         self.plate_compiled_data: dict[str, object] = {}
+        self.plate_terminal_activity_status = PlateTerminalStatusRecorder()
+        self.execution_state = ManagerExecutionState.IDLE
+
+    def debug_session_context_for_plate(
+        self,
+        plate_path: str,
+    ) -> PipelineDebugSessionContext:
+        target = PipelineDebugTargetState(
+            current_plate_scope_id=plate_path,
+            pipeline_scope_id=PlateScopeIdentity.from_plate_root(
+                plate_path,
+            ).scope_id
+            + "::pipeline",
+            initialized=True,
+            compiled=plate_path in self.plate_compiled_data,
+            terminal_status=None,
+        )
+        return PipelineDebugSessionContext(
+            target=target,
+            session=None,
+            terminal_summary=None,
+            pause_boundaries=PipelineDebugPauseBoundaryState(),
+            manager_execution_state=self.execution_state,
+        )
+
+    def debug_terminal_summary_for_plate(self, plate_path: str):
+        del plate_path
+        return None
 
 
 def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
@@ -331,9 +404,9 @@ def test_step_registration_persists_function_editor_scope_tokens() -> None:
         func=(runtime_callable, {"threshold": 3}),
         name="Crop",
     )
-    editor = PipelineEditorWidget.__new__(PipelineEditorWidget)
-
-    step_state, states = editor._collect_step_registration_states(
+    binding = PipelineObjectStateBinding.for_plate("plate")
+    assert binding is not None
+    step_state, states = binding.collect_step_registration_states(
         step=step,
         scope_id="plate::functionstep_0",
         parent_state=None,

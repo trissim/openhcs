@@ -23,6 +23,10 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentValidationResult,
     UiPlateManagerRowState,
     UiPlateManagerState,
+    UiLiveOverviewItem,
+    UiLiveOverviewMetric,
+    UiLiveOverviewSection,
+    UiLiveOverviewSeverity,
     UiStateSurfaceDocument,
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
@@ -63,6 +67,9 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
 from openhcs.pyqt_gui.widgets.plate_manager import (
     EmptyPlateSelectionPolicy,
     PlateOperationValidator,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    TerminalExecutionStatus,
 )
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     dispatch_widget_action,
@@ -420,6 +427,79 @@ class PlateManagerStateSurfaceProvider(
             unchanged=request.base_revision_token == revision_token,
         )
         return self._document_from_state(state)
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        state = self._projection_service.project(
+            self._manager,
+            schema_version=SCHEMA_VERSION,
+            summary=self.summary(),
+            selection_mode=UiCodeDocumentSelectionMode.ALL.value,
+        )
+        rows = state.rows
+        return (
+            UiLiveOverviewSection(
+                section_id=self.identity.surface_id,
+                title=self.identity.title,
+                summary=state.manager_execution_state,
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="plates",
+                        label="plates",
+                        value=str(len(rows)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="selected",
+                        label="selected",
+                        value=str(sum(1 for row in rows if row.selected)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="active",
+                        label="active",
+                        value=str(sum(1 for row in rows if row.execution_active)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="queued",
+                        label="queued",
+                        value=str(sum(1 for row in rows if row.queue_position is not None)),
+                    ),
+                ),
+                items=tuple(self._overview_row_item(row) for row in rows),
+            ),
+        )
+
+    @classmethod
+    def _overview_row_item(cls, row: UiPlateManagerRowState) -> UiLiveOverviewItem:
+        return UiLiveOverviewItem(
+            label=row.name,
+            status=row.status_prefix or row.orchestrator_state,
+            detail=cls._overview_row_detail(row),
+            severity=cls._overview_row_severity(row).value,
+            source_surface_id=PLATE_MANAGER_STATE_SURFACE_ID,
+            source_widget_id=PlateManagerWidgetIdentity.require_value(),
+        )
+
+    @staticmethod
+    def _overview_row_detail(row: UiPlateManagerRowState) -> str:
+        parts = [
+            f"initialized={row.initialized}",
+            f"compiled={row.compiled}",
+            f"active={row.execution_active}",
+        ]
+        if row.runtime_percent is not None:
+            parts.append(f"progress={row.runtime_percent:.1f}%")
+        if row.terminal_status is not None:
+            parts.append(f"terminal={row.terminal_status}")
+        if row.debug_phase is not None:
+            parts.append(f"debug={row.debug_phase}")
+        return " ".join(parts)
+
+    @staticmethod
+    def _overview_row_severity(row: UiPlateManagerRowState) -> UiLiveOverviewSeverity:
+        if row.terminal_status == TerminalExecutionStatus.FAILED.value:
+            return UiLiveOverviewSeverity.ERROR
+        if row.execution_active or row.queue_position is not None:
+            return UiLiveOverviewSeverity.WARNING
+        return UiLiveOverviewSeverity.INFO
 
     def _state_error(
         self,

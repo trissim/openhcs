@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
 from typing import Any
 
 from PyQt6.QtCore import Qt
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from openhcs.core.artifacts import ArtifactScope
 from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
@@ -45,32 +46,19 @@ class LiveMeasurementTableEntry:
     @property
     def label(self) -> str:
         address = self.preview.address
-        scope = [
-            self.axis_id,
-            address.group_key,
-            address.site,
-            address.channel,
-            address.z_index,
-            address.timepoint,
-        ]
-        scope_text = " / ".join(str(part) for part in scope if part not in (None, ""))
+        scope_text = _scope_text(address.key.scope)
         object_text = f" [{self.preview.object_name}]" if self.preview.object_name else ""
-        return f"{self.step_name}: {address.name}{object_text} ({scope_text})"
+        return f"{self.step_name}: {address.key.name}{object_text} ({scope_text})"
 
     @property
     def semantic_sort_key(self) -> tuple:
         address = self.preview.address
         return (
             _semantic_sort_atom(self.plate_id),
-            _semantic_sort_atom(self.axis_id),
-            _semantic_sort_atom(address.group_key),
-            _semantic_sort_atom(address.site),
-            _semantic_sort_atom(address.channel),
-            _semantic_sort_atom(address.z_index),
-            _semantic_sort_atom(address.timepoint),
+            *(_semantic_sort_atom(part) for part in astuple(address.key.scope)),
             _semantic_sort_atom(self.step_name),
-            _semantic_sort_atom(address.kind),
-            _semantic_sort_atom(address.name),
+            _semantic_sort_atom(address.key.kind.value),
+            _semantic_sort_atom(address.key.name),
             _semantic_sort_atom(self.preview.object_name),
             self.sequence_id,
         )
@@ -298,13 +286,13 @@ class LiveMeasurementsWindow(QDialog):
 
         preview = entry.preview
         self.view_artifact_button.setEnabled(
-            self._image_browser is not None and bool(preview.address.path)
+            self._image_browser is not None and bool(preview.address.location.path)
         )
         status_parts = [
             f"{preview.row_count} row(s)",
             f"{len(preview.columns)} column(s)",
-            f"axis {entry.axis_id}",
-            f"backend {preview.address.backend}",
+            f"axis {preview.address.key.scope.axis_id}",
+            f"backend {preview.address.location.backend}",
         ]
         if preview.truncated_rows:
             status_parts.append("rows truncated")
@@ -340,7 +328,7 @@ class LiveMeasurementsWindow(QDialog):
         if entry is None or self._image_browser is None:
             return
         self.tabs.setCurrentWidget(self._image_browser)
-        self._image_browser.focus_file_by_path(entry.preview.address.path)
+        self._image_browser.focus_file_by_path(entry.preview.address.location.path)
 
     def _install_image_browser_tab(self) -> None:
         if self._image_browser_tab_index is not None:
@@ -462,18 +450,18 @@ def _row_for_sequence_id(
 
 def _navigation_label(entry: LiveMeasurementTableEntry) -> str:
     address = entry.preview.address
-    scope_parts = [
-        entry.axis_id,
-        address.group_key,
-        address.site,
-        address.channel,
-        address.z_index,
-        address.timepoint,
-    ]
-    scope_text = " / ".join(str(part) for part in scope_parts if part not in (None, ""))
+    scope_text = _scope_text(address.key.scope)
     object_text = f" [{entry.preview.object_name}]" if entry.preview.object_name else ""
     return (
         f"{entry.step_name}\n"
-        f"{address.name}{object_text}\n"
+        f"{address.key.name}{object_text}\n"
         f"{scope_text or entry.plate_id}"
+    )
+
+
+def _scope_text(scope: ArtifactScope) -> str:
+    return " / ".join(
+        str(part)
+        for part in astuple(scope)
+        if part not in (None, "")
     )

@@ -14,6 +14,7 @@ from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtWidgets import QApplication, QDialog, QProgressBar, QSplitter, QWidget
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.pyqt_gui.services.window_config import WindowSpec
 from pyqt_reactive.services.window_manager import WindowManager
 
@@ -69,6 +70,25 @@ class PipelineEditorWorkflowSurface(ConfigChangeSurface):
         raise NotImplementedError
 
     @abstractmethod
+    def on_manager_execution_state_changed(
+        self,
+        state: ManagerExecutionState,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_cellprofiler_pipeline_imported(self, plate_path: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_pipeline_data_changed(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def show_debug_snapshot(self, notification) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def load_pipeline_from_file(self, file_path: Path) -> None:
         raise NotImplementedError
 
@@ -81,17 +101,18 @@ class PlateManagerWorkflowSurface(ConfigChangeSurface):
     plate_selected: SignalConnectionSurface
     orchestrator_config_changed: SignalConnectionSurface
     orchestrator_state_changed: SignalConnectionSurface
+    manager_execution_state_changed: SignalConnectionSurface
+    pipeline_data_changed: SignalConnectionSurface
+    cellprofiler_pipeline_imported: SignalConnectionSurface
+    debug_snapshot_available: SignalConnectionSurface
     selected_plate_path: str | None
 
     @abstractmethod
-    def set_pipeline_editor(
-        self,
-        pipeline_editor: PipelineEditorWorkflowSurface,
-    ) -> None:
+    def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def notify_pipeline_definition_changed(self, plate_path: str) -> None:
+    def refresh_prepared_cellprofiler_pipelines(self) -> None:
         raise NotImplementedError
 
 
@@ -300,8 +321,21 @@ class MainWindowWidgetConnector:
         plate_manager.orchestrator_state_changed.connect(
             pipeline_editor.on_orchestrator_state_changed
         )
-        plate_manager.set_pipeline_editor(pipeline_editor)
+        plate_manager.manager_execution_state_changed.connect(
+            pipeline_editor.on_manager_execution_state_changed
+        )
+        plate_manager.pipeline_data_changed.connect(
+            pipeline_editor.on_pipeline_data_changed
+        )
+        plate_manager.cellprofiler_pipeline_imported.connect(
+            pipeline_editor.on_cellprofiler_pipeline_imported
+        )
+        plate_manager.debug_snapshot_available.connect(
+            pipeline_editor.show_debug_snapshot
+        )
         pipeline_editor.plate_manager = plate_manager
+
+        plate_manager.refresh_prepared_cellprofiler_pipelines()
 
         if plate_manager.selected_plate_path:
             pipeline_editor.set_current_plate(plate_manager.selected_plate_path)

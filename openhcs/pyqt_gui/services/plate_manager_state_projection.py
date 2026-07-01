@@ -25,6 +25,9 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
 from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
     PlateStatusPresenter,
 )
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    DebugToolbarActionProjector,
+)
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
@@ -233,6 +236,22 @@ class PlateManagerStateProjectionService:
             queue_position=queue_position,
             runtime_projection=status_runtime_projection,
         )
+        debug_phase = None
+        debug_session_id = None
+        debug_context = manager.debug_session_context_for_plate(plate_key)
+        projected_debug_phase = DebugToolbarActionProjector.phase(debug_context)
+        debug_prefix = PlateStatusPresenter.build_debug_status_prefix(
+            debug_phase=projected_debug_phase,
+        )
+        if debug_prefix:
+            status_prefix = debug_prefix
+        debug_phase = projected_debug_phase.value
+        debug_session = manager.debug_session_for_plate(plate_key)
+        terminal_summary = manager.debug_terminal_summary_for_plate(plate_key)
+        if debug_session is not None:
+            debug_session_id = debug_session.debug_session_id
+        elif terminal_summary is not None:
+            debug_session_id = terminal_summary.debug_session_id
 
         return UiPlateManagerRowState(
             plate_scope_id=plate_key,
@@ -256,6 +275,8 @@ class PlateManagerStateProjectionService:
             output_plate_root=output_relation.output_plate_root,
             source_plate_scope_id=output_relation.source_plate_scope_id,
             source_plate_root=output_relation.source_plate_root,
+            debug_phase=debug_phase,
+            debug_session_id=debug_session_id,
         )
 
     @staticmethod
@@ -273,7 +294,7 @@ class PlateManagerStateProjectionService:
     ) -> bool:
         if runtime_projection is None:
             return False
-        return not runtime_projection.state.is_terminal
+        return not runtime_projection.is_terminal
 
     @staticmethod
     def _effective_orchestrator_state(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
 )
+from openhcs.core.debug_session_projection import DebugSessionProjectionContext
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
     CompileBatchWorkflowService,
 )
@@ -157,8 +158,14 @@ class BatchWorkflowComponents:
                 debug_notifications=self.debug_notifications,
                 live_measurements=self.live_measurements,
                 status_presenter=self.server_status_presenter,
+                debug_session_context_provider=self.debug_session_context,
             )
         return self._progress_workflow
+
+    def debug_session_context(self) -> DebugSessionProjectionContext | None:
+        if not self.host.selected_plate_path:
+            return None
+        return self.host.debug_session_context_for_plate(self.host.selected_plate_path)
 
 
 __all__ = ("BatchWorkflowComponents",)

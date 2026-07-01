@@ -25,7 +25,15 @@ from pyqt_reactive.widgets.shared import (
 )
 from zmqruntime.viewer_state import ViewerStateManager
 
+from openhcs.agent.dto.ui_bridge import (
+    UiLiveOverviewItem,
+    UiLiveOverviewMetric,
+    UiLiveOverviewSection,
+    UiLiveOverviewSeverity,
+)
 from openhcs.core.progress import ProgressEvent, registry
+from openhcs.pyqt_gui.services.ui_bridge_contracts import UiLiveOverviewWidget
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
     ExecutionServerProgressRenderer,
@@ -39,7 +47,7 @@ from openhcs.pyqt_gui.widgets.shared.server_browser import (
 logger = logging.getLogger(__name__)
 
 
-class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
+class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     """OpenHCS adapter for generic ZMQ browser UI + OpenHCS progress semantics."""
 
     def __init__(
@@ -99,6 +107,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self._seen_execution_ids = self._topology_state.seen_execution_ids
 
         self._zmq_client = None
+        self._progress_client_port: Optional[int] = None
 
         self._tree_sync_adapter = TreeSyncAdapter()
 
@@ -126,6 +135,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             find_item_by_port=self._find_existing_server_item,
             sync_server_item=self._sync_server_item,
             progress_execution_ids=lambda: set(self._progress_tracker.get_execution_ids()),
+            parse_server_info=self._server_info_parser.parse,
             last_known_servers=self._last_known_servers,
             missing_port_counts=self._missing_port_counts,
         )
@@ -134,6 +144,63 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self._progress_timer = QTimer()
         self._progress_timer.setSingleShot(True)
         self._progress_timer.timeout.connect(self._update_from_progress)
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        rows = tuple(
+            self._overview_item_for_row(row_index)
+            for row_index in range(self.server_tree.topLevelItemCount())
+        )
+        return (
+            UiLiveOverviewSection(
+                section_id=OpenHCSUiWindowId.zmq_server_manager,
+                title="ZMQ Server Manager",
+                summary=f"{len(rows)} servers",
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="servers",
+                        label="servers",
+                        value=str(len(rows)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="ready",
+                        label="ready",
+                        value=str(self._ready_server_count()),
+                    ),
+                ),
+                items=rows,
+            ),
+        )
+
+    def _overview_item_for_row(self, row_index: int) -> UiLiveOverviewItem:
+        item = self.server_tree.topLevelItem(row_index)
+        ready = self._server_row_ready(item)
+        return UiLiveOverviewItem(
+            label=item.text(0),
+            status=item.text(1),
+            detail=item.text(2),
+            severity=(
+                UiLiveOverviewSeverity.INFO.value
+                if ready
+                else UiLiveOverviewSeverity.WARNING.value
+            ),
+            source_window_id=OpenHCSUiWindowId.zmq_server_manager,
+        )
+
+    def _ready_server_count(self) -> int:
+        return sum(
+            1
+            for row_index in range(self.server_tree.topLevelItemCount())
+            if self._server_row_ready(self.server_tree.topLevelItem(row_index))
+        )
+
+    def _server_row_ready(self, item: QTreeWidgetItem) -> bool:
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, dict):
+            return False
+        try:
+            return self._server_info_parser.parse(data).ready
+        except Exception:
+            return False
 
     def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
@@ -212,12 +279,15 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         )
 
     def on_browser_shown(self) -> None:
-        self._setup_progress_client()
+        execution_server_port = self._current_execution_server_port()
+        if execution_server_port is not None:
+            self._setup_progress_client(execution_server_port)
 
     def on_browser_hidden(self) -> None:
         if self._zmq_client is not None:
             self._zmq_client.disconnect()
             self._zmq_client = None
+            self._progress_client_port = None
 
     def on_browser_cleanup(self) -> None:
         if self._zmq_client is not None:
@@ -228,6 +298,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                     "Failed to disconnect ZMQ client during cleanup: %s", error
                 )
             self._zmq_client = None
+            self._progress_client_port = None
 
         if self._viewer_state_callback_registered:
             mgr = ViewerStateManager.get_instance()
@@ -253,7 +324,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             self._progress_timer.deleteLater()
             self._progress_timer = None
 
-    def _setup_progress_client(self) -> None:
+    def _setup_progress_client(self, port: int) -> None:
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
         if self._zmq_client is not None:
@@ -262,11 +333,12 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             except Exception as error:
                 logger.warning("Failed to disconnect existing ZMQ client: %s", error)
             self._zmq_client = None
+            self._progress_client_port = None
 
         try:
             logger.debug("_setup_progress_client: creating new ZMQExecutionClient")
             self._zmq_client = ZMQExecutionClient(
-                port=7777,
+                port=port,
                 persistent=True,
                 progress_callback=self._on_progress,
             )
@@ -274,7 +346,9 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             if not connected:
                 logger.warning("_setup_progress_client: failed to connect")
                 self._zmq_client = None
+                self._progress_client_port = None
                 return
+            self._progress_client_port = port
             logger.debug(
                 "_setup_progress_client: connected, starting progress listener"
             )
@@ -282,6 +356,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         except Exception as error:
             logger.warning("Failed to connect to execution server: %s", error)
             self._zmq_client = None
+            self._progress_client_port = None
 
     def _on_progress(self, message: dict) -> None:
         event = ProgressEvent.from_dict(message)
@@ -327,17 +402,46 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self, parsed_servers: List[BaseServerInfo]
     ) -> None:
         """Keep the progress client connected while an execution server is present."""
-        has_execution_server = any(
-            isinstance(server, ExecutionServerInfo) for server in parsed_servers
+        execution_servers = tuple(
+            server
+            for server in parsed_servers
+            if isinstance(server, ExecutionServerInfo)
         )
-        if has_execution_server:
-            if self._zmq_client is None or not self._zmq_client.is_connected():
-                self._setup_progress_client()
+        if execution_servers:
+            execution_server_port = execution_servers[0].port
+            if (
+                self._zmq_client is None
+                or not self._zmq_client.is_connected()
+                or self._progress_client_port != execution_server_port
+            ):
+                self._setup_progress_client(execution_server_port)
+            return
+
+        if self._current_execution_server_port() is not None and set(
+            self._progress_tracker.get_execution_ids()
+        ):
             return
 
         if self._zmq_client is not None:
             self._zmq_client.disconnect()
             self._zmq_client = None
+            self._progress_client_port = None
+
+    def _current_execution_server_port(self) -> Optional[int]:
+        for index in range(self.server_tree.topLevelItemCount()):
+            item = self.server_tree.topLevelItem(index)
+            if item is None:
+                continue
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if not isinstance(data, dict):
+                continue
+            try:
+                server_info = self._server_info_parser.parse(data)
+            except Exception:
+                continue
+            if isinstance(server_info, ExecutionServerInfo):
+                return server_info.port
+        return None
 
     def _create_tree_item(
         self, display: str, status: str, info: str, data: dict
