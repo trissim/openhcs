@@ -21,8 +21,8 @@ from openhcs.core.debug import (
 from openhcs.core.debug_views import DebugViewModel
 from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerPipelineRuntimeRebinder,
+from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
+    CellProfilerPipelineRuntimeBindingService,
 )
 from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
@@ -526,11 +526,14 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
             return False
 
         pipeline_steps = namespace["pipeline_steps"]
-        import_result = self.editor.cellprofiler_import_result_for_current_plate()
-        if import_result is not None:
-            pipeline_steps = CellProfilerPipelineRuntimeRebinder.from_import_result(
-                import_result,
-            ).rebind(pipeline_steps)
+        if self.editor.current_plate:
+            pipeline_steps = (
+                CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
+                    import_result_provider=self.editor,
+                    plate_path=self.editor.current_plate,
+                    pipeline_steps=pipeline_steps,
+                )
+            )
         self.editor.pipeline_steps = pipeline_steps
         self.editor._normalize_step_scope_tokens(register=False)
 

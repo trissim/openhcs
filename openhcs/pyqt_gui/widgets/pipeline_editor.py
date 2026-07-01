@@ -399,7 +399,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         # Clipboard for copy-paste operations (in-memory only)
         self._clipboard_steps: List[FunctionStep] = []
         self.debug_toolbar: DebugToolbarWidget | None = None
-        self.cellprofiler_import_result = None
         self.cellprofiler_import_results_by_plate: dict[str, Any] = {}
         self.source_binding_contexts_by_plate: dict[str, SourceBindingContext] = {}
         self.debug_inspector_window: Any | None = None
@@ -689,8 +688,8 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         # Connect orchestrator config changes to step editor for live placeholder updates
         # This ensures the step editor's placeholders update when pipeline config is saved
         if self.plate_manager is not None:
-            self.plate_manager.orchestrator_config_changed.connect(
-                editor.on_orchestrator_config_changed
+            editor.connect_orchestrator_config_signal(
+                self.plate_manager.orchestrator_config_changed
             )
             logger.debug("Connected orchestrator_config_changed signal to step editor")
 
@@ -844,7 +843,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             )
         )
         self.pipeline_steps = list(import_result.pipeline.steps)
-        self.cellprofiler_import_result = import_result
         if self.current_plate:
             self.cellprofiler_import_results_by_plate[self.current_plate] = import_result
             self.set_source_binding_context_for_plate(
@@ -933,8 +931,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         if self.current_plate != plate_path:
             self.debug_terminal_summary = None
         self.current_plate = plate_path
-        self.cellprofiler_import_result = self._import_result_for_plate(plate_path)
-
         # Load pipeline for the new plate from Pipeline ObjectState
         if plate_path:
             plate_pipeline = self._get_steps_from_pipeline_state(plate_path)
@@ -962,10 +958,12 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self.update_button_states()
         logger.info(f"  → Pipeline editor updated for plate: {plate_path}")
 
-    def _import_result_for_plate(
+    def cellprofiler_import_result_for_plate(
         self,
         plate_path: str,
     ) -> CellProfilerPipelineImportResult | None:
+        """Return the CellProfiler import record owned by one plate scope."""
+
         if self.plate_manager is not None:
             import_result = self.plate_manager.cellprofiler_import_result_for_plate(
                 plate_path
@@ -984,7 +982,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         if self.current_plate != plate_path:
             return
 
-        self.cellprofiler_import_result = import_result
         self.pipeline_steps = pipeline_steps
         self.update_item_list()
         self._suppress_pipeline_state_sync = True
@@ -1010,7 +1007,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             return
 
         pipeline_steps = PipelineObjectStateBinding.steps_for_plate(plate_path)
-        self.cellprofiler_import_result = self._import_result_for_plate(plate_path)
         self.pipeline_steps = pipeline_steps
         self.update_item_list()
         self.update_button_states()
@@ -1375,8 +1371,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         """Store one coherent source-binding context for a logical plate."""
 
         self.source_binding_contexts_by_plate[str(plate_path)] = context
-        if str(plate_path) == self.current_plate:
-            self.cellprofiler_import_result = context.import_result
 
     def _current_execution_plate_path(self) -> Path:
         """Return the best available execution path for the current plate."""
@@ -1404,19 +1398,9 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self,
     ) -> CellProfilerPipelineImportResult | None:
         """Return the CellProfiler import record for the selected plate."""
-        if self.current_plate:
-            if self.plate_manager is not None:
-                import_result = self.plate_manager.cellprofiler_import_result_for_plate(
-                    self.current_plate
-                )
-                if import_result is not None:
-                    return import_result
-            import_result = self.cellprofiler_import_results_by_plate.get(
-                self.current_plate
-            )
-            if import_result is not None:
-                return import_result
-        return self.cellprofiler_import_result
+        if not self.current_plate:
+            return None
+        return self.cellprofiler_import_result_for_plate(self.current_plate)
 
     # _find_main_window() moved to AbstractManagerWidget
 
@@ -1478,8 +1462,8 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
         # Connect orchestrator config changes to step editor for live placeholder updates
         if self.plate_manager is not None:
-            self.plate_manager.orchestrator_config_changed.connect(
-                editor.on_orchestrator_config_changed
+            editor.connect_orchestrator_config_signal(
+                self.plate_manager.orchestrator_config_changed
             )
             logger.debug("Connected orchestrator_config_changed signal to step editor")
 

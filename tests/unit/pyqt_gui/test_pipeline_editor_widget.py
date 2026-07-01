@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -20,6 +21,7 @@ from openhcs.core.config import (
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.debug import DebugCommandType
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
@@ -264,6 +266,41 @@ def test_pipeline_editor_code_document_apply_notifies_plate_manager() -> None:
         )
 
         assert [step.name for step in widget.pipeline_steps] == ["Replacement"]
+        assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_pipeline_editor_code_apply_ignores_cellprofiler_import_result_from_other_plate() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    plate_manager = PlateManagerDefinitionChangeRecorder()
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = plate_manager
+    widget.cellprofiler_import_results_by_plate["old-cppipe-plate"] = SimpleNamespace(
+        generated_module_name="stale_generated_cellprofiler_pipeline",
+        provenance=SimpleNamespace(
+            processing_modules=(SimpleNamespace(module_num=1),),
+        ),
+        artifact_contracts=(
+            ModuleArtifactContract(module_name="ColorToGray"),
+        ),
+    )
+    driver = widget.code_document_driver()
+
+    try:
+        assert driver is not None
+        driver.apply_source(
+            "from openhcs.core.steps.function_step import FunctionStep\n"
+            "pipeline_steps = [FunctionStep(name='SyntheticTestPipeline')]\n"
+        )
+
+        assert [step.name for step in widget.pipeline_steps] == [
+            "SyntheticTestPipeline"
+        ]
         assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
     finally:
         widget.close()

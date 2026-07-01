@@ -204,6 +204,8 @@ class DualEditorWindow(BaseFormDialog):
         self._save_button_base_style = ""
         self._function_pattern_controller = None
         self._time_travel_title_refresh_callback = None
+        self._event_bus = None
+        self._orchestrator_config_signal = None
 
         # Setup UI
         self.setup_ui()
@@ -753,7 +755,38 @@ class DualEditorWindow(BaseFormDialog):
             event_bus.pipeline_changed.connect(self._on_pipeline_changed)
             event_bus.config_changed.connect(self._on_config_changed)
             event_bus.register_window(self)
+            self._event_bus = event_bus
             logger.debug("Connected to global event bus for cross-window updates")
+
+    def connect_orchestrator_config_signal(self, signal) -> None:
+        """Subscribe this editor to orchestrator config updates."""
+        signal.connect(self.on_orchestrator_config_changed)
+        self._orchestrator_config_signal = signal
+
+    def _cleanup_managed_listeners(self) -> None:
+        """Disconnect editor-owned cross-window subscriptions."""
+        event_bus = self._event_bus
+        if event_bus is not None:
+            try:
+                event_bus.pipeline_changed.disconnect(self._on_pipeline_changed)
+            except TypeError:
+                pass
+            try:
+                event_bus.config_changed.disconnect(self._on_config_changed)
+            except TypeError:
+                pass
+            event_bus.unregister_window(self)
+            self._event_bus = None
+
+        orchestrator_signal = self._orchestrator_config_signal
+        if orchestrator_signal is not None:
+            try:
+                orchestrator_signal.disconnect(self.on_orchestrator_config_changed)
+            except TypeError:
+                pass
+            self._orchestrator_config_signal = None
+
+        super()._cleanup_managed_listeners()
 
     def _schedule_function_editor_sync(self):
         """Schedule a batched sync of the function editor."""
