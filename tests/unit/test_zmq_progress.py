@@ -60,3 +60,23 @@ def test_compile_failed_emits_pipeline_failure_when_axes_are_unknown():
     assert emitted[0]["phase"] == ProgressPhase.COMPILE.value
     assert emitted[0]["status"] == ProgressStatus.FAILED.value
     assert emitted[0]["error"] == "early compile exploded"
+
+
+def test_compile_heartbeat_emits_running_pipeline_compile_event():
+    emitted: list[dict] = []
+    emitter = ZMQProgressEmitter(
+        enqueue=emitted.append,
+        execution_id="exec-1",
+        plate_id="/tmp/plate",
+    )
+
+    emitter.compile_heartbeat(step_count=18)
+
+    assert len(emitted) == 1
+    assert emitted[0]["execution_id"] == "exec-1"
+    assert emitted[0]["plate_id"] == "/tmp/plate"
+    assert emitted[0]["axis_id"] == ""
+    assert emitted[0]["step_name"] == "pipeline"
+    assert emitted[0]["phase"] == ProgressPhase.COMPILE.value
+    assert emitted[0]["status"] == ProgressStatus.RUNNING.value
+    assert emitted[0]["total"] == 18

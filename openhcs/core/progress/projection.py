@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import ClassVar, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 from zmqruntime.progress import (
     GenericAxisProjection,
     GenericExecutionProjection,
@@ -15,6 +17,7 @@ from zmqruntime.progress import (
 )
 
 from .types import (
+    ProgressChannel,
     ProgressEvent,
     phase_channel,
     is_failure_event,
@@ -23,22 +26,166 @@ from .types import (
 
 
 class PlateRuntimeState(str, Enum):
-    def __new__(cls, value: str, is_terminal: bool):
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        obj._is_terminal = is_terminal
-        return obj
+    IDLE = "idle"
+    COMPILING = "compiling"
+    COMPILED = "compiled"
+    EXECUTING = "executing"
+    COMPLETE = "complete"
+    FAILED = "failed"
 
-    IDLE = ("idle", False)
-    COMPILING = ("compiling", False)
-    COMPILED = ("compiled", False)
-    EXECUTING = ("executing", False)
-    COMPLETE = ("complete", True)
-    FAILED = ("failed", True)
 
-    @property
-    def is_terminal(self) -> bool:
-        return self._is_terminal
+class PlateRuntimeStateDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal semantic declaration for one plate runtime state."""
+
+    __registry_key__ = "state"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[PlateRuntimeState, type["PlateRuntimeStateDeclarationBase"]]
+    ] = {}
+
+    state: ClassVar[PlateRuntimeState | None] = None
+    is_terminal: ClassVar[bool] = False
+    default_channel: ClassVar[ProgressChannel | None] = None
+    status_label: ClassVar[str] = ""
+    count_label: ClassVar[str] = ""
+    count_sort_order: ClassVar[int] = 0
+
+    @classmethod
+    def require_state(cls) -> PlateRuntimeState:
+        if cls.state is None:
+            raise TypeError(f"{cls.__name__} does not declare a runtime state.")
+        return cls.state
+
+    @classmethod
+    def for_state(
+        cls,
+        state: PlateRuntimeState,
+    ) -> type["PlateRuntimeStateDeclarationBase"]:
+        return cls.__registry__[state]
+
+    @classmethod
+    def state_channel_from_events(
+        cls,
+        events: Iterable[ProgressEvent],
+    ) -> ProgressChannel | None:
+        del events
+        return cls.default_channel
+
+    @classmethod
+    def percent_from_generic_projection(
+        cls,
+        *,
+        generic_percent: float,
+        axis_progress: Tuple["AxisRuntimeProjection", ...],
+    ) -> float:
+        del axis_progress
+        return generic_percent
+
+    @classmethod
+    def status_label_for_plate(cls, plate: "PlateRuntimeProjection") -> str:
+        del plate
+        return cls.status_label
+
+    @classmethod
+    def counted_declarations(
+        cls,
+    ) -> Tuple[type["PlateRuntimeStateDeclarationBase"], ...]:
+        return tuple(
+            sorted(
+                (
+                    declaration
+                    for declaration in cls.__registry__.values()
+                    if declaration.count_label
+                ),
+                key=lambda declaration: declaration.count_sort_order,
+            )
+        )
+
+    @classmethod
+    def count_status_label(cls, count: int) -> str:
+        if count <= 0 or not cls.count_label:
+            return ""
+        return cls.count_label.format(count=count)
+
+
+class TerminalPlateRuntimeState:
+    """Trait for plate runtime states that close the current execution."""
+
+    is_terminal: ClassVar[bool] = True
+
+
+class IdlePlateRuntimeState(PlateRuntimeStateDeclarationBase):
+    state = PlateRuntimeState.IDLE
+
+
+class CompilingPlateRuntimeState(PlateRuntimeStateDeclarationBase):
+    state = PlateRuntimeState.COMPILING
+    default_channel = ProgressChannel.COMPILE
+    status_label = "⏳ Compiling"
+    count_label = "⏳ {count} compiling"
+    count_sort_order = 10
+
+
+class CompiledPlateRuntimeState(PlateRuntimeStateDeclarationBase):
+    state = PlateRuntimeState.COMPILED
+    default_channel = ProgressChannel.COMPILE
+    status_label = "✅ Compiled"
+    count_label = "✓ {count} compiled"
+    count_sort_order = 30
+
+
+class ExecutingPlateRuntimeState(PlateRuntimeStateDeclarationBase):
+    state = PlateRuntimeState.EXECUTING
+    default_channel = ProgressChannel.PIPELINE
+    status_label = "⚙️ Executing"
+    count_label = "⚙️ {count} executing"
+    count_sort_order = 20
+
+
+class CompletePlateRuntimeState(TerminalPlateRuntimeState, PlateRuntimeStateDeclarationBase):
+    state = PlateRuntimeState.COMPLETE
+    default_channel = ProgressChannel.PIPELINE
+    status_label = "✅ Complete"
+    count_label = "✅ {count} complete"
+    count_sort_order = 40
+
+
+class FailedPlateRuntimeState(TerminalPlateRuntimeState, PlateRuntimeStateDeclarationBase):
+    state = PlateRuntimeState.FAILED
+    status_label = "❌ Failed"
+    count_label = "❌ {count} failed"
+    count_sort_order = 50
+
+    @classmethod
+    def state_channel_from_events(
+        cls,
+        events: Iterable[ProgressEvent],
+    ) -> ProgressChannel | None:
+        latest_failure_event = max(
+            (event for event in events if is_failure_event(event)),
+            key=lambda event: event.timestamp,
+            default=None,
+        )
+        if latest_failure_event is None:
+            return cls.default_channel
+        return phase_channel(latest_failure_event.phase)
+
+    @classmethod
+    def percent_from_generic_projection(
+        cls,
+        *,
+        generic_percent: float,
+        axis_progress: Tuple["AxisRuntimeProjection", ...],
+    ) -> float:
+        if generic_percent > 0.0 or not axis_progress:
+            return generic_percent
+        return sum(axis.percent for axis in axis_progress) / len(axis_progress)
+
+    @classmethod
+    def status_label_for_plate(cls, plate: "PlateRuntimeProjection") -> str:
+        if plate.state_channel is ProgressChannel.COMPILE:
+            return "❌ Compile Failed"
+        return cls.status_label
 
 
 @dataclass(frozen=True)
@@ -86,21 +233,32 @@ class PlateRuntimeProjection:
     percent: float
     axis_progress: Tuple[AxisRuntimeProjection, ...]
     latest_timestamp: float
+    state_channel: ProgressChannel | None = None
 
     @classmethod
     def from_generic_plate(
         cls,
         generic_plate: GenericPlateProjection[PlateRuntimeState],
+        *,
+        state_channel: ProgressChannel | None = None,
     ) -> "PlateRuntimeProjection":
+        axis_progress = tuple(
+            AxisRuntimeProjection.from_generic_axis(axis)
+            for axis in generic_plate.axis_progress
+        )
+        state_declaration = PlateRuntimeStateDeclarationBase.for_state(
+            generic_plate.state
+        )
         return cls(
             identity=PlateRuntimeIdentity.from_generic_plate(generic_plate),
             state=generic_plate.state,
-            percent=generic_plate.percent,
-            axis_progress=tuple(
-                AxisRuntimeProjection.from_generic_axis(axis)
-                for axis in generic_plate.axis_progress
+            percent=state_declaration.percent_from_generic_projection(
+                generic_percent=generic_plate.percent,
+                axis_progress=axis_progress,
             ),
+            axis_progress=axis_progress,
             latest_timestamp=generic_plate.latest_timestamp,
+            state_channel=state_channel,
         )
 
     @property
@@ -119,6 +277,23 @@ class PlateRuntimeProjection:
             if not axis.is_complete and not axis.is_failed
         )
 
+    @property
+    def is_terminal(self) -> bool:
+        return PlateRuntimeStateDeclarationBase.for_state(self.state).is_terminal
+
+    @property
+    def status_label(self) -> str:
+        return PlateRuntimeStateDeclarationBase.for_state(
+            self.state
+        ).status_label_for_plate(self)
+
+    @property
+    def formatted_status(self) -> str:
+        label = self.status_label
+        if not label:
+            return ""
+        return f"{label} {self.percent:.1f}%"
+
 
 @dataclass
 class ExecutionRuntimeProjection:
@@ -127,6 +302,7 @@ class ExecutionRuntimeProjection:
         default_factory=dict
     )
     by_plate_latest: Dict[str, PlateRuntimeProjection] = field(default_factory=dict)
+    state_counts: Dict[PlateRuntimeState, int] = field(default_factory=dict)
     compiling_count: int = 0
     compiled_count: int = 0
     executing_count: int = 0
@@ -138,12 +314,24 @@ class ExecutionRuntimeProjection:
     def from_generic_projection(
         cls,
         generic_projection: GenericExecutionProjection[PlateRuntimeState],
+        events_by_identity: Mapping[PlateRuntimeIdentity, Sequence[ProgressEvent]] | None = None,
     ) -> "ExecutionRuntimeProjection":
         projection = cls()
 
         for generic_plate in generic_projection.plates:
+            identity = PlateRuntimeIdentity.from_generic_plate(generic_plate)
+            state_declaration = PlateRuntimeStateDeclarationBase.for_state(
+                generic_plate.state
+            )
             projection.add_plate(
-                PlateRuntimeProjection.from_generic_plate(generic_plate)
+                PlateRuntimeProjection.from_generic_plate(
+                    generic_plate,
+                    state_channel=state_declaration.state_channel_from_events(
+                        ()
+                        if events_by_identity is None
+                        else events_by_identity.get(identity, ())
+                    ),
+                )
             )
 
         for generic_plate in generic_projection.by_plate_latest.values():
@@ -151,22 +339,39 @@ class ExecutionRuntimeProjection:
                 PlateRuntimeIdentity.from_generic_plate(generic_plate)
             )
 
-        projection.compiling_count = generic_projection.count_state(
+        projection.state_counts = {
+            declaration.require_state(): generic_projection.count_state(
+                declaration.require_state()
+            )
+            for declaration in PlateRuntimeStateDeclarationBase.__registry__.values()
+        }
+        projection.compiling_count = projection.count_for_state(
             PlateRuntimeState.COMPILING
         )
-        projection.compiled_count = generic_projection.count_state(
+        projection.compiled_count = projection.count_for_state(
             PlateRuntimeState.COMPILED
         )
-        projection.executing_count = generic_projection.count_state(
+        projection.executing_count = projection.count_for_state(
             PlateRuntimeState.EXECUTING
         )
-        projection.complete_count = generic_projection.count_state(
-            PlateRuntimeState.COMPLETE
-        )
-        projection.failed_count = generic_projection.count_state(PlateRuntimeState.FAILED)
+        projection.complete_count = projection.count_for_state(PlateRuntimeState.COMPLETE)
+        projection.failed_count = projection.count_for_state(PlateRuntimeState.FAILED)
         projection.overall_percent = generic_projection.overall_percent
 
         return projection
+
+    def count_for_state(self, state: PlateRuntimeState) -> int:
+        return self.state_counts.get(state, 0)
+
+    def count_status_labels(self) -> Tuple[str, ...]:
+        labels: List[str] = []
+        for declaration in PlateRuntimeStateDeclarationBase.counted_declarations():
+            label = declaration.count_status_label(
+                self.count_for_state(declaration.require_state())
+            )
+            if label:
+                labels.append(label)
+        return tuple(labels)
 
     def add_plate(self, plate_projection: PlateRuntimeProjection) -> None:
         self.plates.append(plate_projection)
@@ -242,8 +447,19 @@ _PROJECTION_ADAPTER = _OpenHCSProjectionAdapter()
 def build_execution_runtime_projection(
     events_by_execution: Mapping[str, List[ProgressEvent]],
 ) -> ExecutionRuntimeProjection:
+    events_by_identity: Dict[PlateRuntimeIdentity, List[ProgressEvent]] = {}
+    for execution_id, events in events_by_execution.items():
+        for event in events:
+            events_by_identity.setdefault(
+                PlateRuntimeIdentity(execution_id, event.plate_id),
+                [],
+            ).append(event)
+
     generic_projection = build_execution_projection(
         events_by_execution,
         adapter=_PROJECTION_ADAPTER,
     )
-    return ExecutionRuntimeProjection.from_generic_projection(generic_projection)
+    return ExecutionRuntimeProjection.from_generic_projection(
+        generic_projection,
+        events_by_identity=events_by_identity,
+    )

@@ -70,9 +70,9 @@ def test_live_measurement_payload_round_trips_through_progress_context():
     assert decoded_payload is not None
     assert decoded_payload.preview_count == 1
     preview = decoded_payload.previews[0]
-    assert preview.address.name == "MeasureObjectIntensity"
-    assert preview.address.axis_id == "A01"
-    assert preview.address.group_key == "DAPI"
+    assert preview.address.key.name == "MeasureObjectIntensity"
+    assert preview.address.key.scope.axis_id == "A01"
+    assert preview.address.key.scope.group_key == "DAPI"
     assert preview.columns == ("object_id", "mean", "nullable")
     assert preview.rows[0]["mean"] == 10.0
     assert preview.rows[0]["nullable"] is None

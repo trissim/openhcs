@@ -11,7 +11,10 @@ from typing import Any, Callable, Mapping, TYPE_CHECKING
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.runtime.zmq_progress import ZMQProgressEmitter
+from openhcs.runtime.zmq_progress import (
+    ZMQCompileProgressHeartbeat,
+    ZMQProgressEmitter,
+)
 
 if TYPE_CHECKING:
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
@@ -100,6 +103,7 @@ class ZMQCompilationRequest:
     flush_progress: Callable[[], None]
     immediate_progress_queue: Any
     debug_execution_policy: Any
+    compile_heartbeat_interval_seconds: float = 2.0
 
     def resolve(self) -> ZMQCompilationResult:
         if self.compile_artifact_id is not None:
@@ -174,12 +178,18 @@ class ZMQCompilationRequest:
 
         set_progress_queue(self.immediate_progress_queue)
         try:
-            compilation = self.orchestrator.compile_pipelines(
-                pipeline_definition=self.pipeline_steps,
-                well_filter=self.wells,
-                is_zmq_execution=True,
-                debug_execution_policy=self.debug_execution_policy,
-            )
+            with ZMQCompileProgressHeartbeat(
+                progress_emitter=self.progress_emitter,
+                step_count=len(self.pipeline_steps),
+                flush_progress=self.flush_progress,
+                interval_seconds=self.compile_heartbeat_interval_seconds,
+            ):
+                compilation = self.orchestrator.compile_pipelines(
+                    pipeline_definition=self.pipeline_steps,
+                    well_filter=self.wells,
+                    is_zmq_execution=True,
+                    debug_execution_policy=self.debug_execution_policy,
+                )
         finally:
             set_progress_queue(None)
 

@@ -297,7 +297,8 @@ class ZMQExecutionServer(ExecutionServer):
             )
             json_str = json.dumps(progress_payload)
             logger.info(f"Full JSON being sent: {json_str[:300]}")
-            self.data_socket.send_string(json_str)
+            with self._progress_publish_lock:
+                self.data_socket.send_string(json_str)
             count += 1
 
     def _set_compile_status(

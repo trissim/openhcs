@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+import logging
 import os
+import threading
 import time
+from typing import Callable
 
 from zmqruntime.messages import MessageFields
 
@@ -15,6 +17,8 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,17 @@ class ZMQProgressEmitter(ZMQProgressTarget):
             total=step_count,
             phase=ProgressPhase.COMPILE,
             status=ProgressStatus.STARTED,
+            completed=0,
+            percent=0.0,
+        )
+
+    def compile_heartbeat(self, step_count: int) -> None:
+        self.emit(
+            axis_id="",
+            step_name="pipeline",
+            total=step_count,
+            phase=ProgressPhase.COMPILE,
+            status=ProgressStatus.RUNNING,
             completed=0,
             percent=0.0,
         )
@@ -193,3 +208,36 @@ class ZMQProgressEmitter(ZMQProgressTarget):
             step_names=step_names,
         )
         self.enqueue(event.to_dict())
+
+
+@dataclass(slots=True)
+class ZMQCompileProgressHeartbeat:
+    """Periodic compile progress heartbeat during long synchronous compilation."""
+
+    progress_emitter: ZMQProgressEmitter
+    step_count: int
+    flush_progress: Callable[[], None]
+    interval_seconds: float = 2.0
+    _stop_event: threading.Event = field(init=False, repr=False)
+    _thread: threading.Thread | None = field(init=False, default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        self._stop_event = threading.Event()
+
+    def __enter__(self) -> "ZMQCompileProgressHeartbeat":
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.interval_seconds + 1.0)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.interval_seconds):
+            self.progress_emitter.compile_heartbeat(self.step_count)
+            try:
+                self.flush_progress()
+            except Exception:
+                logger.exception("Compile progress heartbeat flush failed")

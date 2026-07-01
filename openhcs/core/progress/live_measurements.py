@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind
-from openhcs.core.runtime_stores import StoredRuntimeValue
+from openhcs.core.runtime_stores import RuntimeArtifactAddress, StoredRuntimeValue
 from openhcs.core.runtime_values import (
     ColumnarRows,
     MeasurementTable,
@@ -29,65 +29,10 @@ class LiveMeasurementPayloadError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class LiveMeasurementArtifactAddress:
-    """Runtime artifact address for a live measurement preview."""
-
-    name: str
-    kind: str
-    axis_id: str
-    path: str
-    backend: str
-    group_key: str | None = None
-    site: str | None = None
-    channel: str | None = None
-    z_index: str | None = None
-    timepoint: str | None = None
-
-    @classmethod
-    def from_record(cls, record: StoredRuntimeValue) -> "LiveMeasurementArtifactAddress":
-        scope = record.key.scope
-        return cls(
-            name=record.key.name,
-            kind=record.key.kind.value,
-            axis_id=scope.axis_id,
-            path=record.path,
-            backend=record.backend,
-            group_key=scope.group_key,
-            site=scope.site,
-            channel=scope.channel,
-            z_index=scope.z_index,
-            timepoint=scope.timepoint,
-        )
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "LiveMeasurementArtifactAddress":
-        try:
-            return cls(
-                name=str(data["name"]),
-                kind=str(data["kind"]),
-                axis_id=str(data["axis_id"]),
-                path=str(data["path"]),
-                backend=str(data["backend"]),
-                group_key=_optional_string(data.get("group_key")),
-                site=_optional_string(data.get("site")),
-                channel=_optional_string(data.get("channel")),
-                z_index=_optional_string(data.get("z_index")),
-                timepoint=_optional_string(data.get("timepoint")),
-            )
-        except KeyError as exc:
-            raise LiveMeasurementPayloadError(
-                f"Missing live measurement artifact address field: {exc.args[0]}"
-            ) from exc
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True, slots=True)
 class LiveMeasurementTablePreview:
     """Bounded row preview for one measurement artifact write."""
 
-    address: LiveMeasurementArtifactAddress
+    address: RuntimeArtifactAddress
     columns: tuple[str, ...]
     rows: tuple[Mapping[str, Any], ...]
     row_count: int
@@ -116,7 +61,7 @@ class LiveMeasurementTablePreview:
             for row in row_mappings[:row_limit]
         )
         return cls(
-            address=LiveMeasurementArtifactAddress.from_record(record),
+            address=RuntimeArtifactAddress.from_record(record),
             columns=columns,
             rows=preview_rows,
             row_count=len(row_mappings),
@@ -130,7 +75,7 @@ class LiveMeasurementTablePreview:
     def from_dict(cls, data: Mapping[str, Any]) -> "LiveMeasurementTablePreview":
         try:
             return cls(
-                address=LiveMeasurementArtifactAddress.from_dict(data["address"]),
+                address=RuntimeArtifactAddress.from_dict(data["address"]),
                 columns=tuple(str(column) for column in data.get("columns", ())),
                 rows=tuple(
                     _decode_row_mapping(row) for row in data.get("rows", ())
@@ -141,7 +86,7 @@ class LiveMeasurementTablePreview:
                 object_name=_optional_string(data.get("object_name")),
                 source_image_name=_optional_string(data.get("source_image_name")),
             )
-        except (TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise LiveMeasurementPayloadError(
                 f"Malformed live measurement table preview: {exc}"
             ) from exc

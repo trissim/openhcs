@@ -41,10 +41,6 @@ class DebugEventType(Enum):
     AFTER_INVOCATION = "after_invocation"
     EXCEPTION = "exception"
 
-    @property
-    def reports_output_artifacts(self) -> bool:
-        return self is not DebugEventType.BEFORE_INVOCATION
-
 
 class DebugCommandType(Enum):
     """User-facing debug/test-mode command."""
@@ -58,34 +54,172 @@ class DebugCommandType(Enum):
     RANDOM_SOURCE_GROUP = "random_source_group"
     STOP = "stop"
 
-    @property
-    def advances_one_boundary(self) -> bool:
-        return DebugCommandPolicyRow.by_command()[self].advances_one_boundary
 
+class DebugCommandDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal semantic declaration for one debug command."""
 
-@dataclass(frozen=True, slots=True)
-class DebugCommandPolicyRow:
-    """Exhaustive command behavior policy owned by DebugCommandType."""
+    __registry_key__ = "command_type"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[DebugCommandType, type["DebugCommandDeclarationBase"]]
+    ] = {}
 
-    command_type: DebugCommandType
-    advances_one_boundary: bool = False
+    command_type: ClassVar[DebugCommandType | None] = None
+    advances_one_boundary: ClassVar[bool] = False
 
     @classmethod
-    def by_command(cls) -> Mapping[DebugCommandType, "DebugCommandPolicyRow"]:
-        rows = (
-            cls(DebugCommandType.TOGGLE),
-            cls(DebugCommandType.STEP, advances_one_boundary=True),
-            cls(DebugCommandType.RUN),
-            cls(DebugCommandType.RUN_TO_PAUSE, advances_one_boundary=True),
-            cls(DebugCommandType.RESTART, advances_one_boundary=True),
-            cls(DebugCommandType.CHOOSE_SOURCE_GROUP),
-            cls(DebugCommandType.RANDOM_SOURCE_GROUP),
-            cls(DebugCommandType.STOP),
-        )
-        by_command = {row.command_type: row for row in rows}
-        if set(by_command) != set(DebugCommandType):
-            raise TypeError("DebugCommandPolicyRow must cover every DebugCommandType.")
-        return MappingProxyType(by_command)
+    def require_command_type(cls) -> DebugCommandType:
+        if cls.command_type is None:
+            raise TypeError(f"{cls.__name__} does not declare a debug command.")
+        return cls.command_type
+
+    @classmethod
+    def for_command_type(
+        cls,
+        command_type: DebugCommandType,
+    ) -> type["DebugCommandDeclarationBase"]:
+        return cls.__registry__[command_type]
+
+
+class AdvancesOneDebugBoundary:
+    """Trait for debug commands that release exactly one boundary."""
+
+    advances_one_boundary: ClassVar[bool] = True
+
+
+class ToggleDebugCommand(DebugCommandDeclarationBase):
+    command_type = DebugCommandType.TOGGLE
+
+
+class StepDebugCommand(AdvancesOneDebugBoundary, DebugCommandDeclarationBase):
+    command_type = DebugCommandType.STEP
+
+
+class RunDebugCommand(DebugCommandDeclarationBase):
+    command_type = DebugCommandType.RUN
+
+
+class RunToPauseDebugCommand(AdvancesOneDebugBoundary, DebugCommandDeclarationBase):
+    command_type = DebugCommandType.RUN_TO_PAUSE
+
+
+class RestartDebugCommand(AdvancesOneDebugBoundary, DebugCommandDeclarationBase):
+    command_type = DebugCommandType.RESTART
+
+
+class ChooseSourceGroupDebugCommand(DebugCommandDeclarationBase):
+    command_type = DebugCommandType.CHOOSE_SOURCE_GROUP
+
+
+class RandomSourceGroupDebugCommand(DebugCommandDeclarationBase):
+    command_type = DebugCommandType.RANDOM_SOURCE_GROUP
+
+
+class StopDebugCommand(DebugCommandDeclarationBase):
+    command_type = DebugCommandType.STOP
+
+
+class DebugBoundaryOutcome(str, Enum):
+    """Runtime outcome represented by one debug boundary event."""
+
+    STARTED = "started"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DebugTimelineNodeState(str, Enum):
+    """Debugger timeline state derived from a debug boundary event."""
+
+    PENDING = "pending"
+    STARTED = "started"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DebugBoundaryEventDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal semantic declaration for one debug event type."""
+
+    __registry_key__ = "event_type"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[DebugEventType, type["DebugBoundaryEventDeclarationBase"]]
+    ] = {}
+
+    event_type: ClassVar[DebugEventType | None] = None
+    progress_status: ClassVar[ProgressStatus]
+    boundary_outcome: ClassVar[DebugBoundaryOutcome]
+    timeline_node_state: ClassVar[DebugTimelineNodeState]
+    reports_output_artifacts: ClassVar[bool] = False
+
+    @classmethod
+    def require_event_type(cls) -> DebugEventType:
+        if cls.event_type is None:
+            raise TypeError(f"{cls.__name__} does not declare a debug event type.")
+        return cls.event_type
+
+    @classmethod
+    def for_event_type(
+        cls,
+        event_type: DebugEventType,
+    ) -> type["DebugBoundaryEventDeclarationBase"]:
+        return cls.__registry__[event_type]
+
+
+class StartedDebugBoundary:
+    """Trait for before-invocation debug boundary semantics."""
+
+    progress_status: ClassVar[ProgressStatus] = ProgressStatus.STARTED
+    boundary_outcome: ClassVar[DebugBoundaryOutcome] = DebugBoundaryOutcome.STARTED
+    timeline_node_state: ClassVar[DebugTimelineNodeState] = (
+        DebugTimelineNodeState.STARTED
+    )
+
+
+class CompletedDebugBoundary:
+    """Trait for completed debug boundary semantics."""
+
+    progress_status: ClassVar[ProgressStatus] = ProgressStatus.SUCCESS
+    boundary_outcome: ClassVar[DebugBoundaryOutcome] = DebugBoundaryOutcome.COMPLETED
+    timeline_node_state: ClassVar[DebugTimelineNodeState] = (
+        DebugTimelineNodeState.COMPLETED
+    )
+
+
+class FailedDebugBoundary:
+    """Trait for failed debug boundary semantics."""
+
+    progress_status: ClassVar[ProgressStatus] = ProgressStatus.ERROR
+    boundary_outcome: ClassVar[DebugBoundaryOutcome] = DebugBoundaryOutcome.FAILED
+    timeline_node_state: ClassVar[DebugTimelineNodeState] = DebugTimelineNodeState.FAILED
+
+
+class ReportsOutputArtifactsDebugBoundary:
+    """Trait for boundary events that can report produced artifacts."""
+
+    reports_output_artifacts: ClassVar[bool] = True
+
+
+class BeforeInvocationDebugBoundary(
+    StartedDebugBoundary,
+    DebugBoundaryEventDeclarationBase,
+):
+    event_type = DebugEventType.BEFORE_INVOCATION
+
+
+class AfterInvocationDebugBoundary(
+    ReportsOutputArtifactsDebugBoundary,
+    CompletedDebugBoundary,
+    DebugBoundaryEventDeclarationBase,
+):
+    event_type = DebugEventType.AFTER_INVOCATION
+
+
+class ExceptionDebugBoundary(
+    ReportsOutputArtifactsDebugBoundary,
+    FailedDebugBoundary,
+    DebugBoundaryEventDeclarationBase,
+):
+    event_type = DebugEventType.EXCEPTION
 
 
 class DebugControlMessageType(Enum):
@@ -1386,12 +1520,13 @@ class DebugEvent(DebugBoundaryState):
         if event_type is not DebugEventType.EXCEPTION and exception is not None:
             raise ValueError("Only exception debug events can carry an exception.")
 
+        event_declaration = DebugBoundaryEventDeclarationBase.for_event_type(event_type)
         reported_output_artifacts = (
-            output_artifacts.refs if event_type.reports_output_artifacts else ()
+            output_artifacts.refs if event_declaration.reports_output_artifacts else ()
         )
         event_ref_projection = (
             output_artifacts
-            if event_type.reports_output_artifacts
+            if event_declaration.reports_output_artifacts
             else input_artifacts
         )
         exception_text = None
@@ -1438,6 +1573,8 @@ class DebugEvent(DebugBoundaryState):
 @dataclass(frozen=True, slots=True)
 class DebugProgressContext:
     """Small debug context intended for ProgressEvent.context transport."""
+
+    progress_context_discriminator: ClassVar[str] = "debug_session_id"
 
     debug_session_id: str
     snapshot_id: str | None
@@ -1491,6 +1628,10 @@ class DebugProgressContext:
             snapshot_store_backend=context.get("snapshot_store_backend"),
         )
 
+    @classmethod
+    def is_progress_context(cls, context: Mapping[str, Any]) -> bool:
+        return cls.progress_context_discriminator in context
+
 
 @dataclass(frozen=True, slots=True)
 class DebugProgressEventRequest(DebugSessionRequest):
@@ -1542,7 +1683,9 @@ class DebugProgressEventRequest(DebugSessionRequest):
                 step_name=self.debug_event.step_name,
             ),
             phase=ProgressPhase.PATTERN_GROUP,
-            status=DebugProgressStatus.for_event_type(self.debug_event.event_type),
+            status=DebugBoundaryEventDeclarationBase.for_event_type(
+                self.debug_event.event_type
+            ).progress_status,
             percent=self.percent,
             completed=self.completed,
             total=self.total,
@@ -1557,22 +1700,6 @@ class DebugProgressEventRequest(DebugSessionRequest):
                 None if self.owned_wells is None else list(self.owned_wells)
             ),
         )
-
-
-class DebugProgressStatus:
-    """Status mapping for lightweight debug progress events."""
-
-    _STATUS_BY_EVENT_TYPE = MappingProxyType(
-        {
-            DebugEventType.BEFORE_INVOCATION: ProgressStatus.STARTED,
-            DebugEventType.AFTER_INVOCATION: ProgressStatus.SUCCESS,
-            DebugEventType.EXCEPTION: ProgressStatus.ERROR,
-        }
-    )
-
-    @classmethod
-    def for_event_type(cls, event_type: DebugEventType) -> ProgressStatus:
-        return cls._STATUS_BY_EVENT_TYPE[event_type]
 
 
 class DebugPausedWorkerController:
@@ -1622,7 +1749,9 @@ class DebugPausedWorkerController:
                 self._continuous = True
                 self._state = DebugPausedWorkerState.RUNNING
                 self._condition.notify_all()
-            elif command_type.advances_one_boundary:
+            elif DebugCommandDeclarationBase.for_command_type(
+                command_type
+            ).advances_one_boundary:
                 self._continuous = False
                 self._step_permits += 1
                 self._state = DebugPausedWorkerState.RUNNING
@@ -1685,6 +1814,7 @@ class DebugSession:
     execution_id: str | None = None
     plate_id: str | None = None
     axis_id: str | None = None
+    command_type: DebugCommandType | None = None
     selected_source_group: str | None = None
     cursor: DebugCursor | None = None
     breakpoints: tuple[DebugCursor, ...] = ()
@@ -1699,12 +1829,50 @@ class DebugSession:
         execution_id: str | None = None,
         plate_id: str | None = None,
         axis_id: str | None = None,
+        command_type: DebugCommandType | None = None,
     ) -> "DebugSession":
         return cls(
             debug_session_id=str(uuid4()),
             execution_id=execution_id,
             plate_id=plate_id,
             axis_id=axis_id,
+            command_type=command_type,
+        )
+
+    def with_command(self, command_type: DebugCommandType) -> "DebugSession":
+        return DebugSession(
+            debug_session_id=self.debug_session_id,
+            execution_id=self.execution_id,
+            plate_id=self.plate_id,
+            axis_id=self.axis_id,
+            command_type=command_type,
+            selected_source_group=self.selected_source_group,
+            cursor=self.cursor,
+            breakpoints=self.breakpoints,
+            snapshot_store_ref=self.snapshot_store_ref,
+            snapshot_store_backend=self.snapshot_store_backend,
+            dirty_from_cursor=self.dirty_from_cursor,
+        )
+
+    def with_snapshot_store(
+        self,
+        *,
+        snapshot_store_ref: str | None,
+        snapshot_store_backend: str | None,
+        axis_id: str | None = None,
+    ) -> "DebugSession":
+        return DebugSession(
+            debug_session_id=self.debug_session_id,
+            execution_id=self.execution_id,
+            plate_id=self.plate_id,
+            axis_id=self.axis_id if axis_id is None else axis_id,
+            command_type=self.command_type,
+            selected_source_group=self.selected_source_group,
+            cursor=self.cursor,
+            breakpoints=self.breakpoints,
+            snapshot_store_ref=snapshot_store_ref,
+            snapshot_store_backend=snapshot_store_backend,
+            dirty_from_cursor=self.dirty_from_cursor,
         )
 
     def with_cursor(self, cursor: DebugCursor) -> "DebugSession":
@@ -1713,6 +1881,7 @@ class DebugSession:
             execution_id=self.execution_id,
             plate_id=self.plate_id,
             axis_id=self.axis_id,
+            command_type=self.command_type,
             selected_source_group=self.selected_source_group,
             cursor=cursor,
             breakpoints=self.breakpoints,
@@ -1729,12 +1898,78 @@ class DebugSession:
             execution_id=self.execution_id,
             plate_id=self.plate_id,
             axis_id=self.axis_id,
+            command_type=self.command_type,
             selected_source_group=self.selected_source_group,
             cursor=self.cursor,
             breakpoints=self.breakpoints,
             snapshot_store_ref=self.snapshot_store_ref,
             snapshot_store_backend=self.snapshot_store_backend,
             dirty_from_cursor=self.cursor,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DebugTerminalSummary:
+    """Terminal UI/debug summary for one completed debug session."""
+
+    debug_session_id: str
+    plate_id: str
+    terminal_status: str
+    cursor: DebugCursor | None = None
+    command_type: DebugCommandType | None = None
+    axis_id: str | None = None
+    snapshot_id: str | None = None
+    snapshot_store_ref: str | None = None
+    snapshot_store_backend: str | None = None
+    step_name: str | None = None
+    callable_name: str | None = None
+    completed_at_unix: float | None = None
+
+    @classmethod
+    def from_session(
+        cls,
+        session: DebugSession,
+        *,
+        terminal_status: str,
+        completed_at_unix: float | None = None,
+    ) -> "DebugTerminalSummary":
+        if session.plate_id is None:
+            raise ValueError("DebugTerminalSummary requires session.plate_id.")
+        return cls(
+            debug_session_id=session.debug_session_id,
+            plate_id=session.plate_id,
+            terminal_status=terminal_status,
+            cursor=session.cursor,
+            command_type=session.command_type,
+            axis_id=session.axis_id,
+            snapshot_store_ref=session.snapshot_store_ref,
+            snapshot_store_backend=session.snapshot_store_backend,
+            completed_at_unix=completed_at_unix,
+        )
+
+    def with_snapshot(
+        self,
+        *,
+        snapshot: DebugSnapshot | None,
+        snapshot_id: str | None,
+        snapshot_store_ref: str | None,
+        snapshot_store_backend: str | None,
+    ) -> "DebugTerminalSummary":
+        return DebugTerminalSummary(
+            debug_session_id=self.debug_session_id,
+            plate_id=self.plate_id,
+            terminal_status=self.terminal_status,
+            cursor=self.cursor if snapshot is None else snapshot.cursor,
+            command_type=self.command_type,
+            axis_id=self.axis_id if snapshot is None else snapshot.axis_id,
+            snapshot_id=snapshot_id,
+            snapshot_store_ref=snapshot_store_ref,
+            snapshot_store_backend=snapshot_store_backend,
+            step_name=self.step_name if snapshot is None else snapshot.step_name,
+            callable_name=(
+                self.callable_name if snapshot is None else snapshot.callable_name
+            ),
+            completed_at_unix=self.completed_at_unix,
         )
 
 

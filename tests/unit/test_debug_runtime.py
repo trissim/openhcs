@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import socket
@@ -16,7 +17,10 @@ from openhcs.core.debug import (
     DebugArtifactExportRequest,
     DebugArtifactExportResponse,
     DebugArtifactIdentity,
+    DebugBoundaryEventDeclarationBase,
+    DebugBoundaryOutcome,
     DebugCommandType,
+    DebugCommandDeclarationBase,
     DebugCursor,
     DebugBoundaryState,
     DebugEvent,
@@ -212,6 +216,33 @@ class DebugRuntimeFixture:
             worker_slot="worker_0",
             owned_wells=("A01",),
         )
+
+
+def test_debug_command_and_boundary_declarations_cover_wire_tokens():
+    assert set(DebugCommandDeclarationBase.__registry__) == set(DebugCommandType)
+    assert set(DebugBoundaryEventDeclarationBase.__registry__) == set(DebugEventType)
+
+
+def test_debug_boundary_declarations_own_progress_status_and_artifact_policy():
+    before = DebugBoundaryEventDeclarationBase.for_event_type(
+        DebugEventType.BEFORE_INVOCATION
+    )
+    after = DebugBoundaryEventDeclarationBase.for_event_type(
+        DebugEventType.AFTER_INVOCATION
+    )
+    exception = DebugBoundaryEventDeclarationBase.for_event_type(
+        DebugEventType.EXCEPTION
+    )
+
+    assert before.progress_status is ProgressStatus.STARTED
+    assert before.boundary_outcome is DebugBoundaryOutcome.STARTED
+    assert not before.reports_output_artifacts
+    assert after.progress_status is ProgressStatus.SUCCESS
+    assert after.boundary_outcome is DebugBoundaryOutcome.COMPLETED
+    assert after.reports_output_artifacts
+    assert exception.progress_status is ProgressStatus.ERROR
+    assert exception.boundary_outcome is DebugBoundaryOutcome.FAILED
+    assert exception.reports_output_artifacts
 
 
 class DebugSnapshotFileManagerStub:
@@ -945,18 +976,16 @@ def test_paused_worker_runtime_inspection_projects_runtime_value_store():
 
     table = view_model.sections[0].table
     assert table is not None
-    assert table.rows == (
-        (
-            "measurements",
-            ArtifactKind.MEASUREMENTS.value,
-            DebugRuntimeFixture.AXIS_ID,
-            "DAPI",
-            DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
-            "/memory/measurements.pkl",
-            "",
-            "list",
-        ),
-    )
+    assert table.columns == ("key", "location", "value_type")
+    key_record = json.loads(table.rows[0][0])
+    location_record = json.loads(table.rows[0][1])
+    assert key_record["name"] == "measurements"
+    assert key_record["kind"] == ArtifactKind.MEASUREMENTS.value
+    assert key_record["scope"]["axis_id"] == DebugRuntimeFixture.AXIS_ID
+    assert key_record["scope"]["group_key"] == "DAPI"
+    assert location_record["backend"] == DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND
+    assert location_record["path"] == "/memory/measurements.pkl"
+    assert table.rows[0][2] == "list"
     DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
 
 
