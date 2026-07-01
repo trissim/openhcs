@@ -231,7 +231,7 @@ def test_official30_recipe_document_renders_generated_case_index():
         "dataset=CellProfiler_tutorials"
     ) in document.content
     assert "Module Usage Index" in document.content
-    assert "Default pipeline params: openhcs_max_axis_count=1" in document.content
+    assert "Default source-schema selection: max_image_set_count=1" in document.content
     assert "Raw manifest:" not in document.content
     assert len(document.sections) == 33
     assert any(

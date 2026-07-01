@@ -613,6 +613,10 @@ class KnowledgeBaseService:
                 manifest.get("default_pipeline_params"),
             ),
             KnowledgeBaseService._official30_mapping_line(
+                "Default source-schema selection",
+                manifest.get("default_source_schema_image_set_selection"),
+            ),
+            KnowledgeBaseService._official30_mapping_line(
                 "Path roots",
                 manifest.get("path_roots"),
             ),
