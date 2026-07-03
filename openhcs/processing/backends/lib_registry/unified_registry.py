@@ -1259,7 +1259,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             _set_registry_runtime_parameter_exclusions(
                 func,
                 inspect.signature(func),
-                signature_parameter_types,
+                runtime_parameter_types,
             )
             return func
 
@@ -1318,7 +1318,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         _set_registry_runtime_parameter_exclusions(
             wrapper,
             wrapper.__signature__,
-            signature_parameter_types,
+            runtime_parameter_types,
         )
 
         # Explicitly copy nominal processing metadata when the wrapped callable owns it.

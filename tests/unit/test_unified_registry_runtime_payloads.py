@@ -4,6 +4,12 @@ from functools import wraps
 from typing import Any
 
 import numpy as np
+from python_introspect import (
+    Enableable,
+    UnifiedParameterAnalyzer,
+    is_enableable,
+    parameter_exclusions,
+)
 
 from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.runtime_values import (
@@ -55,6 +61,31 @@ class MinimalRegistry(LibraryRegistryBase):
 
     def _check_first_parameter(self, first_param: Any, func_name: str) -> bool:
         return True
+
+
+def test_contract_wrapper_exposes_enableable_but_hides_runtime_parameters() -> None:
+    """Enableable is an editable callable declaration, not a runtime exclusion."""
+
+    def raw(image: np.ndarray, *, sigma: float = 1.0) -> np.ndarray:
+        return image + sigma
+
+    wrapped = MinimalRegistry("minimal").apply_contract_wrapper(
+        raw,
+        ProcessingContract.FLEXIBLE,
+    )
+
+    enabled_field = Enableable.require_parameter_name()
+    params = UnifiedParameterAnalyzer.analyze(wrapped)
+    exclusions = parameter_exclusions(wrapped)
+
+    assert is_enableable(wrapped)
+    assert enabled_field in params
+    assert enabled_field not in exclusions
+    assert "sigma" in params
+    assert "dtype_config" not in params
+    assert "slice_by_slice" not in params
+    assert "dtype_config" in exclusions
+    assert "slice_by_slice" in exclusions
 
 
 def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
