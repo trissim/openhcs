@@ -1201,6 +1201,7 @@ class DualEditorWindow(BaseFormDialog):
         try:
             # CRITICAL FIX: Sync function pattern from function editor BEFORE collecting form values
             # The function editor doesn't use a form manager, so we need to explicitly sync it
+            current_pattern = None
             if self.func_editor:
                 current_pattern = self.func_editor.current_pattern
 
@@ -1217,18 +1218,14 @@ class DualEditorWindow(BaseFormDialog):
                 self.editing_step.func = current_pattern
                 logger.debug(f"Synced function pattern before save: {current_pattern}")
 
-            # CRITICAL FIX: Collect current values from all tab states before saving
-            # This ensures nested dataclass field values are properly saved to the step object
-            for tab_index in range(self.tab_widget.count()):
-                tab_widget = self.tab_widget.widget(tab_index)
-                if tab_widget and hasattr(tab_widget, "state") and tab_widget.state:
-                    # Get current values from this tab's state
-                    current_values = tab_widget.state.get_current_values()
-
-                    # Apply values to editing step
-                    for param_name, value in current_values.items():
-                        setattr(self.editing_step, param_name, value)
-                        logger.debug(f"Applied {param_name}={value} to editing step")
+            # ObjectState is the boundary from flat UI storage to a typed step
+            # declaration. Do not replay get_current_values() with setattr():
+            # that API returns dotted paths for nested fields.
+            if self.step_editor and self.step_editor.state:
+                self.editing_step = self.step_editor.state.to_object()
+                if current_pattern is not None:
+                    self.editing_step.func = current_pattern
+                logger.debug("Materialized editing step from ObjectState for save")
 
             # Validate step
             step_name = self.editing_step.name

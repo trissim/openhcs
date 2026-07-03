@@ -322,6 +322,26 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         return steps
 
+    def _get_steps_for_serialization(self) -> List[FunctionStep]:
+        """Return current pipeline steps through the ObjectState boundary.
+
+        ObjectState owns reconstruction from flat UI state into typed step
+        declarations. Serialization should consume those declarations, falling
+        back to the backing list only before a pipeline has registered scopes.
+        """
+        if not self.current_plate:
+            return list(self.pipeline_steps)
+
+        pipeline_state = self._ensure_pipeline_state(self.current_plate)
+        step_scope_ids = (
+            pipeline_state.parameters.get("step_scope_ids") if pipeline_state else None
+        ) or []
+
+        if not step_scope_ids:
+            return list(self.pipeline_steps)
+
+        return self._get_steps_from_pipeline_state(self.current_plate)
+
     def _update_pipeline_steps(
         self, plate_path: str, steps: List[FunctionStep]
     ) -> None:
@@ -667,9 +687,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
             return
 
         try:
-            # Generate complete pipeline steps code with imports
+            # Generate complete pipeline steps code with imports.
+            # Use ObjectState.to_object() for registered steps so codegen sees
+            # typed nested dataclasses instead of stale backing objects.
+            steps_for_code = self._get_steps_for_serialization()
             python_code = generate_python_source(
-                Assignment("pipeline_steps", list(self.pipeline_steps)),
+                Assignment("pipeline_steps", steps_for_code),
                 header="# Edit this pipeline and save to apply changes",
                 clean_mode=True,
             )
@@ -1236,6 +1259,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
                     break
 
             # Update the display
+            if self.current_plate:
+                self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
             self.update_item_list()
             self.pipeline_changed.emit(self.pipeline_steps)
             self.status_message.emit(f"Updated step: {edited_step.name}")
