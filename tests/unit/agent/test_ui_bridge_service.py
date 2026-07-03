@@ -83,6 +83,7 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
+    UiBridgeDescriptorDirectoryAuthority,
     UiBridgeGatewayABC,
     UiBridgeGatewayResponseError,
     UiBridgeProcessAdvertisedDescriptorCatalog,
@@ -899,6 +900,11 @@ def test_descriptor_resolution_uses_process_advertised_descriptor(
         UiBridgeProcessAdvertisedDescriptorCatalog,
         "proc_root",
         proc_root,
+    )
+    monkeypatch.setattr(
+        UiBridgeDescriptorDirectoryAuthority,
+        "descriptor_dirs",
+        classmethod(lambda cls: (tmp_path / "empty-descriptor-dir",)),
     )
     gateway = _FakeUiBridgeGateway()
 

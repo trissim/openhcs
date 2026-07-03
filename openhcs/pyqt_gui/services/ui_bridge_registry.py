@@ -10,6 +10,7 @@ from typing import TypeAlias, TypeVar
 from metaclass_registry import AutoRegisterMeta
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeRegistryKeyMixin,
+    UiLiveOverviewContributorABC,
     UiBridgeSnapshotProviderABC,
     UiActionProviderABC,
     UiCodeDocumentProviderABC,
@@ -85,6 +86,7 @@ class UiBridgeSurfaceRegistry:
         self._action_providers: dict[str, UiActionProviderABC] = {}
         self._window_providers: dict[str, UiWindowProviderABC] = {}
         self._object_state_scope_providers: dict[str, UiObjectStateScopeProviderABC] = {}
+        self._live_overview_contributors: list[UiLiveOverviewContributorABC] = []
 
     def register_code_document_provider(
         self,
@@ -146,6 +148,12 @@ class UiBridgeSurfaceRegistry:
             UiRegisteredSurfaceKind.OBJECT_STATE_SCOPE,
         )
 
+    def register_live_overview_contributor(
+        self,
+        contributor: UiLiveOverviewContributorABC,
+    ) -> None:
+        self._live_overview_contributors.append(contributor)
+
     def code_document_provider(self, document_id: str) -> UiCodeDocumentProviderABC:
         if document_id in self._code_document_providers:
             return self._code_document_providers[document_id]
@@ -190,6 +198,13 @@ class UiBridgeSurfaceRegistry:
         self,
     ) -> tuple[UiObjectStateScopeProviderABC, ...]:
         return tuple(self._object_state_scope_providers.values())
+
+    def overview_contributors(self) -> tuple[UiLiveOverviewContributorABC, ...]:
+        return (
+            tuple(self._state_surface_providers.values())
+            + tuple(self._window_providers.values())
+            + tuple(self._live_overview_contributors)
+        )
 
     @staticmethod
     def _dynamic_provider(

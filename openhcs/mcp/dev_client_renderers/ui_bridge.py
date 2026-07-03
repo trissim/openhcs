@@ -1419,6 +1419,10 @@ class UiActionCatalogRenderer(McpDevOutputRenderer):
             "selection_rev="
             f"{McpDevPayloadProjection.text(action.get('selection_revision_token'))} "
             f"effects={ViewerValidationRenderer._sequence_text(action.get('side_effects'))}"
+            " selection_mode="
+            f"{McpDevPayloadProjection.text(action.get('selection_mode'))} "
+            "surfaces="
+            f"{ViewerValidationRenderer._sequence_text(action.get('related_state_surface_ids'))}"
             f"{disabled_text}"
         )
 

@@ -210,6 +210,12 @@ class UiBridgeOperationContractABC(ABC, metaclass=AutoRegisterMeta):
             raise KeyError(f"Unknown UI bridge operation: {operation_name}") from exc
 
     @classmethod
+    def require_name(cls) -> str:
+        if cls.name is None:
+            raise ValueError(f"UI bridge operation {cls.__qualname__} has no name.")
+        return cls.name
+
+    @classmethod
     def supported_operation_names(cls) -> tuple[str, ...]:
         return tuple(cls.__registry__)
 

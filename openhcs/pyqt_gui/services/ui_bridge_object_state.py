@@ -15,7 +15,9 @@ from pyqt_reactive.services.function_pattern_code_document import (
     FunctionPatternScopeCodeDocumentDriver,
 )
 from pyqt_reactive.forms.parameter_form_service import ParameterFormService
-from pyqt_reactive.services.window_code_document import PYTHON_MIME_TYPE
+from pyqt_reactive.services.window_code_document import (
+    PYTHON_MIME_TYPE,
+)
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import WindowNavigationRequest
 from pyqt_reactive.services.parameter_help_service import (
@@ -957,9 +959,7 @@ class WindowCodeDocumentDriverBackedProvider(
                 mime_type=document.mime_type,
                 size_bytes=len(source_bytes),
                 sha256=hashlib.sha256(source_bytes).hexdigest(),
-                current_revision_token=self._snapshot_provider.revision_token(
-                    self._revision_key_for_address(address)
-                ),
+                current_revision_token=self._current_revision_token(address),
                 current_snapshot=self._snapshot_provider.current_snapshot(),
                 selection_mode=request.selection_mode,
                 selected_scope_ids=self._selected_scope_ids(address),
@@ -998,9 +998,7 @@ class WindowCodeDocumentDriverBackedProvider(
 
         try:
             address = self._address(request.document_id)
-            current_revision = self._snapshot_provider.revision_token(
-                self._revision_key_for_address(address)
-            )
+            current_revision = self._current_revision_token(address)
             if request.base_revision_token != current_revision:
                 return self._apply_error(
                     request,
@@ -1028,7 +1026,10 @@ class WindowCodeDocumentDriverBackedProvider(
                 driver.apply_source(request.source)
 
             post_head_id = self._snapshot_provider.current_branch_head_snapshot_id()
-            if post_head_id == pre_head_id:
+            if (
+                driver.records_object_state_snapshot_on_apply()
+                and post_head_id == pre_head_id
+            ):
                 return self._apply_error(
                     request,
                     AgentError(
@@ -1041,9 +1042,7 @@ class WindowCodeDocumentDriverBackedProvider(
                 )
 
             post_snapshot = self._snapshot_provider.current_snapshot()
-            new_revision_token = self._snapshot_provider.revision_token(
-                self._revision_key_for_address(address)
-            )
+            new_revision_token = self._current_revision_token(address)
             return UiCodeDocumentApplyResult(
                 schema_version=SCHEMA_VERSION,
                 document_id=request.document_id,
@@ -1110,6 +1109,24 @@ class WindowCodeDocumentDriverBackedProvider(
 
     def _mutation_scope_id(self, address) -> str:
         raise NotImplementedError
+
+    def _current_revision_token_for_apply_result(
+        self,
+        request: UiCodeDocumentApplyRequest,
+    ) -> str | None:
+        try:
+            address = self._address(request.document_id)
+            return self._current_revision_token(address)
+        except Exception:
+            return super()._current_revision_token_for_apply_result(request)
+
+    def _current_revision_token(
+        self,
+        address,
+    ) -> str:
+        return self._snapshot_provider.revision_token(
+            self._revision_key_for_address(address)
+        )
 
     def _document_error(
         self,
@@ -1385,6 +1402,13 @@ class WindowManagerCodeDocumentProvider(WindowCodeDocumentDriverBackedProvider):
 
     def _revision_key_for_address(self, address: WindowCodeDocumentAddress) -> str:
         return address.revision_key
+
+    def _current_revision_token(self, address: WindowCodeDocumentAddress) -> str:
+        driver = self._driver(address)
+        document_revision = driver.current_revision_token()
+        if document_revision is not None:
+            return document_revision
+        return super()._current_revision_token(address)
 
     def _provider_identity_for_label(
         self,

@@ -128,6 +128,7 @@ class ManagerWidgetActionProviderABC(UiActionProviderABC, ABC):
             current_selection_count=len(target_scope_ids),
             target_scope_ids=target_scope_ids,
             selection_revision_token=self._selection_revision_token(),
+            related_state_surface_ids=(PIPELINE_EDITOR_STATE_IDENTITY.surface_id,),
         )
 
     def invoke(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:

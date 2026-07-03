@@ -199,11 +199,12 @@ def test_system_monitor_render_timer_caps_to_update_fps() -> None:
     assert fake_widget._render_timer.started_interval_ms == 200
 
 
-def test_metrics_update_refreshes_full_plot_data(monkeypatch) -> None:
+def test_metrics_update_queues_full_plot_data_on_visual_frame(monkeypatch) -> None:
     monkeypatch.setattr(system_monitor, "PYQTGRAPH_AVAILABLE", True)
     metrics = {"cpu_percent": 12.5, "ram_percent": 34.5}
     fake_widget = SimpleNamespace(
         update_system_info=Mock(),
+        _queue_pyqtgraph_plot_update=Mock(),
         update_pyqtgraph_plots=Mock(),
         update_fallback_display=Mock(),
     )
@@ -211,8 +212,33 @@ def test_metrics_update_refreshes_full_plot_data(monkeypatch) -> None:
     SystemMonitorWidget.update_display(fake_widget, metrics)
 
     fake_widget.update_system_info.assert_called_once_with(metrics)
-    fake_widget.update_pyqtgraph_plots.assert_called_once_with(metrics)
+    fake_widget._queue_pyqtgraph_plot_update.assert_called_once_with(metrics)
+    fake_widget.update_pyqtgraph_plots.assert_not_called()
     fake_widget.update_fallback_display.assert_not_called()
+
+
+def test_pyqtgraph_plot_update_uses_visual_frame_coordinator(monkeypatch) -> None:
+    queued = []
+
+    def queue_callback(owner, callback) -> None:
+        queued.append((owner, callback))
+
+    monkeypatch.setattr(system_monitor, "queue_visual_frame_callback", queue_callback)
+    metrics = {"cpu_percent": 12.5, "ram_percent": 34.5}
+    fake_widget = make_widget(update_pyqtgraph_plots=Mock())
+
+    SystemMonitorWidget._queue_pyqtgraph_plot_update(fake_widget, metrics)
+    metrics["cpu_percent"] = 99.0
+
+    assert len(queued) == 1
+    owner, callback = queued[0]
+    assert owner is fake_widget
+
+    callback()
+
+    fake_widget.update_pyqtgraph_plots.assert_called_once_with(
+        {"cpu_percent": 12.5, "ram_percent": 34.5}
+    )
 
 
 def test_render_frame_does_not_scroll_fixed_axis_plots() -> None:

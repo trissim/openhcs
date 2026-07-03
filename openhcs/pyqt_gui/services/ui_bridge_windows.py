@@ -37,7 +37,7 @@ from pyqt_reactive.widgets.shared import (
 from pyqt_reactive.widgets.shared.abstract_manager_widget import AbstractManagerWidget
 from pyqt_reactive.widgets.shared.list_item_delegate import (
     DIRTY_FIELDS_ROLE,
-    FLASH_KEY_ROLE,
+    OBJECT_STATE_PATH_ROLE,
     SIG_DIFF_FIELDS_ROLE,
 )
 
@@ -1708,7 +1708,7 @@ class _WidgetItemSemanticRecord:
 
     @classmethod
     def from_index(cls, index: QModelIndex) -> "_WidgetItemSemanticRecord":
-        scope_value = index.data(FLASH_KEY_ROLE)
+        scope_value = index.data(OBJECT_STATE_PATH_ROLE)
         agent_scope_id = None
         if isinstance(scope_value, str):
             agent_scope_id = _agent_object_state_scope_id(scope_value)

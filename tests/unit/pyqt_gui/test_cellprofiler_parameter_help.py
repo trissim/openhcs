@@ -126,6 +126,105 @@ def test_parameter_help_long_content_uses_readable_window_width() -> None:
     assert help_window_width_for_content(docstring_info) == HELP_WINDOW_LARGE_WIDTH
 
 
+def test_parameter_help_content_uses_parameter_window_not_docstring_mirror(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    import openhcs  # noqa: F401 - activates source-checkout externals first
+    from PyQt6.QtWidgets import QApplication
+    from pyqt_reactive.windows.help_window_manager import (
+        HELP_WINDOW_CONTENT_MARGIN,
+        HELP_WINDOW_DIALOG_MARGIN,
+        HELP_WINDOW_MIN_WIDTH,
+        DocstringHelpWindow,
+        HelpWindowManager,
+        ParameterHelpWindow,
+    )
+
+    app = QApplication.instance() or QApplication([])
+    HelpWindowManager._help_window = None
+
+    try:
+        HelpWindowManager.show_parameter_help(
+            "source_filters",
+            "Filters limiting the source universe before named bindings are resolved.",
+            parent=None,
+        )
+        for _ in range(20):
+            app.processEvents()
+
+        window = HelpWindowManager._help_window
+        assert isinstance(window, ParameterHelpWindow)
+        assert not isinstance(window, DocstringHelpWindow)
+        assert window.content.summary == "• source_filters"
+        assert (
+            window.content.description
+            == "Filters limiting the source universe before named bindings are resolved."
+        )
+        assert window.layout().contentsMargins().left() == HELP_WINDOW_DIALOG_MARGIN
+        content_layout = window.content_area.widget().layout()
+        assert content_layout.contentsMargins().left() == HELP_WINDOW_CONTENT_MARGIN
+        assert window.width() >= HELP_WINDOW_MIN_WIDTH
+        assert window.minimumWidth() >= HELP_WINDOW_MIN_WIDTH
+        assert window.content_area.minimumHeight() == window.content_area.maximumHeight()
+        assert window.height() >= window.sizeHint().height()
+    finally:
+        if HelpWindowManager._help_window is not None:
+            HelpWindowManager._help_window.close()
+        HelpWindowManager._help_window = None
+
+
+def test_dataclass_help_replaces_parameter_window_without_reusing_parameter_dialog(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    import openhcs  # noqa: F401 - activates source-checkout externals first
+    from PyQt6.QtWidgets import QApplication
+    from openhcs.core.config import PathPlanningConfig
+    from pyqt_reactive.windows.help_window_manager import (
+        DocstringHelpWindow,
+        HelpWindowManager,
+        ParameterHelpWindow,
+    )
+
+    app = QApplication.instance() or QApplication([])
+    HelpWindowManager._help_window = None
+
+    try:
+        HelpWindowManager.show_parameter_help(
+            "source_filters",
+            "Filters limiting the source universe before named bindings are resolved.",
+            parent=None,
+        )
+        for _ in range(20):
+            app.processEvents()
+
+        parameter_window = HelpWindowManager._help_window
+        assert isinstance(parameter_window, ParameterHelpWindow)
+
+        HelpWindowManager.show_docstring_help(PathPlanningConfig, parent=None)
+        for _ in range(20):
+            app.processEvents()
+
+        dataclass_window = HelpWindowManager._help_window
+        assert isinstance(dataclass_window, DocstringHelpWindow)
+        assert dataclass_window is not parameter_window
+        assert dataclass_window.target is PathPlanningConfig
+        assert "PathPlanningConfig(" not in dataclass_window.docstring_info.summary
+    finally:
+        if HelpWindowManager._help_window is not None:
+            HelpWindowManager._help_window.close()
+        HelpWindowManager._help_window = None
+
+
 def test_help_context_routes_parameter_help_with_function_target(monkeypatch) -> None:
     import openhcs  # noqa: F401 - activates source-checkout externals first
     from openhcs.processing.backends import cellprofiler
