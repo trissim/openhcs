@@ -65,7 +65,7 @@ from openhcs.pyqt_gui.services.plate_scope_identity import (
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
-from openhcs.core.debug import DebugSession, DebugTerminalSummary
+from openhcs.core.debug import DebugCursor, DebugSession, DebugTerminalSummary
 from pyqt_reactive.widgets.shared.manager_item_hooks import (
     AttributeItemIdProjection,
     ManagerItemHooks,
@@ -103,6 +103,10 @@ from pyqt_reactive.widgets.shared.abstract_manager_widget import (
 from pyqt_reactive.widgets.shared.manager_action_controller import CodeEditorPayload
 from pyqt_reactive.widgets.shared.manager_selection_controller import (
     ItemSelectionPayloadProjection,
+)
+from pyqt_reactive.widgets.shared.list_item_delegate import (
+    LEADING_MARKER_ROLE_OFFSET,
+    ListItemLeadingMarker,
 )
 
 logger = logging.getLogger(__name__)
@@ -362,6 +366,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
     LIST_ITEM_FORMAT = ListItemFormat(
         first_line=("func",),  # func= shown after step name
         formatters={},
+        append_signature_diff_fields=False,
     )
 
     # Signals
@@ -422,6 +427,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             formatters={
                 "func": self.function_presentation.format_func_preview,
             },
+            append_signature_diff_fields=self.LIST_ITEM_FORMAT.append_signature_diff_fields,
         )
         self._handle_debug_command = self.debug_workflow.handle_command
         self.show_debug_snapshot = self.debug_workflow.show_snapshot
@@ -595,11 +601,27 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             Tuple of (StyledText with segments, semantic step_name)
         """
         display_name, step_name = self._numbered_step_display_name(step, step_index)
+        item_format = self.LIST_ITEM_FORMAT
+        if item_format is not None and step_index is not None:
+            item_format = ListItemFormat(
+                first_line=item_format.first_line,
+                preview_line=item_format.preview_line,
+                detail_line_field=item_format.detail_line_field,
+                formatters={
+                    **item_format.formatters,
+                    "func": lambda func: self.function_presentation.format_func_preview(
+                        func,
+                        step_index=step_index,
+                    ),
+                },
+                append_signature_diff_fields=item_format.append_signature_diff_fields,
+            )
 
         # Use declarative format from LIST_ITEM_FORMAT
-        styled = self.build_item_display_from_format(
+        styled = self._item_display_builder.build_from_format(
             item=step,
             item_name=display_name,
+            item_format=item_format,
         )
         return styled, step_name
 
@@ -678,9 +700,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             plate_scope=plate_scope,
             source_schema=self._current_source_schema(),
             source_binding_context=self.current_source_binding_context(),
-            function_invocation_badge_provider=(
-                self.function_presentation.badge_provider(new_step)
-            ),
+            function_invocation_badge_provider=None,
         )
         # Set original step for change detection
         editor.set_original_step_for_change_detection()
@@ -1428,12 +1448,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         step_to_edit = item
         plate_scope = self._require_current_plate_scope()
 
-        # Find step's current position in pipeline for border pattern
-        step_index = None
-        for i, step in enumerate(self.pipeline_steps):
-            if step is step_to_edit:
-                step_index = i
-                break
+        step_index = self._pipeline_step_index(step_to_edit)
 
         def handle_save(edited_step):
             """Handle step save from editor."""
@@ -1454,7 +1469,10 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             source_schema=self._current_source_schema(),
             source_binding_context=self.current_source_binding_context(),
             function_invocation_badge_provider=(
-                self.function_presentation.badge_provider(step_to_edit)
+                self.function_presentation.badge_provider(
+                    step_to_edit,
+                    step_index=step_index,
+                )
             ),
         )
         # Set original step for change detection
@@ -1470,6 +1488,13 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         editor.show()
         editor.raise_()
         editor.activateWindow()
+
+    def _pipeline_step_index(self, step_to_find: FunctionStep) -> int:
+        """Return the rendered pipeline row index for an existing step."""
+        for step_index, step in enumerate(self.pipeline_steps):
+            if step is step_to_find:
+                return step_index
+        raise RuntimeError("Cannot edit a step that is not in the rendered pipeline")
 
     # === List Update Hooks (domain-specific) ===
 
@@ -1498,9 +1523,27 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self,
         item: FunctionStep,
         index: int,
-    ) -> dict[int, bool]:
-        """Get enabled flag in UserRole+1."""
-        return {1: not item.enabled}
+    ) -> dict[int, bool | ListItemLeadingMarker | None]:
+        """Get row-level presentation roles."""
+        return {
+            1: not item.enabled,
+            LEADING_MARKER_ROLE_OFFSET: self._debug_leading_marker_for_step_index(index),
+        }
+
+    def _debug_leading_marker_for_step_index(
+        self,
+        step_index: int,
+    ) -> ListItemLeadingMarker | None:
+        cursor = self._active_debug_list_cursor()
+        if cursor is None or cursor.step_index != step_index:
+            return None
+        return ListItemLeadingMarker()
+
+    def _active_debug_list_cursor(self) -> DebugCursor | None:
+        session = self.debug_session_state
+        if session is not None and session.cursor is not None:
+            return session.cursor
+        return None
 
     @override
     def _get_list_placeholder(self) -> tuple[str, None] | None:
@@ -1553,7 +1596,10 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
     def on_time_travel_complete(self, dirty_states, triggering_scope):
         """Refresh pipeline list after time travel to reflect restored step order."""
-        PipelineEditorListWorkflow(self).restore_after_time_travel()
+        PipelineEditorListWorkflow(self).restore_after_time_travel(
+            dirty_states,
+            triggering_scope,
+        )
 
     def _action_copy_steps(self):
         """Copy selected steps to clipboard (Ctrl+C)."""

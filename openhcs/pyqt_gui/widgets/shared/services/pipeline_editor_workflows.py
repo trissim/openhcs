@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypeAlias
 
 from objectstate import patch_lazy_constructors, spawn_thread_with_context
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import (
     DebugCommandType,
@@ -42,6 +42,8 @@ from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
 
 
 logger = logging.getLogger(__name__)
+
+TimeTravelDirtyStates: TypeAlias = Iterable[tuple[str, ObjectState]]
 
 
 class WorkflowSignal(Protocol):
@@ -118,8 +120,14 @@ class PipelineEditorFunctionPresentation:
 
     editor: Any
 
-    def format_func_preview(self, func, state=None) -> str | None:
-        badges = self.visible_invocation_badges(func)
+    def format_func_preview(
+        self,
+        func,
+        state=None,
+        *,
+        step_index: int | None = None,
+    ) -> str | None:
+        badges = self.visible_invocation_badges(func, step_index=step_index)
         if badges:
             return "func=" + " | ".join(badge.text for badge in badges)
         if isinstance(func, tuple) and len(func) >= 1:
@@ -155,6 +163,8 @@ class PipelineEditorFunctionPresentation:
     def invocation_badges(
         self,
         func,
+        *,
+        step_index: int | None = None,
     ) -> tuple[FunctionPatternInvocationBadge, ...]:
         if not func:
             return ()
@@ -175,7 +185,8 @@ class PipelineEditorFunctionPresentation:
                 position=item.key.position,
                 function_name=item.key.function_name,
                 is_current_cursor=(
-                    cursor.matches_invocation_key_parts(
+                    self._cursor_matches_step_index(cursor, step_index)
+                    and cursor.matches_invocation_key_parts(
                         group_key=item.key.group_key,
                         position=item.key.position,
                         function_name=item.key.function_name,
@@ -184,7 +195,8 @@ class PipelineEditorFunctionPresentation:
                     else False
                 ),
                 is_dirty_replay_start=(
-                    dirty_cursor.matches_invocation_key_parts(
+                    self._cursor_matches_step_index(dirty_cursor, step_index)
+                    and dirty_cursor.matches_invocation_key_parts(
                         group_key=item.key.group_key,
                         position=item.key.position,
                         function_name=item.key.function_name,
@@ -199,13 +211,24 @@ class PipelineEditorFunctionPresentation:
     def visible_invocation_badges(
         self,
         func,
+        *,
+        step_index: int | None = None,
     ) -> tuple[FunctionPatternInvocationBadge, ...]:
-        return tuple(badge for badge in self.invocation_badges(func) if badge.is_visible)
+        return tuple(
+            badge
+            for badge in self.invocation_badges(func, step_index=step_index)
+            if badge.is_visible
+        )
 
-    def badge_provider(self, step: Any) -> Callable[[str, int, Callable], str | None]:
+    def badge_provider(
+        self,
+        step: AbstractStep,
+        *,
+        step_index: int,
+    ) -> Callable[[str, int, Callable], str | None]:
         badges = {
             (badge.group_key, badge.position, badge.function_name): badge
-            for badge in self.invocation_badges(step.func)
+            for badge in self.invocation_badges(step.func, step_index=step_index)
         }
 
         def badge_text(group_key: str, position: int, func: Callable) -> str | None:
@@ -213,6 +236,10 @@ class PipelineEditorFunctionPresentation:
             return badge.text if badge is not None and badge.is_visible else None
 
         return badge_text
+
+    @staticmethod
+    def _cursor_matches_step_index(cursor: DebugCursor, step_index: int | None) -> bool:
+        return step_index is not None and cursor.step_index == step_index
 
     def func_name(self, func_entry) -> str:
         if isinstance(func_entry, tuple) and len(func_entry) >= 1:
@@ -636,21 +663,61 @@ class PipelineEditorListWorkflow:
             scope_id=str(self.editor.current_plate),
         )
 
-    def restore_after_time_travel(self) -> None:
-        if self.editor.current_plate:
-            self.editor.pipeline_steps = self.editor._get_steps_from_pipeline_state(
-                self.editor.current_plate
-            )
-        else:
-            self.editor.pipeline_steps = []
+    def restore_after_time_travel(
+        self,
+        dirty_states: TimeTravelDirtyStates | None = None,
+        triggering_scope: str | None = None,
+    ) -> None:
+        from objectstate.time_travel_profile import TimeTravelProfiler
 
-        self.editor._normalize_step_scope_tokens(register=False)
-        self.editor.update_item_list()
-        self.editor.update_button_states()
-        self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
-        GuiEventBusBroadcaster(self.editor.event_bus).pipeline_changed(
-            self.editor.pipeline_steps
-        )
+        del triggering_scope
+
+        with TimeTravelProfiler.phase("openhcs.pipeline_editor.restore_after_time_travel"):
+            with TimeTravelProfiler.phase("openhcs.pipeline_editor.load_steps"):
+                if self.editor.current_plate:
+                    self.editor.pipeline_steps = self.editor._get_steps_from_pipeline_state(
+                        self.editor.current_plate
+                    )
+                else:
+                    self.editor.pipeline_steps = []
+
+            with TimeTravelProfiler.phase("openhcs.pipeline_editor.normalize_tokens"):
+                self.editor._normalize_step_scope_tokens(register=False)
+            with TimeTravelProfiler.phase("openhcs.pipeline_editor.update_item_list"):
+                self.editor.update_item_list()
+            with TimeTravelProfiler.phase("openhcs.pipeline_editor.update_button_states"):
+                self.editor.update_button_states()
+            if not self._changed_pipeline_structure(dirty_states):
+                return
+
+            with TimeTravelProfiler.phase("openhcs.pipeline_editor.broadcast_pipeline_changed"):
+                self.editor._suppress_pipeline_state_sync = True
+                try:
+                    self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
+                finally:
+                    self.editor._suppress_pipeline_state_sync = False
+                GuiEventBusBroadcaster(self.editor.event_bus).pipeline_changed(
+                    self.editor.pipeline_steps
+                )
+
+    def _changed_pipeline_structure(
+        self,
+        dirty_states: TimeTravelDirtyStates | None,
+    ) -> bool:
+        from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
+
+        if not self.editor.current_plate:
+            return False
+        if dirty_states is None:
+            return False
+
+        pipeline_scope = PipelineScopeIdentity.from_plate_scope(
+            self.editor.current_plate
+        ).scope_id
+        for scope_id, _state in dirty_states:
+            if scope_id == pipeline_scope:
+                return True
+        return False
 
 
 @dataclass(frozen=True, slots=True)

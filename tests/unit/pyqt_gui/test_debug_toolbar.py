@@ -438,6 +438,7 @@ class PipelineEditorHarnessBase(metaclass=AutoRegisterMeta):
         self.status_message = StatusSignalRecorder()
         self.debug_workflow = PipelineEditorDebugWorkflow(self)
         self.function_presentation = PipelineEditorFunctionPresentation(self)
+        self.pipeline_steps = []
 
 
 class PipelineEditorCommandHarness(PipelineEditorHarnessBase):
@@ -923,9 +924,49 @@ def test_pipeline_editor_formats_invocation_badges_with_debug_cursor() -> None:
     badges = harness.function_presentation.invocation_badges([segment, finish])
 
     assert tuple(badge.text for badge in badges) == (
+        "default[0] segment",
+        "default[1] finish",
+    )
+
+    non_cursor_row_badges = harness.function_presentation.invocation_badges(
+        [segment, finish],
+        step_index=0,
+    )
+    cursor_row_badges = harness.function_presentation.invocation_badges(
+        [segment, finish],
+        step_index=1,
+    )
+
+    assert tuple(badge.text for badge in non_cursor_row_badges) == (
+        "default[0] segment",
+        "default[1] finish",
+    )
+    assert tuple(badge.text for badge in cursor_row_badges) == (
         "▶ default[0] segment *",
         "default[1] finish",
     )
+
+
+def test_pipeline_editor_badge_provider_uses_rendered_step_index() -> None:
+    def segment(image):
+        return image
+
+    harness = PipelineEditorDirtyHarness()
+    first = FunctionStep(func=segment, name="first")
+    second = FunctionStep(func=segment, name="second")
+    harness.pipeline_steps = [first, second]
+
+    first_badge_provider = harness.function_presentation.badge_provider(
+        first,
+        step_index=0,
+    )
+    second_badge_provider = harness.function_presentation.badge_provider(
+        second,
+        step_index=1,
+    )
+
+    assert first_badge_provider("default", 0, segment) is None
+    assert second_badge_provider("default", 0, segment) == "▶ default[0] segment"
 
 
 def test_pipeline_editor_hides_inactive_invocation_badges_from_titles() -> None:
@@ -935,7 +976,7 @@ def test_pipeline_editor_hides_inactive_invocation_badges_from_titles() -> None:
     harness = PipelineEditorDirtyHarness()
     step = FunctionStep(func=crop)
 
-    badge_provider = harness.function_presentation.badge_provider(step)
+    badge_provider = harness.function_presentation.badge_provider(step, step_index=0)
 
     assert badge_provider("default", 0, crop) is None
     assert harness.function_presentation.format_func_preview(crop) == "func=crop"

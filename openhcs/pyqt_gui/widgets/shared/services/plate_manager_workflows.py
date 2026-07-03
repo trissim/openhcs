@@ -470,29 +470,32 @@ class PlateManagerDeletionWorkflow(ManagerDeletionWorkflow):
 
     def delete(self, items: list[PlateManagerRow]) -> None:
         paths_to_delete = {row.scope_id for row in items}
+        plate_names = [row.name for row in items]
+        label = f"delete plate{'s' if len(items) > 1 else ''} {', '.join(plate_names)}"
 
-        root_state = self.manager._ensure_root_state()
-        current_paths = root_orchestrator_scope_ids(root_state)
-        remaining_paths = [
-            path for path in current_paths if path not in paths_to_delete
-        ]
-        root_state.update_parameter(
-            "orchestrator_scope_ids",
-            remaining_paths,
-        )
-
-        for path in paths_to_delete:
-            path_str = str(path)
-            count = ObjectStateRegistry.unregister_scope_and_descendants(path_str)
-            logger.debug(
-                "Cascade unregistered %d ObjectState(s) for deleted plate: %s",
-                count,
-                path,
+        with ObjectStateRegistry.atomic(label):
+            root_state = self.manager._ensure_root_state()
+            current_paths = root_orchestrator_scope_ids(root_state)
+            remaining_paths = [
+                path for path in current_paths if path not in paths_to_delete
+            ]
+            root_state.update_parameter(
+                "orchestrator_scope_ids",
+                remaining_paths,
             )
 
-            if path_str in self.manager.plate_configs:
-                del self.manager.plate_configs[path_str]
-                logger.debug("Deleted plate_configs entry for: %s", path)
+            for path in paths_to_delete:
+                path_str = str(path)
+                count = ObjectStateRegistry.unregister_scope_and_descendants(path_str)
+                logger.debug(
+                    "Cascade unregistered %d ObjectState(s) for deleted plate: %s",
+                    count,
+                    path,
+                )
+
+                if path_str in self.manager.plate_configs:
+                    del self.manager.plate_configs[path_str]
+                    logger.debug("Deleted plate_configs entry for: %s", path)
 
         next_selection = self._selection_after_delete(
             previous_selection=self.manager.selected_plate_path,
