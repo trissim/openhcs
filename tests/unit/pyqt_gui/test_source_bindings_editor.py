@@ -1,8 +1,17 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QPointF, Qt
-from PyQt6.QtGui import QColor, QEnterEvent
-from PyQt6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton
+from enum import Enum
+
+from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRect, Qt, QTimer
+from PyQt6.QtGui import QColor, QEnterEvent, QWheelEvent
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QWidget,
+)
 from python_introspect import is_enableable
 
 from openhcs.core.pipeline_image_schema import ImageAssignment, PipelineImageSchema
@@ -56,10 +65,21 @@ from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,
 )
-from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+from pyqt_reactive.forms.widget_strategies import PlaceholderConfig, PyQt6WidgetEnhancer
 from pyqt_reactive.forms.parameter_info_types import (
     InlineDataclassWidgetInfo,
     create_parameter_info,
+)
+from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
+from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollViewport
+from pyqt_reactive.widgets.structural_table import (
+    StructuralDescendantMaskTarget,
+    StructuralMaskedContainerTarget,
+    StructuralTableCellTarget,
+)
+from pyqt_reactive.services.window_navigation import (
+    NavigationWaitReason,
+    RegisteredWindowNavigationRequest,
 )
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.animation.flash_mixin import create_groupbox_element
@@ -68,7 +88,7 @@ from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpIndicator
 from pyqt_reactive.widgets.shared.clickable_help_components import InlineDataclassGroupBox
 from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceLabel
-from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollComboBox, NoneAwareCheckBox
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
@@ -111,9 +131,17 @@ def table_cell_text(table, row: int, column: int) -> str:
     if isinstance(widget, StructuredSelectorCellWidget):
         return widget.text()
     if isinstance(widget, QComboBox):
+        value = widget.currentData()
+        if isinstance(value, Enum):
+            return str(value.value)
         return widget.currentText().strip()
     item = table.item(row, column)
-    return "" if item is None else item.text().strip()
+    if item is None:
+        return ""
+    logical_value = item.data(Qt.ItemDataRole.UserRole)
+    if isinstance(logical_value, str):
+        return logical_value.strip()
+    return item.text().strip()
 
 
 def test_structured_selector_cell_widget_uses_semantic_editor_kind() -> None:
@@ -281,6 +309,47 @@ def test_source_bindings_editor_edits_pipeline_source_filters() -> None:
     )
 
 
+def test_source_bindings_source_filter_dropdown_ignores_wheel() -> None:
+    QtApplicationHarness.app()
+    widget = SourceBindingsEditorWidget.from_bindings(SourceBindingsConfig())
+
+    widget.add_source_filter_row(
+        SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        )
+    )
+    assert widget.source_filters_table is not None
+    combo = widget.source_filters_table.cellWidget(
+        0,
+        int(SourceFilterColumn.MATCH_TYPE),
+    )
+    assert isinstance(combo, NoScrollComboBox)
+    assert combo.currentData() is SourceFilterMatchType.CONTAINS
+
+    wheel_event = QWheelEvent(
+        QPointF(5, 5),
+        QPointF(5, 5),
+        QPoint(0, 0),
+        QPoint(0, -120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+    QApplication.sendEvent(combo, wheel_event)
+
+    assert combo.currentData() is SourceFilterMatchType.CONTAINS
+    assert widget.get_value().source_filters == (
+        SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        ),
+    )
+
+
 def test_source_bindings_editor_accepts_lazy_pipeline_source_bindings() -> None:
     QtApplicationHarness.app()
     widget = SourceBindingsEditorWidget.from_bindings(LazySourceBindingsConfig())
@@ -439,6 +508,7 @@ def test_pipeline_source_bindings_table_edits_recreate_container_and_children() 
         )
     finally:
         manager.deleteLater()
+        ObjectStateRegistry.clear()
 
 
 def test_pipeline_source_bindings_edit_refreshes_step_lazy_preview() -> None:
@@ -476,7 +546,7 @@ def test_pipeline_source_bindings_edit_refreshes_step_lazy_preview() -> None:
         assert isinstance(step_widget, SourceBindingsEditorWidget)
 
         queued_flashes: list[str] = []
-        manager.queue_flash_local = queued_flashes.append
+        manager.queue_flash_local_batch = queued_flashes.extend
         source_widget.add_binding_row(binding)
         for _ in range(10):
             QApplication.processEvents()
@@ -496,9 +566,211 @@ def test_pipeline_source_bindings_edit_refreshes_step_lazy_preview() -> None:
         ) == ("DNA",)
         assert source_container._title_label.text().startswith("* ")
         assert step_container._title_label.text().startswith("* ")
-        assert "step_source_bindings_config" in queued_flashes
+        assert "step_source_bindings_config.bindings" in queued_flashes
     finally:
         manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_pipeline_step_source_bindings_refresh_open_step_editor_preview() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    binding = NamedSourceBinding(alias="DNA")
+    plate_state = ObjectState(PipelineConfig(), scope_id="plate")
+    step_state = ObjectState(
+        FunctionStep(func=lambda image: image),
+        scope_id="plate::functionstep_0",
+        parent_state=plate_state,
+    )
+    ObjectStateRegistry.register(plate_state, _skip_snapshot=True)
+    ObjectStateRegistry.register(step_state, _skip_snapshot=True)
+    pipeline_manager = ParameterFormManager(
+        plate_state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+    step_manager = ParameterFormManager(
+        step_state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate::functionstep_0",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "step_source_bindings_config" in pipeline_manager.widgets
+                and "source_bindings" in step_manager.widgets
+            ):
+                break
+
+        pipeline_container = pipeline_manager.widgets["step_source_bindings_config"]
+        step_container = step_manager.widgets["source_bindings"]
+        assert isinstance(pipeline_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        pipeline_widget = pipeline_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(pipeline_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        assert tuple(step_widget._create_step_bindings_dialog().bindings()) == ()
+
+        pipeline_widget.add_binding_row(binding)
+        loop = QEventLoop()
+        QTimer.singleShot(260, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
+
+        assert plate_state.parameters["step_source_bindings_config.bindings"] == (
+            binding,
+        )
+        assert step_state.parameters["source_bindings.bindings"] is None
+        assert step_state.get_resolved_value("source_bindings.bindings") == (
+            binding,
+        )
+        assert DataclassFieldAccess.raw_value(
+            step_widget.get_value(),
+            "bindings",
+        ) is None
+        assert tuple(
+            inherited.alias
+            for inherited in step_widget._create_step_bindings_dialog().bindings()
+        ) == ("DNA",)
+    finally:
+        pipeline_manager.deleteLater()
+        step_manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_pipeline_step_source_filter_time_travel_refreshes_open_step_editor() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    plate_state = ObjectState(PipelineConfig(), scope_id="plate")
+    step_state = ObjectState(
+        FunctionStep(func=lambda image: image),
+        scope_id="plate::functionstep_0",
+        parent_state=plate_state,
+    )
+    ObjectStateRegistry.register(plate_state, _skip_snapshot=True)
+    ObjectStateRegistry.register(step_state, _skip_snapshot=True)
+    pipeline_manager = ParameterFormManager(
+        plate_state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+    step_manager = ParameterFormManager(
+        step_state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate::functionstep_0",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "step_source_bindings_config" in pipeline_manager.widgets
+                and "source_bindings" in step_manager.widgets
+            ):
+                break
+
+        pipeline_container = pipeline_manager.widgets["step_source_bindings_config"]
+        step_container = step_manager.widgets["source_bindings"]
+        assert isinstance(pipeline_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        pipeline_widget = pipeline_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(pipeline_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        first_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        )
+        pipeline_widget.add_source_filter_row(first_filter)
+        loop = QEventLoop()
+        QTimer.singleShot(260, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
+
+        assert step_state.parameters["source_bindings.source_filters"] is None
+        assert step_state.get_resolved_value("source_bindings.source_filters") == (
+            first_filter,
+        )
+        assert step_widget.source_filters_table is not None
+        assert table_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "contains"
+
+        assert pipeline_widget.source_filters_table is not None
+        set_combo_cell_text(
+            pipeline_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+            "equals",
+        )
+        loop = QEventLoop()
+        QTimer.singleShot(260, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
+
+        second_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.EQUALS,
+            "DNA",
+        )
+        assert plate_state.parameters["step_source_bindings_config.source_filters"] == (
+            second_filter,
+        )
+        assert step_state.get_resolved_value("source_bindings.source_filters") == (
+            second_filter,
+        )
+        assert table_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert step_state.get_resolved_value("source_bindings.source_filters") == (
+            first_filter,
+        )
+        assert table_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "contains"
+
+        assert ObjectStateRegistry.time_travel_forward()
+        QApplication.processEvents()
+        assert step_state.get_resolved_value("source_bindings.source_filters") == (
+            second_filter,
+        )
+        assert table_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+    finally:
+        pipeline_manager.deleteLater()
+        step_manager.deleteLater()
         ObjectStateRegistry.clear()
 
 
@@ -544,6 +816,33 @@ def test_source_bindings_enableable_chrome_uses_nominal_step_config() -> None:
         assert not step_checkboxes[0].isChecked()
         assert step_widget.graphicsEffect() is not None
 
+        registered = []
+        full_groupbox_registrations = []
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+        manager.register_flash_groupbox_full = (
+            lambda *args, **kwargs: full_groupbox_registrations.append((args, kwargs))
+        )
+        manager._queue_leaf_flash_for_path(
+            "step_source_bindings_config.enabled",
+            queue_flash=False,
+        )
+
+        assert len(registered) == 1
+        key, container_widget, mask_rects, label_widget = registered[0]
+        assert key == "step_source_bindings_config.enabled"
+        assert container_widget is step_container
+        assert label_widget is None
+        assert full_groupbox_registrations == []
+        masks = tuple(mask_rects(manager))
+        assert any(
+            needs_square and rect.width() == rect.height()
+            for rect, needs_square in masks
+        )
+
         step_container._title_label.mousePressEvent(None)
         for _ in range(10):
             QApplication.processEvents()
@@ -551,9 +850,186 @@ def test_source_bindings_enableable_chrome_uses_nominal_step_config() -> None:
         assert state.parameters["step_source_bindings_config.enabled"] is True
         assert step_checkboxes[0].isChecked()
         assert step_widget.graphicsEffect() is None
+
+        refresh_calls = []
+        step_widget.refresh = lambda: refresh_calls.append("refresh")  # type: ignore[method-assign]
+        original_source_filters_table = step_widget.source_filters_table
+        assert step_widget._enabled_reset_button is not None
+
+        step_widget._enabled_reset_button.click()
+        for _ in range(20):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.enabled"] is None
+        assert DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+        assert step_widget.source_filters_table is original_source_filters_table
+        assert refresh_calls == []
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
+
+
+def test_source_bindings_enableable_reset_to_inherited_true_is_path_scoped() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(
+        GlobalPipelineConfig,
+        GlobalPipelineConfig(
+            step_source_bindings_config=StepSourceBindingsConfig(enabled=True),
+        ),
+    )
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "step_source_bindings_config" in manager.widgets:
+                break
+
+        step_container = manager.widgets["step_source_bindings_config"]
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        step_widget = step_container._inline_value_widget
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        state.update_parameter(
+            "step_source_bindings_config",
+            replace_raw(
+                state.parameters["step_source_bindings_config"],
+                enabled=True,
+            ),
+        )
+        for _ in range(20):
+            QApplication.processEvents()
+
+        full_marker_refreshes = []
+        marker_paths = []
+        original_markers = step_widget.refresh_section_label_markers
+
+        def record_markers(owner_field_paths=None):
+            if owner_field_paths is None:
+                full_marker_refreshes.append(None)
+            else:
+                marker_paths.append(tuple(path.value for path in owner_field_paths))
+            return original_markers(owner_field_paths)
+
+        set_value_calls = []
+        original_set_value = step_widget.set_value
+
+        def record_set_value(value):
+            set_value_calls.append(value)
+            return original_set_value(value)
+
+        refresh_calls = []
+        step_widget.refresh = lambda: refresh_calls.append("refresh")  # type: ignore[method-assign]
+        step_widget.refresh_section_label_markers = record_markers  # type: ignore[method-assign]
+        step_widget.set_value = record_set_value  # type: ignore[method-assign]
+
+        assert step_widget._enabled_reset_button is not None
+        step_widget._enabled_reset_button.click()
+        for _ in range(30):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.enabled"] is None
+        assert state.get_resolved_value("step_source_bindings_config.enabled") is True
+        assert DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+        assert step_widget.graphicsEffect() is None
+        assert refresh_calls == []
+        assert set_value_calls == []
+        assert full_marker_refreshes == []
+        assert marker_paths
+        assert set(marker_paths) == {
+            ("step_source_bindings_config.enabled",),
+        }
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_enableable_reset_from_false_to_inherited_value_is_path_scoped() -> None:
+    QtApplicationHarness.app()
+
+    for inherited_enabled in (True, False):
+        ObjectStateRegistry.clear()
+        ensure_global_config_context(
+            GlobalPipelineConfig,
+            GlobalPipelineConfig(
+                step_source_bindings_config=StepSourceBindingsConfig(
+                    enabled=inherited_enabled,
+                ),
+            ),
+        )
+        state = ObjectState(PipelineConfig(), scope_id="plate")
+        ObjectStateRegistry.register(state, _skip_snapshot=True)
+        manager = ParameterFormManager(
+            state,
+            FormManagerConfig(
+                color_scheme=ColorScheme(),
+                use_scroll_area=False,
+                scope_id="plate",
+            ),
+        )
+
+        try:
+            for _ in range(80):
+                QApplication.processEvents()
+                if "step_source_bindings_config" in manager.widgets:
+                    break
+
+            step_container = manager.widgets["step_source_bindings_config"]
+            assert isinstance(step_container, InlineDataclassGroupBox)
+            step_widget = step_container._inline_value_widget
+            assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+            state.update_parameter(
+                "step_source_bindings_config",
+                replace_raw(
+                    state.parameters["step_source_bindings_config"],
+                    enabled=False,
+                ),
+            )
+            for _ in range(20):
+                QApplication.processEvents()
+
+            refresh_calls = []
+            set_value_calls = []
+            original_set_value = step_widget.set_value
+
+            def record_set_value(value):
+                set_value_calls.append(value)
+                return original_set_value(value)
+
+            step_widget.refresh = lambda: refresh_calls.append("refresh")  # type: ignore[method-assign]
+            step_widget.set_value = record_set_value  # type: ignore[method-assign]
+
+            assert step_widget._enabled_reset_button is not None
+            step_widget._enabled_reset_button.click()
+            for _ in range(30):
+                QApplication.processEvents()
+
+            assert state.parameters["step_source_bindings_config.enabled"] is None
+            assert (
+                state.get_resolved_value("step_source_bindings_config.enabled")
+                is inherited_enabled
+            )
+            assert DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+            if inherited_enabled:
+                assert step_widget.graphicsEffect() is None
+            else:
+                assert step_widget.graphicsEffect() is not None
+            assert refresh_calls == []
+            assert set_value_calls == []
+        finally:
+            manager.deleteLater()
+            ObjectStateRegistry.clear()
 
 
 def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> None:
@@ -588,8 +1064,8 @@ def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> No
         step_widget = step_container._inline_value_widget
         assert isinstance(source_widget, SourceBindingsEditorWidget)
         assert isinstance(step_widget, SourceBindingsEditorWidget)
-        assert step_widget.section_groups["bindings"].graphicsEffect() is not None
-        assert step_widget.section_groups["match_plan"].graphicsEffect() is None
+        assert step_widget.child_field_section_group("bindings").graphicsEffect() is None
+        assert step_widget.child_field_section_group("match_plan").graphicsEffect() is None
 
         source_widget.add_source_filter_row()
         assert source_widget.source_filters_table is not None
@@ -630,6 +1106,22 @@ def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> No
             )
             == "contains"
         )
+        assert step_widget.child_field_section_group("source_filters").graphicsEffect() is None
+        inherited_match_type_widget = step_widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(inherited_match_type_widget, QComboBox)
+        assert (
+            PlaceholderConfig.text_color_name()
+            in inherited_match_type_widget.styleSheet()
+        )
+        inherited_value_item = step_widget.source_filters_table.item(
+            0,
+            int(SourceFilterColumn.VALUE),
+        )
+        assert inherited_value_item is not None
+        assert inherited_value_item.font().italic()
 
         source_widget.add_match_plan_row()
         assert source_widget.match_plan_table is not None
@@ -677,9 +1169,468 @@ def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> No
         ObjectStateRegistry.clear()
 
 
+def test_source_bindings_enableable_only_updates_skip_table_rebuild() -> None:
+    QtApplicationHarness.app()
+    inherited_filter = SourceFilterClause(
+        SourceFilterSubject.FILE,
+        SourceFilterMatchType.CONTAINS,
+        "DNA",
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(
+        LazyStepSourceBindingsConfig(
+            enabled=True,
+            source_filters=(inherited_filter,),
+        ),
+    )
+    refresh_calls = []
+    widget.refresh = lambda: refresh_calls.append("refresh")  # type: ignore[method-assign]
+
+    raw_reset = LazyStepSourceBindingsConfig(
+        enabled=None,
+        source_filters=(inherited_filter,),
+    )
+    resolved_reset = StepSourceBindingsConfig(
+        enabled=False,
+        source_filters=(inherited_filter,),
+    )
+
+    try:
+        widget.set_value(raw_reset)
+        widget.set_raw_value_with_resolved_preview(raw_reset, resolved_reset)
+
+        assert refresh_calls == []
+        assert DataclassFieldAccess.raw_value(widget.get_value(), "enabled") is None
+        assert widget.source_filters_table is not None
+        assert widget.source_filters_table.rowCount() == 1
+    finally:
+        widget.deleteLater()
+
+
+def test_source_bindings_table_child_reset_restores_inherited_placeholder_rows() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "source_bindings_config" in manager.widgets
+                and "step_source_bindings_config" in manager.widgets
+            ):
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        step_container = manager.widgets["step_source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        source_widget = source_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(source_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        inherited_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        )
+        source_widget.add_source_filter_row(inherited_filter)
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        assert state.get_resolved_value(
+            "step_source_bindings_config.source_filters"
+        ) == (inherited_filter,)
+        assert step_widget.source_filters_table is not None
+        assert step_widget.source_filters_table.rowCount() == 1
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
+
+        set_editable_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+            "RNA",
+        )
+        for _ in range(10):
+            QApplication.processEvents()
+
+        local_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "RNA",
+        )
+        assert state.parameters["step_source_bindings_config.source_filters"] == (
+            local_filter,
+        )
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "RNA"
+        )
+
+        step_widget.child_field_reset_button("source_filters").click()
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        assert state.get_resolved_value(
+            "step_source_bindings_config.source_filters"
+        ) == (inherited_filter,)
+        assert (
+            DataclassFieldAccess.raw_value(step_widget.get_value(), "source_filters")
+            is None
+        )
+        assert step_widget.source_filters_table.rowCount() == 1
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
+        inherited_value_item = step_widget.source_filters_table.item(
+            0,
+            int(SourceFilterColumn.VALUE),
+        )
+        assert inherited_value_item is not None
+        assert inherited_value_item.font().italic()
+        inherited_match_type_widget = step_widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(inherited_match_type_widget, QComboBox)
+        assert (
+            PlaceholderConfig.text_color_name()
+            in inherited_match_type_widget.styleSheet()
+        )
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_inherited_table_combo_activation_materializes_child() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "source_bindings_config" in manager.widgets
+                and "step_source_bindings_config" in manager.widgets
+            ):
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        step_container = manager.widgets["step_source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        source_widget = source_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(source_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        inherited_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        )
+        source_widget.add_source_filter_row(inherited_filter)
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        history_len_before_activation = len(ObjectStateRegistry.get_branch_history())
+        assert step_widget.source_filters_table is not None
+        match_type_widget = step_widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
+
+        match_type_widget.activated.emit(match_type_widget.currentIndex())
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.source_filters"] == (
+            inherited_filter,
+        )
+        activation_history = ObjectStateRegistry.get_branch_history()[
+            history_len_before_activation:
+        ]
+        assert len(activation_history) == 1
+        assert (
+            "step_source_bindings_config.source_filters"
+            in activation_history[0].label
+        )
+        assert (
+            DataclassFieldAccess.raw_value(step_widget.get_value(), "source_filters")
+            == (inherited_filter,)
+        )
+        assert step_widget.child_field_label("source_filters")._dirty_label_state.is_dirty
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        assert (
+            DataclassFieldAccess.raw_value(step_widget.get_value(), "source_filters")
+            is None
+        )
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_inherited_table_value_edit_undo_restores_lazy_child() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "source_bindings_config" in manager.widgets
+                and "step_source_bindings_config" in manager.widgets
+            ):
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        step_container = manager.widgets["step_source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        source_widget = source_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(source_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        inherited_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        )
+        source_widget.add_source_filter_row(inherited_filter)
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        history_len_before_edit = len(ObjectStateRegistry.get_branch_history())
+        assert step_widget.source_filters_table is not None
+        set_editable_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+            "RNA",
+        )
+        for _ in range(10):
+            QApplication.processEvents()
+
+        edited_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "RNA",
+        )
+        assert state.parameters["step_source_bindings_config.source_filters"] == (
+            edited_filter,
+        )
+        edit_history = ObjectStateRegistry.get_branch_history()[
+            history_len_before_edit:
+        ]
+        assert len(edit_history) == 1
+        assert "step_source_bindings_config.source_filters" in edit_history[0].label
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        assert (
+            DataclassFieldAccess.raw_value(step_widget.get_value(), "source_filters")
+            is None
+        )
+        assert table_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "DNA"
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_inherited_table_first_edit_materializes_second_edit_flashes_cell() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "source_bindings_config" in manager.widgets
+                and "step_source_bindings_config" in manager.widgets
+            ):
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        step_container = manager.widgets["step_source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        source_widget = source_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(source_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        inherited_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "DNA",
+        )
+        source_widget.add_source_filter_row(inherited_filter)
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert state.parameters["step_source_bindings_config.source_filters"] is None
+        assert step_widget.source_filters_table is not None
+
+        set_editable_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+            "RNA",
+        )
+        for _ in range(10):
+            QApplication.processEvents()
+
+        materialized_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "RNA",
+        )
+        assert state.parameters["step_source_bindings_config.source_filters"] == (
+            materialized_filter,
+        )
+        value_item = step_widget.source_filters_table.item(
+            0,
+            int(SourceFilterColumn.VALUE),
+        )
+        assert value_item is not None
+        assert value_item.data(Qt.ItemDataRole.UserRole) == "RNA"
+        assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA"
+        assert value_item.text() == "*RNA"
+        assert table_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "RNA"
+
+        queued: list[str] = []
+        registered = []
+        manager.queue_flash_local_batch = queued.extend
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+
+        set_editable_cell_text(
+            step_widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+            "RNA2",
+        )
+        for _ in range(10):
+            QApplication.processEvents()
+
+        edited_filter = SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "RNA2",
+        )
+        assert state.parameters["step_source_bindings_config.source_filters"] == (
+            edited_filter,
+        )
+        value_item = step_widget.source_filters_table.item(
+            0,
+            int(SourceFilterColumn.VALUE),
+        )
+        assert value_item is not None
+        assert value_item.data(Qt.ItemDataRole.UserRole) == "RNA2"
+        assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA2"
+        assert value_item.text() == "*RNA2"
+
+        flash_key = "step_source_bindings_config.source_filters[0].value"
+        assert flash_key in queued
+        assert "step_source_bindings_config" not in queued
+        assert any(key == flash_key for key, *_ in registered)
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
 def test_source_bindings_child_chrome_and_reset_use_flat_state_paths() -> None:
     QtApplicationHarness.app()
     state = ObjectState(PipelineConfig())
+    ObjectStateRegistry.register(state)
     manager = ParameterFormManager(
         state,
         FormManagerConfig(
@@ -700,11 +1651,13 @@ def test_source_bindings_child_chrome_and_reset_use_flat_state_paths() -> None:
         assert isinstance(source_widget, SourceBindingsEditorWidget)
 
         source_widget.add_binding_row(NamedSourceBinding(alias="DNA"))
-        for _ in range(10):
-            QApplication.processEvents()
+        loop = QEventLoop()
+        QTimer.singleShot(0, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
 
-        bindings_label = source_widget.section_labels["bindings"]
-        reset_button = source_widget.section_reset_buttons["bindings"]
+        bindings_label = source_widget.child_field_label("bindings")
+        reset_button = source_widget.child_field_reset_button("bindings")
         assert bindings_label._label.font().bold()
         assert bindings_label._label.alignment() & Qt.AlignmentFlag.AlignLeft
         assert bindings_label._dirty_label_state.is_dirty
@@ -717,10 +1670,11 @@ def test_source_bindings_child_chrome_and_reset_use_flat_state_paths() -> None:
             QApplication.processEvents()
 
         assert state.parameters["source_bindings_config.bindings"] is None
-        assert not source_widget.section_labels["bindings"]._dirty_label_state.is_dirty
-        assert not source_widget.section_reset_buttons["bindings"].font().underline()
+        assert not source_widget.child_field_label("bindings")._dirty_label_state.is_dirty
+        assert not source_widget.child_field_reset_button("bindings").font().underline()
     finally:
         manager.deleteLater()
+        ObjectStateRegistry.clear()
 
 
 def test_source_bindings_child_provenance_label_grows_on_hover() -> None:
@@ -780,9 +1734,204 @@ def test_source_bindings_child_path_resolves_inline_scroll_target() -> None:
         assert target is not None
         assert target.section_path == "source_bindings_config"
         assert target.leaf_name == "bindings"
-        assert target.target_widget is source_widget.section_groups["bindings"]
+        assert isinstance(target.structural_flash_target, StructuralMaskedContainerTarget)
+        assert target.target_widget is source_widget.child_field_label("bindings")
+        assert target.structural_flash_target.scroll_widget() is target.target_widget
         assert not target.is_field
     finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_owner_path_resolves_structural_container_target() -> None:
+    QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    class Owner(ScrollableFormMixin):
+        def __init__(self, form_manager: ParameterFormManager) -> None:
+            self.form_manager = form_manager
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+
+        target = Owner(manager)._resolve_scroll_target("source_bindings_config")
+
+        assert target is not None
+        assert target.field_name == "source_bindings_config"
+        assert target.section_path == "source_bindings_config"
+        assert target.target_widget is source_container
+        assert isinstance(target.structural_flash_target, StructuralDescendantMaskTarget)
+        assert target.structural_flash_target.container is source_container
+        assert not target.is_field
+    finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_child_path_waits_until_inline_child_target_exists() -> None:
+    QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    class Owner(ScrollableFormMixin):
+        def __init__(self, form_manager: ParameterFormManager) -> None:
+            self.form_manager = form_manager
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+        source_widget = source_container._inline_value_widget
+        assert isinstance(source_widget, SourceBindingsEditorWidget)
+
+        original_target = source_widget.child_field_navigation_target
+        source_widget.child_field_navigation_target = lambda field_name: None
+        try:
+            target = Owner(manager)._resolve_scroll_target(
+                "source_bindings_config.source_filters"
+            )
+        finally:
+            source_widget.child_field_navigation_target = original_target
+
+        assert target is None
+    finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_navigation_falls_back_to_visible_owner_section() -> None:
+    app = QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    scroll_area = QScrollArea()
+    scroll_area.setWidgetResizable(True)
+    scroll_area.setWidget(manager)
+    scroll_area.resize(640, 360)
+    scroll_area.show()
+
+    class Owner(QWidget, ScrollableFormMixin):
+        def __init__(
+            self,
+            form_manager: ParameterFormManager,
+            scroll: QScrollArea,
+        ) -> None:
+            super().__init__()
+            self.form_manager = form_manager
+            self.scroll_area = scroll
+            self.flashed_targets = []
+
+        def _flash_scroll_target(self, target) -> None:
+            self.flashed_targets.append(target)
+
+    try:
+        for _ in range(80):
+            app.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        source_container = manager.widgets["source_bindings_config"]
+        assert isinstance(source_container, InlineDataclassGroupBox)
+        source_widget = source_container._inline_value_widget
+        assert isinstance(source_widget, SourceBindingsEditorWidget)
+
+        original_target = source_widget.child_field_navigation_target
+        source_widget.child_field_navigation_target = lambda field_name: None
+        try:
+            owner = Owner(manager, scroll_area)
+            request = RegisteredWindowNavigationRequest(
+                window=scroll_area.window(),
+                field_path="source_bindings_config.source_filters",
+            )
+            driver = owner.window_navigation_driver()
+
+            first = driver.readiness(request)
+            second = driver.readiness(request)
+            owner.select_and_scroll_to_field("source_bindings_config.source_filters")
+        finally:
+            source_widget.child_field_navigation_target = original_target
+
+        assert first.wait_reason is NavigationWaitReason.LAYOUT
+        assert not second.needs_wait
+        assert len(owner.flashed_targets) == 1
+        fallback_target = owner.flashed_targets[0]
+        assert fallback_target.field_name == "source_bindings_config"
+        assert fallback_target.target_widget is source_container
+    finally:
+        scroll_area.deleteLater()
+        manager.deleteLater()
+
+
+def test_source_bindings_child_navigation_waits_for_stable_geometry() -> None:
+    app = QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    scroll_area = QScrollArea()
+    scroll_area.setWidgetResizable(True)
+    scroll_area.setWidget(manager)
+    scroll_area.resize(640, 360)
+    scroll_area.show()
+
+    class Owner(ScrollableFormMixin):
+        def __init__(
+            self,
+            form_manager: ParameterFormManager,
+            scroll: QScrollArea,
+        ) -> None:
+            self.form_manager = form_manager
+            self.scroll_area = scroll
+
+    try:
+        for _ in range(80):
+            app.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        owner = Owner(manager, scroll_area)
+        driver = owner.window_navigation_driver()
+        request = RegisteredWindowNavigationRequest(
+            window=scroll_area.window(),
+            field_path="source_bindings_config.source_filters",
+        )
+
+        first = driver.readiness(request)
+        second = driver.readiness(request)
+
+        assert first.wait_reason is NavigationWaitReason.LAYOUT
+        assert not second.needs_wait
+    finally:
+        scroll_area.deleteLater()
         manager.deleteLater()
 
 
@@ -793,13 +1942,18 @@ def test_source_bindings_editor_uses_resolved_placeholder_tables() -> None:
         source=MetadataSource.FILE_NAME,
         pattern=r"(?P<well>A\d{2})_(?P<channel>DNA)\.tif",
     )
+    inherited_filter = SourceFilterClause(
+        SourceFilterSubject.FILE,
+        SourceFilterMatchType.CONTAINS,
+        "DNA",
+    )
     local_raw = LazyStepSourceBindingsConfig()
     resolved_display = StepSourceBindingsConfig(
         bindings=(inherited_binding,),
         metadata_rules=(inherited_rule,),
-        source_filters=(),
+        source_filters=(inherited_filter,),
         match_plan=None,
-        enabled=False,
+        enabled=True,
     )
 
     widget = SourceBindingsEditorWidget.from_bindings(
@@ -811,8 +1965,240 @@ def test_source_bindings_editor_uses_resolved_placeholder_tables() -> None:
     assert tuple(binding.alias for binding in dialog.bindings()) == ("InheritedDNA",)
     assert widget.metadata_rules_table is not None
     assert widget.metadata_rules_table.rowCount() == 1
+    assert widget.source_filters_table is not None
+    assert widget.source_filters_table.rowCount() == 1
+
+    match_type_widget = widget.source_filters_table.cellWidget(
+        0,
+        int(SourceFilterColumn.MATCH_TYPE),
+    )
+    assert isinstance(match_type_widget, QComboBox)
+    assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
+    assert match_type_widget.currentText() == "contains"
+    assert PlaceholderConfig.text_color_name() in match_type_widget.styleSheet()
+
+    value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+    assert value_item is not None
+    assert value_item.font().italic()
+    assert value_item.foreground().color().name() == PlaceholderConfig.text_color_name()
     assert DataclassFieldAccess.raw_value(widget.get_value(), "bindings") is None
     assert DataclassFieldAccess.raw_value(widget.get_value(), "metadata_rules") is None
+    assert DataclassFieldAccess.raw_value(widget.get_value(), "source_filters") is None
+
+
+def test_source_bindings_table_row_value_read_does_not_emit_item_changed() -> None:
+    QtApplicationHarness.app()
+    inherited_filter = SourceFilterClause(
+        SourceFilterSubject.FILE,
+        SourceFilterMatchType.CONTAINS,
+        "DNA",
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(
+        LazyStepSourceBindingsConfig(),
+        display_bindings=StepSourceBindingsConfig(
+            source_filters=(inherited_filter,),
+            enabled=True,
+        ),
+    )
+
+    assert widget.source_filters_table is not None
+    assert widget.source_filters_controller is not None
+    value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+    assert value_item is not None
+    value_item.setText("*DNA")
+    value_item.setData(Qt.ItemDataRole.UserRole, "DNA")
+
+    emitted: list[object] = []
+    widget.source_filters_table.itemChanged.connect(emitted.append)
+
+    assert widget.source_filters_controller.row_values() == (("file", "contains", "DNA"),)
+    assert emitted == []
+
+
+def test_source_bindings_editor_editing_inherited_table_makes_lazy_child_concrete() -> None:
+    QtApplicationHarness.app()
+    inherited_filter = SourceFilterClause(
+        SourceFilterSubject.FILE,
+        SourceFilterMatchType.CONTAINS,
+        "DNA",
+    )
+    local_raw = LazyStepSourceBindingsConfig()
+    resolved_display = StepSourceBindingsConfig(
+        source_filters=(inherited_filter,),
+        enabled=True,
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(
+        local_raw,
+        display_bindings=resolved_display,
+    )
+
+    assert widget.source_filters_table is not None
+    set_editable_cell_text(
+        widget.source_filters_table,
+        0,
+        int(SourceFilterColumn.VALUE),
+        "RNA",
+    )
+    QApplication.processEvents()
+
+    edited = widget.get_value()
+    assert type(edited) is LazyStepSourceBindingsConfig
+    assert DataclassFieldAccess.raw_value(edited, "enabled") is None
+    assert DataclassFieldAccess.raw_value(edited, "bindings") is None
+    assert DataclassFieldAccess.raw_value(edited, "source_filters") == (
+        SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.CONTAINS,
+            "RNA",
+        ),
+    )
+
+
+def test_source_bindings_child_reset_restores_lazy_inheritance_slot() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    state = ObjectState(FunctionStep(func=lambda image: image), scope_id="step")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="step",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        QApplication.processEvents()
+        assert state.parameters["source_bindings.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            ),
+        )
+        assert widget.child_field_label("source_filters")._dirty_label_state.is_dirty
+
+        widget.child_field_reset_button("source_filters").click()
+        QApplication.processEvents()
+
+        assert state.parameters["source_bindings.source_filters"] is None
+        assert DataclassFieldAccess.raw_value(
+            state.parameters["source_bindings"],
+            "source_filters",
+        ) is None
+        assert not widget.child_field_label("source_filters")._dirty_label_state.is_dirty
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_child_reset_noops_for_already_inherited_table_preview() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    inherited_filter = SourceFilterClause(
+        SourceFilterSubject.FILE,
+        SourceFilterMatchType.CONTAINS,
+        "DNA",
+    )
+    plate_state = ObjectState(PipelineConfig(), scope_id="plate")
+    step_state = ObjectState(
+        FunctionStep(func=lambda image: image),
+        scope_id="plate::functionstep_0",
+        parent_state=plate_state,
+    )
+    ObjectStateRegistry.register(plate_state, _skip_snapshot=True)
+    ObjectStateRegistry.register(step_state, _skip_snapshot=True)
+    pipeline_manager = ParameterFormManager(
+        plate_state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+    step_manager = ParameterFormManager(
+        step_state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate::functionstep_0",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if (
+                "step_source_bindings_config" in pipeline_manager.widgets
+                and "source_bindings" in step_manager.widgets
+            ):
+                break
+
+        pipeline_container = pipeline_manager.widgets["step_source_bindings_config"]
+        step_container = step_manager.widgets["source_bindings"]
+        assert isinstance(pipeline_container, InlineDataclassGroupBox)
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        pipeline_widget = pipeline_container._inline_value_widget
+        step_widget = step_container._inline_value_widget
+        assert isinstance(pipeline_widget, SourceBindingsEditorWidget)
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+
+        pipeline_widget.add_source_filter_row(inherited_filter)
+        loop = QEventLoop()
+        QTimer.singleShot(260, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
+
+        assert step_state.parameters["source_bindings.source_filters"] is None
+        assert step_state.get_resolved_value("source_bindings.source_filters") == (
+            inherited_filter,
+        )
+        assert step_widget.source_filters_table is not None
+        assert step_widget.source_filters_table.rowCount() == 1
+
+        step_widget.child_field_reset_button("source_filters").click()
+        QApplication.processEvents()
+
+        assert step_state.parameters["source_bindings.source_filters"] is None
+        assert step_state.get_resolved_value("source_bindings.source_filters") == (
+            inherited_filter,
+        )
+        assert DataclassFieldAccess.raw_value(
+            step_widget.get_value(),
+            "source_filters",
+        ) is None
+        assert step_widget.source_filters_table.rowCount() == 1
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
+    finally:
+        pipeline_manager.deleteLater()
+        step_manager.deleteLater()
+        ObjectStateRegistry.clear()
 
 
 def test_source_bindings_editor_preserves_unedited_lazy_inheritance_slots() -> None:
@@ -1075,7 +2461,178 @@ def test_inline_source_bindings_widget_updates_object_state() -> None:
     assert edited.bindings[0].alias == "DNA"
 
 
-def test_inline_source_bindings_edit_queues_groupbox_flash() -> None:
+def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    state = ObjectState(FunctionStep(func=lambda image: image), scope_id="step")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="step",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.EQUALS,
+                "DNA",
+            )
+        )
+        QApplication.processEvents()
+        assert widget.source_filters_table is not None
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+
+        set_combo_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+            "contains",
+        )
+        QApplication.processEvents()
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.property("objectstate_dirty") is True
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.EQUALS,
+                "DNA",
+            ),
+        )
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentData() is SourceFilterMatchType.EQUALS
+        assert match_type_widget.currentText() == "*equals"
+        assert match_type_widget.property("objectstate_dirty") is True
+        assert "source_bindings.source_filters" in state.dirty_fields
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirty() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    saved_filter = SourceFilterClause(
+        SourceFilterSubject.FILE,
+        SourceFilterMatchType.EQUALS,
+        "DNA",
+    )
+    step = FunctionStep(
+        func=lambda image: image,
+        source_bindings=StepSourceBindingsConfig(
+            source_filters=(saved_filter,),
+        ),
+    )
+    state = ObjectState(step, scope_id="step")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="step",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        assert widget.source_filters_table is not None
+
+        set_combo_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+            "contains",
+        )
+        QApplication.processEvents()
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentText() == "*contains"
+
+        set_editable_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+            "RNA",
+        )
+        QApplication.processEvents()
+        value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+        assert value_item is not None
+        assert value_item.text() == "*RNA"
+        assert "source_bindings.source_filters" in state.dirty_fields
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            ),
+        )
+
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
+        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.property("objectstate_dirty") is True
+
+        value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+        assert value_item is not None
+        assert value_item.data(Qt.ItemDataRole.UserRole) == "DNA"
+        assert value_item.text() == "DNA"
+        assert "source_bindings.source_filters" in state.dirty_fields
+        assert widget.child_field_label("source_filters")._dirty_label_state.is_dirty
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_inline_source_bindings_edit_queues_child_field_flash() -> None:
     QtApplicationHarness.app()
     step = FunctionStep(func=lambda image: image)
     state = ObjectState(step)
@@ -1097,11 +2654,1008 @@ def test_inline_source_bindings_edit_queues_groupbox_flash() -> None:
     assert widget is not None
 
     queued: list[str] = []
-    manager.queue_flash_local = queued.append
+    manager.queue_flash_local_batch = queued.extend
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
     QApplication.processEvents()
 
-    assert "source_bindings" in queued
+    assert "source_bindings.bindings" in queued
+    assert "source_bindings" not in queued
+
+
+def test_inline_source_bindings_dropdown_edit_queues_child_section_flash() -> None:
+    QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.EQUALS,
+                "DNA",
+            )
+        )
+        QApplication.processEvents()
+
+        queued: list[str] = []
+        registered = []
+        manager.queue_flash_local_batch = queued.extend
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+        assert widget.source_filters_table is not None
+        set_combo_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+            "contains",
+        )
+        QApplication.processEvents()
+
+        assert len(registered) == 1
+        key, section, _, label_widget = registered[0]
+        assert key == "source_bindings_config.source_filters[0].match_type"
+        assert section is widget.child_field_section_group("source_filters")
+        assert label_widget is widget.child_field_label("source_filters")
+        assert "source_bindings_config.source_filters[0].match_type" in queued
+        assert "source_bindings_config" not in queued
+        assert state.parameters["source_bindings_config.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            ),
+        )
+    finally:
+        manager.deleteLater()
+
+
+def test_inline_source_bindings_provenance_navigation_masks_child_section() -> None:
+    QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    class ScrollHarness(QWidget, ScrollableFormMixin):
+        def __init__(self, form_manager: ParameterFormManager) -> None:
+            super().__init__()
+            self.form_manager = form_manager
+            self.scroll_area = None
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        harness = ScrollHarness(manager)
+        target = harness._resolve_scroll_target("source_bindings_config.source_filters")
+        assert target is not None
+        assert isinstance(
+            target.structural_flash_target,
+            StructuralMaskedContainerTarget,
+        )
+        assert isinstance(
+            target.structural_flash_target.masked_target,
+            StructuralDescendantMaskTarget,
+        )
+        assert target.target_widget is widget.child_field_label("source_filters")
+        label_rect = target.structural_flash_target.scroll_rect_in(manager)
+        label_widget = widget.child_field_label("source_filters")
+        assert label_rect is not None
+        label_window_pos = manager.mapFromGlobal(
+            label_widget.mapToGlobal(label_widget.rect().topLeft())
+        )
+        assert label_rect.topLeft() == label_window_pos
+        assert label_rect.size() == label_widget.size()
+
+        class FakeScrollBar:
+            def maximum(self) -> int:
+                return 10000
+
+        viewport = ScrollViewport(
+            content_widget=manager,
+            viewport_height=10000,
+            viewport_top=0,
+            viewport_bottom=10000,
+            vertical_scroll_bar=FakeScrollBar(),
+        )
+        assert harness._target_is_fully_visible(target, viewport)
+
+        queued: list[str] = []
+        registered = []
+        manager.queue_flash_local = queued.append
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+
+        harness._flash_scroll_target(target)
+
+        assert len(registered) == 1
+        key, container_widget, mask_rects, label_widget = registered[0]
+        assert key == "source_bindings_config.source_filters"
+        assert container_widget is widget
+        assert label_widget is widget.child_field_label("source_filters")
+        masks = tuple(mask_rects(manager))
+        section = widget.child_field_section_group("source_filters")
+        section_window_pos = manager.mapFromGlobal(
+            section.mapToGlobal(section.rect().topLeft())
+        )
+        assert widget.source_filters_table is not None
+        table_window_pos = manager.mapFromGlobal(
+            widget.source_filters_table.mapToGlobal(
+                widget.source_filters_table.rect().topLeft()
+            )
+        )
+        label_widget = widget.child_field_label("source_filters")
+        label_window_pos = manager.mapFromGlobal(
+            label_widget.mapToGlobal(label_widget.rect().topLeft())
+        )
+        section_rect = QRect(section_window_pos, section.size())
+        label_rect = QRect(label_window_pos, label_widget.size())
+        if section_rect != label_rect:
+            assert (section_rect, False) not in masks
+        assert (
+            QRect(table_window_pos, widget.source_filters_table.size()),
+            False,
+        ) in masks
+        assert (label_rect, False) in masks
+        assert "source_bindings_config.source_filters" in queued
+        assert "source_bindings_config" not in queued
+    finally:
+        manager.deleteLater()
+
+
+def test_inline_source_bindings_initial_source_filter_cells_show_signature_diff() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    step = FunctionStep(
+        func=lambda image: image,
+        source_bindings=LazyStepSourceBindingsConfig(
+            source_filters=(
+                SourceFilterClause(
+                    SourceFilterSubject.EXTENSION,
+                    SourceFilterMatchType.IS_IMAGE,
+                ),
+                SourceFilterClause(
+                    SourceFilterSubject.DIRECTORY,
+                    SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+                    value=r"[\\/]\.",
+                ),
+            ),
+        ),
+    )
+    state = ObjectState(step, scope_id="step")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="step",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        assert widget.source_filters_table is not None
+        assert "source_bindings.source_filters" in state.signature_diff_fields
+        assert widget.child_field_label("source_filters")._label.font().underline()
+
+        subject_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.SUBJECT),
+        )
+        assert isinstance(subject_widget, QComboBox)
+        assert subject_widget.property("objectstate_signature_diff") is True
+        assert subject_widget.font().underline()
+
+        match_type_widget = widget.source_filters_table.cellWidget(
+            1,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.property("objectstate_signature_diff") is True
+        assert match_type_widget.font().underline()
+
+        value_item = widget.source_filters_table.item(
+            1,
+            int(SourceFilterColumn.VALUE),
+        )
+        assert value_item is not None
+        assert value_item.font().underline()
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_inline_source_bindings_structural_path_flash_targets_table_cell() -> None:
+    app = QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    manager.resize(900, 700)
+    manager.show()
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        app.processEvents()
+
+        queued: list[str] = []
+        registered = []
+        manager.queue_flash_local = queued.append
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+
+        manager._queue_leaf_flash_for_path(
+            "source_bindings_config.source_filters[0].match_type"
+        )
+
+        assert len(registered) == 1
+        key, container_widget, mask_rects, label_widget = registered[0]
+        assert key == "source_bindings_config.source_filters[0].match_type"
+        assert container_widget is widget.child_field_section_group("source_filters")
+        assert label_widget is widget.child_field_label("source_filters")
+        assert widget.source_filters_table is not None
+        cell_rect = widget.source_filters_table.visualRect(
+            widget.source_filters_table.model().index(
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+        )
+        cell_window_pos = manager.mapFromGlobal(
+            widget.source_filters_table.viewport().mapToGlobal(cell_rect.topLeft())
+        )
+        label_widget = widget.child_field_label("source_filters")
+        label_window_pos = manager.mapFromGlobal(
+            label_widget.mapToGlobal(label_widget.rect().topLeft())
+        )
+        masks = tuple(mask_rects(manager))
+        assert (QRect(cell_window_pos, cell_rect.size()), False) in masks
+        assert (QRect(label_window_pos, label_widget.size()), False) in masks
+        assert queued == ["source_bindings_config.source_filters[0].match_type"]
+    finally:
+        manager.deleteLater()
+
+
+def test_inline_source_bindings_structural_provenance_navigation_flashes_table_cell() -> None:
+    app = QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    manager.resize(900, 700)
+    manager.show()
+
+    class ScrollHarness(QWidget, ScrollableFormMixin):
+        def __init__(self, form_manager: ParameterFormManager) -> None:
+            super().__init__()
+            self.form_manager = form_manager
+            self.scroll_area = None
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        app.processEvents()
+
+        harness = ScrollHarness(manager)
+        target = harness._resolve_scroll_target(
+            "source_bindings_config.source_filters[0].match_type"
+        )
+        assert target is not None
+        assert isinstance(
+            target.structural_flash_target,
+            StructuralMaskedContainerTarget,
+        )
+        assert isinstance(
+            target.structural_flash_target.masked_target,
+            StructuralTableCellTarget,
+        )
+        viewport = ScrollViewport(
+            content_widget=manager,
+            viewport_height=120,
+            viewport_top=0,
+            viewport_bottom=120,
+            vertical_scroll_bar=None,
+        )
+        target_bounds = harness._target_visual_bounds(target, viewport)
+        assert target.structural_flash_target is not None
+        target_rect = target.structural_flash_target.scroll_rect_in(manager)
+        assert target_rect is not None
+        assert target_bounds == (
+            target_rect.y(),
+            target_rect.height(),
+            target_rect.y() + target_rect.height(),
+        )
+        assert widget.source_filters_table is not None
+        cell_rect = widget.source_filters_table.visualRect(
+            widget.source_filters_table.model().index(
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+        )
+        cell_window_pos = manager.mapFromGlobal(
+            widget.source_filters_table.viewport().mapToGlobal(cell_rect.topLeft())
+        )
+        assert target_rect == QRect(cell_window_pos, cell_rect.size())
+        assert target.target_widget is target.structural_flash_target.scroll_widget()
+        table_top = widget.source_filters_table.mapTo(
+            manager,
+            widget.source_filters_table.rect().topLeft(),
+        ).y()
+        assert target_bounds[0] > table_top
+        target_scroll = harness._target_scroll_position(target, viewport)
+        expected_cell_scroll = max(
+            0,
+            target_rect.y() + target_rect.height() // 2 - viewport.viewport_height // 2,
+        )
+        table_center_scroll = max(
+            0,
+            table_top
+            + widget.source_filters_table.height() // 2
+            - viewport.viewport_height // 2,
+        )
+        assert target_scroll == expected_cell_scroll
+        assert target_scroll != table_center_scroll
+
+        queued: list[str] = []
+        registered = []
+        manager.queue_flash_local = queued.append
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+
+        harness._flash_scroll_target(target)
+
+        assert len(registered) == 1
+        key, container_widget, _, label_widget = registered[0]
+        assert key == "source_bindings_config.source_filters[0].match_type"
+        assert container_widget is widget.child_field_section_group("source_filters")
+        assert label_widget is widget.child_field_label("source_filters")
+        assert queued == ["source_bindings_config.source_filters[0].match_type"]
+    finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_cell_flash_element_masks_cell_and_child_label() -> None:
+    app = QtApplicationHarness.app()
+    manager = ParameterFormManager(
+        ObjectState(PipelineConfig()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    manager.resize(900, 700)
+    manager.show()
+
+    try:
+        for _ in range(80):
+            app.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        app.processEvents()
+
+        flash_key = "source_bindings_config.source_filters[0].match_type"
+        manager._queue_leaf_flash_for_path(flash_key)
+
+        registrations = [
+            registration
+            for registration in manager._flash_registrations
+            if registration[0] == flash_key
+        ]
+        assert len(registrations) == 1
+        element_factory = registrations[0][1]
+        element = element_factory(flash_key)
+        assert element.get_child_rects is not None
+
+        mask_rects = tuple(element.get_child_rects(manager))
+        assert widget.source_filters_table is not None
+        cell_rect = widget.source_filters_table.visualRect(
+            widget.source_filters_table.model().index(
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+        )
+        cell_window_pos = manager.mapFromGlobal(
+            widget.source_filters_table.viewport().mapToGlobal(cell_rect.topLeft())
+        )
+        expected_cell_rect = cell_rect.translated(
+            cell_window_pos - cell_rect.topLeft()
+        )
+        label_widget = widget.child_field_label("source_filters")
+        label_window_pos = manager.mapFromGlobal(
+            label_widget.mapToGlobal(label_widget.rect().topLeft())
+        )
+        expected_label_rect = QRect(label_window_pos, label_widget.size())
+
+        assert (expected_cell_rect, False) in mask_rects
+        assert (expected_label_rect, False) in mask_rects
+    finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_child_section_flash_masks_changed_child_section() -> None:
+    app = QtApplicationHarness.app()
+    manager = ParameterFormManager(
+        ObjectState(PipelineConfig()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    manager.resize(900, 700)
+    manager.show()
+
+    try:
+        for _ in range(80):
+            app.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        app.processEvents()
+
+        queued: list[str] = []
+        registered = []
+        manager.queue_flash_local = queued.append
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+
+        manager._queue_leaf_flash_for_path("source_bindings_config.source_filters")
+
+        assert len(registered) == 1
+        key, container_widget, mask_rects, label_widget = registered[0]
+        assert key == "source_bindings_config.source_filters"
+        assert container_widget is widget
+        assert label_widget is widget.child_field_label("source_filters")
+        section = widget.child_field_section_group("source_filters")
+        section_window_pos = manager.mapFromGlobal(
+            section.mapToGlobal(section.rect().topLeft())
+        )
+        label_widget = widget.child_field_label("source_filters")
+        label_window_pos = manager.mapFromGlobal(
+            label_widget.mapToGlobal(label_widget.rect().topLeft())
+        )
+        masks = tuple(mask_rects(manager))
+        assert widget.source_filters_table is not None
+        table_window_pos = manager.mapFromGlobal(
+            widget.source_filters_table.mapToGlobal(
+                widget.source_filters_table.rect().topLeft()
+            )
+        )
+        section_rect = QRect(section_window_pos, section.size())
+        label_rect = QRect(label_window_pos, label_widget.size())
+        if section_rect != label_rect:
+            assert (section_rect, False) not in masks
+        assert (
+            QRect(table_window_pos, widget.source_filters_table.size()),
+            False,
+        ) in masks
+        assert (label_rect, False) in masks
+        assert queued == ["source_bindings_config.source_filters"]
+
+    finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_owner_flash_masks_descendant_fields() -> None:
+    app = QtApplicationHarness.app()
+    manager = ParameterFormManager(
+        ObjectState(PipelineConfig()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    manager.resize(900, 700)
+    manager.show()
+
+    try:
+        for _ in range(80):
+            app.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        app.processEvents()
+
+        queued: list[str] = []
+        registered = []
+        groupbox_calls = []
+        original_register_flash_groupbox = manager.register_flash_groupbox
+        manager.queue_flash_local = queued.append
+
+        def record_groupbox_flash(*args, **kwargs):
+            groupbox_calls.append(args)
+            return original_register_flash_groupbox(*args, **kwargs)
+
+        manager.register_flash_groupbox = record_groupbox_flash
+        manager.register_flash_masked_container = (
+            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+                (key, container, mask_rects, label_widget)
+            )
+        )
+
+        groupbox_call_count = len(groupbox_calls)
+        manager._queue_leaf_flash_for_path("source_bindings_config")
+
+        assert len(groupbox_calls) == groupbox_call_count
+        assert len(registered) == 1
+        key, container_widget, mask_rects, label_widget = registered[0]
+        assert key == "source_bindings_config"
+        assert container_widget is container
+        assert label_widget is None
+        masks = tuple(mask_rects(manager))
+        assert widget.source_filters_table is not None
+        table_window_pos = manager.mapFromGlobal(
+            widget.source_filters_table.mapToGlobal(
+                widget.source_filters_table.rect().topLeft()
+            )
+        )
+        assert (
+            QRect(table_window_pos, widget.source_filters_table.size()),
+            False,
+        ) in masks
+        assert queued == ["source_bindings_config"]
+    finally:
+        manager.deleteLater()
+
+
+def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.EQUALS,
+                "DNA",
+            )
+        )
+        QApplication.processEvents()
+        assert widget.source_filters_table is not None
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+
+        set_combo_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+            "contains",
+        )
+        QApplication.processEvents()
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "contains"
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
+        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.property("objectstate_dirty") is True
+        assert (
+            state.last_changed_field
+            == "source_bindings_config.source_filters[0].match_type"
+        )
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings_config.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.EQUALS,
+                "DNA",
+            ),
+        )
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentData() is SourceFilterMatchType.EQUALS
+        assert match_type_widget.currentText() == "*equals"
+        assert match_type_widget.property("objectstate_dirty") is True
+        assert (
+            state.last_changed_field
+            == "source_bindings_config.source_filters[0].match_type"
+        )
+
+        assert ObjectStateRegistry.time_travel_forward()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings_config.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            ),
+        )
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "contains"
+        match_type_widget = widget.source_filters_table.cellWidget(
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        )
+        assert isinstance(match_type_widget, QComboBox)
+        assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
+        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.property("objectstate_dirty") is True
+        assert (
+            state.last_changed_field
+            == "source_bindings_config.source_filters[0].match_type"
+        )
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_text_time_travel_restores_widget_value() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        QApplication.processEvents()
+        assert widget.source_filters_table is not None
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "DNA"
+
+        set_editable_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+            "RNA",
+        )
+        QApplication.processEvents()
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "RNA"
+        item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+        assert item is not None
+        assert item.data(Qt.ItemDataRole.UserRole) == "RNA"
+        assert item.text() == "*RNA"
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings_config.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            ),
+        )
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "DNA"
+        item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+        assert item is not None
+        assert item.data(Qt.ItemDataRole.UserRole) == "DNA"
+        assert item.text() == "*DNA"
+
+        assert ObjectStateRegistry.time_travel_forward()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings_config.source_filters"] == (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "RNA",
+            ),
+        )
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "RNA"
+        item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
+        assert item is not None
+        assert item.data(Qt.ItemDataRole.UserRole) == "RNA"
+        assert item.text() == "*RNA"
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_child_state_update_refreshes_widget_value() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    state = ObjectState(PipelineConfig(), scope_id="plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+
+        first_filters = (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.EQUALS,
+                "DNA",
+            ),
+        )
+        state.update_parameter(
+            "source_bindings_config.source_filters",
+            first_filters,
+        )
+        loop = QEventLoop()
+        QTimer.singleShot(0, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
+
+        source_config = state.parameters["source_bindings_config"]
+        assert DataclassFieldAccess.raw_value(
+            source_config,
+            "source_filters",
+        ) == first_filters
+        assert widget.get_value().source_filters == first_filters
+        assert widget.source_filters_table is not None
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "DNA"
+        history_len_before_second_update = len(ObjectStateRegistry.get_branch_history())
+
+        second_filters = (
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "RNA",
+            ),
+        )
+        state.update_parameter(
+            "source_bindings_config.source_filters",
+            second_filters,
+        )
+        loop = QEventLoop()
+        QTimer.singleShot(0, loop.quit)
+        loop.exec()
+        QApplication.processEvents()
+
+        source_config = state.parameters["source_bindings_config"]
+        assert DataclassFieldAccess.raw_value(
+            source_config,
+            "source_filters",
+        ) == second_filters
+        assert widget.get_value().source_filters == second_filters
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "contains"
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "RNA"
+
+        new_history = ObjectStateRegistry.get_branch_history()[
+            history_len_before_second_update:
+        ]
+        assert len(new_history) == 1
+        assert "source_bindings_config.source_filters" in new_history[0].label
+
+        assert ObjectStateRegistry.time_travel_back()
+        QApplication.processEvents()
+        assert state.parameters["source_bindings_config.source_filters"] == first_filters
+        assert widget.get_value().source_filters == first_filters
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.MATCH_TYPE),
+        ) == "equals"
+        assert table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.VALUE),
+        ) == "DNA"
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
 
 
 def test_inline_source_bindings_uses_dataclass_groupbox_chrome() -> None:
@@ -1151,7 +3705,12 @@ def test_nested_form_flash_delegates_to_root_manager() -> None:
 
     nested_manager = manager.nested_managers["processing_config"]
     queued: list[str] = []
-    manager._queue_leaf_flash_for_path = queued.append
+
+    def record_flash(path: str, *, queue_flash: bool = True) -> str:
+        queued.append(path)
+        return path
+
+    manager._queue_leaf_flash_for_path = record_flash
 
     nested_manager.queue_field_flash("processing_config.group_by")
     nested_manager._queue_leaf_flash_for_path("processing_config.input_source")
@@ -1227,6 +3786,45 @@ def test_source_bindings_editor_round_trips_form_value() -> None:
     assert widget.get_value() == binding_config
     assert widget.value == binding_config
     assert changed_count == 0
+
+
+def test_source_bindings_editor_set_value_resets_stale_preview_table() -> None:
+    QtApplicationHarness.app()
+    raw_config = StepSourceBindingsConfig(
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            ),
+        ),
+    )
+    preview_config = StepSourceBindingsConfig(
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.EXTENSION,
+                SourceFilterMatchType.CONTAINS,
+                ".tif",
+            ),
+        ),
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(raw_config)
+    assert widget.source_filters_table is not None
+
+    widget.set_resolved_value_preview(preview_config)
+    assert table_cell_text(
+        widget.source_filters_table,
+        0,
+        int(SourceFilterColumn.SUBJECT),
+    ) == "extension"
+
+    widget.set_value(raw_config)
+
+    assert table_cell_text(
+        widget.source_filters_table,
+        0,
+        int(SourceFilterColumn.SUBJECT),
+    ) == "file"
 
 
 def test_source_bindings_editor_renders_preview_context(tmp_path) -> None:

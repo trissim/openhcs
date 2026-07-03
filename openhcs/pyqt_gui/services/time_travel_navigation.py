@@ -127,9 +127,9 @@ def should_replace_navigation_target(
         return candidate_target is not None
     if candidate_target is None:
         return False
-    if existing_target.is_function_target:
-        return False
-    return candidate_target.is_function_target
+    if existing_target.is_function_target and not candidate_target.is_function_target:
+        return True
+    return False
 
 
 def should_include_time_travel_scope(scope: TimeTravelSourceScope) -> bool:
@@ -143,17 +143,24 @@ def should_include_time_travel_scope(scope: TimeTravelSourceScope) -> bool:
     if scope.triggering_scope is None:
         return True
 
+    triggering_function_scope = parse_function_scope_ref(scope.triggering_scope)
+    if triggering_function_scope is not None:
+        if scope.changed_scope_id == scope.triggering_scope:
+            return True
+        if scope.changed_scope_id.startswith(f"{scope.triggering_scope}::"):
+            return True
+        return scope.changed_scope_id == triggering_function_scope.step_scope_id
+
     if scope.changed_scope_id == scope.triggering_scope:
         return True
 
-    if scope.changed_scope_id.startswith(f"{scope.triggering_scope}::"):
-        return True
+    if (
+        parse_function_scope_ref(scope.changed_scope_id) is not None
+        and scope.changed_scope_id.startswith(f"{scope.triggering_scope}::")
+    ):
+        return False
 
-    function_scope = parse_function_scope_ref(scope.changed_scope_id)
-    return (
-        function_scope is not None
-        and function_scope.step_scope_id == scope.triggering_scope
-    )
+    return False
 
 
 class DirtyFieldSortKeyAuthority:

@@ -121,8 +121,12 @@ class _DualEditorTabBuilder:
         step_editor.form_manager.parameter_changed.connect(
             self.context.on_form_parameter_changed
         )
-        step_editor.state.on_state_changed(self.context.update_window_title)
-        step_editor.state.on_state_changed(self.context.detect_changes)
+
+        def update_title_on_state_changed(_: set[str]) -> None:
+            self.context.update_window_title()
+            self.context.detect_changes()
+
+        step_editor.state.on_state_changed(update_title_on_state_changed)
 
         def update_title_on_resolved_changed(_: set) -> None:
             self.context.update_window_title()

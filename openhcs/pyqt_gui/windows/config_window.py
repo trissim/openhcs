@@ -283,7 +283,10 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
         # Subscribe to dirty state changes for window title updates
         self._base_window_title = f"Configuration - {self.config_class.__name__}"
-        self._dirty_title_callback = self._update_window_title_dirty_marker
+        def update_title_on_state_changed(_: set[str]) -> None:
+            self._update_window_title_dirty_marker()
+
+        self._dirty_title_callback = update_title_on_state_changed
         self.state.on_state_changed(self._dirty_title_callback)
 
         # Setup UI
@@ -397,6 +400,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self._save_button = QPushButton("Save")
         self._save_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         self._save_button.setMinimumWidth(70)
+        self._save_button.setEnabled(False)
         self.setup_save_button(self._save_button, self.save_config)
         self._save_button.setStyleSheet(button_styles["compact"])
 
@@ -505,7 +509,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
         # Style Save button with hover effect
         if self._save_button is not None:
-            self._save_button.setStyleSheet(self.get_scope_accent_stylesheet())
+            self._save_button.setStyleSheet(
+                self.theme.styles.generate_scope_accent_button_style(accent_color)
+            )
 
         # Style header label with scope accent color
         if self._header_label is not None:

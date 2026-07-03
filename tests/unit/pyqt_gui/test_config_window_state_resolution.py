@@ -4,6 +4,7 @@ import pytest
 
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.constants.constants import VariableComponents
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.services.window_handlers import (
@@ -11,10 +12,13 @@ from openhcs.pyqt_gui.services.window_handlers import (
     register_openhcs_window_handlers,
 )
 from openhcs.pyqt_gui.windows.config_window import ConfigWindow, ConfigWindowStateResolver
+from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
+from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
     ScopeWindowRegistry,
 )
+from pyqt_reactive.theming.color_scheme import ColorScheme
 
 
 class PipelineConfigHost:
@@ -97,6 +101,67 @@ def test_global_config_window_creates_state_at_canonical_scope() -> None:
 
     assert state.scope_id == ""
     assert state.object_instance.num_workers == 3
+
+
+def test_global_config_concrete_variable_components_are_not_placeholder(qapp) -> None:
+    """Concrete global defaults must not be painted as inherited lazy values."""
+    state = ObjectState(GlobalPipelineConfig(), scope_id="")
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    try:
+        for _ in range(120):
+            qapp.processEvents()
+
+        groups = manager.findChildren(CheckboxGroupAdapter)
+        variable_components_group = next(
+            group
+            for group in groups
+            if any(
+                enum_value is VariableComponents.SITE
+                for enum_value, _ in group.checkbox_items()
+            )
+        )
+
+        assert variable_components_group.get_value() == [VariableComponents.SITE]
+        assert not variable_components_group.has_placeholder_state()
+        for _, checkbox in variable_components_group.checkbox_items():
+            assert not checkbox.is_placeholder()
+            assert not checkbox.has_placeholder_state()
+    finally:
+        manager.deleteLater()
+
+
+def test_config_window_save_button_starts_disabled_and_styles_disabled_state(qapp) -> None:
+    """Config windows expose managed dirty state through visible save styling."""
+    state = ObjectState(GlobalPipelineConfig(), scope_id="")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    window = ConfigWindow(
+        GlobalPipelineConfig,
+        state.object_instance,
+        scope_id=OpenHCSUiWindowId.global_config,
+    )
+
+    try:
+        qapp.processEvents()
+
+        assert window._save_button is not None
+        assert not window._save_button.isEnabled()
+        assert "QPushButton:disabled" in window._save_button.styleSheet()
+
+        state.update_parameter("num_workers", state.parameters["num_workers"] + 1)
+        qapp.processEvents()
+        window.detect_changes()
+
+        assert window._save_button.isEnabled()
+    finally:
+        window.close()
+        ObjectStateRegistry.clear()
 
 
 def test_global_config_window_registers_with_stable_window_id() -> None:
