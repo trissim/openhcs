@@ -13,7 +13,7 @@ import sys
 import platform
 from pathlib import Path
 
-__version__ = "0.5.17"
+__version__ = "0.5.18"
 
 # Configure polystore defaults for OpenHCS integration
 os.environ.setdefault("POLYSTORE_METADATA_FILENAME", "openhcs_metadata.json")
