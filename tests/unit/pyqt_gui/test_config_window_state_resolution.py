@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from openhcs.config_framework.global_config import set_global_config_for_editing
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.constants.constants import VariableComponents
@@ -161,6 +162,62 @@ def test_config_window_save_button_starts_disabled_and_styles_disabled_state(qap
         assert window._save_button.isEnabled()
     finally:
         window.close()
+        ObjectStateRegistry.clear()
+
+
+def test_pipeline_streaming_enableable_placeholders_dim_after_build_and_toggle(qapp) -> None:
+    """Lazy inherited streaming configs still receive enableable dimming."""
+    ObjectStateRegistry.clear()
+    set_global_config_for_editing(GlobalPipelineConfig, GlobalPipelineConfig())
+
+    state = ObjectState(PipelineConfig(), scope_id="/tmp/plate")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="/tmp/plate",
+        ),
+    )
+
+    try:
+        for _ in range(200):
+            qapp.processEvents()
+
+        for field_name in (
+            "streaming_defaults",
+            "napari_streaming_config",
+            "fiji_streaming_config",
+        ):
+            nested_manager = manager.nested_managers[field_name]
+            enabled_widget = nested_manager.widgets["enabled"]
+            dimmed_widget = nested_manager.widgets["host"]
+            enabled_path = f"{field_name}.enabled"
+
+            assert enabled_widget.isChecked() is False
+            assert enabled_widget.get_value() is None
+            assert state.parameters[enabled_path] is None
+            assert dimmed_widget.property("enabled_field_dimmed") is True
+            assert dimmed_widget.graphicsEffect() is not None
+
+            enabled_widget.click()
+            for _ in range(20):
+                qapp.processEvents()
+
+            assert state.parameters[enabled_path] is True
+            assert dimmed_widget.property("enabled_field_dimmed") is False
+            assert dimmed_widget.graphicsEffect() is None
+
+            enabled_widget.click()
+            for _ in range(20):
+                qapp.processEvents()
+
+            assert state.parameters[enabled_path] is False
+            assert dimmed_widget.property("enabled_field_dimmed") is True
+            assert dimmed_widget.graphicsEffect() is not None
+    finally:
+        manager.deleteLater()
         ObjectStateRegistry.clear()
 
 

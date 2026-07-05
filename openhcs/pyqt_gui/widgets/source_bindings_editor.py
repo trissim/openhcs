@@ -35,6 +35,7 @@ from pyqt_reactive.protocols import (
     ChildSubfieldNavigationTargetProvider,
     ChangeSignalEmitter,
     InlineDataclassGroupBoxChromeProvider,
+    InlineDataclassRootResettable,
     PyQtWidgetMeta,
     RawResolvedValueSettable,
     ResolvedValuePreviewSettable,
@@ -1689,6 +1690,7 @@ class SourceBindingsEditorWidget(
     ChildFieldSemanticChromeRefreshable,
     ChildSubfieldNavigationTargetProvider,
     InlineDataclassGroupBoxChromeProvider,
+    InlineDataclassRootResettable,
     ChangeSignalEmitter,
     ScopeColorSchemeReceiver,
     metaclass=PyQtWidgetMeta,
@@ -1710,8 +1712,10 @@ class SourceBindingsEditorWidget(
     ) -> None:
         super().__init__(parent)
         self._schema = schema
-        self._bindings = bindings or StepSourceBindingsConfig()
-        self._display_bindings = display_bindings or self._bindings
+        self._bindings = bindings if bindings is not None else StepSourceBindingsConfig()
+        self._display_bindings = (
+            display_bindings if display_bindings is not None else self._bindings
+        )
         self._inventory = inventory
         self._form_context = form_context
         self._child_chrome = (
@@ -1770,7 +1774,7 @@ class SourceBindingsEditorWidget(
     ) -> "SourceBindingsEditorWidget":
         """Create an editor from typed source bindings and an optional schema."""
 
-        table_bindings = display_bindings or bindings
+        table_bindings = display_bindings if display_bindings is not None else bindings
         return cls(
             SourceBindingsViewModel.from_schema_and_bindings(
                 schema=schema,
@@ -1800,7 +1804,7 @@ class SourceBindingsEditorWidget(
 
         from objectstate.time_travel_profile import TimeTravelProfiler
 
-        bindings = value or type(self._bindings)()
+        bindings = value if value is not None else type(self._bindings)()
         SourceBindingsEditorValue(bindings)
         with TimeTravelProfiler.phase(
             "openhcs.source_bindings.set_value",
@@ -1850,8 +1854,12 @@ class SourceBindingsEditorWidget(
     ) -> None:
         """Update raw edit value and resolved display in one render pass."""
 
-        raw_bindings = raw_value or type(self._bindings)()
-        display_bindings = resolved_value or raw_bindings
+        raw_bindings = (
+            raw_value if raw_value is not None else type(self._bindings)()
+        )
+        display_bindings = (
+            resolved_value if resolved_value is not None else raw_bindings
+        )
         SourceBindingsEditorValue(raw_bindings)
         SourceBindingsEditorValue(display_bindings)
 
@@ -1876,6 +1884,16 @@ class SourceBindingsEditorWidget(
         """Refresh child labels and reset buttons after ObjectState changes."""
 
         self.refresh_section_label_markers(owner_field_paths)
+
+    def reset_inline_dataclass_fields(self) -> None:
+        """Reset SourceBindings child fields through the inline form context."""
+
+        if self._form_context is None:
+            raise RuntimeError(
+                "SourceBindingsEditorWidget requires an InlineDataclassFormContext "
+                "for root reset-all behavior."
+            )
+        self._form_context.reset_children()
 
     def child_field_semantic_owner_paths(self) -> tuple[DottedFieldPath, ...]:
         """Return SourceBindings child fields with structural table semantics."""
@@ -1936,7 +1954,7 @@ class SourceBindingsEditorWidget(
                 return False
 
             if update_raw:
-                self._bindings = raw_bindings or bindings
+                self._bindings = raw_bindings if raw_bindings is not None else bindings
             self._display_bindings = bindings
             self._updating_ui = True
             try:

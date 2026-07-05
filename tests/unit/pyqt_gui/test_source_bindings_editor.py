@@ -390,6 +390,65 @@ def test_inline_pipeline_source_bindings_widget_accepts_lazy_config_value() -> N
     assert len(widget.findChildren(HelpIndicator)) >= 4
 
 
+def test_inline_source_bindings_root_reset_all_resets_child_fields() -> None:
+    QtApplicationHarness.app()
+    state = ObjectState(PipelineConfig())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "source_bindings_config" in manager.widgets:
+                break
+
+        container = manager.widgets["source_bindings_config"]
+        assert isinstance(container, InlineDataclassGroupBox)
+        root_reset_buttons = [
+            button
+            for button in container.findChildren(QPushButton)
+            if button.text() == "Reset All"
+        ]
+        assert len(root_reset_buttons) == 1
+
+        widget = container._inline_value_widget
+        assert isinstance(widget, SourceBindingsEditorWidget)
+        widget.add_source_filter_row(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
+            )
+        )
+        for _ in range(10):
+            QApplication.processEvents()
+        assert DataclassFieldAccess.raw_value(
+            state.parameters["source_bindings_config"],
+            "source_filters",
+        ) is not None
+
+        root_reset_buttons[0].click()
+        for _ in range(10):
+            QApplication.processEvents()
+
+        assert DataclassFieldAccess.raw_value(
+            state.parameters["source_bindings_config"],
+            "source_filters",
+        ) is None
+        assert DataclassFieldAccess.raw_value(
+            widget.get_value(),
+            "source_filters",
+        ) is None
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
 def test_pipeline_source_bindings_edit_updates_flat_children_and_persists() -> None:
     QtApplicationHarness.app()
     binding = NamedSourceBinding(alias="DNA")
