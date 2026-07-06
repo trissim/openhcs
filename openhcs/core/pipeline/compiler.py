@@ -58,6 +58,8 @@ from typing import (
     Union,
 )
 
+import dill as pickle
+
 from openhcs.constants.constants import (
     AllComponents,
     get_multiprocessing_axis,
@@ -105,7 +107,10 @@ from openhcs.core.compiled_step_plan import (
     SequentialRuntimeFilter,
     SequentialRuntimeFilterPlan,
 )
-from openhcs.core.pipeline.path_planner import PipelinePathPlanner
+from openhcs.core.pipeline.path_planner import (
+    PathPlannerExecutionGroups,
+    PipelinePathPlanner,
+)
 from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
@@ -191,9 +196,9 @@ class AxisCompilationRequest:
         context = self.orchestrator.create_context(axis_id)
         context.step_axis_filters = self.global_step_axis_filters
         context.analysis_consolidation_config = (
-            self.pipeline_config.analysis_consolidation_config
+            self.global_config.analysis_consolidation_config
         )
-        context.plate_metadata_config = self.pipeline_config.plate_metadata_config
+        context.plate_metadata_config = self.global_config.plate_metadata_config
         return context
 
 def _refresh_function_objects_in_steps(pipeline_definition: List[AbstractStep]) -> None:
@@ -549,10 +554,8 @@ class PipelineCompiler:
             current_plan.axis_id = session.axis_id
             current_plan.create_openhcs_metadata = session.metadata_writer
             current_plan.variable_components = snapshot.variable_components
-            current_plan.group_by = FuncStepContractValidator.normalized_group_by(
-                snapshot.group_by,
-                snapshot.variable_components,
-                snapshot.name,
+            current_plan.group_by = PathPlannerExecutionGroups.normalized_group_by(
+                snapshot,
             )
             current_plan.input_source = snapshot.input_source
             current_plan.sequential_processing = snapshot.processing_config
@@ -1731,12 +1734,17 @@ class PipelineCompiler:
                 compiled_contexts,
                 compiler_scope_id,
             )
-            return CompiledExecutionBundle.from_runtime_contexts(
+            execution_bundle = CompiledExecutionBundle.from_runtime_contexts(
                 pipeline_definition=pipeline_definition,
                 runtime_contexts=compiled_contexts,
                 worker_assignments=worker_assignments,
                 runtime_environment=runtime_environment,
-            ).as_compilation_result()
+            )
+            PipelineCompiler._write_compilation_debug_bundle_if_configured(
+                pipeline_config,
+                execution_bundle,
+            )
+            return execution_bundle.as_compilation_result()
         except Exception as e:
             if compiler_scope_id is not None:
                 PipelineCompiler._cleanup_compilation_object_states(
@@ -1746,6 +1754,31 @@ class PipelineCompiler:
             orchestrator._state = OrchestratorState.COMPILE_FAILED
             logger.error(f"Failed to compile pipelines: {e}")
             raise
+
+    @staticmethod
+    def _write_compilation_debug_bundle_if_configured(
+        pipeline_config: PipelineConfig,
+        execution_bundle: CompiledExecutionBundle,
+    ) -> None:
+        compilation_debug_config = pipeline_config.compilation_debug_config
+        if not compilation_debug_config.enabled:
+            return
+        dump_path = compilation_debug_config.compiled_execution_bundle_path
+        if dump_path is None:
+            logger.warning(
+                "CompilationDebugConfig enabled but no "
+                "compiled_execution_bundle_path was set."
+            )
+            return
+        dump_path = Path(dump_path)
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        transport_bundle = execution_bundle.for_transport_serialization()
+        with dump_path.open("wb") as handle:
+            pickle.dump(
+                transport_bundle.transport_contexts,
+                handle,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
 
 def _resolve_step_axis_filters(
     step_snapshots: tuple[StepSnapshot, ...],

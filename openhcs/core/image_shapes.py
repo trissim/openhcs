@@ -12,7 +12,7 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 
-COLOR_CHANNEL_COUNTS = frozenset((3, 4))
+COLOR_CHANNEL_COUNTS = frozenset((2, 3, 4))
 ArrayT = TypeVar("ArrayT", bound=np.ndarray)
 
 

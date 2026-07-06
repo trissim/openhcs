@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES, VariableComponents
+from openhcs.constants.constants import (
+    AllComponents,
+    VALID_GPU_MEMORY_TYPES,
+    VariableComponents,
+)
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.compiled_step_plan import (
     ArtifactInputPlans,
@@ -44,6 +48,7 @@ class FunctionStepExecutionPlan:
     output_dir: Path
     variable_components: Sequence[VariableComponents]
     group_by: Any
+    execution_group_component: AllComponents | None
     sequential_filter_plan: SequentialRuntimeFilterPlan
     main_input_dependency: StepInputDependency
     source_binding_plan: CompiledSourceBindingPlan
@@ -87,11 +92,10 @@ class FunctionStepExecutionPlan:
 
         variable_components = compiled_plan.variable_components
         if variable_components is None:
-            variable_components = [VariableComponents.SITE]
-            logger.warning(
-                "Step %s (%s) had None variable_components, using default [SITE]",
-                step_index,
-                step_name,
+            raise ValueError(
+                f"Step {step_index} ({step_name}) missing compiled "
+                "variable_components. Stack-axis semantics must be resolved "
+                "before runtime execution."
             )
 
         input_memory_type = _require_value(
@@ -125,6 +129,7 @@ class FunctionStepExecutionPlan:
             output_dir=output_dir,
             variable_components=variable_components,
             group_by=compiled_plan.group_by,
+            execution_group_component=compiled_plan.execution_group_component,
             sequential_filter_plan=compiled_plan.sequential_filter_plan,
             main_input_dependency=compiled_plan.main_input_dependency,
             source_binding_plan=compiled_plan.source_binding_plan,
@@ -179,13 +184,25 @@ class FunctionStepExecutionPlan:
         return self.group_by.name if self.group_by else None
 
     @property
+    def execution_group_value(self) -> str | None:
+        if self.execution_group_component is None:
+            return None
+        return self.execution_group_component.value
+
+    @property
+    def execution_group_name(self) -> str | None:
+        if self.execution_group_component is None:
+            return None
+        return self.execution_group_component.name
+
+    @property
     def group_projects_runtime_plane(self) -> bool:
         """Return whether the current group axis is a runtime-slice stack axis."""
-        group_by_value = self.group_by_value
-        if group_by_value is None:
+        execution_group_value = self.execution_group_value
+        if execution_group_value is None:
             return False
         return any(
-            component.value == group_by_value
+            component.value == execution_group_value
             for component in self.variable_components
         )
 

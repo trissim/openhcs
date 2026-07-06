@@ -13,7 +13,7 @@ import operator
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field, is_dataclass, replace
-from functools import singledispatch
+from functools import lru_cache, singledispatch
 from pathlib import Path
 from typing import ClassVar, TYPE_CHECKING, TypeAlias
 
@@ -23,7 +23,7 @@ from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
 
 from openhcs.constants.constants import AllComponents, VariableComponents
-from openhcs.core.artifacts import ArtifactKind, ArtifactMaterializationPayload
+from openhcs.core.artifacts import ArtifactMaterializationPayload, ArtifactType
 from openhcs.core.image_shapes import ColorImageShapeRole, image_spatial_shape_yx
 from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
 from openhcs.processing.materialization.options import (
@@ -655,7 +655,9 @@ class SourcePathSourceStemResolutionPolicy(
         metadata: ImagePayloadMetadata,
     ) -> str:
         del authority
-        return Path(metadata.source_provenance.scalar_source_identity.path).stem
+        return _cached_path_stem(
+            metadata.source_provenance.scalar_source_identity.path
+        )
 
 @dataclass(frozen=True, slots=True)
 class PathOnlySourceStemAuthority(
@@ -747,10 +749,10 @@ class ParserBackedSourceStemAuthority(PathOnlySourceStemAuthority):
         source_path = source_identity.path
         if source_path is None:
             return ()
-        suffixes = Path(source_path).suffixes
+        suffixes = _cached_path_suffixes(source_path)
         if not suffixes:
             return ()
-        return ("".join(suffixes),)
+        return (suffixes,)
 
     @staticmethod
     def parsed_components_match_metadata(
@@ -817,7 +819,7 @@ class ROIMaterializationArchiveIdentity:
             return None
         source_path = self.source_identity.path
         if source_path:
-            return Path(source_path).stem
+            return _cached_path_stem(source_path)
         return None
 
     @property
@@ -1066,21 +1068,57 @@ class PathHelper:
 
     @staticmethod
     def _strip_path(path: str, options: FileOutputOptions) -> Path:
-        p = Path(path)
-        name = p.name
-
-        if name.endswith(PathSuffixes.ROI_ZIP):
-            name = name[: -len(PathSuffixes.ROI_ZIP)]
-
-        if options.strip_pkl and name.endswith(PathSuffixes.PKL):
-            name = name[: -len(PathSuffixes.PKL)]
-        if options.strip_roi_suffix and name.endswith(PathSuffixes.ROI):
-            name = name[: -len(PathSuffixes.ROI)]
-
-        return p.with_name(name)
+        return Path(
+            _cached_stripped_materialization_path(
+                path,
+                options.strip_pkl,
+                options.strip_roi_suffix,
+            )
+        )
 
     def with_suffix(self, suffix: str) -> str:
         return str(self.parent / f"{self.name}{suffix}")
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_stem(path: str) -> str:
+    """Return the filename stem for a frequently reused materialization path."""
+    return Path(path).stem
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_suffixes(path: str) -> str:
+    """Return all suffixes for a frequently reused materialization path."""
+
+    return "".join(Path(path).suffixes)
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_parent(path: str) -> str:
+    """Return the parent directory for a materialization output path."""
+
+    return str(Path(path).parent)
+
+
+@lru_cache(maxsize=65536)
+def _cached_stripped_materialization_path(
+    path: str,
+    strip_pkl: bool,
+    strip_roi_suffix: bool,
+) -> str:
+    """Return a materialization base path stripped according to writer flags."""
+    p = Path(path)
+    name = p.name
+
+    if name.endswith(PathSuffixes.ROI_ZIP):
+        name = name[: -len(PathSuffixes.ROI_ZIP)]
+
+    if strip_pkl and name.endswith(PathSuffixes.PKL):
+        name = name[: -len(PathSuffixes.PKL)]
+    if strip_roi_suffix and name.endswith(PathSuffixes.ROI):
+        name = name[: -len(PathSuffixes.ROI)]
+
+    return str(p.with_name(name))
 
 class MaterializationCandidatePathAuthority:
     """Project writer options to the output paths a backend may see."""
@@ -1229,7 +1267,7 @@ class BackendSaver:
         if not backend_instance.requires_filesystem_validation:
             return
 
-        self.filemanager.ensure_directory(str(Path(path).parent), backend)
+        self.filemanager.ensure_directory(_cached_path_parent(path), backend)
 
         if not self.filemanager.exists(path, backend):
             return
@@ -1369,6 +1407,68 @@ def columnar_rows_tabular_rows(
         TabularRow(dict(row))
         for row in data.row_mappings()
     )
+
+
+def _mapping_column_length(value: MaterializationValue) -> int | None:
+    """Return row count for a mapping value that behaves like a table column."""
+    if isinstance(value, Mapping):
+        return None
+    if isinstance(value, (str, bytes, bytearray)):
+        return None
+    shape = getattr(value, "shape", None)
+    if shape:
+        return int(shape[0])
+    if isinstance(value, Sequence):
+        return len(value)
+    try:
+        return len(value)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+
+
+def _mapping_column_value(
+    value: MaterializationValue,
+    row_index: int,
+) -> MaterializationValue:
+    """Return one row value from a column-like mapping value."""
+    length = _mapping_column_length(value)
+    if length is None:
+        return value
+    if row_index >= length:
+        return value
+    return value[row_index]  # type: ignore[index]
+
+
+@tabular_rows_from_payload.register(Mapping)
+def mapping_tabular_rows(
+    data: Mapping,
+    options: TabularExtractionOptions,
+) -> TabularRows:
+    """Project mapping-of-columns payloads into row mappings."""
+    columns = {str(column): value for column, value in data.items()}
+    field_names = tuple(options.fields) if options.fields else tuple(columns)
+    column_lengths = tuple(
+        length
+        for field_name in field_names
+        if field_name in columns
+        for length in (_mapping_column_length(columns[field_name]),)
+        if length is not None
+    )
+    row_count = max(column_lengths) if column_lengths else 1
+    rows = TabularRows()
+    for row_index in range(row_count):
+        row = TabularRow(
+            {
+                field_name: _mapping_column_value(columns[field_name], row_index)
+                for field_name in field_names
+                if field_name in columns
+            }
+        )
+        if TabularRowsAuthority.should_add_slice_index(row, options.fields):
+            row[TabularRowsAuthority.SLICE_INDEX_FIELD] = row_index
+        rows.append(row)
+    return rows
+
 
 class TabularRowsAuthority:
     """Build canonical tabular rows for CSV and JSON materialization."""
@@ -2737,12 +2837,12 @@ class MaterializationSpec(ArtifactMaterializationPayload):
             for output_options in self.outputs
         )
 
-    def uses_source_identity_filename_for_artifact_kind(
+    def uses_source_identity_filename_for_artifact_type(
         self,
-        artifact_kind: ArtifactKind,
+        artifact_type: ArtifactType,
     ) -> bool:
         """Return whether this spec materializes files by source identity."""
-        return artifact_kind.materialization_uses_source_identity_filename and any(
+        return artifact_type.materialization_uses_source_identity_filename and any(
             output_options.filename_identity
             is MaterializedFilenameIdentity.SOURCE_IDENTITY
             for output_options in self.outputs

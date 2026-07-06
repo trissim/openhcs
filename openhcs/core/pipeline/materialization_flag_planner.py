@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List
 
 from openhcs.constants.constants import Backend
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
@@ -131,9 +131,9 @@ class MaterializationFlagPlanner:
         """Return whether automatic final materialization should flush images."""
         if not step_plan.artifact_outputs:
             return True
-        image_kinds = {ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS}
+        image_kinds = {ImageArtifactType, ObjectLabelsArtifactType}
         return any(
-            output.kind in image_kinds
+            output.artifact_type in image_kinds
             and output.materialization is not NO_ARTIFACT_MATERIALIZATION
             for output in step_plan.artifact_outputs.values()
         )

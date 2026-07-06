@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKey, ArtifactKind
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKey, ArtifactType
 from openhcs.core.runtime_values import RuntimeValue
 
 
@@ -97,7 +97,7 @@ class RuntimeArtifactQuery:
     """Typed lookup for one planned runtime artifact record."""
 
     name: str
-    kind: ArtifactKind
+    artifact_type: ArtifactType
     axis_id: str
     target: RuntimeArtifactQueryTarget
 
@@ -114,7 +114,7 @@ class RuntimeArtifactQuery:
         if input_plan.path == "self":
             return cls(
                 name=input_plan.name,
-                kind=input_plan.kind,
+                artifact_type=input_plan.artifact_type,
                 axis_id=axis_id,
                 target=RuntimeArtifactGroupTarget(
                     input_plan.require_single_group_key()
@@ -122,7 +122,7 @@ class RuntimeArtifactQuery:
             )
         return cls(
             name=input_plan.name,
-            kind=input_plan.kind,
+            artifact_type=input_plan.artifact_type,
             axis_id=axis_id,
             target=RuntimeArtifactLocationTarget(
                 RuntimeArtifactLocation(
@@ -147,7 +147,7 @@ class RuntimeArtifactQuery:
         key = record.key
         if key.name != self.name:
             return False
-        if key.kind is not self.kind:
+        if key.artifact_type is not self.artifact_type:
             return False
         if key.scope.axis_id != self.axis_id:
             return False
@@ -230,7 +230,7 @@ class RuntimeValueStore:
             tuple[
                 int,
                 str | None,
-                ArtifactKind | None,
+                ArtifactType | None,
                 str | None,
                 str | None,
                 bool,
@@ -300,14 +300,31 @@ class RuntimeValueStore:
         """Resolve exactly one runtime artifact record for a planned operation."""
         records = self.find_matching(query)
         if not records:
+            same_name_records = tuple(
+                record
+                for record in self._records_by_location.values()
+                if record.key.name == query.name
+                and record.key.artifact_type is query.artifact_type
+                and record.key.scope.axis_id == query.axis_id
+            )
+            candidate_locations = tuple(
+                (
+                    record.key.scope.group_key,
+                    record.location.backend,
+                    record.location.path,
+                )
+                for record in same_name_records
+            )
             raise RuntimeError(
                 f"Missing RuntimeValueStore record for {purpose} "
-                f"'{query.name}' ({query.kind.value}) on axis '{query.axis_id}'."
+                f"'{query.name}' ({query.artifact_type.value}) on axis "
+                f"'{query.axis_id}' target {query.target!r}. "
+                f"Candidate same-name records: {candidate_locations!r}."
             )
         if len(records) > 1:
             raise RuntimeError(
                 f"Ambiguous RuntimeValueStore records for {purpose} "
-                f"'{query.name}' ({query.kind.value}) on axis '{query.axis_id}': "
+                f"'{query.name}' ({query.artifact_type.value}) on axis '{query.axis_id}': "
                 f"{records!r}."
             )
         return records[0]
@@ -340,13 +357,20 @@ class RuntimeValueStore:
         self,
         *,
         name: str | None = None,
-        kind: ArtifactKind | None = None,
+        artifact_type: ArtifactType | None = None,
         axis_id: str | None = None,
         group_key: str | None = None,
         match_group: bool = False,
     ) -> tuple[StoredRuntimeValue, ...]:
         """Find stored values by semantic identity fields."""
-        cache_key = (self._revision, name, kind, axis_id, group_key, match_group)
+        cache_key = (
+            self._revision,
+            name,
+            artifact_type,
+            axis_id,
+            group_key,
+            match_group,
+        )
         cached = self._find_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -355,7 +379,7 @@ class RuntimeValueStore:
             key = record.key
             if name is not None and key.name != name:
                 continue
-            if kind is not None and key.kind is not kind:
+            if artifact_type is not None and key.artifact_type is not artifact_type:
                 continue
             if axis_id is not None and key.scope.axis_id != axis_id:
                 continue

@@ -14,7 +14,7 @@ from openhcs.core.function_patterns import (
 )
 from openhcs.core.function_reference import (
     FunctionReference,
-    FunctionReferenceTransportAuthority,
+    FunctionReferenceTransportStrategy,
 )
 from openhcs.core.steps.function_step import FunctionStep
 
@@ -81,7 +81,7 @@ class FunctionStepTransportAuthority:
                 return func_spec
             return (normalized_func, *func_spec[1:])
         if isinstance(func_spec, ModuleType):
-            resolved = FunctionReferenceTransportAuthority.cellprofiler_catalog_module(
+            resolved = FunctionReferenceTransportStrategy.normalized_registered_module(
                 func_spec
             )
             if resolved is not None:
@@ -91,7 +91,7 @@ class FunctionStepTransportAuthority:
                 f"{func_spec.__name__}. Reload or edit the step to select a function."
             )
         if callable(func_spec):
-            resolved = FunctionReferenceTransportAuthority.cellprofiler_catalog_function(
+            resolved = FunctionReferenceTransportStrategy.normalized_registered_callable(
                 func_spec
             )
             if resolved is not None:

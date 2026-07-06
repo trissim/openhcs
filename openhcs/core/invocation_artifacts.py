@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ArtifactSpec,
+    ArtifactSpecCollection,
+)
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
@@ -59,8 +64,18 @@ class ArtifactDeclarationStepContext:
 class InvocationArtifactDeclarations(ArtifactPlanKeySelector):
     """Artifact declarations owned by one normalized function invocation."""
 
-    inputs: InvocationArtifactSpecItems = ()
-    outputs: InvocationArtifactSpecItems = ()
+    artifacts: tuple[ArtifactSpec, ...] = ()
+    plan_key_artifacts: tuple[ArtifactSpec, ...] | None = None
+
+    def __post_init__(self) -> None:
+        collection = ArtifactSpecCollection(self.artifacts)
+        object.__setattr__(self, "artifacts", collection.specs)
+        if self.plan_key_artifacts is not None:
+            key_collection = ArtifactSpecCollection(self.plan_key_artifacts)
+            object.__setattr__(self, "plan_key_artifacts", key_collection.specs)
+        self.validate_artifact_relation_refs(
+            owner_name="InvocationArtifactDeclarations",
+        )
 
     @classmethod
     def from_contract(cls, contract: Any) -> "InvocationArtifactDeclarations":
@@ -68,8 +83,13 @@ class InvocationArtifactDeclarations(ArtifactPlanKeySelector):
         if contract.module_artifact_contract is not None:
             return cls.from_module_contract(contract.module_artifact_contract)
         return cls(
-            inputs=tuple(contract.artifact_inputs),
-            outputs=tuple(contract.artifact_outputs),
+            artifacts=tuple(
+                spec
+                for _name, spec in (
+                    *contract.artifact_inputs,
+                    *contract.artifact_outputs,
+                )
+            ),
         )
 
     @classmethod
@@ -79,19 +99,43 @@ class InvocationArtifactDeclarations(ArtifactPlanKeySelector):
     ) -> "InvocationArtifactDeclarations":
         """Build declarations from a typed executable-module contract."""
         return cls(
-            inputs=tuple((spec.name, spec) for spec in contract.runtime_artifact_inputs),
-            outputs=tuple((spec.name, spec) for spec in contract.outputs),
+            artifacts=(
+                *contract.declared_input_specs(),
+                *contract.outputs,
+            ),
+            plan_key_artifacts=(
+                *contract.runtime_artifact_inputs,
+                *contract.outputs,
+            ),
         )
 
     @property
-    def input_names(self) -> tuple[str, ...]:
-        """Declared artifact input names in declaration order."""
-        return tuple(name for name, _spec in self.inputs)
+    def artifact_specs(self) -> ArtifactSpecCollection:
+        """All artifact specs declared by this invocation."""
+        return ArtifactSpecCollection(self.artifacts)
 
     @property
-    def output_names(self) -> tuple[str, ...]:
-        """Declared artifact output names in declaration order."""
-        return tuple(name for name, _spec in self.outputs)
+    def artifact_key_specs(self) -> ArtifactSpecCollection:
+        """Artifact specs that participate in runtime plan-key selection."""
+        if self.plan_key_artifacts is None:
+            return self.artifact_specs
+        return ArtifactSpecCollection(self.plan_key_artifacts)
+
+    @property
+    def inputs(self) -> InvocationArtifactSpecItems:
+        """Input declarations projected from the canonical artifact collection."""
+        return tuple(
+            (spec.name, spec)
+            for spec in self.artifact_specs.for_plan_type(ArtifactInputPlan).specs
+        )
+
+    @property
+    def outputs(self) -> InvocationArtifactSpecItems:
+        """Output declarations projected from the canonical artifact collection."""
+        return tuple(
+            (spec.name, spec)
+            for spec in self.artifact_specs.for_plan_type(ArtifactOutputPlan).specs
+        )
 
 
 class InvocationArtifactDeclarationProvider(ABC):

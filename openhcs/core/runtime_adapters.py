@@ -122,6 +122,20 @@ class RuntimeExecutionAxisScope:
             raise ValueError("Runtime component-axis scope has no value.")
         return value_text
 
+    def value_text_for_component(
+        self,
+        component: AllComponents | Enum | str | None,
+    ) -> str | None:
+        """Return this runtime scope's value for one component axis."""
+        if component is None:
+            return None
+        resolved_component = ComponentSet.coerce_component(component)
+        if resolved_component.is_multiprocessing_axis():
+            return self.axis_id
+        if self.component is not None and self.component == resolved_component:
+            return self.value_text
+        return None
+
     @property
     def has_value(self) -> bool:
         return self.component is not None and self.value is not None

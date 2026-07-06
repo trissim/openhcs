@@ -14,7 +14,6 @@ from urllib.parse import unquote, urlparse
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     ImageAssignment,

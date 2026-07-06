@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 from types import MappingProxyType
 
 from openhcs.core.equivalence.policy import (
@@ -15,6 +16,8 @@ from openhcs.core.equivalence.policy import (
     RuntimeMeasurementSourceNameEncoding,
     normalize_runtime_identifier,
     normalize_runtime_source_name,
+    runtime_measurement_dialect_cache_id,
+    runtime_measurement_dialect_for_cache_id,
     runtime_source_name_tokens,
 )
 from openhcs.core.runtime_semantics import (
@@ -22,9 +25,7 @@ from openhcs.core.runtime_semantics import (
     MeasurementStatistic,
     MeasurementSubject,
     ObjectCoreMeasurementFeature,
-    PairMeasurementFeature,
 )
-
 
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementSubjectKey:
@@ -32,6 +33,7 @@ class RuntimeMeasurementSubjectKey:
 
     scope: MeasurementScope
     name: str | None = None
+    _hash_value: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         scope = (
@@ -40,17 +42,21 @@ class RuntimeMeasurementSubjectKey:
             else MeasurementScope(self.scope)
         )
         name = (
-            normalize_runtime_identifier(self.name)
-            if self.name is not None
-            else None
+            normalize_runtime_identifier(self.name) if self.name is not None else None
         )
         if name == "":
             raise ValueError("RuntimeMeasurementSubjectKey.name cannot be empty.")
         object.__setattr__(self, "scope", scope)
         object.__setattr__(self, "name", name)
+        object.__setattr__(self, "_hash_value", hash((scope, name)))
+
+    def __hash__(self) -> int:
+        return self._hash_value
 
     @classmethod
-    def from_subject(cls, subject: MeasurementSubject) -> "RuntimeMeasurementSubjectKey":
+    def from_subject(
+        cls, subject: MeasurementSubject
+    ) -> "RuntimeMeasurementSubjectKey":
         """Build a comparison subject key from typed runtime semantics."""
         return cls(scope=subject.scope, name=subject.name)
 
@@ -189,11 +195,14 @@ class RuntimeMeasurementFeatureKey:
     feature_name: str
     statistic: str = "value"
     source_name: str | None = None
+    _hash_value: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         feature_name = self.feature_name.strip()
         if not feature_name:
-            raise ValueError("RuntimeMeasurementFeatureKey.feature_name cannot be empty.")
+            raise ValueError(
+                "RuntimeMeasurementFeatureKey.feature_name cannot be empty."
+            )
         statistic = normalize_runtime_identifier(self.statistic)
         if not statistic:
             raise ValueError("RuntimeMeasurementFeatureKey.statistic cannot be empty.")
@@ -203,10 +212,20 @@ class RuntimeMeasurementFeatureKey:
             else None
         )
         if source_name == "":
-            raise ValueError("RuntimeMeasurementFeatureKey.source_name cannot be empty.")
+            raise ValueError(
+                "RuntimeMeasurementFeatureKey.source_name cannot be empty."
+            )
         object.__setattr__(self, "feature_name", feature_name)
         object.__setattr__(self, "statistic", statistic)
         object.__setattr__(self, "source_name", source_name)
+        object.__setattr__(
+            self,
+            "_hash_value",
+            hash((self.subject, feature_name, statistic, source_name)),
+        )
+
+    def __hash__(self) -> int:
+        return self._hash_value
 
     @classmethod
     def from_source_qualified_feature(
@@ -219,13 +238,11 @@ class RuntimeMeasurementFeatureKey:
         qualifiers: tuple[str, ...] = (),
     ) -> "RuntimeMeasurementFeatureKey":
         """Build a key through the dialect's declared source-name encoding."""
-        source_qualified_feature = (
-            measurement_dialect.encode_source_qualified_feature(
-                feature_name,
-                source_name,
-                subject.scope,
-                qualifiers=qualifiers,
-            )
+        source_qualified_feature = measurement_dialect.encode_source_qualified_feature(
+            feature_name,
+            source_name,
+            subject.scope,
+            qualifiers=qualifiers,
         )
         if (
             subject.scope is MeasurementScope.IMAGE
@@ -364,7 +381,11 @@ class RuntimeMeasurementFeatureKey:
         )
         return type(self).from_source_qualified_feature(
             self.subject,
-            self.feature_name if feature_family is None else feature_family.feature_name,
+            (
+                self.feature_name
+                if feature_family is None
+                else feature_family.feature_name
+            ),
             source_name,
             measurement_dialect,
             self.statistic,
@@ -416,9 +437,6 @@ class RuntimeMeasurementFeatureKey:
 _RuntimeMeasurementNameParts = tuple[tuple[str, ...], tuple[str, ...]]
 _RuntimeSourceTokenGroups = tuple[tuple[str, tuple[str, ...]], ...]
 _MEASUREMENT_AGGREGATE_PREFIXES = frozenset({MeasurementStatistic.MEAN.value})
-_UNDIRECTED_PAIR_FEATURES = frozenset(
-    (PairMeasurementFeature.CORRELATION.value, PairMeasurementFeature.OVERLAP.value)
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,41 +456,37 @@ class RuntimeMeasurementNamePartsProjection:
         known_source_names: tuple[str, ...] = (),
     ) -> "RuntimeMeasurementNamePartsProjection":
         return cls(
-            tuple(part for part in feature_name.split("_") if part),
+            normalized_measurement_feature_name_parts(feature_name),
             dialect,
             known_source_names,
         )
 
     def category_prefix(self) -> tuple[str, ...]:
         """Return the longest dialect category prefix matched by these parts."""
-        matches = tuple(
-            prefix
-            for prefix in self.dialect.category_prefixes
-            if len(self.parts) >= len(prefix) and self.parts[: len(prefix)] == prefix
+        return _category_prefix_for_parts(
+            self.parts,
+            runtime_measurement_dialect_cache_id(self.dialect),
         )
-        if not matches:
-            return ()
-        return max(matches, key=len)
 
     def strip_category_prefix_for_core(self) -> "RuntimeMeasurementNamePartsProjection":
-        for prefix in self.dialect.category_prefixes:
-            if prefix in self.dialect.calculated_feature_prefixes:
-                continue
-            if self.should_strip_category_prefix(prefix):
-                return RuntimeMeasurementNamePartsProjection(
-                    self.parts[len(prefix) :],
-                    self.dialect,
-                    self.known_source_names,
-                )
+        prefix = _core_strip_category_prefix_for_parts(
+            self.parts,
+            runtime_measurement_dialect_cache_id(self.dialect),
+        )
+        if prefix:
+            return RuntimeMeasurementNamePartsProjection(
+                self.parts[len(prefix) :],
+                self.dialect,
+                self.known_source_names,
+            )
         return self
 
     def should_strip_category_prefix(self, prefix: tuple[str, ...]) -> bool:
-        if self.parts[: len(prefix)] != prefix or len(self.parts) <= len(prefix):
-            return False
-        suffix = self.parts[len(prefix) :]
-        if prefix == (PairMeasurementFeature.CORRELATION.value,):
-            return not _measurement_qualifier_parts_only(suffix)
-        return True
+        return _should_strip_category_prefix(
+            self.parts,
+            prefix,
+            runtime_measurement_dialect_cache_id(self.dialect),
+        )
 
     def source_qualifier_tokens(self) -> _RuntimeMeasurementNameParts:
         source_token_groups = _source_name_token_groups(self.known_source_names)
@@ -502,13 +516,13 @@ class RuntimeMeasurementNamePartsProjection:
         return tuple(stripped), tuple(source_names)
 
     def semantic_core_parts(self) -> tuple[str, ...]:
-        aliased = self.dialect.feature_part_aliases.get(self.parts)
+        aliased = self.dialect.resolved_feature_part_aliases().get(self.parts)
         if aliased is not None:
             return aliased
         numbered_alias = _numbered_feature_parts_alias(self.parts, self.dialect)
         if numbered_alias is not None:
             return numbered_alias
-        for prefix in self.dialect.scale_qualified_feature_prefixes:
+        for prefix in self.dialect.resolved_scale_qualified_feature_prefixes():
             if (
                 len(self.parts) == len(prefix) + 1
                 and self.parts[: len(prefix)] == prefix
@@ -536,7 +550,7 @@ class RuntimeMeasurementNamePartsProjection:
 
     def source_feature_name_and_source(self) -> tuple[str, str | None] | None:
         """Protect dialect-defined source feature phrases from source-name extraction."""
-        for prefix in self.dialect.source_feature_prefixes:
+        for prefix in self.dialect.resolved_source_feature_prefixes():
             if self.parts[: len(prefix)] != prefix:
                 continue
             source_parts = self.parts[len(prefix) :]
@@ -659,6 +673,13 @@ class SemanticCoreFeatureAndSourceNameProjection:
     known_source_names: tuple[str, ...] = ()
 
     def project(self) -> tuple[str, str | None]:
+        return semantic_core_feature_and_source_name_projection(
+            self.feature_name,
+            runtime_measurement_dialect_cache_id(self.dialect),
+            self.known_source_names,
+        )
+
+    def project_uncached(self) -> tuple[str, str | None]:
         parts_projection = RuntimeMeasurementNamePartsProjection.from_feature_name(
             self.feature_name,
             self.dialect,
@@ -673,7 +694,9 @@ class SemanticCoreFeatureAndSourceNameProjection:
             return aggregate_feature
         parts_projection = parts_projection.strip_category_prefix_for_core()
 
-        direct_alias = self.dialect.feature_part_aliases.get(parts_projection.parts)
+        direct_alias = self.dialect.resolved_feature_part_aliases().get(
+            parts_projection.parts
+        )
         if direct_alias is not None:
             return "_".join(direct_alias), None
 
@@ -689,6 +712,20 @@ class SemanticCoreFeatureAndSourceNameProjection:
         ).semantic_core_parts()
         source_name = "__".join(source_names) if source_names else None
         return "_".join(core_parts), source_name
+
+
+@lru_cache(maxsize=65536)
+def semantic_core_feature_and_source_name_projection(
+    feature_name: str,
+    dialect_id: int,
+    known_source_names: tuple[str, ...],
+) -> tuple[str, str | None]:
+    """Return cached semantic core/source projection for one dialect feature."""
+    return SemanticCoreFeatureAndSourceNameProjection(
+        feature_name,
+        runtime_measurement_dialect_for_cache_id(dialect_id),
+        known_source_names,
+    ).project_uncached()
 
 
 @dataclass(frozen=True, slots=True)
@@ -853,12 +890,14 @@ class RuntimeMeasurementFeatureKeyProjection:
         )
         if aggregate_identity is None:
             return None
-        feature_name, source_name = RuntimeMeasurementFeatureNameProjection.from_feature_name(
-            aggregate_identity.feature_name,
-            self.context.policy,
-            None,
-            self.context.known_source_names,
-        ).project()
+        feature_name, source_name = (
+            RuntimeMeasurementFeatureNameProjection.from_feature_name(
+                aggregate_identity.feature_name,
+                self.context.policy,
+                None,
+                self.context.known_source_names,
+            ).project()
+        )
         return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
             RuntimeMeasurementSubjectKey(
                 MeasurementScope.OBJECT,
@@ -887,13 +926,23 @@ def _measurement_qualifier_parts_only(parts: tuple[str, ...]) -> bool:
     return bool(parts) and all(part.isdigit() for part in parts)
 
 
+@lru_cache(maxsize=65536)
+def normalized_measurement_feature_name_parts(feature_name: str) -> tuple[str, ...]:
+    """Return normalized runtime feature-name parts for semantic projection."""
+    return tuple(
+        part
+        for part in normalize_runtime_identifier(feature_name).split("_")
+        if part
+    )
+
+
 def _numbered_feature_parts_alias(
     parts: tuple[str, ...],
     dialect: RuntimeMeasurementDialect,
 ) -> tuple[str, ...] | None:
     if len(parts) != 2 or not parts[1].isdigit():
         return None
-    prefix_alias = dialect.numbered_feature_prefix_aliases.get(parts[0])
+    prefix_alias = dialect.resolved_numbered_feature_prefix_aliases().get(parts[0])
     if prefix_alias is None:
         return None
     return (*prefix_alias, str(int(parts[1])))
@@ -904,8 +953,11 @@ def _directional_pair_feature_name_and_source(
     source_name: str | None,
     dialect: RuntimeMeasurementDialect,
 ) -> tuple[str, str | None]:
-    alias = dialect.directional_pair_feature_aliases.get(feature_name)
-    if source_name is not None and feature_name in _UNDIRECTED_PAIR_FEATURES:
+    alias = dialect.resolved_directional_pair_feature_aliases().get(feature_name)
+    if (
+        source_name is not None
+        and feature_name in dialect.resolved_undirected_pair_feature_names()
+    ):
         return feature_name, _canonical_pair_source_name(source_name)
     if alias is None or source_name is None:
         return feature_name, source_name
@@ -916,9 +968,7 @@ def _directional_pair_feature_name_and_source(
 
     canonical_feature_name, direction_index = alias
     directed_source_name = (
-        "__".join(reversed(source_parts))
-        if direction_index == 2
-        else source_name
+        "__".join(reversed(source_parts)) if direction_index == 2 else source_name
     )
     return canonical_feature_name, directed_source_name
 
@@ -930,13 +980,15 @@ def _canonical_pair_source_name(source_name: str) -> str:
     return "__".join(sorted(source_parts))
 
 
+@lru_cache(maxsize=1024)
 def _source_name_token_groups(
     known_source_names: tuple[str, ...],
 ) -> _RuntimeSourceTokenGroups:
     groups = tuple(
         (normalized, runtime_source_name_tokens(normalized))
         for normalized in (
-            normalize_runtime_source_name(source_name) for source_name in known_source_names
+            normalize_runtime_source_name(source_name)
+            for source_name in known_source_names
         )
         if normalized
     )
@@ -988,7 +1040,7 @@ def _starts_aggregate_feature_parts(
 ) -> bool:
     return (
         _starts_with_measurement_category(parts, dialect)
-        or parts in dialect.feature_part_aliases
+        or parts in dialect.resolved_feature_part_aliases()
     )
 
 
@@ -996,7 +1048,66 @@ def _starts_with_measurement_category(
     parts: tuple[str, ...],
     dialect: RuntimeMeasurementDialect,
 ) -> bool:
-    return any(
-        len(parts) >= len(prefix) and parts[: len(prefix)] == prefix
-        for prefix in dialect.category_prefixes
+    return bool(
+        _category_prefix_for_parts(
+            parts,
+            runtime_measurement_dialect_cache_id(dialect),
+        )
     )
+
+
+@lru_cache(maxsize=16384)
+def _category_prefix_for_parts(
+    parts: tuple[str, ...],
+    dialect_id: int,
+) -> tuple[str, ...]:
+    """Return the longest dialect-declared category prefix for ``parts``."""
+    matches = tuple(
+        prefix
+        for prefix in runtime_measurement_dialect_for_cache_id(
+            dialect_id
+        ).resolved_category_prefixes()
+        if len(parts) >= len(prefix) and parts[: len(prefix)] == prefix
+    )
+    if not matches:
+        return ()
+    return max(matches, key=len)
+
+
+@lru_cache(maxsize=16384)
+def _core_strip_category_prefix_for_parts(
+    parts: tuple[str, ...],
+    dialect_id: int,
+) -> tuple[str, ...]:
+    """Return the longest category prefix stripped from core feature identity."""
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    calculated_prefixes = frozenset(dialect.resolved_calculated_feature_prefixes())
+    matching_prefixes = tuple(
+        prefix
+        for prefix in dialect.resolved_category_prefixes()
+        if prefix not in calculated_prefixes
+        and _should_strip_category_prefix(parts, prefix, dialect_id)
+    )
+    if not matching_prefixes:
+        return ()
+    return max(matching_prefixes, key=len)
+
+
+def _should_strip_category_prefix(
+    parts: tuple[str, ...],
+    prefix: tuple[str, ...],
+    dialect_id: int,
+) -> bool:
+    if parts[: len(prefix)] != prefix or len(parts) <= len(prefix):
+        return False
+    suffix = parts[len(prefix) :]
+    pair_correlation_feature_name = (
+        runtime_measurement_dialect_for_cache_id(
+            dialect_id
+        ).resolved_pair_correlation_feature_name()
+    )
+    if pair_correlation_feature_name is not None and prefix == (
+        pair_correlation_feature_name,
+    ):
+        return not _measurement_qualifier_parts_only(suffix)
+    return True

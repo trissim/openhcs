@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Iterator
 
 from openhcs.core.public_api import declared_public_names
+from openhcs.core.process_local_cache import RegisteredProcessLocalBoundedCache
 from openhcs.core.runtime_identifier import normalize_runtime_identifier
 
 
@@ -53,15 +54,31 @@ class RuntimeMeasurementLookupDialect:
     """Dialect used to resolve external measurement names to runtime fields."""
 
     category_prefixes: tuple[RuntimeMeasurementFeatureParts, ...] = ()
+    category_prefixes_provider: Callable[
+        [],
+        Iterable[RuntimeMeasurementFeatureParts],
+    ] | None = None
     feature_part_aliases: RuntimeMeasurementFeaturePartAliases = field(
         default_factory=lambda: _EMPTY_FEATURE_ALIASES
     )
+    feature_part_aliases_provider: Callable[
+        [],
+        RuntimeMeasurementFeaturePartAliases,
+    ] | None = None
     alternative_feature_part_aliases: (
         RuntimeMeasurementAlternativeFeaturePartAliases
     ) = field(default_factory=lambda: _EMPTY_ALTERNATIVE_FEATURE_ALIASES)
+    alternative_feature_part_aliases_provider: Callable[
+        [],
+        RuntimeMeasurementAlternativeFeaturePartAliases,
+    ] | None = None
     source_qualified_feature_families: tuple[RuntimeMeasurementFeatureParts, ...] = (
         _EMPTY_FEATURE_FAMILIES
     )
+    source_qualified_feature_families_provider: Callable[
+        [],
+        Iterable[RuntimeMeasurementFeatureParts],
+    ] | None = None
     object_domain_policy: RuntimeMeasurementObjectDomainPolicy = field(
         default_factory=RuntimeMeasurementObjectDomainPolicy
     )
@@ -104,16 +121,40 @@ class RuntimeMeasurementLookupDialect:
         object.__setattr__(
             self,
             "source_qualified_feature_families",
-            tuple(
-                tuple(
-                    part
-                    for part in normalize_runtime_identifier("_".join(family)).split("_")
-                    if part
-                )
-                for family in self.source_qualified_feature_families
-                if tuple(family)
-            ),
+            self._normalized_feature_families(self.source_qualified_feature_families),
         )
+        if (
+            self.category_prefixes_provider is not None
+            and not callable(self.category_prefixes_provider)
+        ):
+            raise TypeError(
+                "RuntimeMeasurementLookupDialect.category_prefixes_provider "
+                "must be callable."
+            )
+        if (
+            self.feature_part_aliases_provider is not None
+            and not callable(self.feature_part_aliases_provider)
+        ):
+            raise TypeError(
+                "RuntimeMeasurementLookupDialect.feature_part_aliases_provider "
+                "must be callable."
+            )
+        if (
+            self.source_qualified_feature_families_provider is not None
+            and not callable(self.source_qualified_feature_families_provider)
+        ):
+            raise TypeError(
+                "RuntimeMeasurementLookupDialect."
+                "source_qualified_feature_families_provider must be callable."
+            )
+        if (
+            self.alternative_feature_part_aliases_provider is not None
+            and not callable(self.alternative_feature_part_aliases_provider)
+        ):
+            raise TypeError(
+                "RuntimeMeasurementLookupDialect."
+                "alternative_feature_part_aliases_provider must be callable."
+            )
         if not isinstance(self.object_domain_policy, RuntimeMeasurementObjectDomainPolicy):
             raise TypeError(
                 "RuntimeMeasurementLookupDialect.object_domain_policy must be "
@@ -121,14 +162,75 @@ class RuntimeMeasurementLookupDialect:
                 f"{type(self.object_domain_policy).__name__}."
             )
 
+    @staticmethod
+    def _normalized_feature_families(
+        families: Iterable[RuntimeMeasurementFeatureParts],
+    ) -> tuple[RuntimeMeasurementFeatureParts, ...]:
+        return tuple(
+            tuple(
+                part
+                for part in normalize_runtime_identifier("_".join(family)).split("_")
+                if part
+            )
+            for family in families
+            if tuple(family)
+        )
+
+    def resolved_source_qualified_feature_families(
+        self,
+    ) -> tuple[RuntimeMeasurementFeatureParts, ...]:
+        """Return static and provider-supplied source-qualified families."""
+        provider = self.source_qualified_feature_families_provider
+        provided = () if provider is None else provider()
+        return tuple(
+            dict.fromkeys(
+                (
+                    *self.source_qualified_feature_families,
+                    *self._normalized_feature_families(provided),
+                )
+            )
+        )
+
+    def resolved_category_prefixes(self) -> tuple[RuntimeMeasurementFeatureParts, ...]:
+        """Return static and provider-supplied measurement category prefixes."""
+        provider = self.category_prefixes_provider
+        provided = () if provider is None else provider()
+        return tuple(
+            dict.fromkeys(
+                (
+                    *self.category_prefixes,
+                    *(
+                        tuple(part for part in prefix if part)
+                        for prefix in provided
+                    ),
+                )
+            )
+        )
+
+    def resolved_feature_part_aliases(self) -> RuntimeMeasurementFeaturePartAliases:
+        """Return static and provider-supplied direct feature-part aliases."""
+        provider = self.feature_part_aliases_provider
+        provided = {} if provider is None else provider()
+        return MappingProxyType(
+            {
+                **self.feature_part_aliases,
+                **{
+                    tuple(part for part in parts if part): tuple(
+                        part for part in alias if part
+                    )
+                    for parts, alias in provided.items()
+                },
+            }
+        )
+
     def feature_parts(self, parts: tuple[str, ...]) -> tuple[str, ...]:
         """Return dialect-normalized feature parts for one lookup token."""
         resolved_parts = parts
-        for prefix in self.category_prefixes:
+        for prefix in self.resolved_category_prefixes():
             if len(resolved_parts) > len(prefix) and resolved_parts[: len(prefix)] == prefix:
                 resolved_parts = resolved_parts[len(prefix) :]
                 break
-        return self.feature_part_aliases.get(resolved_parts, resolved_parts)
+        return self.resolved_feature_part_aliases().get(resolved_parts, resolved_parts)
 
     def alternative_feature_parts(
         self,
@@ -136,7 +238,20 @@ class RuntimeMeasurementLookupDialect:
     ) -> tuple[tuple[str, ...], ...]:
         """Return ordered semantic fallback fields for one lookup token."""
         feature_parts = self.feature_parts(parts)
-        return self.alternative_feature_part_aliases.get(feature_parts, ())
+        provider = self.alternative_feature_part_aliases_provider
+        provided_aliases = {} if provider is None else provider()
+        aliases = {
+            **self.alternative_feature_part_aliases,
+            **{
+                tuple(part for part in alias_parts if part): tuple(
+                    tuple(alias_part for alias_part in alias if alias_part)
+                    for alias in alternatives
+                    if tuple(alias)
+                )
+                for alias_parts, alternatives in provided_aliases.items()
+            },
+        }
+        return aliases.get(feature_parts, ())
 
     def feature_lookup(self, feature_name: str) -> "RuntimeMeasurementFeatureLookup":
         """Return the nominal lookup identity for one external feature name."""
@@ -162,6 +277,12 @@ class RuntimeMeasurementFeatureAliasSpan:
         if compact == name:
             return (name,)
         return (name, compact)
+
+
+class RuntimeMeasurementLookupAliasCache(
+    RegisteredProcessLocalBoundedCache[tuple[str, int, str], tuple[str, ...]]
+):
+    """Process-local cache for dialect-resolved measurement lookup aliases."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,17 +311,30 @@ class RuntimeMeasurementFeatureLookup:
     @property
     def field_aliases(self) -> tuple[str, ...]:
         """Return schema-safe feature field aliases."""
+        cache = RuntimeMeasurementLookupAliasCache.process_cache()
+        cache_key = ("field", id(self.dialect), self.feature_name)
+        cached = cache.cached_value(cache_key)
+        if cached is not None:
+            return cached
         aliases: list[str] = []
         for span in self.field_alias_spans:
             for alias in span.field_aliases:
                 if alias and alias not in aliases:
                     aliases.append(alias)
-        return tuple(aliases)
+        return cache.store_value(cache_key, tuple(aliases))
 
     @property
     def source_aliases(self) -> tuple[str, ...]:
         """Return source-image aliases encoded by a source-qualified feature."""
-        return self.compact_identifier_aliases(self.source_names)
+        cache = RuntimeMeasurementLookupAliasCache.process_cache()
+        cache_key = ("source", id(self.dialect), self.feature_name)
+        cached = cache.cached_value(cache_key)
+        if cached is not None:
+            return cached
+        return cache.store_value(
+            cache_key,
+            self.compact_identifier_aliases(self.source_names),
+        )
 
     @property
     def dialect_feature_name(self) -> str:
@@ -236,7 +370,7 @@ class RuntimeMeasurementFeatureLookup:
     @property
     def source_qualified_feature_families(self) -> tuple[tuple[str, ...], ...]:
         families: list[tuple[str, ...]] = []
-        for family in self.dialect.source_qualified_feature_families:
+        for family in self.dialect.resolved_source_qualified_feature_families():
             if len(self.dialect_feature_parts) <= len(family):
                 continue
             if self.dialect_feature_parts[: len(family)] != family:

@@ -5,19 +5,19 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping, TypeVar
+from typing import Any, ClassVar, Mapping, Self, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 from python_introspect import Enableable
 from python_introspect.enableable import EnableableMeta
 
 from openhcs.constants.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactType, ImageArtifactType
 from openhcs.core.components.validation import convert_enum_by_value
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.source_metadata import (
@@ -34,6 +34,25 @@ from openhcs.core.source_path_identity import source_path_identity_key
 SourceMetadataIdentity = tuple[tuple[str, SourceMetadataIdentityItems], ...]
 SOURCE_ALIAS_PART_SEPARATOR = "__"
 SourceBindingValue = TypeVar("SourceBindingValue")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingRuntimeContextProcessIdentity:
+    """Hash-stable semantic identity for process-local source caches."""
+
+    source_order_identity: tuple[Hashable, ...]
+    source_metadata_identity: SourceMetadataIdentity
+    _hash: int = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_hash",
+            hash((self.source_order_identity, self.source_metadata_identity)),
+        )
+
+    def __hash__(self) -> int:
+        return self._hash
 
 
 class SourceBindingPlanMeta(EnableableMeta, AutoRegisterMeta):
@@ -366,6 +385,7 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
     alias: str
     selector: SourceSelector = SourceSelector()
     origin: SourceBindingOrigin = SourceBindingOrigin.STEP_INPUT
+    component_identity: tuple[ComponentSelector, ...] = ()
 
     def __post_init__(self) -> None:
         normalized_alias = str(self.alias).strip()
@@ -377,6 +397,26 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
                 f"{type(self).__name__}.selector must be SourceSelector, "
                 f"got {type(self.selector).__name__}."
             )
+        component_identity = normalize_source_binding_values(
+            f"{type(self).__name__}.component_identity",
+            self.component_identity,
+            ComponentSelector,
+        )
+        seen_components: dict[AllComponents, str] = {}
+        for selector in component_identity:
+            existing = seen_components.get(selector.component)
+            if existing is not None and existing != selector.value:
+                raise ValueError(
+                    f"{type(self).__name__}.component_identity contains "
+                    f"conflicting {selector.component.value!r} values "
+                    f"{existing!r} and {selector.value!r}."
+                )
+            seen_components[selector.component] = selector.value
+        object.__setattr__(
+            self,
+            "component_identity",
+            tuple(dict.fromkeys(component_identity)),
+        )
         object.__setattr__(
             self,
             "origin",
@@ -388,7 +428,7 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
         )
 
     @property
-    def artifact_kind(self) -> ArtifactKind:
+    def artifact_kind(self) -> ArtifactType:
         """Artifact kind bound by this source assignment."""
         raise NotImplementedError(
             f"{type(self).__name__} must provide artifact_kind."
@@ -404,7 +444,36 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
     @property
     def participates_in_image_stack(self) -> bool:
         """Whether this source assignment contributes to the main image stack."""
-        return self.artifact_kind is ArtifactKind.IMAGE
+        return self.artifact_kind is ImageArtifactType
+
+    def component_identity_with(
+        self,
+        selector: ComponentSelector,
+    ) -> tuple[ComponentSelector, ...]:
+        """Return component identity extended by one non-conflicting selector."""
+        if not isinstance(selector, ComponentSelector):
+            raise TypeError(
+                f"{type(self).__name__}.component_identity selector must be "
+                f"ComponentSelector, got {type(selector).__name__}."
+            )
+        for existing in self.component_identity:
+            if existing.component is not selector.component:
+                continue
+            if existing.value != selector.value:
+                raise ValueError(
+                    f"Source assignment {self.alias!r} declares "
+                    f"{selector.component.value!r} identity {existing.value!r}, "
+                    f"but {selector.value!r} was requested."
+                )
+            return self.component_identity
+        return (*self.component_identity, selector)
+
+    def with_component_identity(self, selector: ComponentSelector) -> Self:
+        """Return this source assignment with one canonical component identity."""
+        return replace(
+            self,
+            component_identity=self.component_identity_with(selector),
+        )
 
     def to_binding(self) -> "NamedSourceBinding":
         """Project this source assignment into a step-local source binding."""
@@ -413,6 +482,7 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
             artifact_kind=self.artifact_kind,
             selector=self.selector,
             origin=self.origin,
+            component_identity=self.component_identity,
             participates_in_image_stack=self.participates_in_image_stack,
         )
 
@@ -422,7 +492,7 @@ class NamedSourceBinding(SourceAssignmentBase):
     """Semantic alias mapped to a typed selector over step input space."""
 
     assignment_kind = "named_source_binding"
-    artifact_kind: ArtifactKind = ArtifactKind.IMAGE
+    artifact_kind: ArtifactType = ImageArtifactType
     required: bool = True
     participates_in_image_stack: bool = True
 
@@ -431,11 +501,7 @@ class NamedSourceBinding(SourceAssignmentBase):
         object.__setattr__(
             self,
             "artifact_kind",
-            coerce_enum(
-                ArtifactKind,
-                self.artifact_kind,
-                "NamedSourceBinding.artifact_kind",
-            ),
+            ArtifactType.coerce(self.artifact_kind),
         )
         object.__setattr__(
             self,
@@ -477,7 +543,7 @@ class NamedSourceBinding(SourceAssignmentBase):
         """Whether this binding contributes source-file execution anchors."""
 
         return (
-            self.artifact_kind is ArtifactKind.IMAGE
+            self.artifact_kind is ImageArtifactType
             and self.participates_in_image_stack
         )
 
@@ -866,16 +932,7 @@ class SourceRuntimePathLookup:
     step_input_dir: str | None = None
 
     def keys(self) -> tuple[str, ...]:
-        path = Path(self.file_path)
-        keys = dict.fromkeys((str(self.file_path), path.as_posix()))
-        if path.is_absolute() and self.step_input_dir is not None:
-            try:
-                relative_path = path.relative_to(self.step_input_dir)
-            except ValueError:
-                pass
-            else:
-                keys[relative_path.as_posix()] = None
-        return tuple(keys)
+        return _source_runtime_path_lookup_keys(self.file_path, self.step_input_dir)
 
     def first_value(
         self,
@@ -888,8 +945,32 @@ class SourceRuntimePathLookup:
             if value is not None:
                 return value
         if include_native_path_fallback:
-            return mapping.get(str(Path(self.file_path)))
+            return mapping.get(_source_runtime_native_path(self.file_path))
         return None
+
+
+@lru_cache(maxsize=65536)
+def _source_runtime_path_lookup_keys(
+    file_path: str,
+    step_input_dir: str | None,
+) -> tuple[str, ...]:
+    """Return path lookup spellings for one runtime source path."""
+    path = Path(file_path)
+    keys = dict.fromkeys((str(file_path), path.as_posix()))
+    if path.is_absolute() and step_input_dir is not None:
+        try:
+            relative_path = path.relative_to(step_input_dir)
+        except ValueError:
+            pass
+        else:
+            keys[relative_path.as_posix()] = None
+    return tuple(keys)
+
+
+@lru_cache(maxsize=65536)
+def _source_runtime_native_path(file_path: str) -> str:
+    """Return the native-path spelling used as the final runtime lookup fallback."""
+    return str(Path(file_path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -966,7 +1047,22 @@ class SourceBindingRuntimeContext:
         repr=False,
         compare=False,
     )
+    _process_semantic_identity: SourceBindingRuntimeContextProcessIdentity | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     _virtual_source_paths_by_identity: Mapping[str, tuple[str, ...]] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _source_metadata_by_runtime_lookup_key: Mapping[
+        str,
+        SourceMetadataMapping,
+    ] | None = field(
         default=None,
         init=False,
         repr=False,
@@ -1055,6 +1151,11 @@ class SourceBindingRuntimeContext:
             )
             object.__setattr__(
                 self,
+                "_process_semantic_identity",
+                source_binding_context._process_semantic_identity,
+            )
+            object.__setattr__(
+                self,
                 "_virtual_source_paths_by_identity",
                 source_binding_context._virtual_source_paths_by_identity,
             )
@@ -1140,6 +1241,53 @@ class SourceBindingRuntimeContext:
             )
             object.__setattr__(self, "_source_metadata_identity", cached)
         return cached
+
+    @property
+    def process_semantic_identity(self) -> SourceBindingRuntimeContextProcessIdentity:
+        """Return the source context identity used by process-local caches."""
+        cached = self._process_semantic_identity
+        if cached is None:
+            cached = SourceBindingRuntimeContextProcessIdentity(
+                source_order_identity=self.source_order_identity,
+                source_metadata_identity=self.source_metadata_identity,
+            )
+            object.__setattr__(self, "_process_semantic_identity", cached)
+        return cached
+
+    @property
+    def source_metadata_by_runtime_lookup_key(
+        self,
+    ) -> Mapping[str, SourceMetadataMapping]:
+        """Return source metadata indexed by every runtime path spelling."""
+        cached = self._source_metadata_by_runtime_lookup_key
+        if cached is None:
+            indexed: dict[str, SourceMetadataMapping] = {}
+            for path, metadata in self.source_metadata_by_path.items():
+                for key in _source_runtime_path_lookup_keys(
+                    str(path),
+                    self.step_input_dir,
+                ):
+                    indexed.setdefault(key, metadata)
+                indexed.setdefault(_source_runtime_native_path(str(path)), metadata)
+            cached = MappingProxyType(indexed)
+            object.__setattr__(
+                self,
+                "_source_metadata_by_runtime_lookup_key",
+                cached,
+            )
+        return cached
+
+    def source_metadata_for_runtime_path(
+        self,
+        path: str,
+    ) -> SourceMetadataMapping | None:
+        """Return source metadata for one runtime path spelling, if known."""
+        lookup = self.source_metadata_by_runtime_lookup_key
+        for key in _source_runtime_path_lookup_keys(str(path), self.step_input_dir):
+            metadata = lookup.get(key)
+            if metadata is not None:
+                return metadata
+        return lookup.get(_source_runtime_native_path(str(path)))
 
     @property
     def pipeline_input_files_identity(self) -> tuple[str, ...]:

@@ -13,18 +13,29 @@ from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import ViewerStreamProducer
 from openhcs.constants.constants import AllComponents, Backend
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    MeasurementsArtifactType,
+    SpecialArtifactType,
+)
 from openhcs.core.artifact_materialization_policy import (
     NO_ARTIFACT_MATERIALIZATION,
     resolve_artifact_materialization_spec,
 )
+from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
+from openhcs.core.runtime_artifact_queries import MeasurementTableUnion
 from openhcs.core.runtime_stores import (
+    RuntimeArtifactLocation,
     RuntimeValueStore,
     StoredRuntimeValue,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
+    MeasurementTable,
     image_payload_metadata,
+    normalize_artifact_value,
 )
 from openhcs.core.source_image_provenance import (
     SourceImageIdentity,
@@ -67,6 +78,80 @@ if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
 
 logger = logging.getLogger(__name__)
+
+
+class ArtifactMaterializationRecordReducer(
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
+    ABC,
+):
+    """Registered reducer from runtime store records to materialization records."""
+
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
+
+    def records_for_group(
+        self,
+        *,
+        records: tuple[StoredRuntimeValue, ...],
+        output_plan: ArtifactOutputPlan,
+        axis_id: str,
+        group_key: str | None,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        del output_plan, axis_id, group_key
+        if len(records) <= 1:
+            return records
+        record_locations = tuple(
+            (
+                record.key.semantic_id,
+                record.path,
+            )
+            for record in records
+        )
+        raise RuntimeError(
+            f"Ambiguous RuntimeValueStore records for planned artifact "
+            f"materialization '{records[0].key.name}' "
+            f"({records[0].key.artifact_type.value}) on axis "
+            f"'{records[0].key.scope.axis_id}' group "
+            f"{records[0].key.scope.group_key!r}: {record_locations!r}."
+        )
+
+
+class DefaultArtifactMaterializationRecordReducer(ArtifactMaterializationRecordReducer):
+    """Default materialization record reducer for single-payload artifact types."""
+
+    artifact_type = ArtifactType
+
+
+class MeasurementArtifactMaterializationRecordReducer(DefaultArtifactMaterializationRecordReducer):
+    """Union same-artifact measurement subject records before materialization."""
+
+    artifact_type = MeasurementsArtifactType
+
+    def records_for_group(
+        self,
+        *,
+        records: tuple[StoredRuntimeValue, ...],
+        output_plan: ArtifactOutputPlan,
+        axis_id: str,
+        group_key: str | None,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        if len(records) <= 1:
+            return records
+        group_plan = output_plan.for_group(group_key)
+        table = MeasurementTableUnion(
+            output_plan.name,
+            tuple(MeasurementTable.from_runtime_value(record.value) for record in records),
+        ).as_table()
+        value = normalize_artifact_value(group_plan, table, axis_id=axis_id)
+        return (
+            StoredRuntimeValue(
+                value=value,
+                location=RuntimeArtifactLocation(
+                    path=group_plan.path,
+                    backend=Backend.MEMORY.value,
+                ),
+            ),
+        )
 
 @dataclass(frozen=True, slots=True)
 class ArtifactMaterializationBackendPlan:
@@ -290,6 +375,7 @@ class AnalysisOutputDescriptorAuthority:
         artifact_path: str | None = None,
         record: StoredRuntimeValue | None = None,
         materialization_spec: MaterializationSpec | None = None,
+        output_plan: ArtifactOutputPlan | None = None,
     ) -> ArtifactAnalysisOutputDescriptor:
         """Build analysis output identity from the artifact's source metadata."""
         record_source = None
@@ -303,6 +389,7 @@ class AnalysisOutputDescriptorAuthority:
                 plan,
                 record,
                 materialization_spec,
+                output_plan=output_plan,
             )
         if record_source is not None:
             return ArtifactAnalysisOutputDescriptor(
@@ -322,6 +409,15 @@ class AnalysisOutputDescriptorAuthority:
                 return ArtifactAnalysisOutputDescriptor(
                     filename=f"{Path(artifact_path).stem}.roi.zip",
                     source_identity=source_identity,
+                )
+            if (
+                record is not None
+                and output_plan is not None
+                and output_plan.group_component is not None
+            ):
+                return ArtifactAnalysisOutputDescriptor(
+                    filename=f"{Path(artifact_path).stem}.roi.zip",
+                    source_identity=None,
                 )
 
         memory_paths = cls.produced_memory_paths(context, plan)
@@ -422,11 +518,11 @@ class AnalysisOutputDescriptorAuthority:
         """Attach group-projected runtime-plane identity to record metadata."""
         if not plan.group_projects_runtime_plane:
             return metadata
-        group_by_value = plan.group_by_value
-        if group_by_value is None:
+        execution_group_value = plan.execution_group_value
+        if execution_group_value is None:
             return metadata
         component_metadata = dict(metadata.source_component_metadata or {})
-        component_metadata[group_by_value] = record.key.scope.group_key
+        component_metadata[execution_group_value] = record.key.scope.group_key
         return metadata.with_source_provenance(
             metadata.source_provenance.with_source_component_metadata(
                 component_metadata
@@ -439,6 +535,8 @@ class AnalysisOutputDescriptorAuthority:
         plan: FunctionStepExecutionPlan,
         record: StoredRuntimeValue,
         metadata: ImagePayloadMetadata,
+        *,
+        output_plan: ArtifactOutputPlan | None = None,
     ) -> ImagePayloadMetadata:
         """Attach runtime group identity when metadata marks one missing axis."""
         metadata = cls.record_metadata_with_runtime_plane_group(
@@ -446,10 +544,22 @@ class AnalysisOutputDescriptorAuthority:
             record,
             metadata,
         )
-        if plan.group_by_value is not None:
-            return metadata
         group_key = record.key.scope.group_key
         if group_key is None:
+            return metadata
+        if output_plan is not None and output_plan.group_component is not None:
+            component_metadata = dict(metadata.source_component_metadata or {})
+            component_metadata = with_source_component_metadata(
+                component_metadata,
+                output_plan.group_component,
+                group_key,
+            )
+            return metadata.with_source_provenance(
+                metadata.source_provenance.with_source_component_metadata(
+                    component_metadata
+                ),
+            )
+        if plan.execution_group_value is not None:
             return metadata
         component = cls.single_null_source_component(metadata.source_component_metadata)
         if component is None:
@@ -492,8 +602,12 @@ class AnalysisOutputDescriptorAuthority:
         plan: FunctionStepExecutionPlan,
         record: StoredRuntimeValue,
         materialization_spec: MaterializationSpec,
+        *,
+        output_plan: ArtifactOutputPlan | None = None,
     ) -> ArtifactRecordSourceDescriptor | None:
         """Return source filename stem and identity for one artifact record."""
+        if not record.value.schema.artifact_type.materialization_uses_source_identity_filename:
+            return None
         metadata = cls.record_payload_metadata(record)
         if metadata is None:
             return None
@@ -501,24 +615,33 @@ class AnalysisOutputDescriptorAuthority:
             plan,
             record,
             metadata,
+            output_plan=output_plan,
         )
         parser_context = FunctionOutputParserContext.from_processing_context(context)
         use_filename_identity = materialization_spec.uses_filename_source_identity(
             record.value.data
         )
-        if use_filename_identity:
-            identity = FunctionOutputIdentityAuthority.filename_identity_from_metadata(
-                parser_context.parser,
-                metadata,
-                fallback_identity_path=record.path,
+        try:
+            if use_filename_identity:
+                identity = FunctionOutputIdentityAuthority.filename_identity_from_metadata(
+                    parser_context.parser,
+                    metadata,
+                    fallback_identity_path=record.path,
+                )
+            else:
+                identity = FunctionOutputIdentityAuthority.identity_from_metadata(
+                    parser_context.parser,
+                    metadata,
+                    fallback_identity_path=record.path,
+                    variable_components=plan.variable_components,
+                )
+        except ValueError:
+            logger.debug(
+                "Artifact record metadata identity is not filename-complete; "
+                "falling back to planned output lineage.",
+                exc_info=True,
             )
-        else:
-            identity = FunctionOutputIdentityAuthority.identity_from_metadata(
-                parser_context.parser,
-                metadata,
-                fallback_identity_path=record.path,
-                variable_components=plan.variable_components,
-            )
+            identity = None
         if identity is not None:
             try:
                 filename_stem = Path(
@@ -627,44 +750,69 @@ def actual_materialization_records(
             f"Artifact output plan '{output_plan.name}' has no group keys."
         )
 
-    planned_path_by_group = {
-        group_key: output_plan.for_group(group_key).path
-        for group_key in output_plan.group_keys
-    }
-    planned_paths = frozenset(planned_path_by_group.values())
     group_order = {
         group_key: index
         for index, group_key in enumerate(output_plan.group_keys)
     }
     record_sort_items = []
-    for record in store.find(
-        name=output_plan.name,
-        kind=output_plan.kind,
-        axis_id=plan.axis_id,
-    ):
-        if record.backend != Backend.MEMORY.value or record.path not in planned_paths:
+    missing_group_keys = []
+    for group_key in output_plan.group_keys:
+        records = tuple(
+            record
+            for record in store.find(
+                name=output_plan.name,
+                artifact_type=output_plan.artifact_type,
+                axis_id=plan.axis_id,
+                group_key=group_key,
+                match_group=True,
+            )
+            if record.backend == Backend.MEMORY.value
+            and store.get(record.key).location == record.location
+        )
+        if not records:
+            missing_group_keys.append(group_key)
             continue
+        for record in ArtifactMaterializationRecordReducer.for_artifact_type(
+            output_plan.artifact_type
+        ).records_for_group(
+            records=records,
+            output_plan=output_plan,
+            axis_id=plan.axis_id,
+            group_key=group_key,
+        ):
+            record_sort_items.append((group_order[group_key], record))
 
-        group_key = record.key.scope.group_key
-        if group_key not in planned_path_by_group:
-            raise RuntimeError(
-                f"Runtime artifact record for planned output '{output_plan.name}' "
-                f"has unplanned group key {group_key!r}."
+    if missing_group_keys and not record_sort_items:
+        candidates = tuple(
+            store.find(
+                name=output_plan.name,
+                artifact_type=output_plan.artifact_type,
+                axis_id=plan.axis_id,
             )
-        expected_path = planned_path_by_group[group_key]
-        if record.path != expected_path:
-            raise RuntimeError(
-                f"Runtime artifact record for planned output '{output_plan.name}' "
-                f"uses path {record.path!r}; expected {expected_path!r} for "
-                f"group key {group_key!r}."
+        )
+        candidate_locations = tuple(
+            (
+                candidate.key.scope.group_key,
+                candidate.backend,
+                candidate.path,
             )
-        record_sort_items.append((group_order[group_key], record))
-
-    if not record_sort_items:
+            for candidate in candidates
+        )
+        identity_records = tuple(
+            candidate
+            for candidate in candidates
+            if candidate.key.scope.group_key is None
+            and candidate.backend == Backend.MEMORY.value
+            and store.get(candidate.key).location == candidate.location
+        )
+        if identity_records:
+            return identity_records
         raise RuntimeError(
             f"Missing RuntimeValueStore record for planned artifact materialization "
-            f"'{output_plan.name}' ({output_plan.kind.value}) on axis "
-            f"'{plan.axis_id}'."
+            f"'{output_plan.name}' ({output_plan.artifact_type.value}) on axis "
+            f"'{plan.axis_id}' groups {tuple(missing_group_keys)!r}. "
+            f"Candidate same-name records: "
+            f"{candidate_locations!r}."
         )
     return tuple(
         record
@@ -720,6 +868,7 @@ def _planned_materialization_path(
         context,
         output_plan.single_group_key,
         artifact_path=output_plan.path,
+        output_plan=output_plan,
     )
     base_path = str(plan.artifact_analysis_output_dir / descriptor.filename)
     return PlannedArtifactMaterializationPath(
@@ -745,7 +894,7 @@ def materialize_artifact_outputs(
     for output_key, output_plan in plan.artifact_outputs.items():
         if output_plan.materialization is NO_ARTIFACT_MATERIALIZATION:
             continue
-        if output_plan.materialization is None and output_plan.kind is ArtifactKind.SPECIAL:
+        if output_plan.materialization is None and output_plan.artifact_type is SpecialArtifactType:
             continue
 
         records = actual_materialization_records(
@@ -776,6 +925,7 @@ def materialize_artifact_outputs(
                 artifact_path=record.path,
                 record=record,
                 materialization_spec=mat_spec,
+                output_plan=output_plan,
             )
             analysis_path = analysis_output_dir / output_descriptor.filename
             stream_output_paths = mat_spec.candidate_paths(str(analysis_path))
@@ -807,7 +957,7 @@ def materialize_artifact_outputs(
                                 plan=plan,
                                 output_kind="artifact",
                                 output_key=output_key,
-                                artifact_kind=output_plan.kind.value,
+                                artifact_kind=output_plan.artifact_type.value,
                             )
                         )
                     ),

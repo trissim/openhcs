@@ -13,7 +13,11 @@ from typing import Any
 
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ImageArtifactType,
+    MeasurementsArtifactType,
+)
 from openhcs.core.image_file_serialization import (
     collapse_singleton_image_stack,
     image_payload_as_uint8,
@@ -84,7 +88,7 @@ class RuntimeExportExpectation:
     """Expected export formats for one runtime execution."""
 
     formats: frozenset[RuntimeExportFormat]
-    table_artifact_kinds: frozenset[ArtifactKind] = frozenset()
+    table_artifact_kinds: frozenset[ArtifactType] = frozenset()
     image_artifact_names: frozenset[str] = frozenset()
     image_export_specs: tuple[RuntimeImageExportSpec, ...] = ()
 
@@ -94,7 +98,7 @@ class RuntimeExportExpectation:
         *,
         table_exports: bool,
         image_exports: bool,
-        table_artifact_kinds: frozenset[ArtifactKind] = frozenset(),
+        table_artifact_kinds: frozenset[ArtifactType] = frozenset(),
         image_artifact_names: frozenset[str] = frozenset(),
         image_export_specs: tuple[RuntimeImageExportSpec, ...] = (),
     ) -> "RuntimeExportExpectation":
@@ -128,7 +132,7 @@ class RuntimeExportExpectation:
             self,
             "table_artifact_kinds",
             frozenset(
-                kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
+                ArtifactType.coerce(kind)
                 for kind in self.table_artifact_kinds
             ),
         )
@@ -149,7 +153,7 @@ class RuntimeExportExpectation:
     @property
     def expects_table_files(self) -> bool:
         return RuntimeExportFormat.TABLE in self.formats and any(
-            artifact_kind_exports_as_table(kind)
+            kind.exports_as_table()
             for kind in self.table_artifact_kinds
         )
 
@@ -263,11 +267,6 @@ def runtime_export_failures(
     return tuple(failures)
 
 
-def artifact_kind_exports_as_table(kind: ArtifactKind) -> bool:
-    """Return whether an artifact kind materializes as a table export."""
-    return kind.payload_shape is ArtifactPayloadShape.TABLE
-
-
 def matching_table_outputs(
     record: StoredRuntimeValue,
     table_outputs: tuple[Path, ...],
@@ -313,7 +312,7 @@ def _table_artifact_failures(
             if not matching_outputs:
                 failures.append(
                     f"axis {axis_id!r} produced table artifact "
-                    f"{record.key.name!r} ({record.key.kind.value}) but no "
+                    f"{record.key.name!r} ({record.key.artifact_type.value}) but no "
                     "matching table output exists"
                 )
                 continue
@@ -341,7 +340,7 @@ def _table_runtime_records(
     return tuple(
         record
         for record in records
-        if artifact_kind_exports_as_table(record.key.kind)
+        if record.key.artifact_type.exports_as_table()
     )
 
 
@@ -354,7 +353,7 @@ def image_runtime_records(
     return tuple(
         record
         for record in records
-        if record.key.kind is ArtifactKind.IMAGE
+        if record.key.artifact_type is ImageArtifactType
         and (not artifact_names or record.key.name in artifact_names)
     )
 
@@ -465,7 +464,7 @@ def _table_row_count_failures(
 
 def _runtime_table_row_count(record: StoredRuntimeValue) -> int:
     data = record.value.data
-    if record.key.kind is ArtifactKind.MEASUREMENTS:
+    if record.key.artifact_type is MeasurementsArtifactType:
         data = MeasurementTable.from_runtime_value(record.value).rows
     if isinstance(data, ColumnarRows):
         try:

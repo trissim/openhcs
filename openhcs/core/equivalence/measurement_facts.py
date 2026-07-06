@@ -19,7 +19,7 @@ from openhcs.core.equivalence.keys import (
     RuntimeMeasurementSubjectKey,
 )
 from openhcs.core.equivalence.measurement_features import (
-    object_measurement_feature_has_role,
+    object_measurement_feature_matches_marker,
 )
 from openhcs.core.equivalence.policy import (
     RuntimeEquivalencePolicy,
@@ -27,9 +27,8 @@ from openhcs.core.equivalence.policy import (
     normalize_runtime_identifier,
 )
 from openhcs.core.runtime_semantics import (
+    MeasuredObjectAnchorFeatureMarker,
     MeasurementScope,
-    ObjectMeasurementFeatureRole,
-    PairMeasurementFeature,
 )
 from openhcs.core.runtime_values import (
     RuntimeValue,
@@ -68,8 +67,6 @@ RuntimeRowProjectionRecords = tuple[
     RuntimeRowProjectionRecord[RuntimeRowProjectionValueT],
     ...,
 ]
-PAIR_CORRELATION_FEATURE = PairMeasurementFeature.CORRELATION.value
-PAIR_REGRESSION_SLOPE_FEATURE = PairMeasurementFeature.REGRESSION_SLOPE.value
 
 
 def runtime_measurement_fact_counter(
@@ -141,9 +138,48 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
     known_source_names: tuple[str, ...] = ()
 
     @property
+    def regression_slope_feature(self) -> str | None:
+        """Return the dialect-declared pair regression-slope family."""
+        return (
+            self.policy.measurement_dialect.resolved_pair_regression_slope_feature_name()
+        )
+
+    @property
+    def correlation_feature(self) -> str | None:
+        """Return the dialect-declared pair correlation family."""
+        return self.policy.measurement_dialect.resolved_pair_correlation_feature_name()
+
+    @property
+    def regression_slope_family(self) -> tuple[str, ...]:
+        """Return the source-qualified family tuple for pair slopes."""
+        feature = self.regression_slope_feature
+        return () if feature is None else (feature,)
+
+    @property
     def feature_families(self) -> tuple[str, ...]:
         """Return pair feature families participating in orientation derivation."""
-        return (PAIR_REGRESSION_SLOPE_FEATURE, PAIR_CORRELATION_FEATURE)
+        return tuple(
+            feature
+            for feature in (self.regression_slope_feature, self.correlation_feature)
+            if feature is not None
+        )
+
+    def required_keys_need_derivation(
+        self,
+        required_keys: RuntimeRequiredMeasurementKeys,
+    ) -> bool:
+        """Return whether required output keys can consume derived pair facts."""
+        if not self.regression_slope_family:
+            return False
+        if required_keys is None:
+            return True
+        return any(
+            key.belongs_to_source_qualified_feature_family(
+                self.policy.measurement_dialect,
+                self.regression_slope_family,
+            )
+            for key in required_keys
+        )
 
     def required_input_keys(
         self,
@@ -161,18 +197,18 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
 
         if key.belongs_to_source_qualified_feature_family(
             self.policy.measurement_dialect,
-            (PAIR_REGRESSION_SLOPE_FEATURE,),
+            self.regression_slope_family,
         ):
             pair = key.source_pair(
                 self.policy.measurement_dialect,
-                (PAIR_REGRESSION_SLOPE_FEATURE,),
+                self.regression_slope_family,
                 self.known_source_names,
             )
-            if pair is not None:
+            if pair is not None and self.correlation_feature is not None:
                 input_keys.extend(
                     self.source_pair_feature_key(
                         key,
-                        PAIR_CORRELATION_FEATURE,
+                        self.correlation_feature,
                         source_name,
                     )
                     for source_name in (pair.source_name, pair.reversed_source_name)
@@ -199,12 +235,14 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
         facts: RuntimeMeasurementFacts,
     ) -> RuntimeMeasurementFacts:
         """Derive mathematically equivalent directional pair facts."""
+        if not self.regression_slope_family or self.correlation_feature is None:
+            return facts
         slope_facts = tuple(
             (key, value)
             for key, value in facts
             if key.belongs_to_source_qualified_feature_family(
                 self.policy.measurement_dialect,
-                (PAIR_REGRESSION_SLOPE_FEATURE,),
+                self.regression_slope_family,
             )
         )
         if not slope_facts:
@@ -215,7 +253,7 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
         for key, slope_value in slope_facts:
             pair = key.source_pair(
                 self.policy.measurement_dialect,
-                (PAIR_REGRESSION_SLOPE_FEATURE,),
+                self.regression_slope_family,
                 self.known_source_names,
             )
             if pair is None:
@@ -236,7 +274,7 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
                 continue
             reversed_key = key.reversed_source_pair_feature_key(
                 self.policy.measurement_dialect,
-                (PAIR_REGRESSION_SLOPE_FEATURE,),
+                self.regression_slope_family,
                 self.known_source_names,
             )
             if reversed_key is None:
@@ -264,12 +302,12 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
         for candidate_key in (
             self.source_pair_feature_key(
                 key,
-                PAIR_CORRELATION_FEATURE,
+                self.correlation_feature,
                 source_name,
             ),
             self.source_pair_feature_key(
                 key,
-                PAIR_CORRELATION_FEATURE,
+                self.correlation_feature,
                 reversed_source_name,
             ),
         ):
@@ -294,31 +332,28 @@ class RuntimeMeasurementFactProjectionContract:
         policy: RuntimeEquivalencePolicy,
     ) -> frozenset[RuntimeMeasurementPaddingGroup]:
         """Return padding groups that carry observed measurement facts."""
-        records_by_group: dict[
-            RuntimeMeasurementPaddingGroup,
-            list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]],
-        ] = {}
+        anchor_key_cache: dict[RuntimeMeasurementFeatureKey, bool] = {}
+        has_anchor: set[RuntimeMeasurementPaddingGroup] = set()
+        observed_anchors: set[RuntimeMeasurementPaddingGroup] = set()
+        observed_values: set[RuntimeMeasurementPaddingGroup] = set()
         for padding_group, key, value, _qualified_observation in records:
-            records_by_group.setdefault(padding_group, []).append((key, value))
-
-        observed_groups: set[RuntimeMeasurementPaddingGroup] = set()
-        for padding_group, group_records in records_by_group.items():
-            anchor_values = tuple(
-                value
-                for key, value in group_records
-                if object_measurement_feature_has_role(
+            observed = cls.is_observed_value(value)
+            if observed:
+                observed_values.add(padding_group)
+            is_anchor = anchor_key_cache.get(key)
+            if is_anchor is None:
+                is_anchor = object_measurement_feature_matches_marker(
                     key,
-                    ObjectMeasurementFeatureRole.MEASURED_OBJECT_ANCHOR,
-                    policy.measurement_dialect,
+                    MeasuredObjectAnchorFeatureMarker,
+                    policy,
                 )
-            )
-            if anchor_values:
-                if any(cls.is_observed_value(value) for value in anchor_values):
-                    observed_groups.add(padding_group)
+                anchor_key_cache[key] = is_anchor
+            if not is_anchor:
                 continue
-            if any(cls.is_observed_value(value) for _key, value in group_records):
-                observed_groups.add(padding_group)
-        return frozenset(observed_groups)
+            has_anchor.add(padding_group)
+            if observed:
+                observed_anchors.add(padding_group)
+        return frozenset(observed_anchors | (observed_values - has_anchor))
 
     @classmethod
     def padding_group(
@@ -347,9 +382,7 @@ class RuntimeMeasurementFactProjectionContract:
         materialized = tuple(records)
         observed_padding_groups = cls.observed_padding_groups(materialized, policy)
         return tuple(
-            record
-            for record in materialized
-            if record[0] in observed_padding_groups
+            record for record in materialized if record[0] in observed_padding_groups
         )
 
     @classmethod
@@ -403,7 +436,9 @@ class RuntimeMeasurementFactProjectionContract:
             current = values_by_key.get(key)
             if current is None or (
                 RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
-                and not RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value)
+                and not RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(
+                    value
+                )
             ):
                 values_by_key[key] = value
         return tuple(values_by_key.items())
@@ -416,7 +451,9 @@ class RuntimeMeasurementFactProjectionContract:
         ],
     ) -> RuntimeMeasurementFacts:
         """Collapse aliases unless field normalization intentionally dropped a qualifier."""
-        values_by_key: dict[RuntimeMeasurementFeatureKey, list[RuntimeCellSignature]] = {}
+        values_by_key: dict[
+            RuntimeMeasurementFeatureKey, list[RuntimeCellSignature]
+        ] = {}
         qualified_by_key: dict[RuntimeMeasurementFeatureKey, bool] = {}
         for key, value, qualified_observation in facts:
             if not cls.is_observed_value(value):
@@ -440,9 +477,7 @@ class RuntimeMeasurementFactProjectionContract:
                 current_values.append(value)
 
         return tuple(
-            (key, value)
-            for key, values in values_by_key.items()
-            for value in values
+            (key, value) for key, values in values_by_key.items() for value in values
         )
 
 

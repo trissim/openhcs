@@ -103,6 +103,18 @@ class SourceBindingsHandler(MicroscopeHandler):
 
         plate_root = Path(plate_path)
         self.plate_folder = plate_root
+        metadata_path = plate_root / "openhcs_metadata.json"
+        if metadata_path.exists():
+            from openhcs.core.source_workspace_projection import (
+                VirtualWorkspaceSourceProjection,
+            )
+
+            metadata = self.metadata_handler._load_metadata_dict(plate_root)
+            if VirtualWorkspaceSourceProjection.openhcs_metadata_has_workspace_mapping(
+                metadata
+            ):
+                self._register_virtual_workspace_backend(plate_root, filemanager)
+                return plate_root
         materialize_source_schema_workspace(
             plate_root,
             plate_root,

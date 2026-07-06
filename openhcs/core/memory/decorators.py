@@ -8,6 +8,7 @@ and callable preparation contracts compose predictably.
 from __future__ import annotations
 
 from collections.abc import Callable
+import inspect
 from typing import Any
 
 import arraybridge as _arraybridge
@@ -16,27 +17,34 @@ import arraybridge as _arraybridge
 def _with_openhcs_metadata(decorator: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap an arraybridge decorator with optional OpenHCS prepare metadata."""
 
-    def openhcs_decorator(*args: Any, prepare: Any = None, **kwargs: Any) -> Any:
+    def openhcs_decorator(
+        *args: Any,
+        prepare: Any = None,
+        contract: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        declared_processing_contract = _declared_processing_contract_name(contract)
+        if declared_processing_contract is None and contract is not None:
+            kwargs["contract"] = contract
+
         if args and callable(args[0]) and len(args) == 1:
             wrapped = decorator(args[0], **kwargs)
-            if prepare is not None:
-                from openhcs.core.callable_contract import (
-                    attach_processing_prepare,
-                )
-
-                attach_processing_prepare(wrapped, prepare)
+            _attach_openhcs_metadata(
+                wrapped,
+                prepare=prepare,
+                declared_processing_contract=declared_processing_contract,
+            )
             return wrapped
 
         arraybridge_decorator = decorator(*args, **kwargs)
 
         def decorate(target: Any) -> Any:
             wrapped = arraybridge_decorator(target)
-            if prepare is not None:
-                from openhcs.core.callable_contract import (
-                    attach_processing_prepare,
-                )
-
-                attach_processing_prepare(wrapped, prepare)
+            _attach_openhcs_metadata(
+                wrapped,
+                prepare=prepare,
+                declared_processing_contract=declared_processing_contract,
+            )
             return wrapped
 
         return decorate
@@ -45,6 +53,74 @@ def _with_openhcs_metadata(decorator: Callable[..., Any]) -> Callable[..., Any]:
     openhcs_decorator.__doc__ = getattr(decorator, "__doc__", None)
     openhcs_decorator.__module__ = __name__
     return openhcs_decorator
+
+
+def _declared_processing_contract_name(contract: Any) -> str | None:
+    """Return OpenHCS processing-contract metadata carried by a decorator."""
+    if contract is None or callable(contract):
+        return None
+    name = getattr(contract, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    if isinstance(contract, str) and contract:
+        return contract
+    raise TypeError(
+        "OpenHCS memory decorator contract must be a callable arraybridge "
+        f"validator or a processing contract declaration; got {contract!r}."
+    )
+
+
+def _attach_openhcs_metadata(
+    wrapped: Any,
+    *,
+    prepare: Any,
+    declared_processing_contract: str | None,
+) -> None:
+    if prepare is not None:
+        from openhcs.core.callable_contract import attach_processing_prepare
+
+        attach_processing_prepare(wrapped, prepare)
+    if declared_processing_contract is not None:
+        from openhcs.core.callable_contract import attach_callable_contract_metadata
+
+        _strip_unowned_semantic_controls(wrapped, declared_processing_contract)
+        attach_callable_contract_metadata(
+            wrapped,
+            declared_processing_contract=declared_processing_contract,
+        )
+
+
+def _strip_unowned_semantic_controls(
+    wrapped: Any,
+    declared_processing_contract: str,
+) -> None:
+    from openhcs.processing.backends.lib_registry.unified_registry import (
+        ContractRuntimeParameter,
+        ProcessingContract,
+    )
+
+    contract = ProcessingContract.from_declared_name(declared_processing_contract)
+    if contract is None:
+        return
+    allowed_semantic_control_names = (
+        contract.declaration.injected_semantic_control_parameter_names()
+    )
+    semantic_control_names = {
+        parameter_type.require_parameter_name()
+        for parameter_type in ContractRuntimeParameter.registered_parameter_types()
+        if parameter_type.is_semantic_control
+    }
+    params_to_strip = semantic_control_names - allowed_semantic_control_names
+    if not params_to_strip:
+        return
+    signature = inspect.signature(wrapped)
+    filtered_parameters = tuple(
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.name not in params_to_strip
+    )
+    if len(filtered_parameters) != len(signature.parameters):
+        wrapped.__signature__ = signature.replace(parameters=filtered_parameters)
 
 
 memory_types = _with_openhcs_metadata(_arraybridge.memory_types)

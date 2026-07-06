@@ -4,7 +4,7 @@ from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Iterator, Mapping, Optional
 
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactSpec
 from openhcs.core.function_patterns import DEFAULT_GROUP_KEY
 from openhcs.core.function_patterns import FunctionInvocationKey
 from openhcs.core.function_patterns import normalize_function_pattern
@@ -158,10 +158,15 @@ class ArtifactSpecAccumulator:
         incoming: ArtifactSpec,
     ) -> ArtifactSpec:
         """Merge two declarations for the same artifact name."""
-        if existing.kind != incoming.kind:
+        if existing.plan_type is not incoming.plan_type:
             raise ValueError(
-                f"Conflicting {self.role} artifact kind for '{incoming.name}': "
-                f"{existing.kind.value} vs {incoming.kind.value}."
+                f"Conflicting {self.role} artifact role for '{incoming.name}': "
+                f"{existing.plan_type.plan_role} vs {incoming.plan_type.plan_role}."
+            )
+        if existing.artifact_type != incoming.artifact_type:
+            raise ValueError(
+                f"Conflicting {self.role} artifact type for '{incoming.name}': "
+                f"{existing.artifact_type.value} vs {incoming.artifact_type.value}."
             )
         if (
             existing.materialization is not None
@@ -178,11 +183,27 @@ class ArtifactSpecAccumulator:
             if existing.materialization is not None
             else incoming.materialization
         )
-        return ArtifactSpec(
-            name=existing.name,
-            kind=existing.kind,
+        if (
+            existing.sidecar_role is not None
+            and incoming.sidecar_role is not None
+            and existing.sidecar_role is not incoming.sidecar_role
+        ):
+            raise ValueError(
+                f"Conflicting {self.role} artifact sidecar role for "
+                f"'{incoming.name}'."
+            )
+        sidecar_role = (
+            existing.sidecar_role
+            if existing.sidecar_role is not None
+            else incoming.sidecar_role
+        )
+        relations = tuple(dict.fromkeys((*existing.relations, *incoming.relations)))
+        return replace(
+            existing,
             materialization=materialization,
             required=existing.required or incoming.required,
+            sidecar_role=sidecar_role,
+            relations=relations,
         )
 
 
@@ -228,7 +249,10 @@ def extract_artifact_declarations(
             producer_groups[name].append(normalized_key)
             producer_invocations[name].append(invocation.key)
 
-        for name, spec in declarations.inputs:
+        for spec in declarations.artifact_key_specs.for_plan_type(
+            ArtifactInputPlan
+        ).specs:
+            name = spec.name
             consumer_specs.add(spec)
             consumer_invocations[name].append(invocation.key)
 
@@ -263,8 +287,8 @@ def _validate_local_consumer_producer_kinds(
         producer_spec = producer_specs.get(name)
         if producer_spec is None:
             continue
-        if producer_spec.kind != consumer_spec.kind:
+        if producer_spec.artifact_type != consumer_spec.artifact_type:
             raise ValueError(
-                f"Artifact '{name}' is produced as {producer_spec.kind.value} "
-                f"but consumed as {consumer_spec.kind.value} in the same FunctionStep."
+                f"Artifact '{name}' is produced as {producer_spec.artifact_type.value} "
+                f"but consumed as {consumer_spec.artifact_type.value} in the same FunctionStep."
             )

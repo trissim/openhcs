@@ -32,9 +32,15 @@ import openhcs.core.equivalence.policy as equivalence_policy
 import openhcs.core.equivalence.relationships as equivalence_relationships
 import openhcs.core.equivalence.tables as equivalence_tables
 import openhcs.core.runtime_semantics as runtime_semantics
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_FEATURE_NAME_FIELDS,
     iter_measurement_rows,
     measurement_object_label,
     measurement_row_object_name,
@@ -45,15 +51,18 @@ from openhcs.core.runtime_execution_validation import (
 )
 from openhcs.core.runtime_exports import RuntimeImageExportSpec
 from openhcs.core.runtime_semantics import (
-    IndexedObjectZernikeDescriptor,
-    MeasurementStatistic,
-    MeasurementScope,
-    ObjectInstanceKey,
-    ObjectCoreMeasurementFeature,
-    ObjectMeasurementFeatureRole,
+    MeasurementRowAxisField,
     MeasurementObjectRowIdentity,
-    ObjectZernikeDescriptorFeature,
-    PairMeasurementFeature,
+    MeasurementScope,
+    MeasurementStatistic,
+    ObjectCoreMeasurementFeature,
+    ObjectCalculatedFeatureMarker,
+    ObjectCountFeatureMarker,
+    ObjectIdentifierFeatureMarker,
+    ObjectIntensityFeatureMarker,
+    ObjectInstanceKey,
+    ObjectLocationFeatureMarker,
+    ObjectShapeDescriptorFeatureMarker,
     measurement_row_mapping,
 )
 from openhcs.core.runtime_stores import StoredRuntimeValue
@@ -61,6 +70,7 @@ from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     MostDerivedContextStrategyMixin,
 )
+from openhcs.core.runtime_values import ColumnarRows
 from openhcs.core.runtime_values import MeasurementTable
 from openhcs.core.runtime_values import ObjectLabelSet
 from openhcs.core.runtime_values import ObjectRelationship
@@ -97,22 +107,27 @@ from openhcs.core.equivalence.tables import (
     RuntimeMeasurementTableIdentity,
     RuntimeMeasurementObjectSubtableSet,
     aggregate_measurement_table_semantic_key,
+    complete_object_domain_measurement_table_key,
     dedupe_runtime_measurement_table_aggregate_rows,
     dedupe_runtime_measurement_table_object_subtable,
     exact_measurement_table_key,
     is_wide_measurement_table,
     measurement_table_padding_group,
+    measurement_table_schema_has_object_identity,
+    measurement_table_spans_multiple_transport_identities,
 )
 from openhcs.core.equivalence.measurement_rows import (
     ContextualMeasurementPaddingProjection,
     IMAGE_IDENTITY_FIELDS,
     RuntimeIndexedRowValues,
+    RuntimeCollapsedNumericQualifierCache,
     RuntimeImageNumberOffset,
     RuntimeMeasurementFeatureKeyCache,
     RuntimeMeasurementFeatureCategoryPriority,
     RuntimeMeasurementLongFormKeyCache,
     RuntimeMeasurementPaddingGroupCache,
     RuntimeMeasurementQualifierRenderCache,
+    RuntimeMeasurementRequiredKeyIndex,
     RuntimeMeasurementRowIdentity,
     RuntimeMeasurementRowIdentityOrMissing,
     RuntimeMeasurementRowMapping,
@@ -128,7 +143,6 @@ from openhcs.core.equivalence.measurement_rows import (
     runtime_metadata_map_row_matches,
 )
 from openhcs.core.equivalence.measurement_facts import (
-    PAIR_REGRESSION_SLOPE_FEATURE,
     RuntimeDirectionalPairMeasurementDerivationContract,
     RuntimeMeasurementFact,
     RuntimeExpectedMeasurementFactCompletion,
@@ -143,10 +157,12 @@ from openhcs.core.equivalence.measurement_facts import (
     spatial_grid_measurement_facts,
 )
 from openhcs.core.equivalence.measurement_features import (
-    object_measurement_feature_has_role,
+    RuntimeMeasurementDescriptorSemantics,
+    RuntimeMeasurementFeatureSemanticProfile,
+    object_measurement_feature_matches_marker,
     object_measurement_feature_requires_sparse_boundary_object_count_stability,
-    object_measurement_subject_row_identities_with_role,
-    object_measurement_subjects_with_role,
+    object_measurement_subject_row_identities_matching_marker,
+    object_measurement_subjects_matching_marker,
 )
 from openhcs.core.equivalence.measurement_requirements import (
     RequiredRuntimeMeasurementProjection,
@@ -162,6 +178,8 @@ from openhcs.core.equivalence.relationships import (
     RelationshipAggregateFeatureSemantics,
     RelationshipMeasurementSemantics,
     RuntimeAxisRecordPlaneIdentityResolver,
+    RuntimeObjectRelationshipIdentity,
+    RuntimeRecordPlaneIdentity,
     RuntimeScopedMeasurementTable,
     RuntimeScopedObjectRelationship,
     object_measurement_values_by_label,
@@ -178,7 +196,6 @@ from openhcs.core.equivalence.comparison import (
     runtime_table_differences as _table_differences,
 )
 from openhcs.core.source_image_provenance import SourceImageProvenanceIdentity
-
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"parity"})
 _RUNTIME_MEASUREMENT_PROJECTION_MODULES = (
@@ -243,6 +260,8 @@ RuntimeMeasurementFactsWithRowIdentity = tuple[
     RuntimeMeasurementFactWithRowIdentity,
     ...,
 ]
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowPriorityCacheKey:
     """Identity for row-to-feature priority resolution within one equivalence pass."""
@@ -252,7 +271,19 @@ class RuntimeMeasurementRowPriorityCacheKey:
     feature_key: RuntimeMeasurementFeatureKey
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowFeaturePriorityCacheKey:
+    """Identity for feature-category priority shared by equivalent row shapes."""
+
+    row_fields: tuple[str, ...]
+    long_form_feature: str | None
+
+
 _RuntimeMeasurementRowPriorityCache = dict[RuntimeMeasurementRowPriorityCacheKey, int]
+_RuntimeMeasurementRowFeaturePriorityCache = dict[
+    RuntimeMeasurementRowFeaturePriorityCacheKey,
+    int | None,
+]
 _RuntimeMeasurementPrimaryRowKey = tuple[
     RuntimeMeasurementSubjectKey,
     RuntimeObjectMeasurementRowIdentity,
@@ -260,6 +291,7 @@ _RuntimeMeasurementPrimaryRowKey = tuple[
 _RuntimeMeasurementPrimaryRowSet = set[_RuntimeMeasurementPrimaryRowKey]
 _RuntimeImageFeatureFactIdentity = tuple[
     RuntimeMeasurementRowIdentity,
+    RuntimeRecordPlaneIdentity | None,
     SourceImageProvenanceIdentity,
     RuntimeMeasurementFeatureKey,
     RuntimeCellSignature,
@@ -267,6 +299,10 @@ _RuntimeImageFeatureFactIdentity = tuple[
 _RuntimeImageFeatureFactRecordSet = dict[
     _RuntimeImageFeatureFactIdentity,
     set[str | None],
+]
+_RuntimeMeasurementFactCounterObjectCache = dict[
+    int,
+    tuple[RuntimeMeasurementFeatureKey, Counter[RuntimeCellSignature]],
 ]
 _ContextualMeasurementPaddingGroup = tuple[str, tuple[str, ...], str | None]
 
@@ -293,25 +329,63 @@ class RuntimeAggregateMeanAccumulator:
         return self.total / self.count
 
 
-class SparseNumericCounterToleranceProfile(Enum):
-    """Sparse numeric comparison tolerance profile."""
+class SparseNumericCounterToleranceProfile(ABC, metaclass=AutoRegisterMeta):
+    """Registered sparse numeric comparison tolerance profile."""
 
-    OBJECT_BOUNDARY = auto()
-    SHAPE_DESCRIPTOR = auto()
-    BINARY_NUMERIC = auto()
-    ZERNIKE_DESCRIPTOR = auto()
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+    __registry_key__ = "profile_key"
+    __skip_if_no_key__ = True
 
+    profile_key: ClassVar[str | None] = None
+
+    @classmethod
+    def profile_type(cls, profile_key: str) -> type["SparseNumericCounterToleranceProfile"]:
+        """Return the registered sparse numeric profile for ``profile_key``."""
+        try:
+            return cls.__registry__[profile_key]
+        except KeyError as exc:
+            registered = tuple(cls.__registry__)
+            raise ValueError(
+                f"Unknown sparse numeric tolerance profile {profile_key!r}; "
+                f"registered profiles: {registered!r}."
+            ) from exc
+
+    @classmethod
+    def profile_type_for_descriptor(
+        cls,
+        descriptor: object,
+    ) -> type["SparseNumericCounterToleranceProfile"]:
+        """Return the registered sparse numeric profile that owns ``descriptor``."""
+        matches = tuple(
+            profile_type
+            for profile_type in cls.__registry__.values()
+            if profile_type.matches_descriptor(descriptor)
+        )
+        if len(matches) != 1:
+            names = tuple(profile_type.__name__ for profile_type in matches)
+            raise ValueError(
+                "Sparse numeric descriptor tolerance requires exactly one "
+                f"matching profile for {descriptor!r}, got {names!r}."
+            )
+        return matches[0]
+
+    @classmethod
+    def matches_descriptor(cls, descriptor: object) -> bool:
+        """Return whether this profile owns sparse tolerance for ``descriptor``."""
+        del descriptor
+        return False
+
+    @classmethod
     def equivalent(
-        self,
+        cls,
         reference_values: Counter[RuntimeCellSignature],
         candidate_values: Counter[RuntimeCellSignature],
         policy: RuntimeEquivalencePolicy,
         *,
-        descriptor: IndexedObjectZernikeDescriptor | None = None,
+        descriptor: object | None = None,
     ) -> bool:
-        tolerance = SparseNumericCounterToleranceStrategy.for_enum_member(
-            self
-        ).tolerance(policy, descriptor=descriptor)
+        """Return whether sparse numeric counters match under this profile."""
+        tolerance = cls().tolerance(policy, descriptor=descriptor)
         return _sparse_numeric_counters_equivalent(
             reference_values,
             candidate_values,
@@ -322,40 +396,26 @@ class SparseNumericCounterToleranceProfile(Enum):
             max_unstable_fraction=tolerance[3],
         )
 
-
-class SparseNumericCounterToleranceStrategy(
-    EnumKeyedStrategyMixin[SparseNumericCounterToleranceProfile],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Sparse numeric tolerance profile strategy."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    __enum_member_attr__ = "profile"
-
-    profile: ClassVar[SparseNumericCounterToleranceProfile]
-    strategy_label: ClassVar[str | None] = None
-
     @abstractmethod
     def tolerance(
         self,
         policy: RuntimeEquivalencePolicy,
         *,
-        descriptor: IndexedObjectZernikeDescriptor | None,
+        descriptor: object | None,
     ) -> tuple[float, float, int, float]:
         """Return sparse numeric tolerance settings."""
 
 
-class ObjectBoundarySparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+class ObjectBoundarySparseNumericTolerance(SparseNumericCounterToleranceProfile):
     """Object-boundary sparse jitter tolerance."""
 
-    profile = SparseNumericCounterToleranceProfile.OBJECT_BOUNDARY
+    profile_key = "object_boundary"
 
     def tolerance(
         self,
         policy: RuntimeEquivalencePolicy,
         *,
-        descriptor: IndexedObjectZernikeDescriptor | None,
+        descriptor: object | None,
     ) -> tuple[float, float, int, float]:
         del descriptor
         return (
@@ -366,16 +426,16 @@ class ObjectBoundarySparseNumericTolerance(SparseNumericCounterToleranceStrategy
         )
 
 
-class ShapeDescriptorSparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+class ShapeDescriptorSparseNumericTolerance(SparseNumericCounterToleranceProfile):
     """Shape-descriptor sparse tolerance."""
 
-    profile = SparseNumericCounterToleranceProfile.SHAPE_DESCRIPTOR
+    profile_key = "shape_descriptor"
 
     def tolerance(
         self,
         policy: RuntimeEquivalencePolicy,
         *,
-        descriptor: IndexedObjectZernikeDescriptor | None,
+        descriptor: object | None,
     ) -> tuple[float, float, int, float]:
         del descriptor
         return (
@@ -386,16 +446,16 @@ class ShapeDescriptorSparseNumericTolerance(SparseNumericCounterToleranceStrateg
         )
 
 
-class BinarySparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+class BinarySparseNumericTolerance(SparseNumericCounterToleranceProfile):
     """Binary numeric sparse tolerance."""
 
-    profile = SparseNumericCounterToleranceProfile.BINARY_NUMERIC
+    profile_key = "binary_numeric"
 
     def tolerance(
         self,
         policy: RuntimeEquivalencePolicy,
         *,
-        descriptor: IndexedObjectZernikeDescriptor | None,
+        descriptor: object | None,
     ) -> tuple[float, float, int, float]:
         del descriptor
         return (
@@ -403,51 +463,6 @@ class BinarySparseNumericTolerance(SparseNumericCounterToleranceStrategy):
             policy.numeric_rel_tolerance,
             policy.object_boundary_jitter_max_unstable_values,
             policy.object_boundary_jitter_max_unstable_fraction,
-        )
-
-
-class ZernikeDescriptorSparseNumericTolerance(SparseNumericCounterToleranceStrategy):
-    """Zernike descriptor sparse tolerance."""
-
-    profile = SparseNumericCounterToleranceProfile.ZERNIKE_DESCRIPTOR
-
-    def tolerance(
-        self,
-        policy: RuntimeEquivalencePolicy,
-        *,
-        descriptor: IndexedObjectZernikeDescriptor | None,
-    ) -> tuple[float, float, int, float]:
-        if descriptor is None:
-            raise ValueError("Zernike sparse tolerance requires a descriptor.")
-        abs_tolerance = (
-            policy.zernike_descriptor_phase_abs_tolerance
-            if descriptor.family is ObjectZernikeDescriptorFeature.INTENSITY_PHASE
-            else policy.zernike_descriptor_magnitude_abs_tolerance
-        )
-        return (
-            abs_tolerance,
-            policy.zernike_descriptor_rel_tolerance,
-            policy.object_boundary_jitter_max_unstable_values,
-            policy.object_boundary_jitter_max_unstable_fraction,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectZernikeDescriptorStabilityContext:
-    """Inputs needed to decide whether a Zernike descriptor is comparable."""
-
-    feature: RuntimeMeasurementFeatureKey
-    descriptor: IndexedObjectZernikeDescriptor
-    reference: "RuntimeMeasurementSnapshot"
-    candidate: "RuntimeMeasurementSnapshot"
-    policy: RuntimeEquivalencePolicy
-
-    def stability_policy(self) -> "MeasurementFeatureStabilityPolicy":
-        return MeasurementFeatureStabilityPolicy(
-            self.feature,
-            self.reference,
-            self.candidate,
-            self.policy,
         )
 
 
@@ -482,6 +497,7 @@ class AggregateMeanKeyProjection:
             self.key_cache[cache_key] = mean_key
         return mean_key
 
+
 _AggregateValuesByFeature = dict[
     tuple[RuntimeMeasurementFeatureKey, RuntimeMeasurementRowIdentity],
     RuntimeAggregateMeanAccumulator,
@@ -490,6 +506,8 @@ _AggregateMeanKeyCache = dict[
     tuple[MeasurementScope, str | None, str, str, str | None],
     RuntimeMeasurementFeatureKey | None,
 ]
+
+
 @dataclass(slots=True, kw_only=True)
 class RuntimeObjectMeasurementFactRowDomain:
     """Object row identities proven by emitted measurement facts."""
@@ -580,7 +598,7 @@ class RuntimeObjectMeasurementFactRowDomain:
             value_required = required_keys is None or key in required_keys
             if not value_required and mean_key is None:
                 continue
-            if mean_key is None or not object_identity.has_image_identity:
+            if mean_key is None:
                 continue
             numeric_value = _finite_numeric_runtime_cell_value(value)
             if numeric_value is None:
@@ -716,6 +734,16 @@ class CountMeasurementStatisticDependencyStrategy(
         return (key,)
 
 
+def measurement_table_covers_declared_object_domain(
+    table: MeasurementTable,
+) -> bool:
+    """Return whether row owner declares complete object-domain coverage."""
+    return (
+        isinstance(table.rows, ColumnarRows)
+        and table.rows.covers_declared_object_measurement_domain
+    )
+
+
 class RuntimeObjectLocationRowMergeProjectionKey(Enum):
     """Registered object-location row-merge projection identities."""
 
@@ -735,9 +763,15 @@ class RuntimeMeasurementObservationAxis:
     measurement_tables: list[RuntimeScopedMeasurementTable] = field(
         default_factory=list
     )
+    seen_relationships: set[RuntimeObjectRelationshipIdentity] = field(
+        default_factory=set
+    )
     seen_exact_measurement_tables: set[RuntimeMeasurementTableIdentity] = field(
         default_factory=set
     )
+    seen_measurement_table_replay_identities: set[
+        tuple[RuntimeRecordPlaneIdentity | None, RuntimeMeasurementTableIdentity]
+    ] = field(default_factory=set)
     seen_object_subtables: RuntimeMeasurementObjectSubtableSet = field(
         default_factory=set
     )
@@ -748,9 +782,28 @@ class RuntimeMeasurementObservationAxis:
         plane_identity_resolver: RuntimeAxisRecordPlaneIdentityResolver,
         seen_aggregate_measurement_tables: set[RuntimeMeasurementTableIdentity],
     ) -> RuntimeScopedMeasurementTable | None:
+        record_identity = record.path
         table = MeasurementTable.from_runtime_value(record.value)
-        if record.key.scope.group_key is None:
-            exact_table_key = exact_measurement_table_key(table)
+        plane_identity = plane_identity_resolver.plane_identity_for_runtime_record(
+            record
+        )
+        replay_identity = (plane_identity, exact_measurement_table_key(table))
+        if replay_identity in self.seen_measurement_table_replay_identities:
+            return None
+        self.seen_measurement_table_replay_identities.add(replay_identity)
+        table_spans_multiple_transport_identities = (
+            measurement_table_spans_multiple_transport_identities(table)
+        )
+        if (
+            record.key.scope.group_key is None
+            or table_spans_multiple_transport_identities
+            or measurement_table_covers_declared_object_domain(table)
+        ):
+            exact_table_key = (
+                complete_object_domain_measurement_table_key(table)
+                if measurement_table_covers_declared_object_domain(table)
+                else exact_measurement_table_key(table)
+            )
             if exact_table_key in self.seen_exact_measurement_tables:
                 return None
             self.seen_exact_measurement_tables.add(exact_table_key)
@@ -766,10 +819,11 @@ class RuntimeMeasurementObservationAxis:
             seen_aggregate_measurement_tables.add(aggregate_table_key)
         scoped_table = RuntimeScopedMeasurementTable(
             table,
-            plane_identity=plane_identity_resolver.plane_identity_for_runtime_record(
-                record
+            plane_identity=plane_identity,
+            record_identity=record_identity,
+            spans_multiple_transport_identities=(
+                table_spans_multiple_transport_identities
             ),
-            record_identity=record.path,
         )
         self.measurement_tables.append(scoped_table)
         return scoped_table
@@ -787,12 +841,15 @@ class RuntimeMeasurementObservationAxis:
         plane_identity = plane_identity_resolver.plane_identity_for_runtime_record(
             record
         )
-        self.relationship_records.append(
-            RuntimeScopedObjectRelationship(
-                ObjectRelationship.from_runtime_value(record.value),
-                plane_identity=plane_identity,
-            )
+        scoped_relationship = RuntimeScopedObjectRelationship(
+            ObjectRelationship.from_runtime_value(record.value),
+            plane_identity=plane_identity,
         )
+        relationship_identity = scoped_relationship.identity_for_projection()
+        if relationship_identity in self.seen_relationships:
+            return
+        self.seen_relationships.add(relationship_identity)
+        self.relationship_records.append(scoped_relationship)
 
     def record_relationship_facts(
         self,
@@ -864,7 +921,10 @@ class RuntimeMeasurementObservationAxis:
                         object_label_values
                     )
                 for key, values_by_child_id in object_label_values.items():
-                    if required_child_keys is not None and key not in required_child_keys:
+                    if (
+                        required_child_keys is not None
+                        and key not in required_child_keys
+                    ):
                         continue
                     if key not in child_measurement_values:
                         child_measurement_values[key] = {}
@@ -879,11 +939,13 @@ class RuntimeMeasurementObservationAxis:
                 existing_measurement_keys=explicit_measurement_keys,
                 required_measurement_keys=required_measurement_keys,
             )
-            relationship_object_number_aggregate_key = RuntimeMeasurementFeatureKey.from_subject_feature(
-                relationship_measurement.source_subject,
-                relationship_measurement.aggregate_feature_name(
-                    ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
-                ),
+            relationship_object_number_aggregate_key = (
+                RuntimeMeasurementFeatureKey.from_subject_feature(
+                    relationship_measurement.source_subject,
+                    relationship_measurement.aggregate_feature_name(
+                        ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+                    ),
+                )
             )
             if any(
                 key == relationship_object_number_aggregate_key
@@ -922,10 +984,10 @@ def _remove_authoritative_object_label_location_facts(
             MeasurementStatistic.VALUE.value,
             key.source_name,
         )
-        if object_measurement_feature_has_role(
+        if object_measurement_feature_matches_marker(
             location_role_key,
-            ObjectMeasurementFeatureRole.LOCATION,
-            policy.measurement_dialect,
+            ObjectLocationFeatureMarker,
+            policy,
         ):
             measurement_fact_counts.pop(key, None)
 
@@ -937,7 +999,9 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
     policy: RuntimeEquivalencePolicy
     known_source_names: tuple[str, ...]
     required_measurement_keys: RuntimeRequiredMeasurementKeys = None
-    measurement_fact_counts: RuntimeMeasurementFactCounterMap = field(default_factory=dict)
+    measurement_fact_counts: RuntimeMeasurementFactCounterMap = field(
+        default_factory=dict
+    )
     row_merge_cache: _RuntimeMeasurementRowMergeCache = field(default_factory=dict)
     primary_row_identities: _RuntimeMeasurementPrimaryRowSet = field(
         default_factory=set
@@ -952,6 +1016,22 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
     seen_image_feature_fact_records: _RuntimeImageFeatureFactRecordSet = field(
         default_factory=dict
     )
+    measurement_fact_counter_object_cache: _RuntimeMeasurementFactCounterObjectCache = (
+        field(default_factory=dict)
+    )
+
+    def measurement_fact_counter_for_projected_key(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> Counter[RuntimeCellSignature]:
+        """Return a fact counter cached for this exact projected key object."""
+        cache_key = id(key)
+        cached = self.measurement_fact_counter_object_cache.get(cache_key)
+        if cached is not None and cached[0] is key:
+            return cached[1]
+        counter = runtime_measurement_fact_counter(self.measurement_fact_counts, key)
+        self.measurement_fact_counter_object_cache[cache_key] = (key, counter)
+        return counter
 
     def record_spatial_grid(self, record: StoredRuntimeValue) -> None:
         record_measurement_facts(
@@ -1000,13 +1080,21 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
         schema_cache: RuntimeMeasurementRowSchemaCache = {}
         key_cache: RuntimeMeasurementFeatureKeyCache = {}
         long_form_key_cache: RuntimeMeasurementLongFormKeyCache = {}
+        wide_feature_index_cache: (
+            equivalence_measurement_rows.RuntimeMeasurementWideFeatureIndexCache
+        ) = {}
+        wide_feature_plan_cache: (
+            equivalence_measurement_rows.RuntimeMeasurementWideFeaturePlanCache
+        ) = {}
         qualifier_render_cache: RuntimeMeasurementQualifierRenderCache = {}
         padding_group_cache: RuntimeMeasurementPaddingGroupCache = {}
+        collapsed_numeric_qualifier_cache: RuntimeCollapsedNumericQualifierCache = {}
         subject_schema_cache: RuntimeMeasurementRowSubjectSchemaCache = {}
         aggregate_measurement_fact_counts: _AggregateValuesByFeature = {}
         aggregate_input_key_cache: _AggregateMeanKeyCache = {}
         explicit_measurement_keys: set[RuntimeMeasurementFeatureKey] = set()
         row_priority_cache: _RuntimeMeasurementRowPriorityCache = {}
+        row_feature_priority_cache: _RuntimeMeasurementRowFeaturePriorityCache = {}
         required_projection = RequiredRuntimeMeasurementProjection(
             self.required_measurement_keys,
             self.policy,
@@ -1014,6 +1102,15 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
         )
         row_required_keys = required_projection.input_keys()
         row_required_subjects = required_projection.subjects()
+        row_required_key_index = RuntimeMeasurementRequiredKeyIndex.from_required_keys(
+            row_required_keys
+        )
+        row_derive_directional_pair_facts = (
+            RuntimeDirectionalPairMeasurementDerivationContract(
+                self.policy,
+                self.known_source_names,
+            ).required_keys_need_derivation(row_required_keys)
+        )
 
         def record_row_mapping(
             row: RuntimeMeasurementRowMapping,
@@ -1022,7 +1119,7 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
             image_number_offset: RuntimeImageNumberOffset,
         ) -> None:
             header = row.header
-            row_values = RuntimeIndexedRowValues(row.values)
+            row_values = RuntimeIndexedRowValues.from_row(row)
             row_subject_projection = RuntimeMeasurementRowSubjectProjection(
                 table_subject,
                 table.source_image_name,
@@ -1049,11 +1146,16 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
                 required_keys=row_required_keys,
                 table_padding_group=table_padding_group,
                 image_number_offset=image_number_offset,
+                derive_directional_pair_facts=row_derive_directional_pair_facts,
                 schema_cache=schema_cache,
                 key_cache=key_cache,
                 long_form_key_cache=long_form_key_cache,
+                wide_feature_index_cache=wide_feature_index_cache,
+                wide_feature_plan_cache=wide_feature_plan_cache,
                 qualifier_render_cache=qualifier_render_cache,
                 padding_group_cache=padding_group_cache,
+                collapsed_numeric_qualifier_cache=collapsed_numeric_qualifier_cache,
+                required_key_index=row_required_key_index,
             )
             row_facts = row_context.facts()
             if row_facts:
@@ -1061,16 +1163,16 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
 
         table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
         table_padding_group = measurement_table_padding_group(table.name)
-        image_number_offset = RuntimeImageNumberOffset.from_runtime_rows(
-            iter_measurement_rows((table,))
-        )
+        image_number_offset = RuntimeImageNumberOffset.from_measurement_table(table)
         recorder = RuntimeTableRowProjectionRecorder(
             state=self,
             image_number_offset=image_number_offset,
             row_priority_cache=row_priority_cache,
+            row_feature_priority_cache=row_feature_priority_cache,
             aggregate_measurement_fact_counts=aggregate_measurement_fact_counts,
             aggregate_input_key_cache=aggregate_input_key_cache,
             explicit_measurement_keys=explicit_measurement_keys,
+            required_key_index=row_required_key_index,
             axis_key=axis_key,
             scoped_table=scoped_table,
         )
@@ -1114,14 +1216,16 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
             object_label_measurement_authority.location_subjects,
             self.policy,
         )
-        object_location_subjects = object_measurement_subjects_with_role(
+        object_location_subjects = object_measurement_subjects_matching_marker(
             measurement_fact_counts,
-            ObjectMeasurementFeatureRole.LOCATION,
-            self.policy.measurement_dialect,
+            ObjectLocationFeatureMarker,
+            self.policy,
         ) | RuntimeObjectLocationRowMergeContract.registered_projection(
             RuntimeObjectLocationRowMergeProjectionKey.LOCATION,
             self.policy,
-        ).subjects(row_merge_cache).difference(
+        ).subjects(
+            row_merge_cache
+        ).difference(
             object_label_measurement_authority.location_subjects
         )
         record_measurement_facts(
@@ -1196,7 +1300,9 @@ class RuntimeMeasurementRowProjectionRecorder(ABC):
     state: RuntimeMeasurementProjectionState
     image_number_offset: RuntimeImageNumberOffset
     row_priority_cache: _RuntimeMeasurementRowPriorityCache
+    row_feature_priority_cache: _RuntimeMeasurementRowFeaturePriorityCache
     explicit_measurement_keys: set[RuntimeMeasurementFeatureKey]
+    required_key_index: RuntimeMeasurementRequiredKeyIndex
     axis_key: str | None = None
 
     @abstractmethod
@@ -1214,20 +1320,12 @@ class RuntimeMeasurementRowProjectionRecorder(ABC):
         primary_location_priority = _object_location_primary_row_priority(
             self.state.policy
         )
-        long_form_feature = row.first_value(MEASUREMENT_FEATURE_NAME_FIELDS)
-        feature_names = (
-            (str(long_form_feature),)
-            if long_form_feature is not None
-            else row.header
+        priority = _runtime_row_feature_category_priority(
+            row,
+            self.state.policy,
+            self.row_feature_priority_cache,
         )
-        for feature_name in feature_names:
-            priority = RuntimeMeasurementFeatureCategoryPriority(
-                feature_name,
-                self.state.policy.measurement_dialect,
-            ).priority()
-            if priority is not None and priority <= primary_location_priority:
-                return True
-        return False
+        return priority is not None and priority <= primary_location_priority
 
     def record_primary_row_identity(
         self,
@@ -1257,44 +1355,56 @@ class RuntimeMeasurementRowProjectionRecorder(ABC):
             RuntimeMeasurementSubjectKey,
             RuntimeObjectMeasurementRowIdentity | None,
         ] = {}
-        row_identities: dict[
-            RuntimeObjectMeasurementRowIdentity | None,
-            RuntimeMeasurementRowIdentityOrMissing,
-        ] = {}
+        row_identities: dict[int, RuntimeMeasurementRowIdentityOrMissing] = {}
         emitted_row_facts_by_identity: dict[
-            RuntimeObjectMeasurementRowIdentity,
-            RuntimeMeasurementFactList,
+            int,
+            tuple[RuntimeObjectMeasurementRowIdentity, RuntimeMeasurementFactList],
         ] = {}
+        seen_facts: set[RuntimeMeasurementFactWithRowIdentity] = set()
         for key, value, object_row_identity in self.merge_row_measurement_facts(
             row,
-            tuple(facts),
+            facts,
             object_row_identities,
         ):
+            fact_with_identity = (key, value, object_row_identity)
+            if fact_with_identity in seen_facts:
+                continue
+            seen_facts.add(fact_with_identity)
             self.explicit_measurement_keys.add(key)
             if not self.accept_projected_measurement_fact(row, key, value):
                 continue
-            if (
-                self.state.required_measurement_keys is None
-                or key in self.state.required_measurement_keys
-            ):
-                runtime_measurement_fact_counter(
-                    self.state.measurement_fact_counts,
-                    key,
-                )[value] += 1
+            if key.subject.scope is MeasurementScope.OBJECT:
+                object_row_identity = self.object_row_identity_for_subject(
+                    row,
+                    key.subject,
+                    object_row_identities,
+                )
+            if self.required_key_index.requires_key(key):
+                self.state.measurement_fact_counter_for_projected_key(key)[value] += 1
                 if object_row_identity is not None:
-                    emitted_row_facts_by_identity.setdefault(
-                        object_row_identity,
-                        [],
-                    ).append((key, value))
+                    object_row_identity_id = id(object_row_identity)
+                    emitted_row_fact_group = emitted_row_facts_by_identity.get(
+                        object_row_identity_id
+                    )
+                    if emitted_row_fact_group is None:
+                        emitted_row_fact_group = (object_row_identity, [])
+                        emitted_row_facts_by_identity[object_row_identity_id] = (
+                            emitted_row_fact_group
+                        )
+                    emitted_row_fact_group[1].append((key, value))
+            object_row_identity_id = id(object_row_identity)
             row_identity = self.record_projected_fact_side_effects(
                 key,
                 value,
                 row,
                 object_row_identity,
-                row_identity=row_identities.get(object_row_identity),
+                row_identity=row_identities.get(object_row_identity_id),
             )
-            row_identities[object_row_identity] = row_identity
-        for object_row_identity, emitted_row_facts in emitted_row_facts_by_identity.items():
+            row_identities[object_row_identity_id] = row_identity
+        for (
+            object_row_identity,
+            emitted_row_facts,
+        ) in emitted_row_facts_by_identity.values():
             self.state.record_row_facts_for_identity(
                 object_row_identity,
                 emitted_row_facts,
@@ -1312,14 +1422,14 @@ class RuntimeMeasurementRowProjectionRecorder(ABC):
         remaining_facts: list[RuntimeMeasurementFactWithRowIdentity] = []
         row_merge_contract = RuntimeObjectLocationRowMergeContract(self.state.policy)
         for key, value in facts:
+            if not row_merge_contract.owns_key(key):
+                remaining_facts.append((key, value, None))
+                continue
             object_row_identity = self.object_row_identity_for_subject(
                 row,
                 key.subject,
                 object_row_identities,
             )
-            if not row_merge_contract.owns_key(key):
-                remaining_facts.append((key, value, object_row_identity))
-                continue
             if object_row_identity is None:
                 remaining_facts.append((key, value, None))
                 continue
@@ -1396,6 +1506,21 @@ class RuntimeTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRecorder)
     aggregate_measurement_fact_counts: _AggregateValuesByFeature
     aggregate_input_key_cache: _AggregateMeanKeyCache
 
+    def object_row_identity_for_subject(
+        self,
+        row: RuntimeMeasurementRowMapping,
+        subject: RuntimeMeasurementSubjectKey,
+        object_row_identities: dict[
+            RuntimeMeasurementSubjectKey,
+            RuntimeObjectMeasurementRowIdentity | None,
+        ],
+    ) -> RuntimeObjectMeasurementRowIdentity | None:
+        if object_row_identities:
+            return next(iter(object_row_identities.values()))
+        object_row_identity = self.object_row_identity(row, subject)
+        object_row_identities[subject] = object_row_identity
+        return object_row_identity
+
     def object_row_identity(
         self,
         row: RuntimeMeasurementRowMapping,
@@ -1468,6 +1593,7 @@ class RuntimeTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRecorder)
         )
         identity = (
             image_identity,
+            self.scoped_table.plane_identity,
             self.scoped_table.table.source_provenance.equality_identity,
             key,
             value,
@@ -1565,28 +1691,20 @@ class RuntimeExportTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRec
 
 
 class RuntimeMeasurementObservationRecordHandler(
-    EnumKeyedStrategyMixin[ArtifactKind],
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
-    """Artifact-kind handler for runtime measurement observation recording."""
+    """Artifact-type handler for runtime measurement observation recording."""
 
-    __enum_member_attr__ = "artifact_kind"
-    __enum_label_attr__ = "artifact_kind_label"
-
-    artifact_kind: ClassVar[ArtifactKind | None] = None
-    artifact_kind_label: ClassVar[str | None] = None
-    stable_key_axis: ClassVar[str] = "artifact_kind"
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
 
     @classmethod
-    def for_artifact_kind(
+    def for_artifact_type(
         cls,
-        artifact_kind: ArtifactKind,
+        artifact_type: ArtifactType,
     ) -> "RuntimeMeasurementObservationRecordHandler | None":
-        strategy_type = cls.__registry__.get(artifact_kind.value)
-        if strategy_type is None:
-            return None
-        return strategy_type()
+        return cls.for_context(ArtifactType.coerce(artifact_type), required=False)
 
     @abstractmethod
     def record(
@@ -1602,7 +1720,7 @@ class RuntimeMeasurementObservationRecordHandler(
 class SpatialGridObservationRecordHandler(RuntimeMeasurementObservationRecordHandler):
     """Record spatial-grid artifacts as direct measurement facts."""
 
-    artifact_kind = ArtifactKind.SPATIAL_GRID
+    artifact_type = SpatialGridArtifactType
 
     def record(
         self,
@@ -1620,7 +1738,7 @@ class MeasurementTableObservationRecordHandler(
 ):
     """Record measurement-table artifacts for fact projection."""
 
-    artifact_kind = ArtifactKind.MEASUREMENTS
+    artifact_type = MeasurementsArtifactType
 
     def record(
         self,
@@ -1645,7 +1763,7 @@ class MeasurementTableObservationRecordHandler(
 class ObjectLabelsObservationRecordHandler(RuntimeMeasurementObservationRecordHandler):
     """Record object-label artifacts for object-domain completion."""
 
-    artifact_kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def record(
         self,
@@ -1662,7 +1780,7 @@ class ObjectLabelsObservationRecordHandler(RuntimeMeasurementObservationRecordHa
 class RelationshipObservationRecordHandler(RuntimeMeasurementObservationRecordHandler):
     """Record relationship artifacts for axis-local relationship projection."""
 
-    artifact_kind = ArtifactKind.RELATIONSHIPS
+    artifact_type = RelationshipsArtifactType
 
     def record(
         self,
@@ -1681,17 +1799,6 @@ def _finite_numeric_runtime_cell_value(value: RuntimeCellSignature) -> float | N
     numeric_value = float(value.value)
     return numeric_value if math.isfinite(numeric_value) else None
 
-_TIE_SENSITIVE_LOCATION_FEATURES = frozenset(
-    ("max_intensity_x", "max_intensity_y", "max_intensity_z")
-)
-_LOCATION_VALUE_FEATURE_BY_NAME = MappingProxyType(
-    {
-        "max_intensity_x": "max_intensity",
-        "max_intensity_y": "max_intensity",
-        "max_intensity_z": "max_intensity",
-    }
-)
-
 
 @dataclass(frozen=True, slots=True)
 class TieSensitiveLocationValueFeatureContext:
@@ -1704,7 +1811,9 @@ class TieSensitiveLocationValueFeatureContext:
     def feature_parts(self) -> tuple[str, ...]:
         return tuple(
             part
-            for part in normalize_runtime_identifier(self.feature.feature_name).split("_")
+            for part in normalize_runtime_identifier(self.feature.feature_name).split(
+                "_"
+            )
             if part
         )
 
@@ -1713,23 +1822,45 @@ class TieSensitiveLocationValueFeatureContext:
         feature_name: str,
     ) -> RuntimeMeasurementSourceQualifiedFeature | None:
         """Return the source-qualified location family for one feature name."""
-        return self.policy.measurement_dialect.source_qualified_feature_family(
-            feature_name,
-            self.feature.source_name,
-            self.feature.subject.scope,
-            _TIE_SENSITIVE_LOCATION_FEATURES,
+        feature_family = (
+            self.policy.measurement_dialect.source_feature_family_for_relation(
+                measurement_features.TieSensitiveLocationValueFeatureRelation,
+                feature_name,
+                self.feature.source_name,
+                self.feature.subject.scope,
+            )
         )
+        if feature_family is None:
+            return None
+        if not isinstance(feature_family, RuntimeMeasurementSourceQualifiedFeature):
+            raise TypeError(
+                "RuntimeMeasurementFeature relation returned an invalid "
+                "source-qualified feature family."
+            )
+        return feature_family
 
     def value_key_from_location_family(
         self,
         feature_family: RuntimeMeasurementSourceQualifiedFeature,
     ) -> RuntimeMeasurementFeatureKey:
         """Return direct value key for one source-qualified location family."""
-        value_family = _LOCATION_VALUE_FEATURE_BY_NAME[feature_family.feature_name]
-        value_identity = self.policy.measurement_dialect.encode_source_qualified_feature(
-            value_family,
-            feature_family.source_name,
-            self.feature.subject.scope,
+        value_family = (
+            self.policy.measurement_dialect.target_family_for_relation_source_family(
+                measurement_features.TieSensitiveLocationValueFeatureRelation,
+                feature_family.feature_name,
+            )
+        )
+        if value_family is None:
+            raise ValueError(
+                "RuntimeMeasurementFeature relation lost target-family ownership "
+                f"for {feature_family.feature_name!r}."
+            )
+        value_identity = (
+            self.policy.measurement_dialect.encode_source_qualified_feature(
+                value_family,
+                feature_family.source_name,
+                self.feature.subject.scope,
+            )
         )
         return RuntimeMeasurementFeatureKey(
             subject=self.feature.subject,
@@ -1866,7 +1997,9 @@ class AggregateTieSensitiveLocationValueFeatureStrategy(
     ) -> RuntimeMeasurementFeatureKey:
         aggregate_feature = AggregateTieSensitiveLocationFeature.from_context(context)
         if aggregate_feature is None:
-            raise ValueError("Aggregate tie-sensitive location strategy lost ownership.")
+            raise ValueError(
+                "Aggregate tie-sensitive location strategy lost ownership."
+            )
         return aggregate_feature.value_key_from_location_family(
             context,
             aggregate_feature.feature_family,
@@ -1888,24 +2021,6 @@ class TieSensitiveLocationFeatureContract:
                 policy=self.policy,
             )
         )
-
-
-_ORIENTATION_FEATURES = frozenset(("orientation",))
-_SHAPE_DESCRIPTOR_GATING_FEATURES = (
-    "area",
-    "center_x",
-    "center_y",
-    "center_z",
-    "maximum_radius",
-    "mean_radius",
-    "median_radius",
-    "major_axis_length",
-    "minor_axis_length",
-    "compactness",
-    "form_factor",
-    "min_feret_diameter",
-    "max_feret_diameter",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1951,10 +2066,6 @@ class ShapeDescriptorFeatureSemantics(
         """Return whether this strategy owns the feature."""
 
     @abstractmethod
-    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
-        """Return the underlying child/object descriptor feature name."""
-
-    @abstractmethod
     def values_equivalent(
         self,
         context: ShapeDescriptorFeatureContext,
@@ -1970,23 +2081,15 @@ class ShapeDescriptorFeatureSemantics(
         candidate_values: Counter[RuntimeCellSignature],
     ) -> bool:
         """Return sparse-boundary equivalence for descriptor values."""
-        return SparseNumericCounterToleranceProfile.OBJECT_BOUNDARY.equivalent(
+        return ObjectBoundarySparseNumericTolerance.equivalent(
             reference_values,
             candidate_values,
             context.policy,
         )
 
 
-class OrientationShapeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
-    """Orientation descriptors compare as angular boundary-sensitive values."""
-
-    strategy_key = "orientation_descriptor"
-
-    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
-        return context.feature.feature_name in _ORIENTATION_FEATURES
-
-    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
-        return context.feature.feature_name
+class AngularShapeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics, ABC):
+    """Shape descriptors whose values live on a circular angular domain."""
 
     def values_equivalent(
         self,
@@ -2009,143 +2112,6 @@ class OrientationShapeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics
             candidate_values,
             context.policy,
         )
-
-class ShapeZernikeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
-    """Shape Zernike descriptors compare with shape-descriptor tolerance policy."""
-
-    strategy_key = "shape_zernike_descriptor"
-
-    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
-        descriptor = IndexedObjectZernikeDescriptor.from_feature_name(
-            context.feature.feature_name
-        )
-        return (
-            descriptor is not None
-            and descriptor.family is ObjectZernikeDescriptorFeature.SHAPE
-        )
-
-    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
-        return context.feature.feature_name
-
-    def values_equivalent(
-        self,
-        context: ShapeDescriptorFeatureContext,
-        reference_values: Counter[RuntimeCellSignature],
-        candidate_values: Counter[RuntimeCellSignature],
-    ) -> bool:
-        return SparseNumericCounterToleranceProfile.SHAPE_DESCRIPTOR.equivalent(
-            reference_values,
-            candidate_values,
-            context.policy,
-        )
-
-class ObjectZernikeDescriptorStabilityContract(
-    EnumKeyedStrategyMixin[ObjectZernikeDescriptorFeature],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Declare which object-domain facts make a Zernike descriptor comparable."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    __enum_member_attr__ = "descriptor_family"
-
-    descriptor_family: ClassVar[ObjectZernikeDescriptorFeature]
-    strategy_label: ClassVar[str | None] = None
-
-    @abstractmethod
-    def is_stable(
-        self,
-        context: ObjectZernikeDescriptorStabilityContext,
-    ) -> bool:
-        """Return whether the descriptor's supporting object domain is stable."""
-
-
-class ShapeObjectZernikeDescriptorStabilityContract(
-    ObjectZernikeDescriptorStabilityContract
-):
-    """Shape Zernikes are comparable only when shape geometry is stable."""
-
-    descriptor_family = ObjectZernikeDescriptorFeature.SHAPE
-
-    def is_stable(
-        self,
-        context: ObjectZernikeDescriptorStabilityContext,
-    ) -> bool:
-        stability = context.stability_policy()
-        matched_features = 0
-        for feature_name in _SHAPE_DESCRIPTOR_GATING_FEATURES:
-            geometry_feature, reference_values, candidate_values = (
-                stability._shape_descriptor_geometry_feature_values(feature_name)
-            )
-            if reference_values is None and candidate_values is None:
-                continue
-            if reference_values is None or candidate_values is None:
-                continue
-            if runtime_cell_signature_counters_equivalent(
-                reference_values,
-                candidate_values,
-                context.policy,
-            ):
-                matched_features += 1
-                continue
-            if context.policy.allow_sparse_object_boundary_jitter and (
-                SparseObjectBoundaryStatisticEquivalence.for_enum_member(
-                    MeasurementStatistic.VALUE
-                ).values_equivalent(
-                    SparseObjectBoundaryEquivalence(
-                        geometry_feature,
-                        context.reference,
-                        context.candidate,
-                        context.policy,
-                    )
-                )
-            ):
-                matched_features += 1
-                continue
-            return False
-        return matched_features >= 3
-
-
-class IntensityObjectZernikeDescriptorStabilityContract(
-    ObjectZernikeDescriptorStabilityContract
-):
-    """Intensity Zernikes are comparable when object identity and centers are stable."""
-
-    descriptor_family: ClassVar[ObjectZernikeDescriptorFeature]
-    strategy_label = None
-
-    def is_stable(
-        self,
-        context: ObjectZernikeDescriptorStabilityContext,
-    ) -> bool:
-        stability = context.stability_policy()
-        return (
-            stability.object_count_values_stable()
-            and stability.object_measurement_role_values_stable(
-                ObjectMeasurementFeatureRole.IDENTIFIER,
-                min_stable_features=1,
-            )
-            and stability.object_measurement_role_values_stable(
-                ObjectMeasurementFeatureRole.LOCATION,
-                min_stable_features=2,
-            )
-        )
-
-
-class IntensityMagnitudeObjectZernikeDescriptorStabilityContract(
-    IntensityObjectZernikeDescriptorStabilityContract
-):
-    """Magnitude intensity Zernikes share the intensity object-domain contract."""
-
-    descriptor_family = ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE
-
-
-class IntensityPhaseObjectZernikeDescriptorStabilityContract(
-    IntensityObjectZernikeDescriptorStabilityContract
-):
-    """Phase intensity Zernikes share the intensity object-domain contract."""
-
-    descriptor_family = ObjectZernikeDescriptorFeature.INTENSITY_PHASE
 
 
 @dataclass(slots=True, kw_only=True)
@@ -2170,8 +2136,8 @@ class RuntimeMeasurementObservationProjector(RuntimeMeasurementProjectionState):
         self.axis_observations[axis_key] = axis_observation
         for record in axis_records:
             record_handler = (
-                RuntimeMeasurementObservationRecordHandler.for_artifact_kind(
-                    record.key.kind
+                RuntimeMeasurementObservationRecordHandler.for_artifact_type(
+                    record.key.artifact_type
                 )
             )
             if record_handler is not None:
@@ -2294,9 +2260,9 @@ class RuntimeMeasurementSnapshot:
         for feature_payload, values_payload in payload:  # type: ignore[union-attr]
             counter: Counter[RuntimeCellSignature] = Counter()
             for value_payload, count in values_payload:
-                counter[
-                    RuntimeCellSignature.from_cache_payload(value_payload)
-                ] = int(count)
+                counter[RuntimeCellSignature.from_cache_payload(value_payload)] = int(
+                    count
+                )
             measurement_fact_counts[
                 RuntimeMeasurementFeatureKey.from_cache_payload(feature_payload)
             ] = counter
@@ -2307,7 +2273,9 @@ class RuntimeMeasurementSnapshot:
 class RuntimeMeasurementSnapshotAccumulator:
     """Accumulate semantic measurement facts from independently executed windows."""
 
-    _measurement_fact_counts: RuntimeMeasurementFactCounterMap = field(default_factory=dict)
+    _measurement_fact_counts: RuntimeMeasurementFactCounterMap = field(
+        default_factory=dict
+    )
 
     def add(self, snapshot: RuntimeMeasurementSnapshot) -> None:
         """Merge one projected runtime window into this semantic accumulator."""
@@ -2319,7 +2287,9 @@ class RuntimeMeasurementSnapshotAccumulator:
 
     def snapshot(self) -> RuntimeMeasurementSnapshot:
         """Freeze the accumulated semantic facts for equivalence comparison."""
-        return RuntimeMeasurementSnapshot(measurement_fact_counts=self._measurement_fact_counts)
+        return RuntimeMeasurementSnapshot(
+            measurement_fact_counts=self._measurement_fact_counts
+        )
 
 
 def runtime_output_equivalence(
@@ -2386,11 +2356,15 @@ def runtime_reference_artifact_equivalence(
         policy=policy,
         known_source_names=known_source_names,
     )
-    candidate_measurements = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
-        candidate,
-        policy=policy,
-        known_source_names=known_source_names,
-        required_measurement_keys=frozenset(reference_measurements.measurement_fact_counts),
+    candidate_measurements = (
+        RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+            candidate,
+            policy=policy,
+            known_source_names=known_source_names,
+            required_measurement_keys=frozenset(
+                reference_measurements.measurement_fact_counts
+            ),
+        )
     )
     if reference_measurements.is_empty and candidate_measurements.is_empty:
         table_differences = (
@@ -2467,16 +2441,30 @@ def _runtime_artifact_count_differences(
         RuntimeEquivalenceDifference(
             RuntimeEquivalenceDifferenceKind.RUNTIME_ARTIFACT_COUNTS,
             "runtime artifact counts differ: "
-            f"reference={dict(reference_counts)!r}, "
-            f"candidate={dict(candidate_counts)!r}",
+            f"reference={_artifact_type_counts_repr(reference_counts)}, "
+            f"candidate={_artifact_type_counts_repr(candidate_counts)}",
         ),
     )
 
 
+def _artifact_type_counts_repr(counts: Mapping[type[ArtifactType], int]) -> str:
+    rendered_items = (
+        f"{artifact_type.diagnostic_label()}: {count}"
+        for artifact_type, count in sorted(
+            (
+                (ArtifactType.coerce(artifact_type), count)
+                for artifact_type, count in counts.items()
+            ),
+            key=lambda item: item[0].require_value(),
+        )
+    )
+    return "{" + ", ".join(rendered_items) + "}"
+
+
 def _total_record_counts(
     observation: RuntimeArtifactExecutionObservation,
-) -> Counter[ArtifactKind]:
-    counts: Counter[ArtifactKind] = Counter()
+) -> Counter[type[ArtifactType]]:
+    counts: Counter[type[ArtifactType]] = Counter()
     for axis_counts in observation.record_counts_by_axis.values():
         counts.update(axis_counts)
     return counts
@@ -2542,7 +2530,9 @@ def _measurement_feature_values_equivalent(
 ) -> bool:
     reference_values = reference.measurement_fact_counts[feature]
     candidate_values = candidate.measurement_fact_counts[feature]
-    if runtime_cell_signature_counters_equivalent(reference_values, candidate_values, policy):
+    if runtime_cell_signature_counters_equivalent(
+        reference_values, candidate_values, policy
+    ):
         return True
     if _duplicate_object_location_values_equivalent(
         feature,
@@ -2551,7 +2541,7 @@ def _measurement_feature_values_equivalent(
         policy,
     ):
         return True
-    if _duplicate_object_values_equivalent(feature, reference, candidate):
+    if _duplicate_object_values_equivalent(feature, reference, candidate, policy):
         return True
     if _relationship_object_projection_values_equivalent(feature, reference, candidate):
         return True
@@ -2564,7 +2554,7 @@ def _measurement_feature_values_equivalent(
         return True
     if _threshold_entropy_values_equivalent(feature, reference, candidate, policy):
         return True
-    if _zernike_descriptor_values_equivalent(feature, reference, candidate, policy):
+    if _indexed_descriptor_values_equivalent(feature, reference, candidate, policy):
         return True
     if SparseObjectBoundaryEquivalence(
         feature,
@@ -2613,18 +2603,20 @@ def _duplicate_object_location_values_equivalent(
             MeasurementStatistic.VALUE.value,
             source_name=feature.source_name,
         )
-    if not object_measurement_feature_has_role(
+    if not object_measurement_feature_matches_marker(
         role_feature,
-        ObjectMeasurementFeatureRole.LOCATION,
-        policy.measurement_dialect,
+        ObjectLocationFeatureMarker,
+        policy,
     ):
         return False
     reference_values = reference.measurement_fact_counts[feature]
     candidate_values = candidate.measurement_fact_counts[feature]
     if not reference_values or set(reference_values) != set(candidate_values):
-        normalized_candidate_values = _candidate_counter_without_duplicate_projection(
-            reference_values,
-            candidate_values,
+        normalized_candidate_values = (
+            _candidate_counter_without_uniform_duplicate_projection(
+                reference_values,
+                candidate_values,
+            )
         )
         if normalized_candidate_values is None:
             return False
@@ -2655,13 +2647,28 @@ def _duplicate_object_values_equivalent(
     feature: RuntimeMeasurementFeatureKey,
     reference: RuntimeMeasurementSnapshot,
     candidate: RuntimeMeasurementSnapshot,
+    policy: RuntimeEquivalencePolicy,
 ) -> bool:
     """Allow exact repeated projections of object-level measurement facts."""
     if feature.subject.scope is not MeasurementScope.OBJECT:
         return False
-    return _candidate_counter_is_duplicate_projection(
-        reference.measurement_fact_counts[feature],
-        candidate.measurement_fact_counts[feature],
+    reference_values = reference.measurement_fact_counts[feature]
+    candidate_values = candidate.measurement_fact_counts[feature]
+    if _candidate_counter_is_duplicate_projection(reference_values, candidate_values):
+        return True
+    normalized_candidate_values = (
+        _candidate_counter_without_uniform_duplicate_projection(
+            reference_values,
+            candidate_values,
+        )
+    )
+    return (
+        normalized_candidate_values is not None
+        and runtime_cell_signature_counters_equivalent(
+            reference_values,
+            normalized_candidate_values,
+            policy,
+        )
     )
 
 
@@ -2687,7 +2694,9 @@ def _relationship_object_projection_values_equivalent(
     if not (
         feature.feature_name.endswith("_count")
         or feature.feature_name in object_subject_names
-        or any(feature.feature_name.endswith(f"_{name}") for name in object_subject_names)
+        or any(
+            feature.feature_name.endswith(f"_{name}") for name in object_subject_names
+        )
     ):
         return False
     return _reference_counter_is_object_projection(
@@ -2730,6 +2739,18 @@ def _reference_counter_is_object_projection(
 
 
 def _candidate_counter_without_duplicate_projection(
+    reference_values: Counter[RuntimeCellSignature],
+    candidate_values: Counter[RuntimeCellSignature],
+) -> Counter[RuntimeCellSignature] | None:
+    if set(reference_values) != set(candidate_values):
+        return None
+    return _candidate_counter_without_uniform_duplicate_projection(
+        reference_values,
+        candidate_values,
+    )
+
+
+def _candidate_counter_without_uniform_duplicate_projection(
     reference_values: Counter[RuntimeCellSignature],
     candidate_values: Counter[RuntimeCellSignature],
 ) -> Counter[RuntimeCellSignature] | None:
@@ -2825,7 +2846,7 @@ def _feature_numeric_tolerance_values_equivalent(
     policy: RuntimeEquivalencePolicy,
 ) -> bool:
     feature_semantics = RuntimeMeasurementFeatureSemantics(feature, policy)
-    for tolerance in policy.feature_numeric_tolerances:
+    for tolerance in policy.resolved_feature_numeric_tolerances():
         if not feature_semantics.matches_numeric_tolerance(tolerance):
             continue
         if (
@@ -2956,7 +2977,7 @@ class RuntimeThresholdSensitivePairToleranceContract:
         """Return whether this feature is a threshold-sensitive pair family."""
         return feature.belongs_to_source_qualified_feature_family(
             self.policy.measurement_dialect,
-            _THRESHOLD_SENSITIVE_PAIR_FEATURES,
+            self.policy.measurement_dialect.resolved_threshold_sensitive_pair_feature_names(),
         )
 
     def companion_features(
@@ -2968,7 +2989,7 @@ class RuntimeThresholdSensitivePairToleranceContract:
         """Return comparable pair-orientation companions for ``feature``."""
         source_tokens = feature.source_token_counter(
             self.policy.measurement_dialect,
-            _THRESHOLD_SENSITIVE_PAIR_FEATURES,
+            self.policy.measurement_dialect.resolved_threshold_sensitive_pair_feature_names(),
         )
         if source_tokens is None:
             return ()
@@ -2976,18 +2997,20 @@ class RuntimeThresholdSensitivePairToleranceContract:
         comparable_features = set(reference.measurement_fact_counts) & set(
             candidate.measurement_fact_counts
         )
-        return tuple(sorted(
-            (
-                other
-                for other in comparable_features
-                if self.is_companion_feature(
-                    feature,
-                    other,
-                    source_tokens=source_tokens,
-                )
-            ),
-            key=lambda key: key.sort_key,
-        ))
+        return tuple(
+            sorted(
+                (
+                    other
+                    for other in comparable_features
+                    if self.is_companion_feature(
+                        feature,
+                        other,
+                        source_tokens=source_tokens,
+                    )
+                ),
+                key=lambda key: key.sort_key,
+            )
+        )
 
     def is_companion_feature(
         self,
@@ -3003,7 +3026,10 @@ class RuntimeThresholdSensitivePairToleranceContract:
             return False
         if other.subject.scope is not feature.subject.scope:
             return False
-        if feature.subject.scope is not MeasurementScope.IMAGE and other.subject != feature.subject:
+        if (
+            feature.subject.scope is not MeasurementScope.IMAGE
+            and other.subject != feature.subject
+        ):
             return False
         if (feature.source_name is not None or other.source_name is not None) and (
             other.subject != feature.subject
@@ -3012,11 +3038,11 @@ class RuntimeThresholdSensitivePairToleranceContract:
 
         feature_family = feature.source_qualified_feature_family(
             self.policy.measurement_dialect,
-            _THRESHOLD_SENSITIVE_PAIR_FEATURES,
+            self.policy.measurement_dialect.resolved_threshold_sensitive_pair_feature_names(),
         )
         other_family = other.source_qualified_feature_family(
             self.policy.measurement_dialect,
-            _THRESHOLD_SENSITIVE_PAIR_FEATURES,
+            self.policy.measurement_dialect.resolved_threshold_sensitive_pair_feature_names(),
         )
         if feature_family is None or other_family is None:
             return False
@@ -3025,7 +3051,7 @@ class RuntimeThresholdSensitivePairToleranceContract:
         return (
             other.source_token_counter(
                 self.policy.measurement_dialect,
-                _THRESHOLD_SENSITIVE_PAIR_FEATURES,
+                self.policy.measurement_dialect.resolved_threshold_sensitive_pair_feature_names(),
             )
             == source_tokens
         )
@@ -3109,8 +3135,7 @@ class RuntimeMeasurementFeatureSemantics:
             feature_name.startswith(prefix)
             for prefix in tolerance.feature_name_prefixes
         ) or any(
-            feature_name.endswith(suffix)
-            for suffix in tolerance.feature_name_suffixes
+            feature_name.endswith(suffix) for suffix in tolerance.feature_name_suffixes
         )
 
     def unstable_shape_descriptor_values_equivalent(
@@ -3174,7 +3199,7 @@ class SparseObjectBoundaryEquivalence:
         ).values_equivalent(self)
 
     def boundary_numeric_counters_equivalent(self) -> bool:
-        return SparseNumericCounterToleranceProfile.OBJECT_BOUNDARY.equivalent(
+        return ObjectBoundarySparseNumericTolerance.equivalent(
             self.reference.measurement_fact_counts[self.feature],
             self.candidate.measurement_fact_counts[self.feature],
             self.policy,
@@ -3199,7 +3224,7 @@ class SparseObjectBoundaryEquivalence:
             self.reference.measurement_fact_counts[self.feature],
             self.candidate.measurement_fact_counts[self.feature],
         ):
-            return SparseNumericCounterToleranceProfile.BINARY_NUMERIC.equivalent(
+            return BinarySparseNumericTolerance.equivalent(
                 self.reference.measurement_fact_counts[self.feature],
                 self.candidate.measurement_fact_counts[self.feature],
                 self.policy,
@@ -3213,9 +3238,13 @@ class SparseObjectBoundaryEquivalence:
     ) -> bool:
         if reference == candidate:
             return True
-        if any(signature.kind is not RuntimeCellValueKind.NUMBER for signature in reference):
+        if any(
+            signature.kind is not RuntimeCellValueKind.NUMBER for signature in reference
+        ):
             return False
-        if any(signature.kind is not RuntimeCellValueKind.NUMBER for signature in candidate):
+        if any(
+            signature.kind is not RuntimeCellValueKind.NUMBER for signature in candidate
+        ):
             return False
 
         unstable_cap = max(
@@ -3260,17 +3289,14 @@ class SparseObjectBoundaryCountEquivalence(SparseObjectBoundaryStatisticEquivale
         self,
         context: SparseObjectBoundaryEquivalence,
     ) -> bool:
-        return (
-            object_measurement_feature_has_role(
-                context.feature,
-                ObjectMeasurementFeatureRole.COUNT,
-                context.policy.measurement_dialect,
-            )
-            and _object_count_counters_sparse_equivalent(
-                context.reference.measurement_fact_counts[context.feature],
-                context.candidate.measurement_fact_counts[context.feature],
-                context.policy,
-            )
+        return object_measurement_feature_matches_marker(
+            context.feature,
+            ObjectCountFeatureMarker,
+            context.policy,
+        ) and _object_count_counters_sparse_equivalent(
+            context.reference.measurement_fact_counts[context.feature],
+            context.candidate.measurement_fact_counts[context.feature],
+            context.policy,
         )
 
 
@@ -3286,7 +3312,7 @@ class SparseObjectBoundaryValueEquivalence(SparseObjectBoundaryStatisticEquivale
         if (
             object_measurement_feature_requires_sparse_boundary_object_count_stability(
                 context.feature,
-                context.policy.measurement_dialect,
+                context.policy,
             )
             and not MeasurementFeatureStabilityPolicy(
                 context.feature,
@@ -3296,32 +3322,32 @@ class SparseObjectBoundaryValueEquivalence(SparseObjectBoundaryStatisticEquivale
             ).object_count_values_stable()
         ):
             return False
-        if object_measurement_feature_has_role(
+        if object_measurement_feature_matches_marker(
             context.feature,
-            ObjectMeasurementFeatureRole.IDENTIFIER,
-            context.policy.measurement_dialect,
+            ObjectIdentifierFeatureMarker,
+            context.policy,
         ):
             return context.identifier_counters_equivalent(
                 context.reference.measurement_fact_counts[context.feature],
                 context.candidate.measurement_fact_counts[context.feature],
             )
         if any(
-            object_measurement_feature_has_role(
+            object_measurement_feature_matches_marker(
                 context.feature,
-                role,
-                context.policy.measurement_dialect,
+                marker_type,
+                context.policy,
             )
-            for role in (
-                ObjectMeasurementFeatureRole.LOCATION,
-                ObjectMeasurementFeatureRole.INTENSITY,
-                ObjectMeasurementFeatureRole.CALCULATED,
+            for marker_type in (
+                ObjectLocationFeatureMarker,
+                ObjectIntensityFeatureMarker,
+                ObjectCalculatedFeatureMarker,
             )
         ):
             return context.boundary_numeric_counters_equivalent()
-        if not object_measurement_feature_has_role(
+        if not object_measurement_feature_matches_marker(
             context.feature,
-            ObjectMeasurementFeatureRole.SHAPE_DESCRIPTOR,
-            context.policy.measurement_dialect,
+            ObjectShapeDescriptorFeatureMarker,
+            context.policy,
         ):
             return False
         return context.shape_descriptor_values_equivalent()
@@ -3403,53 +3429,54 @@ class MeasurementFeatureStabilityPolicy:
         )
 
     def shape_descriptor_geometry_is_stable(self) -> bool:
-        matched_features = 0
-        for feature_name in _SHAPE_DESCRIPTOR_GATING_FEATURES:
-            geometry_feature, reference_values, candidate_values = (
-                self._shape_descriptor_geometry_feature_values(feature_name)
+        stable_features = (
+            self.object_measurement_marker_stable_features(
+                ObjectLocationFeatureMarker,
             )
-            if reference_values is None and candidate_values is None:
-                continue
-            if reference_values is None or candidate_values is None:
-                continue
-            if runtime_cell_signature_counters_equivalent(
-                reference_values,
-                candidate_values,
-                self.policy,
-            ):
-                matched_features += 1
-                continue
-            if self.policy.allow_sparse_object_boundary_jitter and (
-                SparseObjectBoundaryStatisticEquivalence.for_enum_member(
-                    MeasurementStatistic.VALUE
-                ).values_equivalent(
-                    SparseObjectBoundaryEquivalence(
-                        geometry_feature,
-                        self.reference,
-                        self.candidate,
-                        self.policy,
-                    )
-                )
-            ):
-                matched_features += 1
-                continue
-            else:
-                return False
-        return matched_features >= 3
+            | self.object_measurement_marker_exactly_stable_features(
+                ObjectShapeDescriptorFeatureMarker,
+            )
+        )
+        return len(stable_features) >= 3
 
-    def object_measurement_role_values_stable(
+    def object_measurement_marker_stable_features(
         self,
-        role: ObjectMeasurementFeatureRole,
-        *,
-        min_stable_features: int,
-    ) -> bool:
-        matched_features = 0
+        marker_type: type[runtime_semantics.RuntimeMeasurementFeatureSemanticMarker],
+    ) -> frozenset[RuntimeMeasurementFeatureKey]:
+        stable_features: set[RuntimeMeasurementFeatureKey] = set()
         candidate_keys = (
             self.reference.measurement_fact_counts.keys()
             | self.candidate.measurement_fact_counts.keys()
         )
         for candidate_key in candidate_keys:
-            if not self._candidate_key_has_role(candidate_key, role):
+            if not self._candidate_key_matches_marker(candidate_key, marker_type):
+                continue
+            reference_values = self.reference.measurement_fact_counts.get(candidate_key)
+            candidate_values = self.candidate.measurement_fact_counts.get(candidate_key)
+            if reference_values is None or candidate_values is None:
+                continue
+            if not self._feature_values_stable(
+                candidate_key,
+                reference_values,
+                candidate_values,
+            ):
+                continue
+            stable_features.add(candidate_key)
+        return frozenset(stable_features)
+
+    def object_measurement_marker_exactly_stable_features(
+        self,
+        marker_type: type[runtime_semantics.RuntimeMeasurementFeatureSemanticMarker],
+    ) -> frozenset[RuntimeMeasurementFeatureKey]:
+        stable_features: set[RuntimeMeasurementFeatureKey] = set()
+        candidate_keys = (
+            self.reference.measurement_fact_counts.keys()
+            | self.candidate.measurement_fact_counts.keys()
+        )
+        for candidate_key in candidate_keys:
+            if candidate_key == self.feature:
+                continue
+            if not self._candidate_key_matches_marker(candidate_key, marker_type):
                 continue
             reference_values = self.reference.measurement_fact_counts.get(candidate_key)
             candidate_values = self.candidate.measurement_fact_counts.get(candidate_key)
@@ -3461,51 +3488,44 @@ class MeasurementFeatureStabilityPolicy:
                 self.policy,
             ):
                 continue
-            matched_features += 1
-        return matched_features >= min_stable_features
+            stable_features.add(candidate_key)
+        return frozenset(stable_features)
 
-    def _shape_descriptor_geometry_feature_values(
+    def _feature_values_stable(
         self,
-        feature_name: str,
-    ) -> tuple[
-        RuntimeMeasurementFeatureKey | None,
-        Counter[RuntimeCellSignature] | None,
-        Counter[RuntimeCellSignature] | None,
-    ]:
-        geometry_source_names = (
-            (self.feature.source_name, None)
-            if self.feature.source_name is not None
-            else (None,)
+        feature: RuntimeMeasurementFeatureKey | None,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        if runtime_cell_signature_counters_equivalent(
+            reference_values,
+            candidate_values,
+            self.policy,
+        ):
+            return True
+        if feature is None:
+            return False
+        if not self.policy.allow_sparse_object_boundary_jitter:
+            return False
+        if feature.subject.scope is not MeasurementScope.OBJECT:
+            return False
+        if feature.statistic not in MeasurementStatistic._value2member_map_:
+            return False
+        return SparseObjectBoundaryStatisticEquivalence.for_enum_member(
+            MeasurementStatistic(feature.statistic)
+        ).values_equivalent(
+            SparseObjectBoundaryEquivalence(
+                feature,
+                self.reference,
+                self.candidate,
+                self.policy,
+            )
         )
-        for source_name in geometry_source_names:
-            candidate_geometry_feature = RuntimeMeasurementFeatureKey(
-                subject=self.feature.subject,
-                feature_name=feature_name,
-                statistic=self.feature.statistic,
-                source_name=source_name,
-            )
-            candidate_reference_values = self.reference.measurement_fact_counts.get(
-                candidate_geometry_feature
-            )
-            candidate_candidate_values = self.candidate.measurement_fact_counts.get(
-                candidate_geometry_feature
-            )
-            if (
-                candidate_reference_values is None
-                and candidate_candidate_values is None
-            ):
-                continue
-            return (
-                candidate_geometry_feature,
-                candidate_reference_values,
-                candidate_candidate_values,
-            )
-        return None, None, None
 
-    def _candidate_key_has_role(
+    def _candidate_key_matches_marker(
         self,
         candidate_key: RuntimeMeasurementFeatureKey,
-        role: ObjectMeasurementFeatureRole,
+        marker_type: type[runtime_semantics.RuntimeMeasurementFeatureSemanticMarker],
     ) -> bool:
         if candidate_key.subject != self.feature.subject:
             return False
@@ -3513,10 +3533,10 @@ class MeasurementFeatureStabilityPolicy:
             return False
         if candidate_key.statistic != MeasurementStatistic.VALUE.value:
             return False
-        return object_measurement_feature_has_role(
+        return object_measurement_feature_matches_marker(
             candidate_key,
-            role,
-            self.policy.measurement_dialect,
+            marker_type,
+            self.policy,
         )
 
 
@@ -3527,9 +3547,13 @@ def _object_count_counters_sparse_equivalent(
 ) -> bool:
     if reference == candidate:
         return True
-    if any(signature.kind is not RuntimeCellValueKind.NUMBER for signature in reference):
+    if any(
+        signature.kind is not RuntimeCellValueKind.NUMBER for signature in reference
+    ):
         return False
-    if any(signature.kind is not RuntimeCellValueKind.NUMBER for signature in candidate):
+    if any(
+        signature.kind is not RuntimeCellValueKind.NUMBER for signature in candidate
+    ):
         return False
 
     unstable_cap = max(
@@ -3558,41 +3582,28 @@ def _numeric_counters_are_binary(
     return numbers.issubset({0.0, 1.0})
 
 
-def _zernike_descriptor_values_equivalent(
+def _indexed_descriptor_values_equivalent(
     feature: RuntimeMeasurementFeatureKey,
     reference: RuntimeMeasurementSnapshot,
     candidate: RuntimeMeasurementSnapshot,
     policy: RuntimeEquivalencePolicy,
 ) -> bool:
-    if not policy.allow_unstable_zernike_descriptors:
+    profile = RuntimeMeasurementFeatureSemanticProfile.for_feature_key(feature, policy)
+    if not isinstance(profile, RuntimeMeasurementDescriptorSemantics):
         return False
-    descriptor = IndexedObjectZernikeDescriptor.from_feature_name(feature.feature_name)
-    if descriptor is None:
-        return False
-    if not object_measurement_feature_has_role(
+    if not profile.descriptor_snapshots_comparable(
         feature,
-        ObjectMeasurementFeatureRole.ZERNIKE_DESCRIPTOR,
-        policy.measurement_dialect,
-    ):
-        return False
-    if not ObjectZernikeDescriptorStabilityContract.for_enum_member(
-        descriptor.family
-    ).is_stable(
-        ObjectZernikeDescriptorStabilityContext(
-            feature,
-            descriptor,
-            reference,
-            candidate,
-            policy,
-        )
+        reference,
+        candidate,
+        policy,
     ):
         return False
 
-    return SparseNumericCounterToleranceProfile.ZERNIKE_DESCRIPTOR.equivalent(
+    return profile.values_equivalent(
+        feature,
         reference.measurement_fact_counts[feature],
         candidate.measurement_fact_counts[feature],
         policy,
-        descriptor=descriptor,
     )
 
 
@@ -3627,10 +3638,10 @@ class RuntimeObjectLocationRowMergeContract(metaclass=AutoRegisterMeta):
             key.subject.scope is MeasurementScope.OBJECT
             and key.statistic == MeasurementStatistic.VALUE.value
             and key.source_name is None
-            and object_measurement_feature_has_role(
+            and object_measurement_feature_matches_marker(
                 key,
-                ObjectMeasurementFeatureRole.LOCATION,
-                self.policy.measurement_dialect,
+                ObjectLocationFeatureMarker,
+                self.policy,
             )
         )
 
@@ -3663,10 +3674,14 @@ def _runtime_row_measurement_fact_priority(
 ) -> int:
     """Return dialect category priority for the row field that produced ``key``."""
     candidates: list[str] = []
-    long_form_feature = row.first_value(MEASUREMENT_FEATURE_NAME_FIELDS)
+    long_form_feature = row.first_value(
+        MeasurementRowAxisField.feature_name_field_names_ordered()
+    )
     cache_key = RuntimeMeasurementRowPriorityCacheKey(
         row_fields=row.header,
-        long_form_feature=str(long_form_feature) if long_form_feature is not None else None,
+        long_form_feature=(
+            str(long_form_feature) if long_form_feature is not None else None
+        ),
         feature_key=key,
     )
     cached = row_priority_cache.get(cache_key)
@@ -3694,6 +3709,43 @@ def _runtime_row_measurement_fact_priority(
     return priority
 
 
+def _runtime_row_feature_category_priority(
+    row: RuntimeMeasurementRowMapping,
+    policy: RuntimeEquivalencePolicy,
+    row_feature_priority_cache: _RuntimeMeasurementRowFeaturePriorityCache,
+) -> int | None:
+    """Return best dialect category priority represented by this row shape."""
+    long_form_feature = row.first_value(
+        MeasurementRowAxisField.feature_name_field_names_ordered()
+    )
+    cache_key = RuntimeMeasurementRowFeaturePriorityCacheKey(
+        row_fields=row.header,
+        long_form_feature=(
+            str(long_form_feature) if long_form_feature is not None else None
+        ),
+    )
+    cached = row_feature_priority_cache.get(cache_key, _CACHE_MISS)
+    if cached is not _CACHE_MISS:
+        return cached
+    candidates = (
+        (str(long_form_feature),) if long_form_feature is not None else row.header
+    )
+    priorities = tuple(
+        priority
+        for feature_name in candidates
+        if (
+            priority := RuntimeMeasurementFeatureCategoryPriority(
+                feature_name,
+                policy.measurement_dialect,
+            ).priority()
+        )
+        is not None
+    )
+    priority = min(priorities, default=None)
+    row_feature_priority_cache[cache_key] = priority
+    return priority
+
+
 def _measurement_feature_source_priority(
     feature_name: str,
     key: RuntimeMeasurementFeatureKey,
@@ -3713,7 +3765,10 @@ def _measurement_feature_source_priority(
             (),
         ).project()
     )
-    if canonical_feature_name != key.feature_name or canonical_source_name != key.source_name:
+    if (
+        canonical_feature_name != key.feature_name
+        or canonical_source_name != key.source_name
+    ):
         return None
     return priority if canonical_feature_name else None
 
@@ -3759,10 +3814,13 @@ class RuntimeRowMergeAggregateLocationSubjectProjection(
         key: RuntimeMeasurementFeatureKey,
         row_identity: RuntimeMeasurementRowIdentity,
     ) -> bool:
-        return super().owns_row_identity(
-            key,
-            row_identity,
-        ) and RuntimeObjectMeasurementRowIdentity(row_identity).has_image_identity
+        return (
+            super().owns_row_identity(
+                key,
+                row_identity,
+            )
+            and RuntimeObjectMeasurementRowIdentity(row_identity).has_image_identity
+        )
 
 
 def _primary_row_object_count_measurement_facts(
@@ -3777,10 +3835,12 @@ def _primary_row_object_count_measurement_facts(
         tuple[RuntimeMeasurementSubjectKey, RuntimeMeasurementRowIdentity],
         set[object],
     ] = {}
-    row_merge_subject_identities = object_measurement_subject_row_identities_with_role(
-        row_merge_cache,
-        ObjectMeasurementFeatureRole.LOCATION,
-        policy.measurement_dialect,
+    row_merge_subject_identities = (
+        object_measurement_subject_row_identities_matching_marker(
+            row_merge_cache,
+            ObjectLocationFeatureMarker,
+            policy,
+        )
     )
     source_row_identities = (
         tuple(
@@ -3826,6 +3886,33 @@ class RuntimeExportRowProjectionContext(RuntimeRowProjectionContext):
 
     table: RuntimeTableSnapshot
 
+    def wide_feature_indexes(
+        self,
+        header: tuple[str, ...],
+        row_schema: equivalence_measurement_rows.RuntimeMeasurementRowSchema,
+    ) -> tuple[int, ...]:
+        cache_key: equivalence_measurement_rows.RuntimeMeasurementWideFeatureIndexCacheKey = (
+            header,
+            self.subject.scope,
+            self.subject.name,
+            self.source_name,
+            id(self.required_key_index),
+        )
+        cached = self.wide_feature_index_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        indexes = tuple(
+            index
+            for index in row_schema.feature_indexes
+            if not self.contextual_object_identity_field(index)
+        )
+        self.wide_feature_index_cache[cache_key] = indexes
+        return indexes
+
+    def supports_static_wide_projection(self) -> bool:
+        """Export snapshots may derive subjects from row-contextual columns."""
+        return False
+
     def subject_for_field_index(
         self,
         index: int,
@@ -3836,6 +3923,23 @@ class RuntimeExportRowProjectionContext(RuntimeRowProjectionContext):
             index,
             self.subject,
         ).subject()
+
+    def contextual_object_identity_field(self, index: int) -> bool:
+        """Return whether one contextual export column carries object identity."""
+        if not self.table.column_context or index >= len(self.table.column_context):
+            return False
+        subject = self.subject_for_field_index(index)
+        return (
+            RuntimeExportContextualObjectIdentityField(
+                table=self.table,
+                index=index,
+                context=self.table.column_context[index],
+                subject=subject,
+                policy=self.policy,
+                known_source_names=self.known_source_names,
+            ).candidate()
+            is not None
+        )
 
     def padding_indexes(
         self,
@@ -3905,15 +4009,34 @@ class RuntimeTableSnapshotFactExtractor:
         schema_cache: RuntimeMeasurementRowSchemaCache = {}
         key_cache: RuntimeMeasurementFeatureKeyCache = {}
         long_form_key_cache: RuntimeMeasurementLongFormKeyCache = {}
+        wide_feature_index_cache: (
+            equivalence_measurement_rows.RuntimeMeasurementWideFeatureIndexCache
+        ) = {}
+        wide_feature_plan_cache: (
+            equivalence_measurement_rows.RuntimeMeasurementWideFeaturePlanCache
+        ) = {}
         qualifier_render_cache: RuntimeMeasurementQualifierRenderCache = {}
         padding_group_cache: RuntimeMeasurementPaddingGroupCache = {}
+        collapsed_numeric_qualifier_cache: RuntimeCollapsedNumericQualifierCache = {}
+        required_key_index = RuntimeMeasurementRequiredKeyIndex.from_required_keys(
+            state.required_measurement_keys
+        )
+        derive_directional_pair_facts = (
+            RuntimeDirectionalPairMeasurementDerivationContract(
+                state.policy,
+                state.known_source_names,
+            ).required_keys_need_derivation(state.required_measurement_keys)
+        )
         explicit_measurement_keys: set[RuntimeMeasurementFeatureKey] = set()
         row_priority_cache: _RuntimeMeasurementRowPriorityCache = {}
+        row_feature_priority_cache: _RuntimeMeasurementRowFeaturePriorityCache = {}
         recorder = RuntimeExportTableRowProjectionRecorder(
             state=state,
             image_number_offset=image_number_offset,
             row_priority_cache=row_priority_cache,
+            row_feature_priority_cache=row_feature_priority_cache,
             explicit_measurement_keys=explicit_measurement_keys,
+            required_key_index=required_key_index,
             table=self.table,
         )
         for row in self.table.rows:
@@ -3936,11 +4059,16 @@ class RuntimeTableSnapshotFactExtractor:
                     self.table.path.stem
                 ),
                 image_number_offset=image_number_offset,
+                derive_directional_pair_facts=derive_directional_pair_facts,
                 schema_cache=schema_cache,
                 key_cache=key_cache,
                 long_form_key_cache=long_form_key_cache,
+                wide_feature_index_cache=wide_feature_index_cache,
+                wide_feature_plan_cache=wide_feature_plan_cache,
                 qualifier_render_cache=qualifier_render_cache,
                 padding_group_cache=padding_group_cache,
+                collapsed_numeric_qualifier_cache=collapsed_numeric_qualifier_cache,
+                required_key_index=required_key_index,
                 table=self.table,
             )
             row_facts = row_context.facts()
@@ -3976,6 +4104,8 @@ class RuntimeTableSnapshotFactExtractor:
                 )
             )
         return tuple(facts)
+
+
 def _measurement_source_names_from_artifact_execution(
     observation: RuntimeArtifactExecutionObservation,
 ) -> tuple[str, ...]:
@@ -3986,7 +4116,7 @@ def _measurement_source_names_from_artifact_execution(
             schema_source_name = record.value.schema.source_image_name
             if schema_source_name is not None:
                 source_names.update(_source_name_aliases(str(schema_source_name)))
-            if record.key.kind is not ArtifactKind.MEASUREMENTS:
+            if record.key.artifact_type is not MeasurementsArtifactType:
                 continue
             table = MeasurementTable.from_runtime_value(record.value)
             if table.source_image_name is not None:
@@ -4038,7 +4168,9 @@ class RuntimeExportColumnSubject:
     fallback_subject: RuntimeMeasurementSubjectKey
 
     def subject(self) -> RuntimeMeasurementSubjectKey:
-        if not self.table.column_context or self.index >= len(self.table.column_context):
+        if not self.table.column_context or self.index >= len(
+            self.table.column_context
+        ):
             return self.fallback_subject
 
         field_name = self.table.header[self.index]
@@ -4064,7 +4196,9 @@ class RuntimeExportColumnSubject:
         ).subject()
 
     def context_pair(self) -> tuple[str | None, str | None]:
-        if not self.table.column_context or self.index >= len(self.table.column_context):
+        if not self.table.column_context or self.index >= len(
+            self.table.column_context
+        ):
             return None, None
         context = self.table.column_context[self.index]
         if context is None:
@@ -4100,12 +4234,14 @@ class RuntimeExportContextualObjectIdentityField:
             field_name,
             self.subject,
         )
-        projected_feature_name, _source_name = RuntimeMeasurementFeatureNameProjection.from_feature_name(
-            contextual_feature_name.feature_name(),
-            self.policy,
-            None,
-            self.known_source_names,
-        ).project()
+        projected_feature_name, _source_name = (
+            RuntimeMeasurementFeatureNameProjection.from_feature_name(
+                contextual_feature_name.feature_name(),
+                self.policy,
+                None,
+                self.known_source_names,
+            ).project()
+        )
         if projected_feature_name != ObjectCoreMeasurementFeature.OBJECT_NUMBER.value:
             return None
         return RuntimeExportContextualObjectIdentityCandidate(
@@ -4160,7 +4296,9 @@ class RuntimeExportContextualFeatureName:
     def feature_name(self) -> str:
         normalized_field_name = normalize_runtime_identifier(self.field_name)
         subject_suffix = self.subject_suffix()
-        if subject_suffix is not None and normalized_field_name.endswith(subject_suffix):
+        if subject_suffix is not None and normalized_field_name.endswith(
+            subject_suffix
+        ):
             return normalized_field_name[: -len(subject_suffix)]
         return normalized_field_name
 
@@ -4229,18 +4367,4 @@ _NON_MEASUREMENT_FIELD_PREFIXES = (
     "series_",
     "url_",
     "width_",
-)
-_PAIR_COSTES_MANDERS_FEATURE = PairMeasurementFeature.COSTES_MANDERS.value
-_PAIR_MANDERS_FEATURE = PairMeasurementFeature.MANDERS.value
-_PAIR_RANK_WEIGHTED_COLOCALIZATION_FEATURE = (
-    PairMeasurementFeature.RANK_WEIGHTED_COLOCALIZATION.value
-)
-_PAIR_OVERLAP_K_FEATURE = PairMeasurementFeature.OVERLAP_K.value
-_THRESHOLD_SENSITIVE_PAIR_FEATURES = frozenset(
-    (
-        _PAIR_COSTES_MANDERS_FEATURE,
-        _PAIR_MANDERS_FEATURE,
-        _PAIR_RANK_WEIGHTED_COLOCALIZATION_FEATURE,
-        _PAIR_OVERLAP_K_FEATURE,
-    )
 )

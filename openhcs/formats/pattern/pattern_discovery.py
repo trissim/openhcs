@@ -280,6 +280,25 @@ class PatternDiscoveryEngine:
             group_by,
         )
 
+    def auto_detect_patterns_from_axis_files(
+        self,
+        image_paths: List[Union[str, Path]],
+        *,
+        axis_id: str,
+        variable_components: List[str],
+        group_by=None,
+    ) -> Dict[str, Any]:
+        """Detect patterns from files already selected for one runtime axis."""
+        if not axis_id:
+            raise ValueError("axis_id cannot be empty")
+        if not image_paths:
+            return {}
+        return self._patterns_for_files_by_axis(
+            {axis_id: list(image_paths)},
+            variable_components,
+            group_by,
+        )
+
     def _patterns_for_files_by_axis(
         self,
         files_by_axis: Dict[str, List[Any]],

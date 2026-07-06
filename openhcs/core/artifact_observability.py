@@ -5,16 +5,20 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
-from metaclass_registry import AutoRegisterMeta
-
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+)
+from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 
 
 class ArtifactObservabilityStrategy(
-    EnumKeyedStrategyMixin[ArtifactKind],
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
     """Registered policy for artifacts that remain externally observable.
 
@@ -23,10 +27,7 @@ class ArtifactObservabilityStrategy(
     explicitly requested. Object-label counts are the canonical example.
     """
 
-    strategy_key: ClassVar[ArtifactKind | None] = None
-    strategy_label: ClassVar[str | None] = None
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
 
     @abstractmethod
     def externally_required_outputs(
@@ -39,7 +40,7 @@ class ArtifactObservabilityStrategy(
 class ObjectLabelArtifactObservabilityStrategy(ArtifactObservabilityStrategy):
     """Object labels induce externally visible object-count measurement facts."""
 
-    strategy_key = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def externally_required_outputs(
         self,
@@ -51,7 +52,7 @@ class ObjectLabelArtifactObservabilityStrategy(ArtifactObservabilityStrategy):
 class MeasurementArtifactObservabilityStrategy(ArtifactObservabilityStrategy):
     """Measurement artifacts are externally visible semantic facts."""
 
-    strategy_key = ArtifactKind.MEASUREMENTS
+    artifact_type = MeasurementsArtifactType
 
     def externally_required_outputs(
         self,
@@ -65,12 +66,14 @@ def externally_required_artifact_outputs(
 ) -> tuple[ArtifactSpec, ...]:
     """Return declared outputs whose observable facts require runtime retention."""
     required: list[ArtifactSpec] = []
-    for kind_label, strategy_type in ArtifactObservabilityStrategy.__registry__.items():
-        strategy = strategy_type()
+    for output in declared_outputs:
+        strategy = ArtifactObservabilityStrategy.for_context(
+            output.artifact_type,
+            required=False,
+        )
+        if strategy is None:
+            continue
         required.extend(
-            output
-            for output in declared_outputs
-            if output.kind.value == kind_label
-            for output in strategy.externally_required_outputs((output,))
+            strategy.externally_required_outputs((output,))
         )
     return tuple(dict.fromkeys(required))

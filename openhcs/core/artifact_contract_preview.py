@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole
+from openhcs.core.artifacts import ArtifactSidecarRole, ArtifactType
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.source_bindings import StepSourceBindingsConfig
 
-ArtifactBindingKeys = tuple[tuple[str, ArtifactKind], ...]
+ArtifactBindingKeys = tuple[tuple[str, ArtifactType], ...]
 
 
 class ArtifactPreviewDirection(str, Enum):
@@ -32,7 +32,7 @@ class ArtifactContractPreviewRow:
     """Read-only row describing one artifact contract entry."""
 
     name: str
-    kind: ArtifactKind
+    kind: ArtifactType
     direction: ArtifactPreviewDirection
     origin: ArtifactPreviewOrigin
     required: bool = True
@@ -54,16 +54,16 @@ class ArtifactContractPreview:
     ) -> "ArtifactContractPreview":
         """Project executable contract metadata into read-only preview rows."""
         runtime_input_keys = {
-            (spec.name, spec.kind) for spec in contract.runtime_artifact_inputs
+            (spec.name, spec.artifact_type) for spec in contract.runtime_artifact_inputs
         }
         rows = [
             ArtifactContractPreviewRow(
                 name=spec.name,
-                kind=spec.kind,
+                kind=spec.artifact_type,
                 direction=ArtifactPreviewDirection.INPUT,
                 origin=(
                     ArtifactPreviewOrigin.RUNTIME_ARTIFACT
-                    if (spec.name, spec.kind) in runtime_input_keys
+                    if (spec.name, spec.artifact_type) in runtime_input_keys
                     else ArtifactPreviewOrigin.SOURCE_BINDING
                 ),
                 required=spec.required,
@@ -75,7 +75,7 @@ class ArtifactContractPreview:
         rows.extend(
             ArtifactContractPreviewRow(
                 name=spec.name,
-                kind=spec.kind,
+                kind=spec.artifact_type,
                 direction=ArtifactPreviewDirection.OUTPUT,
                 origin=ArtifactPreviewOrigin.MODULE_OUTPUT,
                 required=spec.required,
@@ -155,17 +155,17 @@ class SourceBindingRuntimeContractGuard:
             unexpected=tuple(sorted(actual - expected)),
         )
 
-    def _source_bound_contract_inputs(self) -> set[tuple[str, ArtifactKind]]:
+    def _source_bound_contract_inputs(self) -> set[tuple[str, ArtifactType]]:
         runtime_inputs = {
-            (spec.name, spec.kind) for spec in self.contract.runtime_artifact_inputs
+            (spec.name, spec.artifact_type) for spec in self.contract.runtime_artifact_inputs
         }
         return {
-            (spec.name, spec.kind)
+            (spec.name, spec.artifact_type)
             for spec in self.contract.inputs
-            if (spec.name, spec.kind) not in runtime_inputs
+            if (spec.name, spec.artifact_type) not in runtime_inputs
         }
 
-    def _source_binding_specs(self) -> set[tuple[str, ArtifactKind]]:
+    def _source_binding_specs(self) -> set[tuple[str, ArtifactType]]:
         return {
             (binding.alias, binding.artifact_kind)
             for binding in self.source_bindings.bindings

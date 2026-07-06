@@ -98,6 +98,38 @@ class SourceImagePayloadSemantics:
             return ImagePayloadMetadata.for_array_payload(data)
         return self.source_context.metadata_request(data).metadata()
 
+
+def source_image_payload_role(payload: RuntimeArrayData) -> ImageTypeSourceRole | None:
+    """Return the declared pipeline image-type role carried by payload metadata."""
+
+    metadata = image_payload_metadata(payload)
+    if metadata.source_component_metadata is not None:
+        scalar_image_type = source_metadata_value(
+            metadata.source_component_metadata,
+            SOURCE_IMAGE_TYPE_METADATA_FIELD,
+        )
+        if scalar_image_type is not None:
+            return ImageTypeSourceRole.for_image_type(scalar_image_type)
+    image_types: list[str] = []
+    for component_metadata in metadata.source_image_provenance_planes.component_metadata:
+        image_type = source_metadata_value(
+            component_metadata,
+            SOURCE_IMAGE_TYPE_METADATA_FIELD,
+        )
+        if image_type is not None:
+            image_types.append(image_type)
+    if not image_types:
+        return None
+    roles = tuple(ImageTypeSourceRole.for_image_type(image_type) for image_type in image_types)
+    role_type = type(roles[0])
+    if any(type(role) is not role_type for role in roles):
+        raise ValueError(
+            "Runtime image payload carries mixed source image types: "
+            f"{tuple(type(role).__name__ for role in roles)!r}."
+        )
+    return roles[0]
+
+
 class SourceImagePayloadRoleStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -173,6 +205,7 @@ class ImageStackSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrategy
         if is_color_image_stack(array):
             return tuple(int(value) for value in array.shape[:-1])
         return tuple(int(value) for value in array.shape)
+
 
 @dataclass(frozen=True, slots=True)
 class MonochromeImageStackSourcePayloadRoleStrategy(

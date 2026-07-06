@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Annotated, ClassVar, get_args, get_origin, get_type_hints
 
@@ -16,7 +17,13 @@ from openhcs.core.runtime_identifier import (
     normalize_runtime_source_name,
     runtime_source_name_tokens,
 )
-from openhcs.core.runtime_semantics import MeasurementScope
+from openhcs.core.runtime_semantics import (
+    MeasurementScope,
+    RuntimeMeasurementFeatureRelation,
+    RuntimeMeasurementFeatureRelationDeclaration,
+    RuntimeMeasurementFeatureRelationDeclarationCollection,
+    RuntimeMeasurementFeatureSemanticMarker,
+)
 
 
 class RuntimeMeasurementFeatureNameMode(str, Enum):
@@ -56,6 +63,23 @@ class RuntimeMeasurementSourceQualifiedFeature:
 _EMPTY_FEATURE_ALIASES = MappingProxyType({})
 _EMPTY_PAIR_FEATURE_ALIASES = MappingProxyType({})
 _EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES = MappingProxyType({})
+_RUNTIME_MEASUREMENT_DIALECTS_BY_ID: dict[int, "RuntimeMeasurementDialect"] = {}
+
+
+def runtime_measurement_dialect_cache_id(
+    dialect: "RuntimeMeasurementDialect",
+) -> int:
+    """Return a process-local cache key for an immutable measurement dialect."""
+    dialect_id = id(dialect)
+    _RUNTIME_MEASUREMENT_DIALECTS_BY_ID[dialect_id] = dialect
+    return dialect_id
+
+
+def runtime_measurement_dialect_for_cache_id(
+    dialect_id: int,
+) -> "RuntimeMeasurementDialect":
+    """Return the measurement dialect registered for ``dialect_id``."""
+    return _RUNTIME_MEASUREMENT_DIALECTS_BY_ID[dialect_id]
 
 
 class RuntimeMeasurementQualifierValueMode(str, Enum):
@@ -93,7 +117,9 @@ class RuntimePolicyNonNegativeFieldValidationMixin:
             ):
                 continue
             if object.__getattribute__(self, field_name) < 0:
-                raise ValueError(f"{owner_type.__name__}.{field_name} cannot be negative.")
+                raise ValueError(
+                    f"{owner_type.__name__}.{field_name} cannot be negative."
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,15 +353,41 @@ class RuntimeMeasurementDialect:
     """Policy-provided measurement-name dialect for semantic comparisons."""
 
     category_prefixes: tuple[tuple[str, ...], ...] = ()
+    category_prefixes_provider: Callable[[], Iterable[tuple[str, ...]]] | None = None
     feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = field(
         default_factory=lambda: _EMPTY_FEATURE_ALIASES
     )
+    feature_part_aliases_provider: (
+        Callable[[], Mapping[tuple[str, ...], tuple[str, ...]]] | None
+    ) = None
     source_feature_prefixes: tuple[tuple[str, ...], ...] = ()
+    source_feature_prefixes_provider: (
+        Callable[[], Iterable[tuple[str, ...]]] | None
+    ) = None
     calculated_feature_prefixes: tuple[tuple[str, ...], ...] = ()
+    calculated_feature_prefixes_provider: (
+        Callable[[], Iterable[tuple[str, ...]]] | None
+    ) = None
     directional_pair_feature_aliases: Mapping[str, tuple[str, int]] = field(
         default_factory=lambda: _EMPTY_PAIR_FEATURE_ALIASES
     )
+    directional_pair_feature_aliases_provider: (
+        Callable[[], Mapping[str, tuple[str, int]]] | None
+    ) = None
     scale_qualified_feature_prefixes: tuple[tuple[str, ...], ...] = ()
+    scale_qualified_feature_prefixes_provider: (
+        Callable[[], Iterable[tuple[str, ...]]] | None
+    ) = None
+    pair_correlation_feature_name: str | None = None
+    pair_correlation_feature_name_provider: Callable[[], str | None] | None = None
+    pair_regression_slope_feature_name: str | None = None
+    pair_regression_slope_feature_name_provider: Callable[[], str | None] | None = None
+    undirected_pair_feature_names: frozenset[str] = frozenset()
+    undirected_pair_feature_names_provider: Callable[[], Iterable[str]] | None = None
+    threshold_sensitive_pair_feature_names: frozenset[str] = frozenset()
+    threshold_sensitive_pair_feature_names_provider: (
+        Callable[[], Iterable[str]] | None
+    ) = None
     threshold_qualifier_tokens: frozenset[str] = frozenset()
     source_qualifier_prefix_tokens: frozenset[str] = frozenset()
     source_qualifier_suffix_tokens: frozenset[str] = frozenset()
@@ -343,12 +395,14 @@ class RuntimeMeasurementDialect:
         _DEFAULT_MEASUREMENT_ROW_QUALIFIERS
     )
     source_suffix_qualifier_sequences: tuple[
-        RuntimeMeasurementRowQualifierSequence,
-        ...
+        RuntimeMeasurementRowQualifierSequence, ...
     ] = _DEFAULT_MEASUREMENT_ROW_QUALIFIER_SEQUENCES
     numbered_feature_prefix_aliases: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: _EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES
     )
+    numbered_feature_prefix_aliases_provider: (
+        Callable[[], Mapping[str, tuple[str, ...]]] | None
+    ) = None
     source_name_encoding_by_scope: Mapping[
         MeasurementScope,
         RuntimeMeasurementSourceNameEncoding,
@@ -356,6 +410,23 @@ class RuntimeMeasurementDialect:
     row_identity_contract: RuntimeMeasurementRowIdentityContract = (
         DEFAULT_RUNTIME_MEASUREMENT_ROW_IDENTITY_CONTRACT
     )
+    measurement_feature_relation_provider: (
+        Callable[
+            [],
+            Iterable[RuntimeMeasurementFeatureRelationDeclaration],
+        ]
+        | None
+    ) = None
+    measurement_feature_marker_provider: (
+        Callable[
+            [object, "RuntimeMeasurementDialect"],
+            Iterable[type[RuntimeMeasurementFeatureSemanticMarker]],
+        ]
+        | None
+    ) = None
+    indexed_descriptor_suffix_width_provider: (
+        Callable[[tuple[str, ...]], int | None] | None
+    ) = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -412,7 +483,43 @@ class RuntimeMeasurementDialect:
             "scale_qualified_feature_prefixes",
             tuple(
                 tuple(part for part in prefix if part)
-                for prefix in self.scale_qualified_feature_prefixes
+                for prefix in self.resolved_scale_qualified_feature_prefixes()
+            ),
+        )
+        object.__setattr__(
+            self,
+            "pair_correlation_feature_name",
+            (
+                None
+                if self.pair_correlation_feature_name is None
+                else normalize_runtime_identifier(self.pair_correlation_feature_name)
+            ),
+        )
+        object.__setattr__(
+            self,
+            "pair_regression_slope_feature_name",
+            (
+                None
+                if self.pair_regression_slope_feature_name is None
+                else normalize_runtime_identifier(
+                    self.pair_regression_slope_feature_name
+                )
+            ),
+        )
+        object.__setattr__(
+            self,
+            "undirected_pair_feature_names",
+            frozenset(
+                normalize_runtime_identifier(feature_name)
+                for feature_name in self.undirected_pair_feature_names
+            ),
+        )
+        object.__setattr__(
+            self,
+            "threshold_sensitive_pair_feature_names",
+            frozenset(
+                normalize_runtime_identifier(feature_name)
+                for feature_name in self.threshold_sensitive_pair_feature_names
             ),
         )
         object.__setattr__(
@@ -423,34 +530,49 @@ class RuntimeMeasurementDialect:
         object.__setattr__(
             self,
             "source_qualifier_prefix_tokens",
-            frozenset(
-                str(token) for token in self.source_qualifier_prefix_tokens
-            ),
+            frozenset(str(token) for token in self.source_qualifier_prefix_tokens),
         )
         object.__setattr__(
             self,
             "source_qualifier_suffix_tokens",
-            frozenset(
-                str(token) for token in self.source_qualifier_suffix_tokens
-            ),
+            frozenset(str(token) for token in self.source_qualifier_suffix_tokens),
         )
         object.__setattr__(
             self,
             "row_qualifiers",
             tuple(
-                qualifier
-                if isinstance(qualifier, RuntimeMeasurementRowQualifier)
-                else RuntimeMeasurementRowQualifier(tuple(qualifier))
+                (
+                    qualifier
+                    if isinstance(qualifier, RuntimeMeasurementRowQualifier)
+                    else RuntimeMeasurementRowQualifier(tuple(qualifier))
+                )
                 for qualifier in self.row_qualifiers
             ),
         )
+        if self.measurement_feature_marker_provider is not None and not callable(
+            self.measurement_feature_marker_provider
+        ):
+            raise TypeError(
+                "RuntimeMeasurementDialect.measurement_feature_marker_provider "
+                "must be callable."
+            )
+        if (
+            self.indexed_descriptor_suffix_width_provider is not None
+            and not callable(self.indexed_descriptor_suffix_width_provider)
+        ):
+            raise TypeError(
+                "RuntimeMeasurementDialect.indexed_descriptor_suffix_width_provider "
+                "must be callable."
+            )
         object.__setattr__(
             self,
             "source_suffix_qualifier_sequences",
             tuple(
-                sequence
-                if isinstance(sequence, RuntimeMeasurementRowQualifierSequence)
-                else RuntimeMeasurementRowQualifierSequence(tuple(sequence))
+                (
+                    sequence
+                    if isinstance(sequence, RuntimeMeasurementRowQualifierSequence)
+                    else RuntimeMeasurementRowQualifierSequence(tuple(sequence))
+                )
                 for sequence in self.source_suffix_qualifier_sequences
             ),
         )
@@ -504,6 +626,160 @@ class RuntimeMeasurementDialect:
                 )
             ),
         )
+        if self.measurement_feature_relation_provider is not None and not callable(
+            self.measurement_feature_relation_provider
+        ):
+            raise TypeError(
+                "RuntimeMeasurementDialect.measurement_feature_relation_provider "
+                "must be callable."
+            )
+        for field_name in (
+            "category_prefixes_provider",
+            "feature_part_aliases_provider",
+            "source_feature_prefixes_provider",
+            "calculated_feature_prefixes_provider",
+            "directional_pair_feature_aliases_provider",
+            "scale_qualified_feature_prefixes_provider",
+            "pair_correlation_feature_name_provider",
+            "pair_regression_slope_feature_name_provider",
+            "undirected_pair_feature_names_provider",
+            "threshold_sensitive_pair_feature_names_provider",
+            "numbered_feature_prefix_aliases_provider",
+        ):
+            provider = object.__getattribute__(self, field_name)
+            if provider is not None and not callable(provider):
+                raise TypeError(
+                    f"RuntimeMeasurementDialect.{field_name} must be callable."
+                )
+
+    def resolved_category_prefixes(self) -> tuple[tuple[str, ...], ...]:
+        """Return static and provider-supplied measurement category prefixes."""
+        return _resolved_category_prefixes(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_feature_part_aliases(self) -> Mapping[tuple[str, ...], tuple[str, ...]]:
+        """Return static and provider-supplied direct feature-part aliases."""
+        return _resolved_feature_part_aliases(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_source_feature_prefixes(self) -> tuple[tuple[str, ...], ...]:
+        """Return static and provider-supplied source-feature prefixes."""
+        return _resolved_source_feature_prefixes(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_calculated_feature_prefixes(self) -> tuple[tuple[str, ...], ...]:
+        """Return static and provider-supplied calculated feature prefixes."""
+        return _resolved_calculated_feature_prefixes(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_numbered_feature_prefix_aliases(
+        self,
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Return static and provider-supplied numbered feature-prefix aliases."""
+        return _resolved_numbered_feature_prefix_aliases(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_directional_pair_feature_aliases(
+        self,
+    ) -> Mapping[str, tuple[str, int]]:
+        """Return static and provider-supplied directional pair aliases."""
+        return _resolved_directional_pair_feature_aliases(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_scale_qualified_feature_prefixes(self) -> tuple[tuple[str, ...], ...]:
+        """Return static and provider-supplied scale-qualified prefixes."""
+        return _resolved_scale_qualified_feature_prefixes(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_pair_correlation_feature_name(self) -> str | None:
+        """Return static or provider-supplied pair correlation feature name."""
+        provider = self.pair_correlation_feature_name_provider
+        value = self.pair_correlation_feature_name if provider is None else provider()
+        return None if value is None else normalize_runtime_identifier(value)
+
+    def resolved_pair_regression_slope_feature_name(self) -> str | None:
+        """Return static or provider-supplied pair regression-slope feature name."""
+        provider = self.pair_regression_slope_feature_name_provider
+        value = (
+            self.pair_regression_slope_feature_name if provider is None else provider()
+        )
+        return None if value is None else normalize_runtime_identifier(value)
+
+    def resolved_undirected_pair_feature_names(self) -> frozenset[str]:
+        """Return static and provider-supplied undirected pair feature names."""
+        return _resolved_undirected_pair_feature_names(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def resolved_threshold_sensitive_pair_feature_names(self) -> frozenset[str]:
+        """Return static and provider-supplied threshold-sensitive pair names."""
+        return _resolved_threshold_sensitive_pair_feature_names(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def measurement_feature_relation_declarations(
+        self,
+    ) -> RuntimeMeasurementFeatureRelationDeclarationCollection:
+        """Return producer-declared measurement-feature relations."""
+        provider = self.measurement_feature_relation_provider
+        return RuntimeMeasurementFeatureRelationDeclarationCollection(
+            () if provider is None else provider()
+        )
+
+    def measurement_feature_marker_types(
+        self,
+        key: object,
+    ) -> tuple[type[RuntimeMeasurementFeatureSemanticMarker], ...]:
+        """Return producer-declared semantic marker types for one feature key."""
+        provider = self.measurement_feature_marker_provider
+        if provider is None:
+            return ()
+        marker_types = tuple(provider(key, self))
+        for marker_type in marker_types:
+            if not isinstance(marker_type, type) or not issubclass(
+                marker_type,
+                RuntimeMeasurementFeatureSemanticMarker,
+            ):
+                raise TypeError(
+                    "RuntimeMeasurementDialect.measurement_feature_marker_provider "
+                    "must return RuntimeMeasurementFeatureSemanticMarker types."
+                )
+        return marker_types
+
+    def source_feature_family_for_relation(
+        self,
+        relation_type: type[RuntimeMeasurementFeatureRelation],
+        feature_name: str,
+        source_name: str | None,
+        scope: MeasurementScope,
+    ) -> RuntimeMeasurementSourceQualifiedFeature | None:
+        """Return the source-qualified family for one declared relation type."""
+        return self.source_qualified_feature_family(
+            feature_name,
+            source_name,
+            scope,
+            self.measurement_feature_relation_declarations().source_family_names(
+                relation_type,
+            ),
+        )
+
+    def target_family_for_relation_source_family(
+        self,
+        relation_type: type[RuntimeMeasurementFeatureRelation],
+        source_family_name: str,
+    ) -> str | None:
+        """Return the declared target family for one relation source family."""
+        return self.measurement_feature_relation_declarations().target_family_name(
+            relation_type,
+            source_family_name,
+        )
 
     def source_name_encoding(
         self,
@@ -536,7 +812,9 @@ class RuntimeMeasurementDialect:
                 normalized_source_name,
             )
         if encoding is not RuntimeMeasurementSourceNameEncoding.FEATURE_SUFFIX:
-            raise ValueError(f"Unsupported measurement source-name encoding: {encoding}.")
+            raise ValueError(
+                f"Unsupported measurement source-name encoding: {encoding}."
+            )
         source_tokens = runtime_source_name_tokens(normalized_source_name)
         if not source_tokens:
             return RuntimeMeasurementSourceQualifiedFeature(normalized_feature_name)
@@ -580,7 +858,10 @@ class RuntimeMeasurementDialect:
             feature_tokens,
             qualifier_tokens,
         )
-        if feature_tokens[suffix_start - len(source_tokens) : suffix_start] == source_tokens:
+        if (
+            feature_tokens[suffix_start - len(source_tokens) : suffix_start]
+            == source_tokens
+        ):
             return feature_tokens
         if feature_tokens[-len(source_tokens) :] == source_tokens:
             return feature_tokens
@@ -595,6 +876,11 @@ class RuntimeMeasurementDialect:
         feature_tokens: tuple[str, ...],
     ) -> tuple[str, ...]:
         """Infer declared row-qualifier suffix tokens from a flat feature name."""
+        descriptor_suffix_width = self.indexed_descriptor_suffix_token_width(
+            feature_tokens
+        )
+        if descriptor_suffix_width is not None:
+            return feature_tokens[-descriptor_suffix_width:]
         matches: list[tuple[str, ...]] = []
         for qualifiers in self.source_suffix_qualifier_sequence_qualifiers():
             suffix_length = self.match_feature_suffix_qualifier_sequence(
@@ -615,13 +901,31 @@ class RuntimeMeasurementDialect:
             return ()
         return max(matches, key=len)
 
+    def indexed_descriptor_suffix_token_width(
+        self,
+        feature_tokens: tuple[str, ...],
+    ) -> int | None:
+        """Return the trailing descriptor-index token width declared for a feature."""
+        provider = self.indexed_descriptor_suffix_width_provider
+        if provider is None:
+            return None
+        suffix_width = provider(tuple(feature_tokens))
+        if suffix_width is None:
+            return None
+        suffix_width = int(suffix_width)
+        if suffix_width <= 0 or suffix_width > len(feature_tokens):
+            raise ValueError(
+                "Indexed descriptor suffix width must be within feature token "
+                f"bounds: width={suffix_width!r}, tokens={feature_tokens!r}."
+            )
+        return suffix_width
+
     def source_suffix_qualifier_sequence_qualifiers(
         self,
     ) -> tuple[tuple[RuntimeMeasurementRowQualifier, ...], ...]:
         """Return declared source-suffix qualifier sequences as qualifier objects."""
         qualifiers_by_fields = {
-            qualifier.field_names: qualifier
-            for qualifier in self.row_qualifiers
+            qualifier.field_names: qualifier for qualifier in self.row_qualifiers
         }
         sequences: list[tuple[RuntimeMeasurementRowQualifier, ...]] = []
         for sequence in self.source_suffix_qualifier_sequences:
@@ -670,7 +974,7 @@ class RuntimeMeasurementDialect:
         base_tokens = feature_tokens[: len(feature_tokens) - len(suffix_tokens)]
         return any(
             base_tokens == prefix
-            for prefix in self.scale_qualified_feature_prefixes
+            for prefix in self.resolved_scale_qualified_feature_prefixes()
         )
 
     def feature_suffix_source_insertion_index(
@@ -718,7 +1022,9 @@ class RuntimeMeasurementDialect:
                 )
             return None
         if encoding is not RuntimeMeasurementSourceNameEncoding.FEATURE_SUFFIX:
-            raise ValueError(f"Unsupported measurement source-name encoding: {encoding}.")
+            raise ValueError(
+                f"Unsupported measurement source-name encoding: {encoding}."
+            )
         if normalized_feature_name in normalized_families:
             return RuntimeMeasurementSourceQualifiedFeature(normalized_feature_name)
         for family in normalized_families:
@@ -726,9 +1032,165 @@ class RuntimeMeasurementDialect:
             if normalized_feature_name.startswith(prefix):
                 return RuntimeMeasurementSourceQualifiedFeature(
                     family,
-                    normalized_feature_name[len(prefix):],
+                    normalized_feature_name[len(prefix) :],
                 )
         return None
+
+
+@lru_cache(maxsize=64)
+def _resolved_category_prefixes(
+    dialect_id: int,
+) -> tuple[tuple[str, ...], ...]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.category_prefixes_provider
+    provided = () if provider is None else provider()
+    return tuple(
+        dict.fromkeys(
+            (
+                *dialect.category_prefixes,
+                *(tuple(part for part in prefix if part) for prefix in provided),
+            )
+        )
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_feature_part_aliases(
+    dialect_id: int,
+) -> Mapping[tuple[str, ...], tuple[str, ...]]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.feature_part_aliases_provider
+    provided = {} if provider is None else provider()
+    return MappingProxyType(
+        {
+            **dialect.feature_part_aliases,
+            **{
+                tuple(part for part in parts if part): tuple(
+                    part for part in alias if part
+                )
+                for parts, alias in provided.items()
+            },
+        }
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_source_feature_prefixes(
+    dialect_id: int,
+) -> tuple[tuple[str, ...], ...]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.source_feature_prefixes_provider
+    provided = () if provider is None else provider()
+    return tuple(
+        dict.fromkeys(
+            (
+                *dialect.source_feature_prefixes,
+                *(tuple(part for part in prefix if part) for prefix in provided),
+            )
+        )
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_calculated_feature_prefixes(
+    dialect_id: int,
+) -> tuple[tuple[str, ...], ...]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.calculated_feature_prefixes_provider
+    provided = () if provider is None else provider()
+    return tuple(
+        dict.fromkeys(
+            (
+                *dialect.calculated_feature_prefixes,
+                *(tuple(part for part in prefix if part) for prefix in provided),
+            )
+        )
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_numbered_feature_prefix_aliases(
+    dialect_id: int,
+) -> Mapping[str, tuple[str, ...]]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.numbered_feature_prefix_aliases_provider
+    provided = {} if provider is None else provider()
+    return MappingProxyType(
+        {
+            **dialect.numbered_feature_prefix_aliases,
+            **{
+                normalize_runtime_identifier(prefix): tuple(
+                    normalize_runtime_identifier(part)
+                    for part in alias
+                    if str(part).strip()
+                )
+                for prefix, alias in provided.items()
+                if str(prefix).strip()
+            },
+        }
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_directional_pair_feature_aliases(
+    dialect_id: int,
+) -> Mapping[str, tuple[str, int]]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.directional_pair_feature_aliases_provider
+    provided = {} if provider is None else provider()
+    return MappingProxyType(
+        {
+            **dialect.directional_pair_feature_aliases,
+            **{
+                str(name): (str(alias[0]), int(alias[1]))
+                for name, alias in provided.items()
+            },
+        }
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_scale_qualified_feature_prefixes(
+    dialect_id: int,
+) -> tuple[tuple[str, ...], ...]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.scale_qualified_feature_prefixes_provider
+    provided = () if provider is None else provider()
+    return tuple(
+        dict.fromkeys(
+            (
+                *dialect.scale_qualified_feature_prefixes,
+                *(tuple(part for part in prefix if part) for prefix in provided),
+            )
+        )
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_undirected_pair_feature_names(dialect_id: int) -> frozenset[str]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.undirected_pair_feature_names_provider
+    provided = () if provider is None else provider()
+    return frozenset(
+        normalize_runtime_identifier(feature_name)
+        for feature_name in (*dialect.undirected_pair_feature_names, *provided)
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_threshold_sensitive_pair_feature_names(
+    dialect_id: int,
+) -> frozenset[str]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.threshold_sensitive_pair_feature_names_provider
+    provided = () if provider is None else provider()
+    return frozenset(
+        normalize_runtime_identifier(feature_name)
+        for feature_name in (
+            *dialect.threshold_sensitive_pair_feature_names,
+            *provided,
+        )
+    )
 
 
 DEFAULT_RUNTIME_MEASUREMENT_DIALECT = RuntimeMeasurementDialect()
@@ -765,7 +1227,11 @@ class RuntimeMeasurementFeatureNumericTolerance(
             for feature_name in self.feature_names
             if str(feature_name).strip()
         )
-        if not feature_name_prefixes and not feature_name_suffixes and not feature_names:
+        if (
+            not feature_name_prefixes
+            and not feature_name_suffixes
+            and not feature_names
+        ):
             raise ValueError(
                 "RuntimeMeasurementFeatureNumericTolerance requires at least "
                 "one feature name, prefix, or suffix."
@@ -802,7 +1268,7 @@ class RuntimeEquivalencePolicy(RuntimePolicyNonNegativeFieldValidationMixin):
     numeric_rel_tolerance: NonNegativeFloat = 0.0
     allow_tie_sensitive_location_mismatches: bool = False
     allow_unstable_shape_descriptors: bool = False
-    shape_descriptor_abs_tolerance: NonNegativeFloat = 0.025
+    shape_descriptor_abs_tolerance: NonNegativeFloat = 1e-6
     shape_descriptor_rel_tolerance: NonNegativeFloat = 0.0
     shape_descriptor_max_unstable_values: NonNegativeInt = 2
     shape_descriptor_max_unstable_fraction: NonNegativeFloat = 0.01
@@ -829,13 +1295,13 @@ class RuntimeEquivalencePolicy(RuntimePolicyNonNegativeFieldValidationMixin):
     measurement_feature_name_mode: RuntimeMeasurementFeatureNameMode = (
         RuntimeMeasurementFeatureNameMode.SEMANTIC_CORE
     )
-    measurement_dialect: RuntimeMeasurementDialect = (
-        DEFAULT_RUNTIME_MEASUREMENT_DIALECT
-    )
+    measurement_dialect: RuntimeMeasurementDialect = DEFAULT_RUNTIME_MEASUREMENT_DIALECT
     feature_numeric_tolerances: tuple[
-        RuntimeMeasurementFeatureNumericTolerance,
-        ...
+        RuntimeMeasurementFeatureNumericTolerance, ...
     ] = ()
+    feature_numeric_tolerances_provider: (
+        Callable[[], Iterable[RuntimeMeasurementFeatureNumericTolerance]] | None
+    ) = None
 
     def __post_init__(self) -> None:
         self.validate_non_negative_policy_fields()
@@ -862,12 +1328,36 @@ class RuntimeEquivalencePolicy(RuntimePolicyNonNegativeFieldValidationMixin):
             self,
             "feature_numeric_tolerances",
             tuple(
-                tolerance
-                if isinstance(
-                    tolerance,
-                    RuntimeMeasurementFeatureNumericTolerance,
+                (
+                    tolerance
+                    if isinstance(
+                        tolerance,
+                        RuntimeMeasurementFeatureNumericTolerance,
+                    )
+                    else RuntimeMeasurementFeatureNumericTolerance(**tolerance)
                 )
-                else RuntimeMeasurementFeatureNumericTolerance(**tolerance)
                 for tolerance in self.feature_numeric_tolerances
             ),
+        )
+        if self.feature_numeric_tolerances_provider is not None and not callable(
+            self.feature_numeric_tolerances_provider
+        ):
+            raise TypeError(
+                "RuntimeEquivalencePolicy.feature_numeric_tolerances_provider "
+                "must be callable."
+            )
+
+    def resolved_feature_numeric_tolerances(
+        self,
+    ) -> tuple[RuntimeMeasurementFeatureNumericTolerance, ...]:
+        """Return static and provider-supplied feature numeric tolerances."""
+        provider = self.feature_numeric_tolerances_provider
+        provided = () if provider is None else provider()
+        return tuple(
+            (
+                tolerance
+                if isinstance(tolerance, RuntimeMeasurementFeatureNumericTolerance)
+                else RuntimeMeasurementFeatureNumericTolerance(**tolerance)
+            )
+            for tolerance in (*self.feature_numeric_tolerances, *provided)
         )

@@ -1,28 +1,35 @@
 """Generic semantic contracts for typed runtime artifacts."""
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields as dataclass_fields, is_dataclass, replace
+from dataclasses import (
+    asdict,
+    dataclass,
+    fields as dataclass_fields,
+    is_dataclass,
+    replace,
+)
 from enum import Enum
 from functools import lru_cache
 import math
 import re
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
-
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from openhcs.core.alias_property import AliasProperty
 import numpy as np
-
-from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
+from openhcs.core.artifacts import (
+    ArtifactPayloadShape,
+    ArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.source_spatial_domain import (
     SourceSpatialDomainAdapter,
     SourceSpatialDomain,
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
-    GeneratedEnumClassSpec,
     GeneratedLeafClassSpec,
     MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
@@ -39,8 +46,6 @@ if TYPE_CHECKING:
         RuntimeArrayData,
         SparseIJVLabelRows,
     )
-
-
 DeclaredObjectIds = tuple[int, ...] | list[int] | None
 
 
@@ -57,10 +62,7 @@ class RuntimeSliceIdentityProjectableValue(ABC):
 
     @abstractmethod
     def with_runtime_slice_identity(
-        self,
-        *,
-        slice_index: int,
-        slice_count: int,
+        self, *, slice_index: int, slice_count: int
     ) -> Self:
         """Return the value with execution-slice identity applied."""
 
@@ -83,10 +85,7 @@ class ObjectLabelRepresentation(str, Enum):
 
     def __new__(cls, value: str, payload_shape: ArtifactPayloadShape):
         return str_enum_member_with_payload(
-            cls,
-            value,
-            payload_attribute="_payload_shape",
-            payload=payload_shape,
+            cls, value, payload_attribute="_payload_shape", payload=payload_shape
         )
 
     DENSE_LABELS = ("dense_labels", ArtifactPayloadShape.ARRAY)
@@ -111,33 +110,33 @@ class ObjectLabelDomainScope(str, Enum):
     @classmethod
     def common(cls, scopes: Any) -> "ObjectLabelDomainScope":
         """Return the common scope for merged labels, defaulting to payload scope."""
-        unique_scopes = tuple(dict.fromkeys(coerce_enum(cls, scope, "ObjectLabelDomain.scope") for scope in scopes))
+        unique_scopes = tuple(
+            dict.fromkeys(
+                (coerce_enum(cls, scope, "ObjectLabelDomain.scope") for scope in scopes)
+            )
+        )
         if len(unique_scopes) == 1:
             return unique_scopes[0]
         return cls.PAYLOAD
 
 
 RuntimePlaneAxisPlaneIndexResolver = Callable[
-    ["RuntimePlaneAxisProjector", tuple[str, ...]],
-    int | None,
+    ["RuntimePlaneAxisProjector", tuple[str, ...]], int | None
 ]
 RuntimePlaneAxisSizeResolver = Callable[
-    ["RuntimePlaneAxisProjector", tuple[str, ...]],
-    int | None,
+    ["RuntimePlaneAxisProjector", tuple[str, ...]], int | None
 ]
 
 
 def runtime_slice_axis_plane_index(
-    projector: "RuntimePlaneAxisProjector",
-    source_aliases: tuple[str, ...],
+    projector: "RuntimePlaneAxisProjector", source_aliases: tuple[str, ...]
 ) -> int | None:
     """Resolve a runtime-slice axis through the projector."""
     return projector.runtime_slice_plane_index()
 
 
 def runtime_slice_axis_size(
-    projector: "RuntimePlaneAxisProjector",
-    source_aliases: tuple[str, ...],
+    projector: "RuntimePlaneAxisProjector", source_aliases: tuple[str, ...]
 ) -> int | None:
     """Resolve runtime-slice axis cardinality through the projector."""
     del source_aliases
@@ -145,16 +144,14 @@ def runtime_slice_axis_size(
 
 
 def source_binding_axis_plane_index(
-    projector: "RuntimePlaneAxisProjector",
-    source_aliases: tuple[str, ...],
+    projector: "RuntimePlaneAxisProjector", source_aliases: tuple[str, ...]
 ) -> int | None:
     """Resolve a source-binding axis through the projector."""
     return projector.source_binding_axis_plane_index(source_aliases)
 
 
 def source_binding_axis_size(
-    projector: "RuntimePlaneAxisProjector",
-    source_aliases: tuple[str, ...],
+    projector: "RuntimePlaneAxisProjector", source_aliases: tuple[str, ...]
 ) -> int | None:
     """Resolve source-binding axis cardinality through the projector."""
     return projector.source_binding_axis_size(source_aliases)
@@ -199,40 +196,29 @@ class RuntimePlaneAxis(str, Enum):
     def common(cls, axes: Any) -> "RuntimePlaneAxis":
         """Return the common plane axis for merged labels."""
         unique_axes = tuple(
-            dict.fromkeys(
-                coerce_enum(cls, axis, "RuntimePlaneAxis") for axis in axes
-            )
+            dict.fromkeys((coerce_enum(cls, axis, "RuntimePlaneAxis") for axis in axes))
         )
         if len(unique_axes) != 1:
             raise ValueError(
-                "Cannot merge object-label stacks with different plane-axis semantics: "
-                f"{unique_axes!r}."
+                f"Cannot merge object-label stacks with different plane-axis semantics: {unique_axes!r}."
             )
         return unique_axes[0]
 
     def plane_index(
-        self,
-        projector: "RuntimePlaneAxisProjector",
-        *,
-        source_aliases: tuple[str, ...],
+        self, projector: "RuntimePlaneAxisProjector", *, source_aliases: tuple[str, ...]
     ) -> int | None:
         """Resolve this semantic axis against the execution-local projector."""
         return self.plane_index_resolver(projector, source_aliases)
 
     def axis_size(
-        self,
-        projector: "RuntimePlaneAxisProjector",
-        *,
-        source_aliases: tuple[str, ...],
+        self, projector: "RuntimePlaneAxisProjector", *, source_aliases: tuple[str, ...]
     ) -> int | None:
         """Resolve this semantic axis cardinality against the projector."""
         return self.axis_size_resolver(projector, source_aliases)
 
 
 class RuntimePlaneAxisSliceProjectionPolicy(
-    EnumKeyedStrategyMixin[RuntimePlaneAxis],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[RuntimePlaneAxis], ABC, metaclass=AutoRegisterMeta
 ):
     """Policy for axes that can be selected by a runtime slice index."""
 
@@ -255,7 +241,9 @@ class RuntimeSlicePlaneAxisSliceProjectionPolicy(RuntimePlaneAxisSliceProjection
         return True
 
 
-class SourceBindingPlaneAxisSliceProjectionPolicy(RuntimePlaneAxisSliceProjectionPolicy):
+class SourceBindingPlaneAxisSliceProjectionPolicy(
+    RuntimePlaneAxisSliceProjectionPolicy
+):
     """Source-binding planes are selected by slice index during source-bound execution."""
 
     axis = RuntimePlaneAxis.SOURCE_BINDING
@@ -288,9 +276,7 @@ class RuntimePlaneProjection:
 
     def __post_init__(self) -> None:
         scope = coerce_enum(
-            RuntimePlaneProjectionScope,
-            self.scope,
-            "RuntimePlaneProjection.scope",
+            RuntimePlaneProjectionScope, self.scope, "RuntimePlaneProjection.scope"
         )
         object.__setattr__(self, "scope", scope)
         if scope is RuntimePlaneProjectionScope.STACK:
@@ -304,9 +290,7 @@ class RuntimePlaneProjection:
                 )
             return
         if self.plane_index is None:
-            raise ValueError(
-                "Grouped runtime-plane projection requires a plane index."
-            )
+            raise ValueError("Grouped runtime-plane projection requires a plane index.")
         plane_index = int(self.plane_index)
         if plane_index < 0:
             raise ValueError(
@@ -322,8 +306,7 @@ class RuntimePlaneProjection:
             )
         if plane_index >= plane_count:
             raise ValueError(
-                "Grouped runtime-plane projection plane_index must be within "
-                f"plane_count: index {plane_index}, count {plane_count}."
+                f"Grouped runtime-plane projection plane_index must be within plane_count: index {plane_index}, count {plane_count}."
             )
         object.__setattr__(self, "plane_count", plane_count)
 
@@ -334,9 +317,7 @@ class RuntimePlaneProjection:
 
     @classmethod
     def group(
-        cls,
-        plane_index: int,
-        plane_count: int | None = None,
+        cls, plane_index: int, plane_count: int | None = None
     ) -> "RuntimePlaneProjection":
         """Select one runtime-slice plane for grouped execution."""
         return cls(RuntimePlaneProjectionScope.GROUP, plane_index, plane_count)
@@ -369,8 +350,7 @@ class RuntimePlaneProjection:
             return cls.stack()
         if plane_index is None:
             raise ValueError(
-                "Runtime-plane grouped execution requires the OpenHCS component "
-                "plane index."
+                "Runtime-plane grouped execution requires the OpenHCS component plane index."
             )
         return cls.group(plane_index, plane_count)
 
@@ -399,24 +379,19 @@ class RuntimePlaneAxisProjector(ABC):
         return None
 
     def source_binding_axis_plane_index(
-        self,
-        source_aliases: tuple[str, ...],
+        self, source_aliases: tuple[str, ...]
     ) -> int | None:
         """Return the execution-local source-binding plane index."""
         raise NotImplementedError(
             f"{type(self).__name__} does not provide source-binding plane projection."
         )
 
-    def source_binding_axis_size(
-        self,
-        source_aliases: tuple[str, ...],
-    ) -> int | None:
+    def source_binding_axis_size(self, source_aliases: tuple[str, ...]) -> int | None:
         """Return the source-binding axis size for this execution scope."""
         return None
 
     def plane_index_for_axis(
-        self,
-        request: "RuntimePlaneAxisProjectionRequest",
+        self, request: "RuntimePlaneAxisProjectionRequest"
     ) -> int | None:
         """Return the execution-local plane index for a nominal runtime axis."""
         return request.resolve(self)
@@ -434,9 +409,7 @@ class RuntimePlaneAxisProjectionRequest:
             self,
             "axis",
             coerce_enum(
-                RuntimePlaneAxis,
-                self.axis,
-                "RuntimePlaneAxisProjectionRequest.axis",
+                RuntimePlaneAxis, self.axis, "RuntimePlaneAxisProjectionRequest.axis"
             ),
         )
         object.__setattr__(self, "source_aliases", tuple(self.source_aliases))
@@ -447,8 +420,7 @@ class RuntimePlaneAxisProjectionRequest:
 
 
 def bounded_runtime_plane_index(
-    plane_count: int,
-    plane_index: int | None,
+    plane_count: int, plane_index: int | None
 ) -> int | None:
     """Return a selected runtime plane index only when it is in range."""
     if plane_index is None:
@@ -479,8 +451,7 @@ class RuntimePlaneAxisValueProjection:
             return None
         if not isinstance(projector, RuntimePlaneAxisProjector):
             raise TypeError(
-                "Runtime plane-axis projection requires RuntimePlaneAxisProjector, "
-                f"got {type(projector).__name__}."
+                f"Runtime plane-axis projection requires RuntimePlaneAxisProjector, got {type(projector).__name__}."
             )
         source_aliases = tuple(source_aliases)
         axis_size = axis.axis_size(projector, source_aliases=source_aliases)
@@ -491,8 +462,7 @@ class RuntimePlaneAxisValueProjection:
             source_aliases=source_aliases,
             plane_index=projector.plane_index_for_axis(
                 RuntimePlaneAxisProjectionRequest(
-                    axis=axis,
-                    source_aliases=source_aliases,
+                    axis=axis, source_aliases=source_aliases
                 )
             ),
             axis_size=axis_size,
@@ -500,23 +470,15 @@ class RuntimePlaneAxisValueProjection:
 
     @classmethod
     def from_selected_plane(
-        cls,
-        *,
-        axis: RuntimePlaneAxis,
-        plane_index: int,
-        axis_size: int,
+        cls, *, axis: RuntimePlaneAxis, plane_index: int, axis_size: int
     ) -> "RuntimePlaneAxisValueProjection":
         """Return a projection whose explicit plane proof is already resolved."""
         return cls(
-            axis=axis,
-            source_aliases=(),
-            plane_index=plane_index,
-            axis_size=axis_size,
+            axis=axis, source_aliases=(), plane_index=plane_index, axis_size=axis_size
         )
 
     def project(
-        self,
-        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+        self, value: "RuntimeArrayData | ObjectLabelMeasurementSource"
     ) -> "RuntimeArrayData | ObjectLabelMeasurementSource":
         """Return the selected plane when the value carries this runtime axis."""
         plane_index = self.plane_index_for_value(value)
@@ -529,8 +491,7 @@ class RuntimePlaneAxisValueProjection:
         return self.project_array_payload(value, plane_index)
 
     def plane_index_for_value(
-        self,
-        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+        self, value: "RuntimeArrayData | ObjectLabelMeasurementSource"
     ) -> int | None:
         """Return the selected runtime-axis plane for this value."""
         alias_plane_index = self.source_alias_plane_index(value)
@@ -539,24 +500,19 @@ class RuntimePlaneAxisValueProjection:
         return self.plane_index
 
     def source_alias_plane_index(
-        self,
-        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
+        self, value: "RuntimeArrayData | ObjectLabelMeasurementSource"
     ) -> int | None:
         """Return a source-alias plane index only for a complete alias axis."""
         if self.axis is RuntimePlaneAxis.SOURCE_BINDING:
             from openhcs.core.runtime_values import source_image_context_plane_index
 
             return source_image_context_plane_index(
-                value,
-                self.source_aliases,
-                self.axis_size,
+                value, self.source_aliases, self.axis_size
             )
         return None
 
     def project_array_payload(
-        self,
-        value: "RuntimeArrayData | ObjectLabelMeasurementSource",
-        plane_index: int,
+        self, value: "RuntimeArrayData | ObjectLabelMeasurementSource", plane_index: int
     ) -> "RuntimeArrayData | ObjectLabelMeasurementSource":
         """Project image-like values carrying this leading runtime axis."""
         from openhcs.core.runtime_values import (
@@ -573,9 +529,7 @@ class RuntimePlaneAxisValueProjection:
         return image_payload_slice_context(value, data[plane_index], plane_index)
 
     def project_object_labels(
-        self,
-        value: "ObjectLabelValue",
-        plane_index: int,
+        self, value: "ObjectLabelValue", plane_index: int
     ) -> "ObjectLabelValue":
         """Project object labels while preserving their nominal metadata."""
         if value.plane_axis is not self.axis:
@@ -604,8 +558,7 @@ class RuntimePlaneAxisValueProjection:
         """Validate a selected source-binding plane against dense data shape."""
         if plane_index < 0 or plane_index >= shape[0]:
             raise RuntimeError(
-                "Runtime plane-axis projection produced an out-of-range plane "
-                f"index {plane_index} for shape {shape!r}."
+                f"Runtime plane-axis projection produced an out-of-range plane index {plane_index} for shape {shape!r}."
             )
 
 
@@ -622,7 +575,9 @@ class ObjectLabelDomain:
         if self.declared_object_count is not None:
             count = int(self.declared_object_count)
             if count < 0:
-                raise ValueError("ObjectLabelDomain.declared_object_count cannot be negative.")
+                raise ValueError(
+                    "ObjectLabelDomain.declared_object_count cannot be negative."
+                )
             object.__setattr__(self, "declared_object_count", count)
         object.__setattr__(
             self,
@@ -633,8 +588,10 @@ class ObjectLabelDomain:
             self,
             "declared_object_id_domains",
             tuple(
-                self._normalize_ids(domain, "declared_object_id_domains")
-                for domain in self.declared_object_id_domains
+                (
+                    self._normalize_ids(domain, "declared_object_id_domains")
+                    for domain in self.declared_object_id_domains
+                )
             ),
         )
         object.__setattr__(
@@ -644,9 +601,11 @@ class ObjectLabelDomain:
         )
 
     @staticmethod
-    def _normalize_ids(ids: tuple[int, ...] | list[int], field_name: str) -> tuple[int, ...]:
-        normalized = tuple(int(object_id) for object_id in ids)
-        if any(object_id <= 0 for object_id in normalized):
+    def _normalize_ids(
+        ids: tuple[int, ...] | list[int], field_name: str
+    ) -> tuple[int, ...]:
+        normalized = tuple((int(object_id) for object_id in ids))
+        if any((object_id <= 0 for object_id in normalized)):
             raise ValueError(f"ObjectLabelDomain.{field_name} IDs must be positive.")
         return tuple(sorted(dict.fromkeys(normalized)))
 
@@ -663,9 +622,7 @@ class ObjectLabelDomain:
         return cls(
             declared_object_count=declared_object_count,
             declared_object_ids=(
-                tuple(declared_object_ids)
-                if declared_object_ids is not None
-                else ()
+                tuple(declared_object_ids) if declared_object_ids is not None else ()
             ),
             declared_object_id_domains=declared_object_id_domains,
             scope=scope,
@@ -680,8 +637,7 @@ class ObjectLabelDomain:
         return None
 
     def with_missing_declarations_from(
-        self,
-        fallback: "ObjectLabelDomain",
+        self, fallback: "ObjectLabelDomain"
     ) -> "ObjectLabelDomain":
         """Return this domain with absent declarations filled from another domain."""
         return ObjectLabelDomain(
@@ -722,9 +678,8 @@ class ObjectLabelDomain:
                 if declared_object_ids is not None
                 else self.declared_object_ids
             ),
-            declared_object_id_domains=(
-                self.declared_object_id_domains or declared_object_id_domains
-            ),
+            declared_object_id_domains=self.declared_object_id_domains
+            or declared_object_id_domains,
             scope=self.scope,
         )
 
@@ -739,8 +694,7 @@ class ObjectLabelDomain:
 
     @classmethod
     def explicit_plane_id_domains(
-        cls,
-        domains: Iterable["ObjectLabelDomain"],
+        cls, domains: Iterable["ObjectLabelDomain"]
     ) -> tuple[tuple[int, ...], ...]:
         """Return per-plane declared IDs, preserving undeclared domains as absent."""
         plane_domains: list[tuple[int, ...]] = []
@@ -754,8 +708,7 @@ class ObjectLabelDomain:
             if id_domain is None:
                 if saw_declared:
                     raise ValueError(
-                        "Cannot combine declared and undeclared object-label "
-                        "plane domains."
+                        "Cannot combine declared and undeclared object-label plane domains."
                     )
                 plane_domains.append(())
                 continue
@@ -763,7 +716,7 @@ class ObjectLabelDomain:
             plane_domains.append(id_domain)
         if not saw_declared:
             return ()
-        if any(not domain for domain in plane_domains):
+        if any((not domain for domain in plane_domains)):
             raise ValueError(
                 "Cannot combine declared and undeclared object-label plane domains."
             )
@@ -777,8 +730,7 @@ class ObjectLabelDomain:
             raise ValueError("Object-label slice_count must be positive.")
         if normalized_index < 0 or normalized_index >= normalized_count:
             raise ValueError(
-                f"Object-label slice_index {normalized_index} is outside "
-                f"slice_count {normalized_count}."
+                f"Object-label slice_index {normalized_index} is outside slice_count {normalized_count}."
             )
         if not self.declared_object_id_domains:
             return self
@@ -797,15 +749,13 @@ class ObjectLabelDomain:
             )
         if len(self.declared_object_id_domains) != normalized_count:
             raise ValueError(
-                "Plane-scoped object-label domains must match PURE_2D slice "
-                f"count: {len(self.declared_object_id_domains)} domains for "
-                f"{normalized_count} slices."
+                f"Plane-scoped object-label domains must match PURE_2D slice count: {len(self.declared_object_id_domains)} domains for {normalized_count} slices."
             )
         return self.project_planes((normalized_index,))
 
     def project_planes(self, plane_indices: Iterable[int]) -> "ObjectLabelDomain":
         """Return the object-label domain carried by selected plane indexes."""
-        normalized_indices = tuple(int(index) for index in plane_indices)
+        normalized_indices = tuple((int(index) for index in plane_indices))
         if not self.declared_object_id_domains:
             return self
         if not normalized_indices:
@@ -813,26 +763,24 @@ class ObjectLabelDomain:
         elif len(self.declared_object_id_domains) == 1:
             domains = (self.declared_object_id_domains[0],)
         elif any(
-            index < 0 or index >= len(self.declared_object_id_domains)
-            for index in normalized_indices
+            (
+                index < 0 or index >= len(self.declared_object_id_domains)
+                for index in normalized_indices
+            )
         ):
             raise ValueError(
-                "Object-label plane projection index is outside declared "
-                f"domain count {len(self.declared_object_id_domains)}: "
-                f"{normalized_indices!r}."
+                f"Object-label plane projection index is outside declared domain count {len(self.declared_object_id_domains)}: {normalized_indices!r}."
             )
         else:
             domains = tuple(
-                self.declared_object_id_domains[index] for index in normalized_indices
+                (self.declared_object_id_domains[index] for index in normalized_indices)
             )
         if len(domains) == 1:
             return ObjectLabelDomain.declared(
-                scope=ObjectLabelDomainScope.PLANE,
-                declared_object_ids=domains[0],
+                scope=ObjectLabelDomainScope.PLANE, declared_object_ids=domains[0]
             )
         return ObjectLabelDomain.declared(
-            scope=ObjectLabelDomainScope.PLANE,
-            declared_object_id_domains=domains,
+            scope=ObjectLabelDomainScope.PLANE, declared_object_id_domains=domains
         )
 
 
@@ -846,14 +794,10 @@ class RuntimeObjectMeasurementQuery(ABC):
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self,
-            "object_name",
-            self.required_name("object_name", self.object_name),
+            self, "object_name", self.required_name("object_name", self.object_name)
         )
         object.__setattr__(
-            self,
-            "feature_name",
-            self.required_name("feature_name", self.feature_name),
+            self, "feature_name", self.required_name("feature_name", self.feature_name)
         )
         if self.group_key is not None:
             object.__setattr__(self, "group_key", str(self.group_key))
@@ -878,7 +822,9 @@ class RuntimeObjectFeatureMeasurementQuery(RuntimeObjectMeasurementQuery):
         object.__setattr__(
             self,
             "object_domain",
-            ObjectLabelDomain._normalize_ids(tuple(self.object_domain), "object_domain"),
+            ObjectLabelDomain._normalize_ids(
+                tuple(self.object_domain), "object_domain"
+            ),
         )
 
 
@@ -923,9 +869,7 @@ class ObjectLabelDomainMetadata(ABC, metaclass=AutoRegisterMeta):
 
 
 class ObjectLabelDomainMetadataStrategy(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    NominalTypeKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Registered extractor for nominal object-label domain metadata."""
 
@@ -936,7 +880,9 @@ class ObjectLabelDomainMetadataStrategy(
     @classmethod
     def for_value(cls, value: object) -> "ObjectLabelDomainMetadataStrategy":
         strategy = cls.for_nominal_value(value)
-        return strategy if strategy is not None else RawObjectLabelDomainMetadataStrategy()
+        return (
+            strategy if strategy is not None else RawObjectLabelDomainMetadataStrategy()
+        )
 
     @abstractmethod
     def object_label_domain(self, value: object) -> ObjectLabelDomain:
@@ -951,8 +897,7 @@ class NominalObjectLabelDomainMetadataStrategy(ObjectLabelDomainMetadataStrategy
     def object_label_domain(self, value: object) -> ObjectLabelDomain:
         if not isinstance(value, ObjectLabelDomainMetadata):
             raise TypeError(
-                "NominalObjectLabelDomainMetadataStrategy requires "
-                f"ObjectLabelDomainMetadata, got {type(value).__name__}."
+                f"NominalObjectLabelDomainMetadataStrategy requires ObjectLabelDomainMetadata, got {type(value).__name__}."
             )
         return value.object_label_domain()
 
@@ -974,35 +919,32 @@ class ObjectLabelMeasurementValues:
 
     def __post_init__(self) -> None:
         object_ids = ObjectLabelDomain._normalize_ids(
-            self.object_ids,
-            "ObjectLabelMeasurementValues.object_ids",
+            self.object_ids, "ObjectLabelMeasurementValues.object_ids"
         )
         values = np.asarray(self.values, dtype=np.float64).reshape(-1)
         if len(object_ids) != values.size:
             raise ValueError(
-                "ObjectLabelMeasurementValues requires one value per object ID, "
-                f"got {len(object_ids)} IDs and {values.size} values."
+                f"ObjectLabelMeasurementValues requires one value per object ID, got {len(object_ids)} IDs and {values.size} values."
             )
         object.__setattr__(self, "object_ids", object_ids)
         object.__setattr__(self, "values", values)
 
     @classmethod
     def from_label_indexed_values(
-        cls,
-        object_ids: Iterable[int],
-        values: Any,
+        cls, object_ids: Iterable[int], values: Any
     ) -> "ObjectLabelMeasurementValues":
         """Bind dense label-indexed values where index ``label_id - 1``."""
         normalized_ids = ObjectLabelDomain._normalize_ids(
-            tuple(object_ids),
-            "ObjectLabelMeasurementValues.object_ids",
+            tuple(object_ids), "ObjectLabelMeasurementValues.object_ids"
         )
         source_values = np.asarray(values, dtype=np.float64).reshape(-1)
         bound_values = np.array(
             [
-                source_values[object_id - 1]
-                if object_id - 1 < source_values.size
-                else np.nan
+                (
+                    source_values[object_id - 1]
+                    if object_id - 1 < source_values.size
+                    else np.nan
+                )
                 for object_id in normalized_ids
             ],
             dtype=np.float64,
@@ -1011,14 +953,11 @@ class ObjectLabelMeasurementValues:
 
     @classmethod
     def from_positional_values(
-        cls,
-        object_ids: Iterable[int],
-        values: Any,
+        cls, object_ids: Iterable[int], values: Any
     ) -> "ObjectLabelMeasurementValues":
         """Bind values that are already ordered like ``object_ids``."""
         normalized_ids = ObjectLabelDomain._normalize_ids(
-            tuple(object_ids),
-            "ObjectLabelMeasurementValues.object_ids",
+            tuple(object_ids), "ObjectLabelMeasurementValues.object_ids"
         )
         source_values = np.asarray(values, dtype=np.float64).reshape(-1)
         bound_values = np.full(len(normalized_ids), np.nan, dtype=np.float64)
@@ -1029,14 +968,11 @@ class ObjectLabelMeasurementValues:
 
     @classmethod
     def from_value_mapping(
-        cls,
-        object_ids: Iterable[int],
-        values_by_object_id: Mapping[int, float],
+        cls, object_ids: Iterable[int], values_by_object_id: Mapping[int, float]
     ) -> "ObjectLabelMeasurementValues":
         """Bind sparse object-id keyed values to an explicit object domain."""
         normalized_ids = ObjectLabelDomain._normalize_ids(
-            tuple(object_ids),
-            "ObjectLabelMeasurementValues.object_ids",
+            tuple(object_ids), "ObjectLabelMeasurementValues.object_ids"
         )
         return cls(
             normalized_ids,
@@ -1069,9 +1005,11 @@ class ObjectLabelMeasurementValues:
         if use_maximum and max_value is not None:
             hits[self.values > max_value] = False
         return tuple(
-            object_id
-            for object_id, hit in zip(self.object_ids, hits, strict=True)
-            if bool(hit)
+            (
+                object_id
+                for object_id, hit in zip(self.object_ids, hits, strict=True)
+                if bool(hit)
+            )
         )
 
     def extremum_id(self, *, keep_max: bool) -> int | None:
@@ -1088,10 +1026,7 @@ class ObjectLabelMeasurementValues:
         return self.object_ids[int(selected_index)]
 
     def dense_label_indexed(
-        self,
-        *,
-        max_label: int | None = None,
-        fill_value: float = np.nan,
+        self, *, max_label: int | None = None, fill_value: float = np.nan
     ) -> np.ndarray:
         """Return values as a dense ``label_id - 1`` indexed vector."""
         largest_id = max(self.object_ids, default=0)
@@ -1118,13 +1053,15 @@ class ObjectMeasurementVectorDomain:
             RuntimeProjectionAxis,
             RuntimeSliceProjection,
         )
+
         slice_count = int(label_array.shape[0])
         return tuple(
-            RuntimeSliceProjection.value_for_slice(
-                self.labels,
-                RuntimeProjectionAxis(index, slice_count),
+            (
+                RuntimeSliceProjection.value_for_slice(
+                    self.labels, RuntimeProjectionAxis(index, slice_count)
+                )
+                for index in range(slice_count)
             )
-            for index in range(slice_count)
         )
 
     @property
@@ -1132,10 +1069,12 @@ class ObjectMeasurementVectorDomain:
         label_slices = self.label_slices
         value_slices = tuple(self.value_slices)
         if len(value_slices) != len(label_slices):
-            return tuple(np.asarray(values) for values in value_slices)
+            return tuple((np.asarray(values) for values in value_slices))
         return tuple(
-            self.aligned_values(values, label_slice)
-            for values, label_slice in zip(value_slices, label_slices, strict=True)
+            (
+                self.aligned_values(values, label_slice)
+                for values, label_slice in zip(value_slices, label_slices, strict=True)
+            )
         )
 
     @staticmethod
@@ -1145,15 +1084,12 @@ class ObjectMeasurementVectorDomain:
         if value_array.size == len(object_ids):
             return value_array
         return ObjectLabelMeasurementValues.from_positional_values(
-            object_ids,
-            value_array,
+            object_ids, value_array
         ).values
 
 
 class ObjectLabelIdDomainStrategy(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    NominalTypeKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Registered extractor for materially present positive object-label IDs."""
 
@@ -1190,9 +1126,7 @@ class ObjectLabelIdDomainStrategy(
         if dense_integer_domain is not None:
             return dense_integer_domain.present_ids()
         return tuple(
-            int(object_id)
-            for object_id in np.unique(label_array)
-            if object_id > 0
+            (int(object_id) for object_id in np.unique(label_array) if object_id > 0)
         )
 
 
@@ -1204,10 +1138,7 @@ class DenseIntegerObjectLabelIdDomain:
     max_label: int
 
     @classmethod
-    def from_array(
-        cls,
-        labels: np.ndarray,
-    ) -> "DenseIntegerObjectLabelIdDomain | None":
+    def from_array(cls, labels: np.ndarray) -> "DenseIntegerObjectLabelIdDomain | None":
         if not (
             np.issubdtype(labels.dtype, np.integer)
             or np.issubdtype(labels.dtype, np.bool_)
@@ -1231,7 +1162,7 @@ class DenseIntegerObjectLabelIdDomain:
             minlength=self.max_label + 1,
         )
         present_ids = np.flatnonzero(counts)
-        return tuple(int(label_id) for label_id in present_ids if label_id > 0)
+        return tuple((int(label_id) for label_id in present_ids if label_id > 0))
 
 
 class DenseArrayObjectLabelIdDomainStrategy(ObjectLabelIdDomainStrategy):
@@ -1251,9 +1182,7 @@ class RawObjectLabelIdDomainStrategy(ObjectLabelIdDomainStrategy):
 
 
 class ObjectLabelPlaneDomainStrategy(
-    EnumKeyedStrategyMixin[ObjectLabelDomainScope],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ObjectLabelDomainScope], ABC, metaclass=AutoRegisterMeta
 ):
     """Projection strategy from object-label domain metadata to measurement planes."""
 
@@ -1355,9 +1284,7 @@ class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
             plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
             if len(declared_object_id_domains) != plane_count:
                 raise ValueError(
-                    "Plane-scoped object-label domains must match dense label "
-                    f"plane count: {len(declared_object_id_domains)} domains for "
-                    f"{plane_count} planes."
+                    f"Plane-scoped object-label domains must match dense label plane count: {len(declared_object_id_domains)} domains for {plane_count} planes."
                 )
             return declared_object_id_domains
         if declared_object_count is not None or declared_object_ids:
@@ -1370,7 +1297,7 @@ class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
             return (domain,) * plane_count
         if label_array.ndim <= 2:
             return (dense_object_label_id_domain(labels),)
-        return tuple(dense_object_label_id_domain(plane) for plane in label_array)
+        return tuple((dense_object_label_id_domain(plane) for plane in label_array))
 
 
 class SpatialGridOrdering(str, Enum):
@@ -1430,8 +1357,10 @@ class MeasurementScopeSelection:
 
     def __post_init__(self) -> None:
         scopes = frozenset(
-            coerce_enum(MeasurementScope, scope, "MeasurementScopeSelection.scopes")
-            for scope in self.scopes
+            (
+                coerce_enum(MeasurementScope, scope, "MeasurementScopeSelection.scopes")
+                for scope in self.scopes
+            )
         )
         if not scopes:
             raise ValueError("MeasurementScopeSelection.scopes cannot be empty.")
@@ -1442,8 +1371,10 @@ class MeasurementScopeSelection:
         """Return a selection for one or more measurement scopes."""
         return cls(
             frozenset(
-                coerce_enum(MeasurementScope, scope, "MeasurementScope")
-                for scope in scopes
+                (
+                    coerce_enum(MeasurementScope, scope, "MeasurementScope")
+                    for scope in scopes
+                )
             )
         )
 
@@ -1453,44 +1384,356 @@ class MeasurementScopeSelection:
 
     def includes_all(self, *scopes: MeasurementScope | str) -> bool:
         """Return whether this selection includes every supplied semantic scope."""
-        return all(self.includes(scope) for scope in scopes)
+        return all((self.includes(scope) for scope in scopes))
+
+
+class RuntimeMeasurementFeatureRelation(ABC):
+    """Polymorphic relation declared by a runtime measurement feature member."""
+
+    @abstractmethod
+    def source_family_names(
+        self, source_feature: "RuntimeMeasurementFeature"
+    ) -> tuple[str, ...]:
+        """Return feature-family names that select the relation source."""
+
+    @abstractmethod
+    def target_family_name(
+        self,
+        source_feature: "RuntimeMeasurementFeature",
+        source_family_name: str,
+        feature_type: type["RuntimeMeasurementFeature"],
+    ) -> str | None:
+        """Return the target family for one selected source family."""
+
+
+class RuntimeMeasurementFeatureSemanticMarker(ABC):
+    """Nominal marker carried by a runtime measurement feature member."""
+
+    family_qualifier: ClassVar[str | None] = None
+
+    @classmethod
+    def matches_feature(cls, feature: "RuntimeMeasurementFeature") -> bool:
+        """Return whether ``feature`` carries this semantic marker."""
+        return any(
+            issubclass(marker_type, cls) for marker_type in feature.semantic_markers
+        )
+
+    @classmethod
+    def qualified_family(cls, feature: "RuntimeMeasurementFeature") -> str:
+        """Return a marker-qualified feature family name."""
+        if cls.family_qualifier is None:
+            raise ValueError(f"{cls.__name__} does not declare family_qualifier.")
+        return normalize_runtime_identifier(f"{cls.family_qualifier}_{feature.value}")
+
+    @classmethod
+    def requires_sparse_boundary_object_count_stability(cls) -> bool:
+        """Return whether sparse-boundary comparison is gated by object count."""
+        return True
+
+
+class ObjectCountFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for object-count measurement features."""
+
+    family_qualifier = "count"
+
+
+class ObjectIdentifierFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for object-identifier measurement features."""
+
+    family_qualifier = "identifier"
+
+
+class MeasuredObjectAnchorFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for features proving that an object row was measured."""
+
+    family_qualifier = "object"
+
+
+class ObjectLocationFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for object-location measurement features."""
+
+    family_qualifier = "location"
+
+
+class ObjectIntensityFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for object-intensity measurement features."""
+
+    family_qualifier = "intensity"
+
+
+class ObjectCalculatedFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for calculated object measurement features."""
+
+    family_qualifier = "calculated"
+
+    @classmethod
+    def requires_sparse_boundary_object_count_stability(cls) -> bool:
+        """Calculated object aggregates may gain or lose missing boundary rows."""
+        return False
+
+
+class ObjectShapeDescriptorFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Generic marker for object shape-descriptor measurement features."""
+
+    family_qualifier = "shape"
+
+
+class RuntimeMeasurementIndexedDescriptorDeclaration(ABC, metaclass=AutoRegisterMeta):
+    """Registered parser/renderer declaration for indexed feature names."""
+
+    __registry_key__ = "descriptor_key"
+    __skip_if_no_key__ = True
+    descriptor_key: ClassVar[str | None] = None
+
+    @classmethod
+    def require_registered(
+        cls,
+        declaration_type: type["RuntimeMeasurementIndexedDescriptorDeclaration"],
+    ) -> type["RuntimeMeasurementIndexedDescriptorDeclaration"]:
+        """Return a registered indexed-descriptor declaration type."""
+        if not isinstance(declaration_type, type) or not issubclass(
+            declaration_type,
+            RuntimeMeasurementIndexedDescriptorDeclaration,
+        ):
+            raise TypeError(
+                "Indexed descriptor declaration must inherit "
+                "RuntimeMeasurementIndexedDescriptorDeclaration."
+            )
+        if declaration_type not in cls.__registry__.values():
+            raise TypeError(
+                f"{declaration_type.__name__} is not registered in {cls.__name__}."
+            )
+        return declaration_type
+
+    @classmethod
+    def matching_declarations(
+        cls,
+        feature_name: str,
+    ) -> tuple[tuple[type["RuntimeMeasurementIndexedDescriptorDeclaration"], object], ...]:
+        """Return registered descriptor declarations that parse ``feature_name``."""
+        return tuple(
+            (declaration_type, descriptor)
+            for declaration_type in cls.__registry__.values()
+            for descriptor in (declaration_type.from_feature_name(feature_name),)
+            if descriptor is not None
+        )
+
+    @classmethod
+    def indexed_suffix_token_width_for(
+        cls,
+        feature_tokens: tuple[str, ...],
+    ) -> int | None:
+        """Return the unique registered descriptor suffix width for feature tokens."""
+        suffix_widths = frozenset(
+            suffix_width
+            for declaration_type in cls.__registry__.values()
+            for suffix_width in (
+                declaration_type.indexed_suffix_token_width(feature_tokens),
+            )
+            if suffix_width is not None
+        )
+        if not suffix_widths:
+            return None
+        if len(suffix_widths) != 1:
+            raise ValueError(
+                "Indexed descriptor declarations disagree on suffix width for "
+                f"{feature_tokens!r}: {tuple(sorted(suffix_widths))!r}."
+            )
+        return next(iter(suffix_widths))
+
+    @classmethod
+    @abstractmethod
+    def from_feature_name(
+        cls,
+        feature_name: str,
+    ) -> object | None:
+        """Parse ``feature_name`` into this declaration's descriptor identity."""
+
+    @classmethod
+    @abstractmethod
+    def feature_name(
+        cls,
+        descriptor: object,
+    ) -> str:
+        """Render one descriptor identity."""
+
+    @classmethod
+    @abstractmethod
+    def indexed_suffix_token_width(
+        cls,
+        feature_tokens: tuple[str, ...],
+    ) -> int | None:
+        """Return trailing token width owned by the descriptor index, if any."""
 
 
 class RuntimeMeasurementFeature(str, Enum):
     """Base for generated runtime measurement feature enums."""
 
+    def __new__(
+        cls,
+        value: str,
+        relations: Iterable[RuntimeMeasurementFeatureRelation] = (),
+        semantic_markers: Iterable[type[RuntimeMeasurementFeatureSemanticMarker]] = (),
+        indexed_descriptor_declarations: Iterable[
+            type[RuntimeMeasurementIndexedDescriptorDeclaration]
+        ] = (),
+    ):
+        descriptor_declarations = tuple(
+            RuntimeMeasurementIndexedDescriptorDeclaration.require_registered(
+                declaration_type
+            )
+            for declaration_type in indexed_descriptor_declarations
+        )
+        member = str_enum_member_with_payload(
+            cls, value, payload_attribute="_relations", payload=tuple(relations)
+        )
+        member.__dict__["_semantic_markers"] = tuple(semantic_markers)
+        member.__dict__["_indexed_descriptor_declarations"] = descriptor_declarations
+        return member
+
     feature_name = AliasProperty[str]("value")
+    relations = AliasProperty[tuple[RuntimeMeasurementFeatureRelation, ...]](
+        "_relations"
+    )
+    semantic_markers = AliasProperty[
+        tuple[type[RuntimeMeasurementFeatureSemanticMarker], ...]
+    ]("_semantic_markers")
+    _indexed_descriptor_declaration_types = AliasProperty[
+        tuple[type[RuntimeMeasurementIndexedDescriptorDeclaration], ...]
+    ]("_indexed_descriptor_declarations")
+
+    def feature_family(self) -> str:
+        """Return this feature's normalized runtime family."""
+        return normalize_runtime_identifier(self.value)
+
+    def relation_declarations(
+        self,
+    ) -> tuple[RuntimeMeasurementFeatureRelationDeclaration, ...]:
+        """Return relation declarations owned by this feature member."""
+        return tuple(
+            (
+                RuntimeMeasurementFeatureRelationDeclaration(self, relation)
+                for relation in self.relations
+            )
+        )
+
+    def indexed_descriptor_declarations(
+        self,
+    ) -> tuple[type[RuntimeMeasurementIndexedDescriptorDeclaration], ...]:
+        """Return parser/render declarations owned by this feature member."""
+        return self._indexed_descriptor_declaration_types
 
 
-for _measurement_feature_spec in (
-    GeneratedEnumClassSpec(
-        class_name="PairMeasurementFeature",
-        base_type=RuntimeMeasurementFeature,
-        members={
-            "CORRELATION": "correlation",
-            "REGRESSION_SLOPE": "slope",
-            "OVERLAP": "overlap",
-            "COSTES_MANDERS": "costes",
-            "MANDERS": "manders",
-            "RANK_WEIGHTED_COLOCALIZATION": "rwc",
-            "OVERLAP_K": "k",
-        },
-    ),
-):
-    _measurement_feature_spec.declare_in(globals())
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureRelationDeclaration:
+    """One producer-owned relation declared between measurement feature families."""
+
+    source_feature: RuntimeMeasurementFeature
+    relation: RuntimeMeasurementFeatureRelation
+
+    def source_family_names(
+        self, relation_type: type[RuntimeMeasurementFeatureRelation]
+    ) -> tuple[str, ...]:
+        """Return source families when this declaration belongs to ``relation_type``."""
+        if not isinstance(self.relation, relation_type):
+            return ()
+        return self.relation.source_family_names(self.source_feature)
+
+    def target_family_name(
+        self,
+        relation_type: type[RuntimeMeasurementFeatureRelation],
+        source_family_name: str,
+    ) -> str | None:
+        """Return the target family for one source family and relation type."""
+        if not isinstance(self.relation, relation_type):
+            return None
+        return self.relation.target_family_name(
+            self.source_feature, source_family_name, type(self.source_feature)
+        )
 
 
-class ObjectMeasurementFeatureRole(str, Enum):
-    """Nominal semantic roles for generic object measurement features."""
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureRelationDeclarationCollection:
+    """Blind query surface over producer-declared feature relations."""
 
-    COUNT = "count"
-    IDENTIFIER = "identifier"
-    MEASURED_OBJECT_ANCHOR = "measured_object_anchor"
-    LOCATION = "location"
-    INTENSITY = "intensity"
-    CALCULATED = "calculated"
-    SHAPE_DESCRIPTOR = "shape_descriptor"
-    ZERNIKE_DESCRIPTOR = "zernike_descriptor"
+    declarations: tuple[RuntimeMeasurementFeatureRelationDeclaration, ...]
+
+    def __init__(
+        self, declarations: Iterable[RuntimeMeasurementFeatureRelationDeclaration]
+    ) -> None:
+        normalized = tuple(declarations)
+        for declaration in normalized:
+            if not isinstance(
+                declaration, RuntimeMeasurementFeatureRelationDeclaration
+            ):
+                raise TypeError(
+                    "RuntimeMeasurementFeatureRelationDeclarationCollection requires RuntimeMeasurementFeatureRelationDeclaration values."
+                )
+        object.__setattr__(self, "declarations", normalized)
+
+    def source_family_names(
+        self, relation_type: type[RuntimeMeasurementFeatureRelation]
+    ) -> tuple[str, ...]:
+        """Return all declared source families for one relation type."""
+        return tuple(
+            (
+                family_name
+                for declaration in self.declarations
+                for family_name in declaration.source_family_names(relation_type)
+            )
+        )
+
+    def target_family_name(
+        self,
+        relation_type: type[RuntimeMeasurementFeatureRelation],
+        source_family_name: str,
+    ) -> str | None:
+        """Return the declared target family for one source family."""
+        for declaration in self.declarations:
+            target_family = declaration.target_family_name(
+                relation_type, source_family_name
+            )
+            if target_family is not None:
+                return target_family
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureFamilyRelation(RuntimeMeasurementFeatureRelation):
+    """Relation from one feature family to another family in the same enum."""
+
+    target_member_name: str
+
+    def target_feature(
+        self, feature_type: type[RuntimeMeasurementFeature]
+    ) -> RuntimeMeasurementFeature:
+        """Return the target feature member named by this relation."""
+        try:
+            return feature_type.__members__[self.target_member_name]
+        except KeyError as exc:
+            raise ValueError(
+                f"{feature_type.__name__} relation targets unknown member {self.target_member_name!r}."
+            ) from exc
+
+    def source_family_names(
+        self, source_feature: RuntimeMeasurementFeature
+    ) -> tuple[str, ...]:
+        """Return feature-family names that select the relation source."""
+        return (source_feature.feature_family(),)
+
+    def target_family_name(
+        self,
+        source_feature: RuntimeMeasurementFeature,
+        source_family_name: str,
+        feature_type: type[RuntimeMeasurementFeature],
+    ) -> str | None:
+        """Return the target family when ``source_family_name`` selects source."""
+        if normalize_runtime_identifier(source_family_name) not in (
+            normalize_runtime_identifier(family)
+            for family in self.source_family_names(source_feature)
+        ):
+            return None
+        return self.target_feature(feature_type).feature_family()
 
 
 class MeasurementStatistic(str, Enum):
@@ -1501,20 +1744,14 @@ class MeasurementStatistic(str, Enum):
     MEAN = "mean"
 
 
-for _measurement_feature_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ObjectCoreMeasurementFeature",
-        base_type=RuntimeMeasurementFeature,
-        members={
-            "OBJECT_COUNT": "object_count",
-            "OBJECT_NUMBER": "object_number",
-            "CENTER_X": "center_x",
-            "CENTER_Y": "center_y",
-            "CENTER_Z": "center_z",
-        },
-    ),
-):
-    _measurement_feature_spec.declare_in(globals())
+class ObjectCoreMeasurementFeature(RuntimeMeasurementFeature):
+    """Core object-measurement feature families."""
+
+    OBJECT_COUNT = "object_count"
+    OBJECT_NUMBER = "object_number"
+    CENTER_X = "center_x"
+    CENTER_Y = "center_y"
+    CENTER_Z = "center_z"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1533,16 +1770,13 @@ class ObjectLocationCoordinateProjectionStrategy(
     """Project dense-label coordinates for one nominal object-location feature."""
 
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    __enum_member_attr__ = "coordinate_feature"
-
-    coordinate_feature: ClassVar[ObjectCoreMeasurementFeature]
+    __enum_member_attr__ = "axis_feature"
+    axis_feature: ClassVar[ObjectCoreMeasurementFeature]
     strategy_label: ClassVar[str | None] = None
 
     @abstractmethod
     def coordinate_values(
-        self,
-        axis_centers: Sequence[Any],
-        counts: Any,
+        self, axis_centers: Sequence[Any], counts: Any
     ) -> ObjectLocationCoordinateValues:
         """Return dense label-indexed coordinate values for this feature."""
 
@@ -1565,24 +1799,18 @@ class AxisBackedObjectLocationCoordinateProjectionStrategy(
     absent_axis_missing_for_unlabeled_objects: ClassVar[bool] = True
 
     def coordinate_values(
-        self,
-        axis_centers: Sequence[Any],
-        counts: Any,
+        self, axis_centers: Sequence[Any], counts: Any
     ) -> ObjectLocationCoordinateValues:
         import numpy as np
 
         if len(axis_centers) >= type(self).required_ndim:
             return ObjectLocationCoordinateValues(
-                axis_centers[type(self).axis_offset],
-                include_missing=False,
+                axis_centers[type(self).axis_offset], include_missing=False
             )
         values = np.zeros(len(counts))
         if type(self).absent_axis_missing_for_unlabeled_objects:
             values = self.missing_for_absent_labels(values, counts)
-        return ObjectLocationCoordinateValues(
-            values,
-            include_missing=False,
-        )
+        return ObjectLocationCoordinateValues(values, include_missing=False)
 
 
 for _coordinate_projection_spec in (
@@ -1590,7 +1818,7 @@ for _coordinate_projection_spec in (
         class_name="CenterXObjectLocationCoordinateProjectionStrategy",
         base_type=AxisBackedObjectLocationCoordinateProjectionStrategy,
         attributes={
-            "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_X,
+            "axis_feature": ObjectCoreMeasurementFeature.CENTER_X,
             "required_ndim": 1,
             "axis_offset": -1,
         },
@@ -1599,7 +1827,7 @@ for _coordinate_projection_spec in (
         class_name="CenterYObjectLocationCoordinateProjectionStrategy",
         base_type=AxisBackedObjectLocationCoordinateProjectionStrategy,
         attributes={
-            "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_Y,
+            "axis_feature": ObjectCoreMeasurementFeature.CENTER_Y,
             "required_ndim": 2,
             "axis_offset": -2,
         },
@@ -1608,7 +1836,7 @@ for _coordinate_projection_spec in (
         class_name="CenterZObjectLocationCoordinateProjectionStrategy",
         base_type=AxisBackedObjectLocationCoordinateProjectionStrategy,
         attributes={
-            "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_Z,
+            "axis_feature": ObjectCoreMeasurementFeature.CENTER_Z,
             "required_ndim": 3,
             "axis_offset": -3,
             "absent_axis_missing_for_unlabeled_objects": False,
@@ -1619,21 +1847,16 @@ for _coordinate_projection_spec in (
 
 
 def object_location_coordinate_arrays(
-    axis_centers: Sequence[Any],
-    counts: Any,
+    axis_centers: Sequence[Any], counts: Any
 ) -> tuple[tuple[str, ObjectLocationCoordinateValues], ...]:
     """Return nominal object-location coordinate arrays in core feature order."""
     return tuple(
         (
-            feature.value,
-            ObjectLocationCoordinateProjectionStrategy.for_enum_member(
-                feature,
-            ).coordinate_values(axis_centers, counts),
+            strategy_type.axis_feature.value,
+            strategy_type().coordinate_values(axis_centers, counts),
         )
-        for feature in (
-            ObjectCoreMeasurementFeature.CENTER_X,
-            ObjectCoreMeasurementFeature.CENTER_Y,
-            ObjectCoreMeasurementFeature.CENTER_Z,
+        for strategy_type in (
+            ObjectLocationCoordinateProjectionStrategy.registered_strategy_types()
         )
     )
 
@@ -1649,113 +1872,6 @@ class ObjectLocationMeasurementFeature(str, Enum):
     def core_feature(self) -> ObjectCoreMeasurementFeature:
         """Return the normalized core feature represented by this location feature."""
         return ObjectCoreMeasurementFeature[self.name]
-
-
-for _measurement_feature_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ObjectIntensityMeasurementFeature",
-        base_type=RuntimeMeasurementFeature,
-        members={
-            "INTEGRATED_INTENSITY": "IntegratedIntensity",
-            "MEAN_INTENSITY": "MeanIntensity",
-            "STD_INTENSITY": "StdIntensity",
-            "MIN_INTENSITY": "MinIntensity",
-            "MAX_INTENSITY": "MaxIntensity",
-            "INTEGRATED_INTENSITY_EDGE": "IntegratedIntensityEdge",
-            "MEAN_INTENSITY_EDGE": "MeanIntensityEdge",
-            "STD_INTENSITY_EDGE": "StdIntensityEdge",
-            "MIN_INTENSITY_EDGE": "MinIntensityEdge",
-            "MAX_INTENSITY_EDGE": "MaxIntensityEdge",
-            "MASS_DISPLACEMENT": "MassDisplacement",
-            "LOWER_QUARTILE_INTENSITY": "LowerQuartileIntensity",
-            "MEDIAN_INTENSITY": "MedianIntensity",
-            "MAD_INTENSITY": "MADIntensity",
-            "UPPER_QUARTILE_INTENSITY": "UpperQuartileIntensity",
-            "CENTER_MASS_INTENSITY_X": "CenterMassIntensity_X",
-            "CENTER_MASS_INTENSITY_Y": "CenterMassIntensity_Y",
-            "CENTER_MASS_INTENSITY_Z": "CenterMassIntensity_Z",
-            "MAX_INTENSITY_X": "MaxIntensity_X",
-            "MAX_INTENSITY_Y": "MaxIntensity_Y",
-            "MAX_INTENSITY_Z": "MaxIntensity_Z",
-        },
-    ),
-    GeneratedEnumClassSpec(
-        class_name="ImageAreaOccupiedMeasurementFeature",
-        base_type=RuntimeMeasurementFeature,
-        members={
-            "AREA_OCCUPIED": "AreaOccupied",
-            "PERIMETER": "Perimeter",
-            "TOTAL_AREA": "TotalArea",
-        },
-    ),
-    GeneratedEnumClassSpec(
-        class_name="ObjectShapeMeasurementFeature",
-        base_type=RuntimeMeasurementFeature,
-        members={
-            "AREA": "Area",
-            "PERIMETER": "Perimeter",
-            "VOLUME": "Volume",
-            "SURFACE_AREA": "SurfaceArea",
-            "ECCENTRICITY": "Eccentricity",
-            "SOLIDITY": "Solidity",
-            "CONVEX_AREA": "ConvexArea",
-            "EXTENT": "Extent",
-            "CENTER_X": "Center_X",
-            "CENTER_Y": "Center_Y",
-            "CENTER_Z": "Center_Z",
-            "BOUNDING_BOX_AREA": "BoundingBoxArea",
-            "BOUNDING_BOX_VOLUME": "BoundingBoxVolume",
-            "BOUNDING_BOX_MINIMUM_X": "BoundingBoxMinimum_X",
-            "BOUNDING_BOX_MAXIMUM_X": "BoundingBoxMaximum_X",
-            "BOUNDING_BOX_MINIMUM_Y": "BoundingBoxMinimum_Y",
-            "BOUNDING_BOX_MAXIMUM_Y": "BoundingBoxMaximum_Y",
-            "BOUNDING_BOX_MINIMUM_Z": "BoundingBoxMinimum_Z",
-            "BOUNDING_BOX_MAXIMUM_Z": "BoundingBoxMaximum_Z",
-            "EULER_NUMBER": "EulerNumber",
-            "FORM_FACTOR": "FormFactor",
-            "MAJOR_AXIS_LENGTH": "MajorAxisLength",
-            "MINOR_AXIS_LENGTH": "MinorAxisLength",
-            "ORIENTATION": "Orientation",
-            "COMPACTNESS": "Compactness",
-            "MAXIMUM_RADIUS": "MaximumRadius",
-            "MEDIAN_RADIUS": "MedianRadius",
-            "MEAN_RADIUS": "MeanRadius",
-            "MIN_FERET_DIAMETER": "MinFeretDiameter",
-            "MAX_FERET_DIAMETER": "MaxFeretDiameter",
-            "EQUIVALENT_DIAMETER": "EquivalentDiameter",
-            "SPATIAL_MOMENT": "SpatialMoment",
-            "CENTRAL_MOMENT": "CentralMoment",
-            "NORMALIZED_MOMENT": "NormalizedMoment",
-            "HU_MOMENT": "HuMoment",
-            "INERTIA_TENSOR": "InertiaTensor",
-            "INERTIA_TENSOR_EIGENVALUES": "InertiaTensorEigenvalues",
-            "ZERNIKE": "Zernike",
-        },
-    ),
-):
-    _measurement_feature_spec.declare_in(globals())
-
-
-class ObjectZernikeDescriptorFeature(str, Enum):
-    """Canonical object Zernike descriptor families."""
-
-    SHAPE = "zernike"
-    INTENSITY_MAGNITUDE = "zernike_magnitude"
-    INTENSITY_PHASE = "zernike_phase"
-
-
-for _measurement_feature_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ObjectIntensityDistributionMeasurementFeature",
-        base_type=RuntimeMeasurementFeature,
-        members={
-            "FRACTION_AT_DISTANCE": "FracAtD",
-            "MEAN_FRACTION": "MeanFrac",
-            "RADIAL_CV": "RadialCV",
-        },
-    ),
-):
-    _measurement_feature_spec.declare_in(globals())
 
 
 @dataclass(frozen=True, slots=True)
@@ -1774,240 +1890,6 @@ class ObjectMeasurementSliceValueRow(ObjectMeasurementValueRow):
     slice_index: int
 
 
-class ObjectIntensityZernikeFeatureNameStrategy(
-    EnumKeyedStrategyMixin[ObjectZernikeDescriptorFeature],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Render intensity Zernike feature families with nominal dispatch."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    __enum_member_attr__ = "feature"
-
-    feature: ClassVar[ObjectZernikeDescriptorFeature]
-    strategy_label: ClassVar[str | None] = None
-
-    @abstractmethod
-    def family_name(self) -> str:
-        """Return the external feature-family name for this descriptor."""
-
-    def feature_name(self, *, degree: int, repetition: int) -> str:
-        """Return CP-compatible long-form intensity Zernike feature identity."""
-        return (
-            f"IntensityDistribution_{self.family_name()}_"
-            f"{int(degree)}_{int(repetition)}"
-        )
-
-
-class ObjectIntensityZernikeMagnitudeFeatureNameStrategy(
-    ObjectIntensityZernikeFeatureNameStrategy
-):
-    """Render intensity Zernike magnitude rows."""
-
-    feature = ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE
-
-    def family_name(self) -> str:
-        return "ZernikeMagnitude"
-
-
-class ObjectIntensityZernikePhaseFeatureNameStrategy(
-    ObjectIntensityZernikeFeatureNameStrategy
-):
-    """Render intensity Zernike phase rows."""
-
-    feature = ObjectZernikeDescriptorFeature.INTENSITY_PHASE
-
-    def family_name(self) -> str:
-        return "ZernikePhase"
-
-
-@lru_cache(maxsize=None)
-def indexed_object_intensity_distribution_feature_name(
-    feature: ObjectIntensityDistributionMeasurementFeature | str,
-    *,
-    bin_index: int,
-    bin_count: int,
-) -> str:
-    """Return CP-compatible long-form radial distribution feature identity."""
-    feature = coerce_enum(
-        ObjectIntensityDistributionMeasurementFeature,
-        feature,
-        "indexed_object_intensity_distribution_feature_name.feature",
-    )
-    return f"IntensityDistribution_{feature.value}_{int(bin_index)}of{int(bin_count)}"
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectIntensityDistributionMeasurementRows:
-    """Materialize long-form object radial intensity-distribution rows."""
-
-    radial_arrays: Any
-    object_ids: Sequence[int]
-    bin_count: int
-    slice_index: int | None = None
-
-    def rows(self) -> list[ObjectMeasurementValueRow]:
-        object_ids = tuple(int(object_id) for object_id in self.object_ids)
-        rows = cast(
-            list[ObjectMeasurementValueRow],
-            [None] * (len(object_ids) * int(self.radial_arrays.n_bins) * 3),
-        )
-        row_index = 0
-        row_type = (
-            ObjectMeasurementValueRow
-            if self.slice_index is None
-            else ObjectMeasurementSliceValueRow
-        )
-        fraction_at_distance = self.radial_arrays.fraction_at_distance
-        mean_pixel_fraction = self.radial_arrays.mean_pixel_fraction
-        radial_cv_by_bin = self.radial_arrays.radial_cv_by_bin
-        object_has_pixels_by_index = self.radial_arrays.object_has_pixels
-        for bin_idx in range(self.radial_arrays.n_bins):
-            bin_index = bin_idx + 1
-            fraction_at_distance_feature = (
-                indexed_object_intensity_distribution_feature_name(
-                    ObjectIntensityDistributionMeasurementFeature.FRACTION_AT_DISTANCE,
-                    bin_index=bin_index,
-                    bin_count=self.bin_count,
-                )
-            )
-            mean_fraction_feature = indexed_object_intensity_distribution_feature_name(
-                ObjectIntensityDistributionMeasurementFeature.MEAN_FRACTION,
-                bin_index=bin_index,
-                bin_count=self.bin_count,
-            )
-            radial_cv_feature = indexed_object_intensity_distribution_feature_name(
-                ObjectIntensityDistributionMeasurementFeature.RADIAL_CV,
-                bin_index=bin_index,
-                bin_count=self.bin_count,
-            )
-            radial_cv = radial_cv_by_bin[bin_idx]
-            for object_label in object_ids:
-                obj_idx = object_label - 1
-                object_has_pixels = bool(object_has_pixels_by_index[obj_idx])
-                frac_at_d = (
-                    float(fraction_at_distance[obj_idx, bin_idx])
-                    if object_has_pixels
-                    else np.nan
-                )
-                mean_frac = (
-                    float(mean_pixel_fraction[obj_idx, bin_idx])
-                    if object_has_pixels
-                    else np.nan
-                )
-                rows[row_index] = row_type(
-                    object_label=object_label,
-                    feature_name=fraction_at_distance_feature,
-                    result_value=frac_at_d,
-                    **self.slice_kwargs,
-                )
-                row_index += 1
-                rows[row_index] = row_type(
-                    object_label=object_label,
-                    feature_name=mean_fraction_feature,
-                    result_value=mean_frac,
-                    **self.slice_kwargs,
-                )
-                row_index += 1
-                rows[row_index] = row_type(
-                    object_label=object_label,
-                    feature_name=radial_cv_feature,
-                    result_value=float(radial_cv[obj_idx]),
-                    **self.slice_kwargs,
-                )
-                row_index += 1
-        return rows
-
-    @property
-    def slice_kwargs(self) -> dict[str, int]:
-        return {} if self.slice_index is None else {"slice_index": self.slice_index}
-
-@lru_cache(maxsize=None)
-def indexed_object_intensity_zernike_feature_name(
-    feature: ObjectZernikeDescriptorFeature | str,
-    *,
-    degree: int,
-    repetition: int,
-) -> str:
-    """Return CP-compatible long-form intensity Zernike feature identity."""
-    feature = coerce_enum(
-        ObjectZernikeDescriptorFeature,
-        feature,
-        "indexed_object_intensity_zernike_feature_name.feature",
-    )
-    return ObjectIntensityZernikeFeatureNameStrategy.for_enum_member(
-        feature
-    ).feature_name(degree=degree, repetition=repetition)
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectIntensityZernikeMeasurementRows:
-    """Materialize long-form object intensity-Zernike rows from backend arrays."""
-
-    object_ids: Sequence[int]
-    zernike_indexes: Sequence[tuple[int, int]]
-    magnitudes: Any
-    phases: Any
-    include_phase: bool
-    slice_index: int | None = None
-
-    def rows(self) -> list[ObjectMeasurementValueRow]:
-        """Return rows in canonical magnitude-then-phase feature order."""
-        object_ids = np.asarray(self.object_ids, dtype=np.int32)
-        zernike_indexes = tuple((int(n), int(m)) for n, m in self.zernike_indexes)
-        if object_ids.size == 0 or len(zernike_indexes) == 0:
-            return []
-
-        magnitude_values = np.asarray(self.magnitudes, dtype=np.float64)
-        phase_values = np.asarray(self.phases, dtype=np.float64)
-        descriptor_count = 2 if self.include_phase else 1
-        rows = cast(
-            list[ObjectMeasurementValueRow],
-            [None] * (object_ids.size * len(zernike_indexes) * descriptor_count),
-        )
-        row_index = 0
-        row_type = (
-            ObjectMeasurementValueRow
-            if self.slice_index is None
-            else ObjectMeasurementSliceValueRow
-        )
-        for index, (degree, repetition) in enumerate(zernike_indexes):
-            magnitude_feature = indexed_object_intensity_zernike_feature_name(
-                ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
-                degree=degree,
-                repetition=repetition,
-            )
-            magnitude_column = magnitude_values[:, index]
-            for object_label, value in zip(object_ids, magnitude_column, strict=True):
-                rows[row_index] = row_type(
-                    object_label=int(object_label),
-                    feature_name=magnitude_feature,
-                    result_value=float(value),
-                    **self.slice_kwargs,
-                )
-                row_index += 1
-            if self.include_phase:
-                phase_feature = indexed_object_intensity_zernike_feature_name(
-                    ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
-                    degree=degree,
-                    repetition=repetition,
-                )
-                phase_column = phase_values[:, index]
-                for object_label, value in zip(object_ids, phase_column, strict=True):
-                    rows[row_index] = row_type(
-                        object_label=int(object_label),
-                        feature_name=phase_feature,
-                        result_value=float(value),
-                        **self.slice_kwargs,
-                    )
-                    row_index += 1
-        return rows
-
-    @property
-    def slice_kwargs(self) -> dict[str, int]:
-        return {} if self.slice_index is None else {"slice_index": self.slice_index}
-
-
 class MeasurementRowAxisField(str, Enum):
     """Canonical row-axis fields for long/tall measurement tables."""
 
@@ -2021,6 +1903,7 @@ class MeasurementRowAxisField(str, Enum):
     OBJECT_NUMBER = "object_number"
     OBJECT_ID = "object_id"
     LABEL = "label"
+    OBJECT_ROW_IDENTITY = "openhcs_object_row_identity"
     SOURCE_IMAGE_NAME = "source_image_name"
     BIN_INDEX = "bin_index"
     BIN_COUNT = "bin_count"
@@ -2029,6 +1912,70 @@ class MeasurementRowAxisField(str, Enum):
     GRAY_LEVELS = "gray_levels"
     ZERNIKE_N = "n"
     ZERNIKE_M = "m"
+
+    @classmethod
+    def field_names(cls) -> frozenset[str]:
+        """Return every canonical row-axis field name."""
+        return frozenset((field.value for field in cls))
+
+    @classmethod
+    def object_id_fields(cls) -> tuple["MeasurementRowAxisField", ...]:
+        """Return axis fields that can identify an object row."""
+        return (
+            cls.OBJECT_LABEL,
+            cls.OBJECT_NUMBER,
+            cls.OBJECT_ID,
+            cls.LABEL,
+        )
+
+    @classmethod
+    def object_id_field_names(cls) -> tuple[str, ...]:
+        """Return canonical object-row identity field names."""
+        return tuple(field.value for field in cls.object_id_fields())
+
+    @classmethod
+    def normalized_object_id_field_names(cls) -> frozenset[str]:
+        """Return normalized object-row identity field names."""
+        return frozenset(
+            normalize_runtime_identifier(field_name)
+            for field_name in (
+                *cls.object_id_field_names(),
+                cls.OBJECT_ROW_IDENTITY.value,
+            )
+        )
+
+    @classmethod
+    def object_ownership_fields(cls) -> tuple["MeasurementRowAxisField", ...]:
+        """Return row-axis fields that declare row ownership."""
+        return (cls.OBJECT_NAME, cls.SOURCE_IMAGE_NAME)
+
+    @classmethod
+    def object_ownership_field_names(cls) -> tuple[str, ...]:
+        """Return canonical row ownership field names."""
+        return tuple(field.value for field in cls.object_ownership_fields())
+
+    @classmethod
+    def feature_name_fields(cls) -> tuple["MeasurementRowAxisField", ...]:
+        """Return axis fields that name long-form measurement features."""
+        return (cls.FEATURE_NAME, cls.MEASUREMENT_NAME, cls.OUTPUT_NAME)
+
+    @classmethod
+    def feature_name_field_names_ordered(cls) -> tuple[str, ...]:
+        """Return long-form feature-name fields in semantic priority order."""
+        return tuple(field.value for field in cls.feature_name_fields())
+
+    @classmethod
+    def feature_name_field_names(cls) -> frozenset[str]:
+        """Return canonical long-form feature-name field names."""
+        return frozenset(cls.feature_name_field_names_ordered())
+
+    @classmethod
+    def normalized_feature_name_field_names(cls) -> frozenset[str]:
+        """Return normalized long-form feature-name field names."""
+        return frozenset(
+            normalize_runtime_identifier(field_name)
+            for field_name in cls.feature_name_field_names()
+        )
 
 
 class MeasurementRowValueField(str, Enum):
@@ -2039,15 +1986,36 @@ class MeasurementRowValueField(str, Enum):
     VALUE = "value"
     MEAN_VALUE = "mean_value"
 
+    @classmethod
+    def fields(cls) -> tuple["MeasurementRowValueField", ...]:
+        """Return scalar measurement value fields in semantic priority order."""
+        return (cls.RESULT_VALUE, cls.MEASUREMENT_VALUE, cls.VALUE, cls.MEAN_VALUE)
+
+    @classmethod
+    def field_names_ordered(cls) -> tuple[str, ...]:
+        """Return scalar measurement value field names in semantic priority order."""
+        return tuple(field.value for field in cls.fields())
+
+    @classmethod
+    def field_names(cls) -> frozenset[str]:
+        """Return every canonical scalar measurement value field name."""
+        return frozenset(cls.field_names_ordered())
+
+    @classmethod
+    def normalized_field_names(cls) -> frozenset[str]:
+        """Return normalized scalar measurement value field names."""
+        return frozenset(
+            normalize_runtime_identifier(field_name) for field_name in cls.field_names()
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class MeasurementScalarLiteral:
     """Scalar classification shared by measurement row and setting policies."""
 
     raw_value: object
-
     _NUMERIC_LITERAL_RE: ClassVar[re.Pattern[str]] = re.compile(
-        r"^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|nan|inf|infinity)$",
+        "^[+-]?(?:(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?|nan|inf|infinity)$",
         re.IGNORECASE,
     )
 
@@ -2088,7 +2056,7 @@ class MeasurementScalarLiteral:
     @property
     def is_nonfinite_numeric(self) -> bool:
         value = self.numeric_value
-        return value is not None and not math.isfinite(value)
+        return value is not None and (not math.isfinite(value))
 
     @property
     def finite_numeric_value(self) -> float | None:
@@ -2124,8 +2092,7 @@ class MeasurementScalarLiteral:
 
 
 def measurement_axis_integer_value(
-    value: object,
-    axis: MeasurementRowAxisField,
+    value: object, axis: MeasurementRowAxisField
 ) -> int | None:
     """Return one present integer axis value, or ``None`` for absent values."""
     if value is None:
@@ -2140,8 +2107,7 @@ def measurement_axis_integer_value(
         integer_value = literal.integer_value
         if integer_value is None:
             raise ValueError(
-                f"Measurement axis field {axis.value!r} requires integer-compatible "
-                f"values, got {value!r}."
+                f"Measurement axis field {axis.value!r} requires integer-compatible values, got {value!r}."
             )
         return integer_value
     if isinstance(value, (bool, np.bool_)):
@@ -2155,8 +2121,7 @@ def measurement_axis_integer_value(
         if float(integer) == float(value):
             return integer
         raise ValueError(
-            f"Measurement axis field {axis.value!r} requires integer-compatible "
-            f"values, got {value!r}."
+            f"Measurement axis field {axis.value!r} requires integer-compatible values, got {value!r}."
         )
     literal = MeasurementScalarLiteral(value)
     if not literal.is_present_axis_value:
@@ -2164,23 +2129,21 @@ def measurement_axis_integer_value(
     integer_value = literal.integer_value
     if integer_value is None:
         raise ValueError(
-            f"Measurement axis field {axis.value!r} requires integer-compatible "
-            f"values, got {value!r}."
+            f"Measurement axis field {axis.value!r} requires integer-compatible values, got {value!r}."
         )
     return integer_value
 
 
 def measurement_axis_integer_domain(
-    values: Sequence[object],
-    axis: MeasurementRowAxisField,
+    values: Sequence[object], axis: MeasurementRowAxisField
 ) -> tuple[int, ...]:
     """Return the present integer domain for one row-axis value vector."""
     if isinstance(values, np.ndarray) and values.size == 0:
         return ()
     if isinstance(values, np.ndarray) and np.issubdtype(values.dtype, np.bool_):
-        return tuple(int(value) for value in np.unique(values))
+        return tuple((int(value) for value in np.unique(values)))
     if isinstance(values, np.ndarray) and np.issubdtype(values.dtype, np.integer):
-        return tuple(int(value) for value in np.unique(values))
+        return tuple((int(value) for value in np.unique(values)))
     if isinstance(values, np.ndarray) and np.issubdtype(values.dtype, np.floating):
         finite_values = values[np.isfinite(values)]
         if finite_values.size == 0:
@@ -2189,16 +2152,17 @@ def measurement_axis_integer_domain(
         if not bool(np.all(finite_values == integer_values)):
             invalid_value = finite_values[finite_values != integer_values][0]
             raise ValueError(
-                f"Measurement axis field {axis.value!r} requires "
-                f"integer-compatible values, got {invalid_value!r}."
+                f"Measurement axis field {axis.value!r} requires integer-compatible values, got {invalid_value!r}."
             )
-        return tuple(int(value) for value in np.unique(integer_values))
+        return tuple((int(value) for value in np.unique(integer_values)))
     return tuple(
         dict.fromkeys(
-            integer_value
-            for value in values
-            for integer_value in (measurement_axis_integer_value(value, axis),)
-            if integer_value is not None
+            (
+                integer_value
+                for value in values
+                for integer_value in (measurement_axis_integer_value(value, axis),)
+                if integer_value is not None
+            )
         )
     )
 
@@ -2218,9 +2182,7 @@ class MeasurementRowAxisState(str, Enum):
 
     @classmethod
     def for_image_number_presence(
-        cls,
-        *,
-        has_image_number: bool,
+        cls, *, has_image_number: bool
     ) -> "MeasurementRowAxisState":
         """Return row-axis state from precomputed ImageNumber presence."""
         return cls.IMAGE_NUMBER if has_image_number else cls.RUNTIME_AXES
@@ -2239,25 +2201,6 @@ class ObjectFeatureMissingValue(str, Enum):
 
     NAN = "nan"
     ZERO = "zero"
-
-
-def zernike_shape_feature_names(*, max_order: int) -> tuple[str, ...]:
-    """Return canonical shape-Zernike feature names for a maximum order."""
-    names: list[str] = []
-    for n in range(max_order + 1):
-        for m in range(n % 2, n + 1, 2):
-            names.append(f"{ObjectShapeMeasurementFeature.ZERNIKE.value}_{n}_{m}")
-    return tuple(names)
-
-
-class ObjectShapeZernikeFeatureContract:
-    """CellProfiler AreaShape Zernike descriptor field declaration."""
-
-    max_order: ClassVar[int] = 9
-
-    @classmethod
-    def feature_names(cls) -> tuple[str, ...]:
-        return zernike_shape_feature_names(max_order=cls.max_order)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2283,15 +2226,12 @@ class ObjectFeatureArrayDomainContext:
 
 
 class ObjectFeatureArrayDomainStrategy(
-    EnumKeyedStrategyMixin[ObjectFeatureArrayDomain],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ObjectFeatureArrayDomain], ABC, metaclass=AutoRegisterMeta
 ):
     """Project feature arrays according to their declared object domain."""
 
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "domain"
-
     domain: ClassVar[ObjectFeatureArrayDomain]
     strategy_label: ClassVar[str | None] = None
 
@@ -2300,8 +2240,7 @@ class ObjectFeatureArrayDomainStrategy(
         """Return the value index for ``context.object_id``."""
 
     def value_indexes(
-        self,
-        context: ObjectFeatureArrayDomainContext,
+        self, context: ObjectFeatureArrayDomainContext
     ) -> Mapping[int, int]:
         """Return object-id to value-index mappings for a feature array."""
         indexes: dict[int, int] = {}
@@ -2331,8 +2270,7 @@ class OrdinalObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
         return value_index if value_index < context.value_count else None
 
     def value_indexes(
-        self,
-        context: ObjectFeatureArrayDomainContext,
+        self, context: ObjectFeatureArrayDomainContext
     ) -> Mapping[int, int]:
         return {
             object_id: index
@@ -2366,8 +2304,7 @@ class LabelIdFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
         return context.value_count >= context.measured_object_max
 
     def value_indexes(
-        self,
-        context: ObjectFeatureArrayDomainContext,
+        self, context: ObjectFeatureArrayDomainContext
     ) -> Mapping[int, int]:
         return {
             object_id: object_id - 1
@@ -2389,15 +2326,12 @@ class RowOrdinalFeatureArrayDomainStrategy(OrdinalObjectFeatureArrayDomainStrate
 
 
 class ObjectFeatureMissingValueStrategy(
-    EnumKeyedStrategyMixin[ObjectFeatureMissingValue],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ObjectFeatureMissingValue], ABC, metaclass=AutoRegisterMeta
 ):
     """Emit declared missing values for unmeasured object-feature rows."""
 
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "missing_value"
-
     missing_value: ClassVar[ObjectFeatureMissingValue]
     strategy_label: ClassVar[str | None] = None
 
@@ -2426,15 +2360,12 @@ class ZeroObjectFeatureMissingValueStrategy(ObjectFeatureMissingValueStrategy):
 
 @dataclass(frozen=True, slots=True)
 class ObjectFeatureValueTable(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    NominalTypeKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Wide object-feature values aligned onto a declared object-id domain."""
 
     __registry_key__ = "table_label"
     __skip_if_no_key__ = True
-
     value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
     value_type_label: ClassVar[str | None] = None
     table_label: ClassVar[str | None] = None
@@ -2452,16 +2383,14 @@ class ObjectFeatureValueTable(
             self,
             "measured_object_ids",
             ObjectLabelDomain._normalize_ids(
-                self.measured_object_ids,
-                "ObjectFeatureValueTable.measured_object_ids",
+                self.measured_object_ids, "ObjectFeatureValueTable.measured_object_ids"
             ),
         )
         object.__setattr__(
             self,
             "object_domain",
             ObjectLabelDomain._normalize_ids(
-                self.object_domain,
-                "ObjectFeatureValueTable.object_domain",
+                self.object_domain, "ObjectFeatureValueTable.object_domain"
             ),
         )
         object.__setattr__(self, "slice_index", int(self.slice_index))
@@ -2477,8 +2406,10 @@ class ObjectFeatureValueTable(
         """Build a declared-domain table from measured feature arrays."""
         return cls(
             feature_values=feature_values,
-            measured_object_ids=tuple(int(object_id) for object_id in measured_object_ids),
-            object_domain=tuple(int(object_id) for object_id in object_domain),
+            measured_object_ids=tuple(
+                (int(object_id) for object_id in measured_object_ids)
+            ),
+            object_domain=tuple((int(object_id) for object_id in object_domain)),
             **kwargs,
         )
 
@@ -2486,15 +2417,17 @@ class ObjectFeatureValueTable(
         """Return wide rows ordered by the declared object domain."""
         feature_items = tuple(
             (
-                feature_name,
-                np.asarray(values),
-                self.python_feature_values(values),
-                ObjectFeatureMissingValueStrategy.for_enum_member(
-                    self.feature_missing_value(feature_name)
-                ).value(),
-                self.feature_value_indexes(feature_name, np.asarray(values)),
+                (
+                    feature_name,
+                    np.asarray(values),
+                    self.python_feature_values(values),
+                    ObjectFeatureMissingValueStrategy.for_enum_member(
+                        self.feature_missing_value(feature_name)
+                    ).value(),
+                    self.feature_value_indexes(feature_name, np.asarray(values)),
+                )
+                for feature_name, values in self.feature_values.items()
             )
-            for feature_name, values in self.feature_values.items()
         )
         rows: list[dict[str, float | int]] = []
         for object_id in self.object_domain:
@@ -2521,9 +2454,7 @@ class ObjectFeatureValueTable(
         return rows
 
     def feature_value_indexes(
-        self,
-        feature_name: str,
-        values: np.ndarray,
+        self, feature_name: str, values: np.ndarray
     ) -> Mapping[int, int]:
         """Return object-id to feature-value indexes for one feature array."""
         if values.ndim == 0:
@@ -2541,11 +2472,7 @@ class ObjectFeatureValueTable(
         )
 
     def feature_value_index(
-        self,
-        feature_name: str,
-        object_id: int,
-        *,
-        values: np.ndarray,
+        self, feature_name: str, object_id: int, *, values: np.ndarray
     ) -> int | None:
         """Return the feature-array index for one declared object ID."""
         return ObjectFeatureArrayDomainStrategy.for_enum_member(
@@ -2562,14 +2489,11 @@ class ObjectFeatureValueTable(
     def feature_array_domain(self, feature_name: str) -> ObjectFeatureArrayDomain:
         """Return the declared indexing domain for one feature array."""
         return self.feature_array_domains.get(
-            feature_name,
-            ObjectFeatureArrayDomain.MEASURED_OBJECT_ID,
+            feature_name, ObjectFeatureArrayDomain.MEASURED_OBJECT_ID
         )
 
     def validate_feature_value_domain(
-        self,
-        feature_name: str,
-        values: np.ndarray,
+        self, feature_name: str, values: np.ndarray
     ) -> None:
         """Fail when a feature array is not aligned to a declared object domain."""
         if values.ndim == 0:
@@ -2585,10 +2509,7 @@ class ObjectFeatureValueTable(
         ).accepts(context):
             return
         raise ValueError(
-            f"{type(self).__name__} feature {feature_name!r} has {context.value_count} "
-            f"values for {context.measured_object_count} measured objects. Feature arrays "
-            "must align to measured_object_ids unless the table declares another "
-            "feature-array domain."
+            f"{type(self).__name__} feature {feature_name!r} has {context.value_count} values for {context.measured_object_count} measured objects. Feature arrays must align to measured_object_ids unless the table declares another feature-array domain."
         )
 
     def python_feature_values(self, values: Any) -> Any:
@@ -2605,8 +2526,7 @@ class ObjectFeatureValueTable(
     def feature_missing_value(self, feature_name: str) -> ObjectFeatureMissingValue:
         """Return the declared missing-value policy for one feature."""
         return self.feature_missing_values.get(
-            feature_name,
-            ObjectFeatureMissingValue.NAN,
+            feature_name, ObjectFeatureMissingValue.NAN
         )
 
 
@@ -2614,44 +2534,6 @@ class GenericObjectFeatureValueTable(ObjectFeatureValueTable):
     """Generic object feature table with NaN missing values."""
 
     table_label = "generic"
-
-
-class ShapeObjectFeatureValueTable(ObjectFeatureValueTable):
-    """Object shape feature rows with CellProfiler-compatible missing values."""
-
-    table_label = "shape"
-    feature_array_domains: ClassVar[Mapping[str, ObjectFeatureArrayDomain]] = {
-        ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER.value: (
-            ObjectFeatureArrayDomain.ROW_ORDINAL
-        ),
-        ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value: (
-            ObjectFeatureArrayDomain.ROW_ORDINAL
-        ),
-        **{
-            field_name: ObjectFeatureArrayDomain.ROW_ORDINAL
-            for field_name in ObjectShapeZernikeFeatureContract.feature_names()
-        },
-    }
-    feature_missing_values: ClassVar[Mapping[str, ObjectFeatureMissingValue]] = {
-        feature.value: ObjectFeatureMissingValue.ZERO
-        for feature in (
-            ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER,
-            ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER,
-            ObjectShapeMeasurementFeature.MAXIMUM_RADIUS,
-            ObjectShapeMeasurementFeature.MEAN_RADIUS,
-            ObjectShapeMeasurementFeature.MEDIAN_RADIUS,
-        )
-    }
-
-    def feature_array_domain(self, feature_name: str) -> ObjectFeatureArrayDomain:
-        """Return feature-specific AreaShape array indexing semantics."""
-        return self.feature_array_domains.get(
-            feature_name,
-            ObjectFeatureArrayDomain.MEASURED_OBJECT_ID,
-        )
-
-    def complete_row(self, row: dict[str, float | int]) -> None:
-        row[ObjectShapeMeasurementFeature.CENTER_Z.value] = 0.0
 
 
 class MeasurementTableRowLayout(str, Enum):
@@ -2663,9 +2545,7 @@ class MeasurementTableRowLayout(str, Enum):
 
 
 class MeasurementRowLayoutProjectionStrategy(
-    EnumKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Project one nominal measurement row layout into canonical long form."""
 
@@ -2714,18 +2594,22 @@ class WideMeasurementRowProjectionStrategy(MeasurementRowLayoutProjectionStrateg
 
 def measurement_row_feature_field_names() -> frozenset[str]:
     """Return row fields that name long-form measurement features."""
-    return frozenset(
-        (
-            MeasurementRowAxisField.FEATURE_NAME.value,
-            MeasurementRowAxisField.MEASUREMENT_NAME.value,
-            MeasurementRowAxisField.OUTPUT_NAME.value,
-        )
-    )
+    return MeasurementRowAxisField.feature_name_field_names()
+
+
+def measurement_row_feature_field_names_ordered() -> tuple[str, ...]:
+    """Return long-form feature-name fields in semantic priority order."""
+    return MeasurementRowAxisField.feature_name_field_names_ordered()
 
 
 def measurement_row_value_field_names() -> frozenset[str]:
     """Return row fields that carry long-form measurement values."""
-    return frozenset(field.value for field in MeasurementRowValueField)
+    return MeasurementRowValueField.field_names()
+
+
+def measurement_row_value_field_names_ordered() -> tuple[str, ...]:
+    """Return long-form value fields in semantic priority order."""
+    return MeasurementRowValueField.field_names_ordered()
 
 
 def measurement_row_semantic_field_names() -> frozenset[str]:
@@ -2737,11 +2621,11 @@ def carries_measurement_row_semantics(row: object) -> bool:
     """Return whether a row-like object declares measurement-row fields."""
     semantic_fields = measurement_row_semantic_field_names()
     if isinstance(row, Mapping):
-        field_names = frozenset(str(field_name) for field_name in row.keys())
+        field_names = frozenset((str(field_name) for field_name in row.keys()))
     elif is_dataclass(row):
-        field_names = frozenset(field.name for field in dataclass_fields(row))
+        field_names = frozenset((field.name for field in dataclass_fields(row)))
     elif type(row).__dictoffset__ != 0:
-        field_names = frozenset(str(field_name) for field_name in vars(row).keys())
+        field_names = frozenset((str(field_name) for field_name in vars(row).keys()))
     else:
         return False
     return bool(field_names & semantic_fields)
@@ -2750,9 +2634,7 @@ def carries_measurement_row_semantics(row: object) -> bool:
 def supports_measurement_row_mapping(row: object) -> bool:
     """Return whether ``measurement_row_mapping`` can project this row."""
     return (
-        isinstance(row, Mapping)
-        or is_dataclass(row)
-        or type(row).__dictoffset__ != 0
+        isinstance(row, Mapping) or is_dataclass(row) or type(row).__dictoffset__ != 0
     )
 
 
@@ -2764,9 +2646,7 @@ def measurement_row_mapping(row: object) -> Mapping[str, object]:
         return MeasurementRowMappingCache.process_cache().mapping(row)
     if type(row).__dictoffset__ != 0:
         return vars(row)
-    raise TypeError(
-        f"Unsupported measurement row type {type(row).__name__}."
-    )
+    raise TypeError(f"Unsupported measurement row type {type(row).__name__}.")
 
 
 @dataclass(slots=True)
@@ -2775,7 +2655,7 @@ class MeasurementRowMappingCache(
 ):
     """Bounded process-local cache for immutable dataclass measurement rows."""
 
-    max_entries: int = 262_144
+    max_entries: int = 262144
 
     def mapping(self, row: object) -> Mapping[str, object]:
         row_id = id(row)
@@ -2785,7 +2665,6 @@ class MeasurementRowMappingCache(
             if cached_row is row:
                 return row_mapping
             del self.entries[row_id]
-
         row_mapping = asdict(row)
         row_mapping.update(MeasurementRowDescriptorFields.mapping(row, row_mapping))
         self.store_value(row_id, (row, row_mapping))
@@ -2797,9 +2676,7 @@ class MeasurementRowDescriptorFields:
 
     @classmethod
     def mapping(
-        cls,
-        row: object,
-        dataclass_mapping: Mapping[str, object],
+        cls, row: object, dataclass_mapping: Mapping[str, object]
     ) -> Mapping[str, object]:
         field_names = frozenset(dataclass_mapping)
         descriptor_values: dict[str, object] = {}
@@ -2811,29 +2688,22 @@ class MeasurementRowDescriptorFields:
                 descriptor = vars(owner).get(field_name)
                 if not cls.is_descriptor_column(descriptor):
                     continue
-                descriptor_values[field_name] = cls.value(
-                    row,
-                    descriptor,
-                    field_name,
-                )
+                descriptor_values[field_name] = cls.value(row, descriptor, field_name)
         return descriptor_values
 
     @staticmethod
     def is_descriptor_column(descriptor: object) -> bool:
-        return descriptor is not None and callable(vars(type(descriptor)).get("__get__"))
+        return descriptor is not None and callable(
+            vars(type(descriptor)).get("__get__")
+        )
 
     @staticmethod
-    def value(
-        row: object,
-        descriptor: object,
-        field_name: str,
-    ) -> object:
+    def value(row: object, descriptor: object, field_name: str) -> object:
         try:
             return descriptor.__get__(row, type(row))
         except Exception as exc:
             raise ValueError(
-                "Measurement row descriptor field "
-                f"{type(row).__name__}.{field_name} could not be projected."
+                f"Measurement row descriptor field {type(row).__name__}.{field_name} could not be projected."
             ) from exc
 
 
@@ -2844,8 +2714,7 @@ def measurement_table_row_layout(rows: object) -> MeasurementTableRowLayout:
         return MeasurementTableRowLayout.EMPTY
     if len(observed_layouts) != 1:
         raise ValueError(
-            "MeasurementTable rows must not mix long-form and wide-form layouts; "
-            f"got {sorted(layout.value for layout in observed_layouts)!r}."
+            f"MeasurementTable rows must not mix long-form and wide-form layouts; got {sorted((layout.value for layout in observed_layouts))!r}."
         )
     return next(iter(observed_layouts))
 
@@ -2855,7 +2724,7 @@ def measurement_table_row_layout_from_fields(
 ) -> MeasurementTableRowLayout | None:
     """Return row layout declared by table fields when fields are authoritative."""
     return _measurement_table_row_layout_from_field_names(
-        tuple(field.name for field in fields)
+        tuple((field.name for field in fields))
     )
 
 
@@ -2869,10 +2738,9 @@ def _measurement_table_row_layout_from_field_names(
         return None
     has_feature_field = bool(field_names & measurement_row_feature_field_names())
     has_value_field = bool(field_names & measurement_row_value_field_names())
-    if has_feature_field and not has_value_field:
+    if has_feature_field and (not has_value_field):
         raise ValueError(
-            "Long-form measurement table fields must declare both a feature field "
-            f"and a value field, got fields {sorted(field_names)!r}."
+            f"Long-form measurement table fields must declare both a feature field and a value field, got fields {sorted(field_names)!r}."
         )
     return (
         MeasurementTableRowLayout.LONG
@@ -2889,16 +2757,16 @@ def measurement_table_row_layouts(rows: object) -> frozenset[MeasurementTableRow
     if not row_sequence:
         return frozenset()
     if isinstance(row_sequence[0], ObjectMeasurementValueRow) and all(
-        isinstance(row, ObjectMeasurementValueRow) for row in row_sequence
+        (isinstance(row, ObjectMeasurementValueRow) for row in row_sequence)
     ):
         return frozenset((MeasurementTableRowLayout.LONG,))
-    return frozenset(MeasurementRowLayoutAuthority(row).layout() for row in row_sequence)
+    return frozenset(
+        (MeasurementRowLayoutAuthority(row).layout() for row in row_sequence)
+    )
 
 
 def normalize_measurement_table_rows(
-    rows: object,
-    *,
-    fields: Iterable[FieldSpec] = (),
+    rows: object, *, fields: Iterable[FieldSpec] = ()
 ) -> object:
     """Return homogeneous measurement rows, canonicalizing mixed tables to long form."""
     declared_layout = measurement_table_row_layout_from_fields(fields)
@@ -2911,12 +2779,13 @@ def normalize_measurement_table_rows(
 
 
 def measurement_rows_as_layout(
-    rows: object,
-    layout: MeasurementTableRowLayout,
+    rows: object, layout: MeasurementTableRowLayout
 ) -> object:
     """Project measurement rows into a declared table layout."""
     if layout is not MeasurementTableRowLayout.LONG:
-        raise ValueError(f"Unsupported measurement row layout projection: {layout.value}.")
+        raise ValueError(
+            f"Unsupported measurement row layout projection: {layout.value}."
+        )
     row_sequence = rows if isinstance(rows, list | tuple) else (rows,)
     return [
         projected_row
@@ -2935,14 +2804,13 @@ class MeasurementRowLayoutAuthority:
 
     def layout(self) -> MeasurementTableRowLayout:
         field_names = frozenset(
-            str(field_name) for field_name in measurement_row_mapping(self.row)
+            (str(field_name) for field_name in measurement_row_mapping(self.row))
         )
         has_feature_field = bool(field_names & measurement_row_feature_field_names())
         has_value_field = bool(field_names & measurement_row_value_field_names())
-        if has_feature_field and not has_value_field:
+        if has_feature_field and (not has_value_field):
             raise ValueError(
-                "Long-form measurement rows must declare both a feature field and a "
-                f"value field, got fields {sorted(field_names)!r}."
+                f"Long-form measurement rows must declare both a feature field and a value field, got fields {sorted(field_names)!r}."
             )
         return (
             MeasurementTableRowLayout.LONG
@@ -2961,200 +2829,7 @@ class MeasurementObjectRowIdentity(str, Enum):
 
 def measurement_row_axis_field_names() -> frozenset[str]:
     """Return fields that identify a measurement row axis, not a result value."""
-    return frozenset(field.value for field in MeasurementRowAxisField)
-
-
-def indexed_measurement_feature_name(
-    feature: ObjectShapeMeasurementFeature | str,
-    *indices: int,
-) -> str:
-    """Return a stable runtime field name for indexed measurement features."""
-    feature = coerce_enum(
-        ObjectShapeMeasurementFeature,
-        feature,
-        "indexed_measurement_feature_name.feature",
-    )
-    if not indices:
-        return feature.value
-    return "_".join((feature.value, *(str(int(index)) for index in indices)))
-
-
-@dataclass(frozen=True, slots=True)
-class IndexedObjectZernikeDescriptor:
-    """Parsed identity for an indexed object Zernike descriptor feature."""
-
-    family: ObjectZernikeDescriptorFeature
-    degree: int
-    repetition: int
-
-    @classmethod
-    def from_feature_name(
-        cls,
-        feature_name: str,
-    ) -> "IndexedObjectZernikeDescriptor | None":
-        normalized_parts = tuple(
-            part
-            for part in str(feature_name).strip().lower().replace("-", "_").split("_")
-            if part
-        )
-        for family in ObjectZernikeDescriptorFeature:
-            family_parts = tuple(
-                part
-                for part in family.value.split("_")
-                if part
-            )
-            family_prefixes = (family_parts, ("".join(family_parts),))
-            for family_prefix in family_prefixes:
-                if len(normalized_parts) != len(family_prefix) + 2:
-                    continue
-                if normalized_parts[: len(family_prefix)] != family_prefix:
-                    continue
-                degree_text, repetition_text = normalized_parts[-2:]
-                if not degree_text.isdecimal() or not repetition_text.isdecimal():
-                    continue
-                return cls(
-                    family=family,
-                    degree=int(degree_text),
-                    repetition=int(repetition_text),
-                )
-        return None
-
-
-def object_shape_measurement_field_names(
-    *,
-    dimensions: int = 2,
-    calculate_advanced: bool = True,
-    calculate_zernikes: bool = True,
-    object_id_field: str = "object_label",
-    slice_index_field: str = "slice_index",
-) -> tuple[str, ...]:
-    """Return canonical table fields for object shape measurements."""
-    if dimensions not in (2, 3):
-        raise ValueError(f"Object shape measurements support 2D/3D, got {dimensions}D.")
-
-    fields: list[str] = [slice_index_field, object_id_field]
-    if dimensions == 2:
-        fields.extend(feature.value for feature in _OBJECT_SHAPE_STANDARD_2D_FIELDS)
-        fields.append(ObjectShapeMeasurementFeature.CENTER_Z.value)
-        if calculate_advanced:
-            fields.extend(_indexed_object_shape_fields(_OBJECT_SHAPE_ADVANCED_2D_SPECS))
-        if calculate_zernikes:
-            fields.extend(ObjectShapeZernikeFeatureContract.feature_names())
-    else:
-        fields.extend(feature.value for feature in _OBJECT_SHAPE_STANDARD_3D_FIELDS)
-        if calculate_advanced:
-            fields.append(ObjectShapeMeasurementFeature.SOLIDITY.value)
-    return tuple(dict.fromkeys(fields))
-
-
-def object_shape_measurement_all_field_names(
-    *,
-    calculate_advanced: bool = True,
-    calculate_zernikes: bool = True,
-    object_id_field: str = "object_label",
-    slice_index_field: str = "slice_index",
-) -> tuple[str, ...]:
-    """Return the union schema for object-shape tables that may emit 2D or 3D rows."""
-
-    return tuple(
-        dict.fromkeys(
-            (
-                *object_shape_measurement_field_names(
-                    dimensions=2,
-                    calculate_advanced=calculate_advanced,
-                    calculate_zernikes=calculate_zernikes,
-                    object_id_field=object_id_field,
-                    slice_index_field=slice_index_field,
-                ),
-                *object_shape_measurement_field_names(
-                    dimensions=3,
-                    calculate_advanced=calculate_advanced,
-                    calculate_zernikes=calculate_zernikes,
-                    object_id_field=object_id_field,
-                    slice_index_field=slice_index_field,
-                ),
-            )
-        )
-    )
-
-
-_OBJECT_SHAPE_STANDARD_2D_FIELDS = (
-    ObjectShapeMeasurementFeature.AREA,
-    ObjectShapeMeasurementFeature.PERIMETER,
-    ObjectShapeMeasurementFeature.MAJOR_AXIS_LENGTH,
-    ObjectShapeMeasurementFeature.MINOR_AXIS_LENGTH,
-    ObjectShapeMeasurementFeature.ECCENTRICITY,
-    ObjectShapeMeasurementFeature.ORIENTATION,
-    ObjectShapeMeasurementFeature.CENTER_X,
-    ObjectShapeMeasurementFeature.CENTER_Y,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_AREA,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_X,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_X,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_Y,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_Y,
-    ObjectShapeMeasurementFeature.FORM_FACTOR,
-    ObjectShapeMeasurementFeature.EXTENT,
-    ObjectShapeMeasurementFeature.SOLIDITY,
-    ObjectShapeMeasurementFeature.COMPACTNESS,
-    ObjectShapeMeasurementFeature.EULER_NUMBER,
-    ObjectShapeMeasurementFeature.MAXIMUM_RADIUS,
-    ObjectShapeMeasurementFeature.MEAN_RADIUS,
-    ObjectShapeMeasurementFeature.MEDIAN_RADIUS,
-    ObjectShapeMeasurementFeature.CONVEX_AREA,
-    ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER,
-    ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER,
-    ObjectShapeMeasurementFeature.EQUIVALENT_DIAMETER,
-)
-
-
-_OBJECT_SHAPE_STANDARD_3D_FIELDS = (
-    ObjectShapeMeasurementFeature.VOLUME,
-    ObjectShapeMeasurementFeature.SURFACE_AREA,
-    ObjectShapeMeasurementFeature.MAJOR_AXIS_LENGTH,
-    ObjectShapeMeasurementFeature.MINOR_AXIS_LENGTH,
-    ObjectShapeMeasurementFeature.CENTER_X,
-    ObjectShapeMeasurementFeature.CENTER_Y,
-    ObjectShapeMeasurementFeature.CENTER_Z,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_VOLUME,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_X,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_X,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_Y,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_Y,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_Z,
-    ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_Z,
-    ObjectShapeMeasurementFeature.EXTENT,
-    ObjectShapeMeasurementFeature.EULER_NUMBER,
-    ObjectShapeMeasurementFeature.EQUIVALENT_DIAMETER,
-)
-
-
-_OBJECT_SHAPE_ADVANCED_2D_SPECS = (
-    (ObjectShapeMeasurementFeature.SPATIAL_MOMENT, range(3), range(4)),
-    (ObjectShapeMeasurementFeature.CENTRAL_MOMENT, range(3), range(4)),
-    (ObjectShapeMeasurementFeature.NORMALIZED_MOMENT, range(4), range(4)),
-    (ObjectShapeMeasurementFeature.HU_MOMENT, range(7), None),
-    (ObjectShapeMeasurementFeature.INERTIA_TENSOR, range(2), range(2)),
-    (ObjectShapeMeasurementFeature.INERTIA_TENSOR_EIGENVALUES, range(2), None),
-)
-
-
-def _indexed_object_shape_fields(
-    specs: tuple[
-        tuple[ObjectShapeMeasurementFeature, range, range | None],
-        ...,
-    ],
-) -> tuple[str, ...]:
-    fields: list[str] = []
-    for feature, rows, columns in specs:
-        if columns is None:
-            fields.extend(indexed_measurement_feature_name(feature, row) for row in rows)
-            continue
-        fields.extend(
-            indexed_measurement_feature_name(feature, row, column)
-            for row in rows
-            for column in columns
-        )
-    return tuple(fields)
+    return MeasurementRowAxisField.field_names()
 
 
 @dataclass(frozen=True, slots=True)
@@ -3168,7 +2843,6 @@ class MeasurementSubject:
     def __post_init__(self) -> None:
         scope = coerce_enum(MeasurementScope, self.scope, "MeasurementSubject.scope")
         object.__setattr__(self, "scope", scope)
-
         if self.name == "":
             raise ValueError("MeasurementSubject.name cannot be empty.")
         if self.id_field == "":
@@ -3195,17 +2869,13 @@ class RelationshipEndpoint:
     name: str
     role: str
     id_field: str
-    kind: ArtifactKind = ArtifactKind.OBJECT_LABELS
+    kind: ArtifactType = ObjectLabelsArtifactType
 
     def __post_init__(self) -> None:
         _require_name(self.name, "RelationshipEndpoint.name")
         _require_name(self.role, "RelationshipEndpoint.role")
         _require_name(self.id_field, "RelationshipEndpoint.id_field")
-        object.__setattr__(
-            self,
-            "kind",
-            coerce_enum(ArtifactKind, self.kind, "RelationshipEndpoint.kind"),
-        )
+        object.__setattr__(self, "kind", ArtifactType.coerce(self.kind))
 
 
 PARENT_RELATIONSHIP_ROLE = "parent"
@@ -3224,9 +2894,7 @@ def parent_child_relationship_artifact_name(parent_name: str, child_name: str) -
 
 
 def parent_child_relationship_artifact_endpoints(
-    artifact_name: str,
-    *,
-    parent_candidates: tuple[str, ...],
+    artifact_name: str, *, parent_candidates: tuple[str, ...]
 ) -> tuple[str, str] | None:
     """Return parent/child names encoded by a canonical relationship artifact.
 
@@ -3245,16 +2913,15 @@ def parent_child_relationship_artifact_endpoints(
         prefix = f"{parent_name}_"
         if not body.startswith(prefix):
             continue
-        child_name = body[len(prefix):]
+        child_name = body[len(prefix) :]
         if child_name:
-            return parent_name, child_name
+            return (parent_name, child_name)
     return None
 
 
 @dataclass(frozen=True, slots=True)
 class ParentChildRelationshipPayload(
-    RuntimeSliceProjectableValue,
-    RuntimeSliceIdentityProjectableValue,
+    RuntimeSliceProjectableValue, RuntimeSliceIdentityProjectableValue
 ):
     """Generic parent-child id pairs emitted before endpoint names are bound."""
 
@@ -3264,33 +2931,33 @@ class ParentChildRelationshipPayload(
     slice_count: int | None = None
 
     def __post_init__(self) -> None:
-        parent_ids = tuple(int(parent_id) for parent_id in self.parent_ids)
-        child_ids = tuple(int(child_id) for child_id in self.child_ids)
+        parent_ids = tuple((int(parent_id) for parent_id in self.parent_ids))
+        child_ids = tuple((int(child_id) for child_id in self.child_ids))
         if len(parent_ids) != len(child_ids):
             raise ValueError(
-                "ParentChildRelationshipPayload parent_ids and child_ids must "
-                f"have equal length, got {len(parent_ids)} and {len(child_ids)}."
+                f"ParentChildRelationshipPayload parent_ids and child_ids must have equal length, got {len(parent_ids)} and {len(child_ids)}."
             )
-        slice_indices = tuple(int(slice_index) for slice_index in self.slice_indices)
+        slice_indices = tuple((int(slice_index) for slice_index in self.slice_indices))
         if slice_indices and len(slice_indices) != len(parent_ids):
             raise ValueError(
-                "ParentChildRelationshipPayload slice_indices must be empty or "
-                "match parent_ids/child_ids length, got "
-                f"{len(slice_indices)} for {len(parent_ids)} relationships."
+                f"ParentChildRelationshipPayload slice_indices must be empty or match parent_ids/child_ids length, got {len(slice_indices)} for {len(parent_ids)} relationships."
             )
-        if any(slice_index < 0 for slice_index in slice_indices):
-            raise ValueError("ParentChildRelationshipPayload slice_indices cannot be negative.")
+        if any((slice_index < 0 for slice_index in slice_indices)):
+            raise ValueError(
+                "ParentChildRelationshipPayload slice_indices cannot be negative."
+            )
         slice_count = None if self.slice_count is None else int(self.slice_count)
         if slice_count is not None and slice_count < 0:
-            raise ValueError("ParentChildRelationshipPayload slice_count cannot be negative.")
+            raise ValueError(
+                "ParentChildRelationshipPayload slice_count cannot be negative."
+            )
         if (
             slice_count is not None
             and slice_indices
-            and max(slice_indices) >= slice_count
+            and (max(slice_indices) >= slice_count)
         ):
             raise ValueError(
-                "ParentChildRelationshipPayload slice_indices must be smaller "
-                f"than slice_count {slice_count}."
+                f"ParentChildRelationshipPayload slice_indices must be smaller than slice_count {slice_count}."
             )
         object.__setattr__(self, "parent_ids", parent_ids)
         object.__setattr__(self, "child_ids", child_ids)
@@ -3298,16 +2965,13 @@ class ParentChildRelationshipPayload(
         object.__setattr__(self, "slice_count", slice_count)
 
     def with_runtime_slice_identity(
-        self,
-        *,
-        slice_index: int,
-        slice_count: int,
+        self, *, slice_index: int, slice_count: int
     ) -> "ParentChildRelationshipPayload":
         """Return relationships stamped with the execution runtime-slice identity."""
         return ParentChildRelationshipPayload(
             parent_ids=self.parent_ids,
             child_ids=self.child_ids,
-            slice_indices=tuple(int(slice_index) for _child_id in self.child_ids),
+            slice_indices=tuple((int(slice_index) for _child_id in self.child_ids)),
             slice_count=int(slice_count),
         )
 
@@ -3315,37 +2979,33 @@ class ParentChildRelationshipPayload(
         """Return per-relationship slice ids for persisted relationship records."""
         if self.slice_indices:
             return self.slice_indices
-        return tuple(0 for _child_id in self.child_ids)
+        return tuple((0 for _child_id in self.child_ids))
 
     def project_runtime_slice(
-        self,
-        slice_index: int,
+        self, slice_index: int
     ) -> "ParentChildRelationshipPayload":
         """Return only relationship rows belonging to one runtime slice."""
         if not self.slice_indices:
-            if self.slice_count is not None and self.slice_count > 1 and self.parent_ids:
+            if (
+                self.slice_count is not None
+                and self.slice_count > 1
+                and self.parent_ids
+            ):
                 raise ValueError(
-                    "Cannot slice multi-plane ParentChildRelationshipPayload "
-                    "without slice_indices."
+                    "Cannot slice multi-plane ParentChildRelationshipPayload without slice_indices."
                 )
             return self
-
         parent_ids: list[int] = []
         child_ids: list[int] = []
         for parent_id, child_id, relationship_slice_index in zip(
-            self.parent_ids,
-            self.child_ids,
-            self.slice_indices,
-            strict=True,
+            self.parent_ids, self.child_ids, self.slice_indices, strict=True
         ):
             if relationship_slice_index != int(slice_index):
                 continue
             parent_ids.append(parent_id)
             child_ids.append(child_id)
         return ParentChildRelationshipPayload(
-            parent_ids=tuple(parent_ids),
-            child_ids=tuple(child_ids),
-            slice_count=1,
+            parent_ids=tuple(parent_ids), child_ids=tuple(child_ids), slice_count=1
         )
 
 
@@ -3353,33 +3013,26 @@ class ObjectRelationshipPayloadKernel(ABC):
     """Kernel contract used by semantic relationship payload policies."""
 
     def dominant_parent_ids_by_child(
-        self,
-        parent_array: Any,
-        child_array: Any,
-        context_array: Any,
+        self, parent_array: Any, child_array: Any, context_array: Any
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return child ids with their dominant parent ids by positive overlap."""
         children = np.asarray(child_array, dtype=np.int64)
         parents = np.asarray(parent_array, dtype=np.int64)
         context = np.asarray(context_array, dtype=np.int64)
-
         child_ids = np.unique(children[children > 0])
         if child_ids.size == 0:
             empty = np.zeros(0, dtype=np.int64)
-            return empty, empty
-
+            return (empty, empty)
         max_parent = int(np.max(parents)) if parents.size else 0
         parent_ids = np.zeros(child_ids.size, dtype=np.int64)
         valid = (context > 0) & (parents > 0)
         if not np.any(valid) or max_parent <= 0:
-            return child_ids, parent_ids
-
+            return (child_ids, parent_ids)
         stride = max_parent + 1
         pair_keys = context[valid] * stride + parents[valid]
         counts = np.bincount(pair_keys)
         child_to_index = np.full(int(child_ids[-1]) + 1, -1, dtype=np.int64)
         child_to_index[child_ids] = np.arange(child_ids.size, dtype=np.int64)
-
         nonzero_keys = np.flatnonzero(counts)
         best_counts = np.zeros(child_ids.size, dtype=np.int64)
         for key in nonzero_keys:
@@ -3394,14 +3047,11 @@ class ObjectRelationshipPayloadKernel(ABC):
             if count > best_counts[output_index]:
                 best_counts[output_index] = count
                 parent_ids[output_index] = parent_id
-        return child_ids, parent_ids
+        return (child_ids, parent_ids)
 
     @abstractmethod
     def relate_children_to_parents(
-        self,
-        parent_labels: np.ndarray,
-        child_labels: np.ndarray,
-        child_count: int,
+        self, parent_labels: np.ndarray, child_labels: np.ndarray, child_count: int
     ) -> np.ndarray:
         """Assign each child label id to its dominant parent label id."""
 
@@ -3420,20 +3070,14 @@ class DefaultObjectRelationshipPayloadKernel(ObjectRelationshipPayloadKernel):
     """Core NumPy relationship kernel used outside backend-specific execution."""
 
     def relate_children_to_parents(
-        self,
-        parent_labels: np.ndarray,
-        child_labels: np.ndarray,
-        child_count: int,
+        self, parent_labels: np.ndarray, child_labels: np.ndarray, child_count: int
     ) -> np.ndarray:
         del child_count
         child_ids, parent_ids = self.dominant_parent_ids_by_child(
-            parent_labels,
-            child_labels,
-            child_labels,
+            parent_labels, child_labels, child_labels
         )
         parents_of = np.zeros(
-            int(child_labels.max()) if child_labels.size else 0,
-            dtype=np.int32,
+            int(child_labels.max()) if child_labels.size else 0, dtype=np.int32
         )
         for child_id, parent_id in zip(child_ids, parent_ids, strict=True):
             if 0 < child_id <= parents_of.size:
@@ -3464,17 +3108,18 @@ class DefaultObjectRelationshipPayloadKernel(ObjectRelationshipPayloadKernel):
             parent_id = parent_by_yx.get((int(row[0]), int(row[1])), 0)
             if parent_id <= 0:
                 continue
-            votes[(child_id, parent_id)] = votes.get((child_id, parent_id), 0) + 1
+            votes[child_id, parent_id] = votes.get((child_id, parent_id), 0) + 1
         for child_id in range(1, child_count + 1):
             child_votes = tuple(
-                (parent_id, count)
-                for (candidate_child, parent_id), count in votes.items()
-                if candidate_child == child_id
+                (
+                    (parent_id, count)
+                    for (candidate_child, parent_id), count in votes.items()
+                    if candidate_child == child_id
+                )
             )
             if child_votes:
                 parents_of[child_id - 1] = min(
-                    child_votes,
-                    key=lambda item: (-item[1], item[0]),
+                    child_votes, key=lambda item: (-item[1], item[0])
                 )[0]
         return parents_of
 
@@ -3492,8 +3137,7 @@ class ObjectRelationshipPayloadRequest:
 
 
 class ObjectRelationshipPayloadStrategy(
-    MostDerivedContextStrategyMixin[ObjectRelationshipPayloadRequest],
-    ABC,
+    MostDerivedContextStrategyMixin[ObjectRelationshipPayloadRequest], ABC
 ):
     """Derive parent-child payloads by nominal object-label representation."""
 
@@ -3507,15 +3151,13 @@ class ObjectRelationshipPayloadStrategy(
 
     @abstractmethod
     def payload(
-        self,
-        context: ObjectRelationshipPayloadRequest,
+        self, context: ObjectRelationshipPayloadRequest
     ) -> ParentChildRelationshipPayload:
         """Return parent-child ids for the strategy's representation contract."""
 
     @staticmethod
     def related_payload_from_parents_of(
-        parents_of: np.ndarray,
-        child_ids: np.ndarray,
+        parents_of: np.ndarray, child_ids: np.ndarray
     ) -> ParentChildRelationshipPayload:
         parent_ids: list[int] = []
         related_child_ids: list[int] = []
@@ -3526,8 +3168,7 @@ class ObjectRelationshipPayloadStrategy(
                     parent_ids.append(parent_id)
                     related_child_ids.append(int(child_id))
         return ParentChildRelationshipPayload(
-            parent_ids=tuple(parent_ids),
-            child_ids=tuple(related_child_ids),
+            parent_ids=tuple(parent_ids), child_ids=tuple(related_child_ids)
         )
 
     @staticmethod
@@ -3538,8 +3179,10 @@ class ObjectRelationshipPayloadStrategy(
         parent_vector = np.asarray(parents_of, dtype=np.int64)
         related_child_indexes = np.flatnonzero(parent_vector > 0)
         return ParentChildRelationshipPayload(
-            parent_ids=tuple(int(parent_vector[index]) for index in related_child_indexes),
-            child_ids=tuple(int(index + 1) for index in related_child_indexes),
+            parent_ids=tuple(
+                (int(parent_vector[index]) for index in related_child_indexes)
+            ),
+            child_ids=tuple((int(index + 1) for index in related_child_indexes)),
         )
 
 
@@ -3553,60 +3196,57 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
         return True
 
     def payload(
-        self,
-        context: ObjectRelationshipPayloadRequest,
+        self, context: ObjectRelationshipPayloadRequest
     ) -> ParentChildRelationshipPayload:
         from openhcs.core.runtime_values import object_label_dense_array
 
         slice_count = self.relationship_slice_count(context)
         if slice_count is not None:
             aligned_stacks = DenseObjectLabelPairAligner(
-                context.parent_labels,
-                context.child_labels,
+                context.parent_labels, context.child_labels
             ).aligned_stacks(slice_count)
             if aligned_stacks is not None:
                 return self.stack_payload(context, *aligned_stacks)
-
         parent_array, child_array = (
             object_label_dense_array(labels, dtype=np.int32)
             for labels in DenseObjectLabelPairAligner(
-                context.parent_labels,
-                context.child_labels,
+                context.parent_labels, context.child_labels
             ).aligned()
         )
         child_count = int(child_array.max()) if child_array.size else 0
         if child_count <= 0:
             return ParentChildRelationshipPayload(parent_ids=(), child_ids=())
         parents_of = context.kernel.relate_children_to_parents(
-            parent_array,
-            child_array,
-            child_count,
+            parent_array, child_array, child_count
         )
         return self.related_payload_from_dense_parent_vector(parents_of)
 
     def relationship_slice_count(
-        self,
-        context: ObjectRelationshipPayloadRequest,
+        self, context: ObjectRelationshipPayloadRequest
     ) -> int | None:
         """Return the plane count for plane-scoped label relationships."""
         domains = tuple(
-            ObjectLabelDomainMetadataStrategy.for_value(labels).object_label_domain(
-                labels,
+            (
+                ObjectLabelDomainMetadataStrategy.for_value(labels).object_label_domain(
+                    labels
+                )
+                for labels in (context.parent_labels, context.child_labels)
             )
-            for labels in (context.parent_labels, context.child_labels)
         )
         if (
-            ObjectLabelDomainScope.common(domain.scope for domain in domains)
+            ObjectLabelDomainScope.common((domain.scope for domain in domains))
             is not ObjectLabelDomainScope.PLANE
         ):
             return None
         leading_plane_counts = tuple(
-            int(label_array.shape[0])
-            for label_array in (
-                np.asarray(context.parent_labels),
-                np.asarray(context.child_labels),
+            (
+                int(label_array.shape[0])
+                for label_array in (
+                    np.asarray(context.parent_labels),
+                    np.asarray(context.child_labels),
+                )
+                if label_array.ndim == 3
             )
-            if label_array.ndim == 3
         )
         if not leading_plane_counts:
             return None
@@ -3629,14 +3269,12 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
             if child_count <= 0:
                 continue
             parents_of = context.kernel.relate_children_to_parents(
-                parent_plane,
-                child_plane,
-                child_count,
+                parent_plane, child_plane, child_count
             )
             payload = self.related_payload_from_dense_parent_vector(parents_of)
             parent_ids.extend(payload.parent_ids)
             child_ids.extend(payload.child_ids)
-            slice_indices.extend(slice_index for _child_id in payload.child_ids)
+            slice_indices.extend((slice_index for _child_id in payload.child_ids))
         return ParentChildRelationshipPayload(
             parent_ids=tuple(parent_ids),
             child_ids=tuple(child_ids),
@@ -3645,7 +3283,9 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
         )
 
 
-class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadStrategy):
+class SparseIJVObjectRelationshipPayloadStrategy(
+    DenseObjectRelationshipPayloadStrategy
+):
     """Sparse IJV labels derive parent-child ids through sparse rows."""
 
     strategy_key = "sparse_ijv"
@@ -3654,13 +3294,14 @@ class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadS
         from openhcs.core.runtime_values import SparseIJVReplacementLabelsStrategy
 
         return any(
-            SparseIJVReplacementLabelsStrategy.source_is_sparse_ijv(labels)
-            for labels in (context.parent_labels, context.child_labels)
+            (
+                SparseIJVReplacementLabelsStrategy.source_is_sparse_ijv(labels)
+                for labels in (context.parent_labels, context.child_labels)
+            )
         )
 
     def payload(
-        self,
-        context: ObjectRelationshipPayloadRequest,
+        self, context: ObjectRelationshipPayloadRequest
     ) -> ParentChildRelationshipPayload:
         from openhcs.core.runtime_values import SparseIJVReplacementLabelsStrategy
 
@@ -3683,29 +3324,23 @@ class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadS
             parent_count,
         )
         return self.related_payload_from_parents_of(
-            parents_of,
-            self.present_sparse_child_ids(child_array, child_rows),
+            parents_of, self.present_sparse_child_ids(child_array, child_rows)
         )
 
     @staticmethod
-    def label_count(
-        array: np.ndarray,
-        rows: SparseIJVLabelRows,
-    ) -> int:
+    def label_count(array: np.ndarray, rows: SparseIJVLabelRows) -> int:
         if array.size == 0:
             return 0
         return int(np.max(array[:, rows.label_column]))
 
     @staticmethod
     def present_sparse_child_ids(
-        child_array: np.ndarray,
-        child_rows: SparseIJVLabelRows,
+        child_array: np.ndarray, child_rows: SparseIJVLabelRows
     ) -> np.ndarray:
         if child_array.size == 0:
             return np.empty(0, dtype=np.int32)
         return np.unique(child_array[:, child_rows.label_column]).astype(
-            np.int32,
-            copy=False,
+            np.int32, copy=False
         )
 
 
@@ -3717,9 +3352,7 @@ class ObjectLabelLineageGeometry(str, Enum):
 
 
 class ObjectLabelLineageStrategy(
-    EnumKeyedStrategyMixin[ObjectLabelLineageGeometry],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ObjectLabelLineageGeometry], ABC, metaclass=AutoRegisterMeta
 ):
     """Derive parent-child object lineage from two dense label artifacts."""
 
@@ -3730,9 +3363,7 @@ class ObjectLabelLineageStrategy(
 
     @abstractmethod
     def payload(
-        self,
-        parent_labels: Any,
-        child_labels: Any,
+        self, parent_labels: Any, child_labels: Any
     ) -> ParentChildRelationshipPayload:
         """Return parent-child ids for the strategy's geometry contract."""
 
@@ -3743,9 +3374,7 @@ class SharedGeometryObjectLabelLineageStrategy(ObjectLabelLineageStrategy):
     strategy_key = ObjectLabelLineageGeometry.SHARED_GEOMETRY
 
     def payload(
-        self,
-        parent_labels: Any,
-        child_labels: Any,
+        self, parent_labels: Any, child_labels: Any
     ) -> ParentChildRelationshipPayload:
         return object_label_parent_child_payload(parent_labels, child_labels)
 
@@ -3756,16 +3385,15 @@ class IdentityDomainObjectLabelLineageStrategy(ObjectLabelLineageStrategy):
     strategy_key = ObjectLabelLineageGeometry.IDENTITY_DOMAIN
 
     def payload(
-        self,
-        parent_labels: Any,
-        child_labels: Any,
+        self, parent_labels: Any, child_labels: Any
     ) -> ParentChildRelationshipPayload:
         parent_ids = set(dense_object_label_id_domain(parent_labels))
         child_ids = tuple(dense_object_label_id_domain(child_labels))
-        related_ids = tuple(object_id for object_id in child_ids if object_id in parent_ids)
+        related_ids = tuple(
+            (object_id for object_id in child_ids if object_id in parent_ids)
+        )
         return ParentChildRelationshipPayload(
-            parent_ids=related_ids,
-            child_ids=related_ids,
+            parent_ids=related_ids, child_ids=related_ids
         )
 
 
@@ -3809,13 +3437,12 @@ class ObjectInstanceKey:
 
     @classmethod
     def domain(
-        cls,
-        object_ids: Iterable[int],
-        *,
-        slice_index: int | None = None,
+        cls, object_ids: Iterable[int], *, slice_index: int | None = None
     ) -> tuple["ObjectInstanceKey", ...]:
         """Return typed object identities for one optional measurement plane."""
-        return tuple(cls(object_id, slice_index=slice_index) for object_id in object_ids)
+        return tuple(
+            (cls(object_id, slice_index=slice_index) for object_id in object_ids)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -3836,25 +3463,27 @@ class ObjectInstanceRelationship:
         slice_count: int | None = None,
     ) -> "ObjectInstanceRelationship":
         """Build typed relationship identity from id columns plus optional slices."""
-        source_id_tuple = tuple(int(value) for value in source_ids)
-        target_id_tuple = tuple(int(value) for value in target_ids)
+        source_id_tuple = tuple((int(value) for value in source_ids))
+        target_id_tuple = tuple((int(value) for value in target_ids))
         if len(source_id_tuple) != len(target_id_tuple):
             raise ValueError(
-                "ObjectInstanceRelationship source_ids and target_ids must have "
-                f"equal length, got {len(source_id_tuple)} and {len(target_id_tuple)}."
+                f"ObjectInstanceRelationship source_ids and target_ids must have equal length, got {len(source_id_tuple)} and {len(target_id_tuple)}."
             )
-        slice_index_tuple = tuple(int(value) for value in slice_indices)
+        slice_index_tuple = tuple((int(value) for value in slice_indices))
         if slice_index_tuple and len(slice_index_tuple) != len(source_id_tuple):
             raise ValueError(
-                "ObjectInstanceRelationship slice_indices must be empty or match "
-                f"id columns, got {len(slice_index_tuple)} for {len(source_id_tuple)}."
+                f"ObjectInstanceRelationship slice_indices must be empty or match id columns, got {len(slice_index_tuple)} for {len(source_id_tuple)}."
             )
         resolved_slice_count = None if slice_count is None else int(slice_count)
         if resolved_slice_count is not None and resolved_slice_count < 0:
-            raise ValueError("ObjectInstanceRelationship.slice_count cannot be negative.")
+            raise ValueError(
+                "ObjectInstanceRelationship.slice_count cannot be negative."
+            )
         source_keys: list[ObjectInstanceKey] = []
         target_keys: list[ObjectInstanceKey] = []
-        for index, (source_id, target_id) in enumerate(zip(source_id_tuple, target_id_tuple, strict=True)):
+        for index, (source_id, target_id) in enumerate(
+            zip(source_id_tuple, target_id_tuple, strict=True)
+        ):
             slice_index = slice_index_tuple[index] if slice_index_tuple else None
             if source_id > 0 and target_id > 0:
                 source_keys.append(ObjectInstanceKey(source_id, slice_index))
@@ -3866,10 +3495,7 @@ class ObjectInstanceRelationship:
         )
 
     def source_domain(
-        self,
-        object_count: int = 0,
-        *,
-        declared_keys: Iterable[ObjectInstanceKey] = (),
+        self, object_count: int = 0, *, declared_keys: Iterable[ObjectInstanceKey] = ()
     ) -> tuple[ObjectInstanceKey, ...]:
         """Return all source identities represented by this relationship domain."""
         return self._domain(
@@ -3880,10 +3506,7 @@ class ObjectInstanceRelationship:
         )
 
     def target_domain(
-        self,
-        object_count: int = 0,
-        *,
-        declared_keys: Iterable[ObjectInstanceKey] = (),
+        self, object_count: int = 0, *, declared_keys: Iterable[ObjectInstanceKey] = ()
     ) -> tuple[ObjectInstanceKey, ...]:
         """Return all target identities represented by this relationship domain."""
         return self._domain(
@@ -3903,14 +3526,24 @@ class ObjectInstanceRelationship:
         children: dict[ObjectInstanceKey, list[ObjectInstanceKey]] = {
             source_key: []
             for source_key in self.source_domain(
-                source_object_count,
-                declared_keys=declared_source_keys,
+                source_object_count, declared_keys=declared_source_keys
             )
         }
-        for source_key, target_key in zip(self.source_keys, self.target_keys, strict=True):
+        for source_key, target_key in zip(
+            self.source_keys, self.target_keys, strict=True
+        ):
             children.setdefault(source_key, []).append(target_key)
         return {
-            source_key: tuple(sorted(child_keys, key=lambda key: (key.slice_index is None, key.slice_index or -1, key.object_id)))
+            source_key: tuple(
+                sorted(
+                    child_keys,
+                    key=lambda key: (
+                        key.slice_index is None,
+                        key.slice_index or -1,
+                        key.object_id,
+                    ),
+                )
+            )
             for source_key, child_keys in sorted(
                 children.items(),
                 key=lambda item: (
@@ -3967,16 +3600,19 @@ class ObjectInstanceRelationship:
             if slice_count is not None and slice_count > 1
             else ()
         ) or tuple(
-            dict.fromkeys(key.slice_index for key in keys if key.slice_index is not None)
+            dict.fromkeys(
+                (key.slice_index for key in keys if key.slice_index is not None)
+            )
         )
         if not slice_indexes:
             return ObjectInstanceKey.domain(range(1, max_object_id + 1))
         return tuple(
-            key
-            for slice_index in slice_indexes
-            for key in ObjectInstanceKey.domain(
-                range(1, max_object_id + 1),
-                slice_index=slice_index,
+            (
+                key
+                for slice_index in slice_indexes
+                for key in ObjectInstanceKey.domain(
+                    range(1, max_object_id + 1), slice_index=slice_index
+                )
             )
         )
 
@@ -3989,19 +3625,18 @@ class ObjectLabelInstanceDomains:
 
     @classmethod
     def from_named_plane_domains(
-        cls,
-        named_plane_domains: Iterable[tuple[str, tuple[tuple[int, ...], ...]]],
+        cls, named_plane_domains: Iterable[tuple[str, tuple[tuple[int, ...], ...]]]
     ) -> "ObjectLabelInstanceDomains":
         """Build domains from per-plane object-id domains."""
         domains: dict[str, dict[ObjectInstanceKey, None]] = {}
         for object_name, plane_domains in named_plane_domains:
             slice_indexes = (
-                (None,)
-                if len(plane_domains) <= 1
-                else tuple(range(len(plane_domains)))
+                (None,) if len(plane_domains) <= 1 else tuple(range(len(plane_domains)))
             )
             domain = domains.setdefault(str(object_name), {})
-            for slice_index, object_ids in zip(slice_indexes, plane_domains, strict=True):
+            for slice_index, object_ids in zip(
+                slice_indexes, plane_domains, strict=True
+            ):
                 for object_id in object_ids:
                     domain[ObjectInstanceKey(object_id, slice_index=slice_index)] = None
         return cls(
@@ -4040,18 +3675,16 @@ class SourceSpatialDomainProjection:
 
     @classmethod
     def from_adapter(
-        cls,
-        adapter: SourceSpatialDomainAdapter,
+        cls, adapter: SourceSpatialDomainAdapter
     ) -> "SourceSpatialDomainProjection":
         import numpy as np
 
         array = np.asarray(adapter.array)
         if array.ndim < 2:
             raise ValueError(
-                "Source-spatial object-label projection requires at least two "
-                f"dimensions, got {array.ndim}."
+                f"Source-spatial object-label projection requires at least two dimensions, got {array.ndim}."
             )
-        return cls(adapter.domain, tuple(int(axis) for axis in array.shape[-2:]))
+        return cls(adapter.domain, tuple((int(axis) for axis in array.shape[-2:])))
 
     def restore(self, value: Any) -> Any:
         import numpy as np
@@ -4064,8 +3697,7 @@ class SourceSpatialDomainProjection:
         source_shape_yx = self.domain.source_shape_yx
         if source_shape_yx is None or tuple(array.shape[-2:]) != tuple(source_shape_yx):
             raise ValueError(
-                "Cannot restore source-domain object labels with shape "
-                f"{array.shape[-2:]} to native shape {self.shape_yx}."
+                f"Cannot restore source-domain object labels with shape {array.shape[-2:]} to native shape {self.shape_yx}."
             )
         origin_y, origin_x = self.domain.origin_yx
         height, width = self.shape_yx
@@ -4078,7 +3710,6 @@ class DenseObjectLabelProjectionAlignment(metaclass=AutoRegisterMeta):
 
     __registry_key__ = "__name__"
     __skip_if_no_key__ = True
-
     first_projection: SourceSpatialDomainProjection | None
     second_projection: SourceSpatialDomainProjection | None
 
@@ -4115,7 +3746,7 @@ class SourceSpatialAlignmentValue:
         array = np.asarray(self.array)
         if array.ndim < 2:
             return None
-        return tuple(int(axis) for axis in array.shape[-2:])
+        return tuple((int(axis) for axis in array.shape[-2:]))
 
     @property
     def source_domain(self) -> SourceSpatialDomain | None:
@@ -4129,7 +3760,7 @@ class SourceSpatialAlignmentValue:
         return (
             self.native_shape_yx is not None
             and other.native_shape_yx is not None
-            and self.native_shape_yx == other.native_shape_yx
+            and (self.native_shape_yx == other.native_shape_yx)
         )
 
     def materialize(self) -> Any:
@@ -4146,8 +3777,7 @@ class SourceSpatialAlignmentValue:
         return SourceSpatialDomainProjection.from_adapter(self.adapter)
 
     def projection_in_domain(
-        self,
-        domain: SourceSpatialDomain,
+        self, domain: SourceSpatialDomain
     ) -> SourceSpatialDomainProjection | None:
         shape_yx = self.native_shape_yx
         if shape_yx is None:
@@ -4162,11 +3792,7 @@ class SourceSpatialAlignmentPair:
     values: tuple[SourceSpatialAlignmentValue, SourceSpatialAlignmentValue]
 
     @classmethod
-    def from_values(
-        cls,
-        first: Any,
-        second: Any,
-    ) -> "SourceSpatialAlignmentPair":
+    def from_values(cls, first: Any, second: Any) -> "SourceSpatialAlignmentPair":
         return cls(
             (
                 SourceSpatialAlignmentValue.from_value(first),
@@ -4178,14 +3804,14 @@ class SourceSpatialAlignmentPair:
         source_domain = self.shared_source_domain_for_native_pair()
         if source_domain is not None:
             aligned_values = tuple(
-                value.materialize_in_domain(source_domain) for value in self.values
+                (value.materialize_in_domain(source_domain) for value in self.values)
             )
             projections = tuple(
-                value.projection_in_domain(source_domain) for value in self.values
+                (value.projection_in_domain(source_domain) for value in self.values)
             )
         else:
-            aligned_values = tuple(value.materialize() for value in self.values)
-            projections = tuple(value.projection() for value in self.values)
+            aligned_values = tuple((value.materialize() for value in self.values))
+            projections = tuple((value.projection() for value in self.values))
         return DenseObjectLabelPairAlignment(
             first=aligned_values[0],
             second=aligned_values[1],
@@ -4195,9 +3821,11 @@ class SourceSpatialAlignmentPair:
 
     def shared_source_domain_for_native_pair(self) -> SourceSpatialDomain | None:
         source_domains = tuple(
-            value.source_domain
-            for value in self.values
-            if value.source_domain is not None
+            (
+                value.source_domain
+                for value in self.values
+                if value.source_domain is not None
+            )
         )
         if len(source_domains) != 1:
             return None
@@ -4248,26 +3876,28 @@ class DenseObjectLabelPairAligner:
 
     def aligned(self) -> tuple[Any, Any]:
         alignment = self.alignment()
-        return alignment.first, alignment.second
+        return (alignment.first, alignment.second)
 
     def alignment(self) -> DenseObjectLabelPairAlignment:
         alignment = self.shared_geometry_alignment()
         if alignment is None:
-            first = DenseObjectLabelStack.from_labels(self.first_labels).collapse_singleton_plane()
-            second = DenseObjectLabelStack.from_labels(self.second_labels).collapse_singleton_plane()
+            first = DenseObjectLabelStack.from_labels(
+                self.first_labels
+            ).collapse_singleton_plane()
+            second = DenseObjectLabelStack.from_labels(
+                self.second_labels
+            ).collapse_singleton_plane()
             raise ValueError(
-                "Dense object-label payloads must share a common geometry after "
-                f"alignment; got {first.shape} and {second.shape}."
+                f"Dense object-label payloads must share a common geometry after alignment; got {first.shape} and {second.shape}."
             )
         return alignment
 
     def shared_geometry_alignment(self) -> DenseObjectLabelPairAlignment | None:
         """Return aligned labels when the pair has a declared shared geometry."""
         alignment = SourceSpatialAlignmentPair.from_values(
-            self.first_labels,
-            self.second_labels,
+            self.first_labels, self.second_labels
         ).aligned()
-        first, second = alignment.first, alignment.second
+        first, second = (alignment.first, alignment.second)
         first = DenseObjectLabelStack.from_labels(first).collapse_singleton_plane()
         second = DenseObjectLabelStack.from_labels(second).collapse_singleton_plane()
         if first.shape == second.shape:
@@ -4277,7 +3907,6 @@ class DenseObjectLabelPairAligner:
                 first_projection=alignment.first_projection,
                 second_projection=alignment.second_projection,
             )
-
         factorized = self._factorized_pair(first, second)
         if factorized is not None:
             first, second = factorized
@@ -4287,12 +3916,11 @@ class DenseObjectLabelPairAligner:
                 first_projection=alignment.first_projection,
                 second_projection=alignment.second_projection,
             )
-
-        if first.ndim == 3 and second.ndim == 2 and first.shape[1:] == second.shape:
+        if first.ndim == 3 and second.ndim == 2 and (first.shape[1:] == second.shape):
             first = DenseObjectLabelStack.from_labels(
                 first
             ).project_xy_plane_without_relabeling()
-        if second.ndim == 3 and first.ndim == 2 and second.shape[1:] == first.shape:
+        if second.ndim == 3 and first.ndim == 2 and (second.shape[1:] == first.shape):
             second = DenseObjectLabelStack.from_labels(
                 second
             ).project_xy_plane_without_relabeling()
@@ -4309,15 +3937,13 @@ class DenseObjectLabelPairAligner:
         alignment = self.aligned_stack_context(slice_count)
         if alignment is None:
             return None
-        return alignment.first_stack, alignment.second_stack
+        return (alignment.first_stack, alignment.second_stack)
 
     def aligned_stack_context(
-        self,
-        slice_count: int,
+        self, slice_count: int
     ) -> DenseObjectLabelStackAlignment | None:
         alignment = SourceSpatialAlignmentPair.from_values(
-            self.first_labels,
-            self.second_labels,
+            self.first_labels, self.second_labels
         ).aligned()
         first_stack = self._stack_view(alignment.first, slice_count)
         second_stack = self._stack_view(alignment.second, slice_count)
@@ -4325,8 +3951,7 @@ class DenseObjectLabelPairAligner:
             return None
         if first_stack.shape != second_stack.shape:
             raise ValueError(
-                "Dense object-label stacks must share a common geometry after "
-                f"alignment; got {first_stack.shape} and {second_stack.shape}."
+                f"Dense object-label stacks must share a common geometry after alignment; got {first_stack.shape} and {second_stack.shape}."
             )
         return DenseObjectLabelStackAlignment(
             first_stack=first_stack,
@@ -4345,12 +3970,14 @@ class DenseObjectLabelPairAligner:
         if (
             array.ndim == 3
             and array.shape[0] > 0
-            and slice_count % array.shape[0] == 0
+            and (slice_count % array.shape[0] == 0)
         ):
             indexes = np.arange(slice_count) % array.shape[0]
             return np.ascontiguousarray(array[indexes])
         if array.ndim == 2:
-            return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
+            return np.ascontiguousarray(
+                np.broadcast_to(array, (slice_count, *array.shape))
+            )
         return None
 
     @classmethod
@@ -4372,7 +3999,7 @@ class DenseObjectLabelPairAligner:
             return None
         if first_stack.shape != second_stack.shape:
             return None
-        return first_stack, second_stack
+        return (first_stack, second_stack)
 
 
 @dataclass(frozen=True, slots=True)
@@ -4384,37 +4011,31 @@ class DenseObjectLabelMaskAligner:
 
     def aligned(self) -> tuple[Any, Any]:
         alignment = SourceSpatialAlignmentPair.from_values(
-            self.labels,
-            self.mask,
+            self.labels, self.mask
         ).aligned()
         labels = DenseObjectLabelStack.from_labels(
-            alignment.first,
+            alignment.first
         ).collapse_singleton_plane()
         mask = self._collapse_singleton_mask_plane(alignment.second)
-
         if labels.shape == mask.shape:
-            return labels, mask
-
-        if labels.ndim == 3 and mask.ndim == 2 and labels.shape[1:] == mask.shape:
+            return (labels, mask)
+        if labels.ndim == 3 and mask.ndim == 2 and (labels.shape[1:] == mask.shape):
             labels = DenseObjectLabelStack.from_labels(
                 labels
             ).project_xy_plane_without_relabeling()
-        if mask.ndim == 3 and labels.ndim == 2 and mask.shape[1:] == labels.shape:
+        if mask.ndim == 3 and labels.ndim == 2 and (mask.shape[1:] == labels.shape):
             mask = self._project_mask_stack(mask)
         if labels.shape != mask.shape:
             raise ValueError(
-                "Dense object labels and mask must share a common geometry after "
-                f"alignment; got {labels.shape} and {mask.shape}."
+                f"Dense object labels and mask must share a common geometry after alignment; got {labels.shape} and {mask.shape}."
             )
-        return labels, mask
+        return (labels, mask)
 
     def aligned_stack_context(
-        self,
-        slice_count: int,
+        self, slice_count: int
     ) -> DenseObjectLabelMaskStackAlignment | None:
         alignment = SourceSpatialAlignmentPair.from_values(
-            self.labels,
-            self.mask,
+            self.labels, self.mask
         ).aligned()
         label_stack = self._stack_view(alignment.first, slice_count)
         mask_stack = self._stack_view(alignment.second, slice_count)
@@ -4422,13 +4043,10 @@ class DenseObjectLabelMaskAligner:
             return None
         if label_stack.shape != mask_stack.shape:
             raise ValueError(
-                "Dense object-label and mask stacks must share a common geometry "
-                f"after alignment; got {label_stack.shape} and {mask_stack.shape}."
+                f"Dense object-label and mask stacks must share a common geometry after alignment; got {label_stack.shape} and {mask_stack.shape}."
             )
         return DenseObjectLabelMaskStackAlignment(
-            label_stack,
-            mask_stack,
-            alignment.first_projection,
+            label_stack, mask_stack, alignment.first_projection
         )
 
     @staticmethod
@@ -4449,8 +4067,7 @@ class DenseObjectLabelMaskAligner:
         conflicts = int(np.count_nonzero(np.count_nonzero(positive, axis=0) > 1))
         if conflicts:
             raise ValueError(
-                "Mask stack cannot be projected to one XY plane because "
-                f"{conflicts} pixels are positive in multiple planes."
+                f"Mask stack cannot be projected to one XY plane because {conflicts} pixels are positive in multiple planes."
             )
         return np.max(array, axis=0)
 
@@ -4462,7 +4079,9 @@ class DenseObjectLabelMaskAligner:
         if array.ndim == 3 and array.shape[0] == slice_count:
             return np.ascontiguousarray(array)
         if array.ndim == 2:
-            return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
+            return np.ascontiguousarray(
+                np.broadcast_to(array, (slice_count, *array.shape))
+            )
         return None
 
 
@@ -4487,11 +4106,9 @@ class DenseObjectLabelStack:
             return stack
         if stack.shape[0] == 1:
             return stack[0]
-
         positive = stack > 0
         if not np.any(positive):
             return np.zeros(stack.shape[1:], dtype=np.int32)
-
         max_label = np.where(positive, stack, 0).max(axis=0)
         sentinel = np.iinfo(np.int32).max
         min_positive = np.where(positive, stack, sentinel).min(axis=0)
@@ -4499,8 +4116,7 @@ class DenseObjectLabelStack:
         conflicts = (positive_count > 1) & (min_positive != max_label)
         if np.any(conflicts):
             raise ValueError(
-                "Cannot project dense object-label stack with conflicting positive "
-                "labels at the same XY coordinate."
+                "Cannot project dense object-label stack with conflicting positive labels at the same XY coordinate."
             )
         return max_label.astype(np.int32, copy=False)
 
@@ -4512,7 +4128,9 @@ class ConsecutiveObjectLabelIdProjection:
     positive_label_ids: Any
 
     @classmethod
-    def from_dense_array(cls, labels: np.ndarray) -> "ConsecutiveObjectLabelIdProjection":
+    def from_dense_array(
+        cls, labels: np.ndarray
+    ) -> "ConsecutiveObjectLabelIdProjection":
         label_array = np.asarray(labels)
         positive_ids = np.unique(label_array[label_array > 0])
         return cls(positive_ids.astype(np.int64, copy=False))
@@ -4526,10 +4144,7 @@ class ConsecutiveObjectLabelIdProjection:
         return self.object_count > 0
 
     def relabel_numpy_array(
-        self,
-        labels: np.ndarray,
-        *,
-        dtype: Any | None = None,
+        self, labels: np.ndarray, *, dtype: Any | None = None
     ) -> np.ndarray:
         """Apply this ID projection to one dense NumPy label array."""
         label_array = np.asarray(labels)
@@ -4560,9 +4175,7 @@ class ConsecutiveObjectLabelIdProjection:
         label_array = np.asarray(labels)
         lookup = np.zeros(int(self.positive_label_ids[-1]) + 1, dtype=dtype)
         lookup[self.positive_label_ids] = np.arange(
-            1,
-            self.object_count + 1,
-            dtype=dtype,
+            1, self.object_count + 1, dtype=dtype
         )
         return lookup[label_array]
 
@@ -4577,9 +4190,7 @@ class ConsecutiveObjectLabelIdProjection:
 
 
 class DenseObjectLabelConsecutiveRelabelingStrategy(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    NominalTypeKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Registered backend strategy for consecutive dense object-label IDs."""
 
@@ -4589,8 +4200,7 @@ class DenseObjectLabelConsecutiveRelabelingStrategy(
 
     @classmethod
     def for_labels(
-        cls,
-        labels: object,
+        cls, labels: object
     ) -> "DenseObjectLabelConsecutiveRelabelingStrategy":
         strategy = cls.for_nominal_value(labels)
         return (
@@ -4614,14 +4224,10 @@ class NumpyDenseObjectLabelConsecutiveRelabelingStrategy(
     def relabel(self, labels: object, *, dtype: Any | None = None) -> np.ndarray:
         if not isinstance(labels, np.ndarray):
             raise TypeError(
-                "NumpyDenseObjectLabelConsecutiveRelabelingStrategy requires ndarray, "
-                f"got {type(labels).__name__}."
+                f"NumpyDenseObjectLabelConsecutiveRelabelingStrategy requires ndarray, got {type(labels).__name__}."
             )
         projection = ConsecutiveObjectLabelIdProjection.from_dense_array(labels)
-        return projection.relabel_numpy_array(
-            labels,
-            dtype=dtype,
-        )
+        return projection.relabel_numpy_array(labels, dtype=dtype)
 
 
 class RawDenseObjectLabelConsecutiveRelabelingStrategy(
@@ -4654,17 +4260,16 @@ def dense_object_label_id_domain(
     ).object_label_domain(labels)
     payload_ids = payload_domain.declared_object_ids
     payload_count = payload_domain.declared_object_count
-    resolved_ids = declared_object_ids if declared_object_ids is not None else payload_ids
+    resolved_ids = (
+        declared_object_ids if declared_object_ids is not None else payload_ids
+    )
     if resolved_ids:
-        ids = tuple(int(object_id) for object_id in resolved_ids)
-        if any(object_id <= 0 for object_id in ids):
+        ids = tuple((int(object_id) for object_id in resolved_ids))
+        if any((object_id <= 0 for object_id in ids)):
             raise ValueError("Object label IDs must be positive integers.")
         return tuple(sorted(dict.fromkeys(ids)))
-
     resolved_count = (
-        declared_object_count
-        if declared_object_count is not None
-        else payload_count
+        declared_object_count if declared_object_count is not None else payload_count
     )
     if resolved_count is not None:
         count = int(resolved_count)
@@ -4682,7 +4287,9 @@ def dense_object_label_extent_id_domain(labels: Any) -> tuple[int, ...]:
     material label extent so gaps inside ``1..max(label)`` become explicit
     missing measurements without fabricating rows for an external grid domain.
     """
-    max_present_id = ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
+    max_present_id = ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(
+        labels
+    )
     return tuple(range(1, max_present_id + 1))
 
 
@@ -4699,8 +4306,7 @@ def dense_object_label_declared_or_extent_id_domain(labels: Any) -> tuple[int, .
 
 
 def dense_object_label_measurement_row_domain(
-    labels: Any,
-    dense_labels: Any,
+    labels: Any, dense_labels: Any
 ) -> tuple[int, ...]:
     """Return the direct object-measurement row domain for dense labels.
 
@@ -4714,13 +4320,11 @@ def dense_object_label_measurement_row_domain(
     ).object_label_domain(labels)
     if payload_domain.declared_object_count is not None:
         return dense_object_label_extent_id_domain(dense_labels)
-
     declared_ids = payload_domain.declared_object_ids
     if not declared_ids:
         return dense_object_label_id_domain(labels)
     if len(declared_ids) == 1:
         return declared_ids
-
     dense_domain = dense_object_label_extent_id_domain(dense_labels)
     if declared_ids == tuple(range(1, len(declared_ids) + 1)):
         return dense_domain
@@ -4775,9 +4379,9 @@ class PresentObjectLabelIdsDomainDeclaration(ObjectLabelDomainDeclaration):
     def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
         del source
         return ObjectLabelDomain(
-            declared_object_ids=(
-                ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
-            )
+            declared_object_ids=ObjectLabelIdDomainStrategy.for_value(
+                labels
+            ).present_ids(labels)
         )
 
 
@@ -4788,9 +4392,9 @@ class DenseObjectLabelExtentDomainDeclaration(ObjectLabelDomainDeclaration):
     def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
         del source
         return ObjectLabelDomain(
-            declared_object_count=(
-                ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
-            )
+            declared_object_count=ObjectLabelIdDomainStrategy.for_value(
+                labels
+            ).max_present_id(labels)
         )
 
 
@@ -4809,17 +4413,17 @@ def dense_object_label_plane_id_domains(
     contributes its own dense label domain rather than repeating the global
     declaration for every slice.
     """
-    payload_domain = ObjectLabelDomainMetadataStrategy.for_value(
-        labels
-    ).object_label_domain(labels).with_runtime_declaration_overrides(
-        declared_object_count=declared_object_count,
-        declared_object_ids=declared_object_ids,
-        declared_object_id_domains=declared_object_id_domains,
+    payload_domain = (
+        ObjectLabelDomainMetadataStrategy.for_value(labels)
+        .object_label_domain(labels)
+        .with_runtime_declaration_overrides(
+            declared_object_count=declared_object_count,
+            declared_object_ids=declared_object_ids,
+            declared_object_id_domains=declared_object_id_domains,
+        )
     )
     resolved_scope = domain_scope or payload_domain.scope
-    return ObjectLabelPlaneDomainStrategy.for_enum_member(
-        resolved_scope,
-    ).plane_domains(
+    return ObjectLabelPlaneDomainStrategy.for_enum_member(resolved_scope).plane_domains(
         labels,
         declared_object_count=payload_domain.declared_object_count,
         declared_object_ids=payload_domain.declared_object_ids,
@@ -4836,16 +4440,18 @@ def dense_object_label_identity_domains(
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> tuple[tuple[int, ...], ...]:
     """Return object-id domains for object identity rows represented by labels."""
-    payload_domain = ObjectLabelDomainMetadataStrategy.for_value(
-        labels
-    ).object_label_domain(labels).with_runtime_declaration_overrides(
-        declared_object_count=declared_object_count,
-        declared_object_ids=declared_object_ids,
-        declared_object_id_domains=declared_object_id_domains,
+    payload_domain = (
+        ObjectLabelDomainMetadataStrategy.for_value(labels)
+        .object_label_domain(labels)
+        .with_runtime_declaration_overrides(
+            declared_object_count=declared_object_count,
+            declared_object_ids=declared_object_ids,
+            declared_object_id_domains=declared_object_id_domains,
+        )
     )
     resolved_scope = domain_scope or payload_domain.scope
     return ObjectLabelPlaneDomainStrategy.for_enum_member(
-        resolved_scope,
+        resolved_scope
     ).identity_domains(
         labels,
         declared_object_count=payload_domain.declared_object_count,
@@ -4870,35 +4476,27 @@ def object_label_parent_child_payload(
 
     if child_region_labels is None:
         request = ObjectRelationshipPayloadRequest(
-            parent_labels=parent_labels,
-            child_labels=child_labels,
-            kernel=kernel,
+            parent_labels=parent_labels, child_labels=child_labels, kernel=kernel
         )
         return ObjectRelationshipPayloadStrategy.for_context(request).payload(request)
     else:
         parent_array, context_array = DenseObjectLabelPairAligner(
-            parent_labels,
-            child_region_labels,
+            parent_labels, child_region_labels
         ).aligned()
         child_array, context_array = DenseObjectLabelPairAligner(
-            child_labels,
-            context_array,
+            child_labels, context_array
         ).aligned()
-
     child_ids_array, parent_ids_array = kernel.dominant_parent_ids_by_child(
-        parent_array,
-        child_array,
-        context_array,
+        parent_array, child_array, context_array
     )
     return ParentChildRelationshipPayload(
-        parent_ids=tuple(int(parent_id) for parent_id in parent_ids_array),
-        child_ids=tuple(int(child_id) for child_id in child_ids_array),
+        parent_ids=tuple((int(parent_id) for parent_id in parent_ids_array)),
+        child_ids=tuple((int(child_id) for child_id in child_ids_array)),
     )
 
 
 def object_label_lineage_payload(
-    parent_labels: Any,
-    child_labels: Any,
+    parent_labels: Any, child_labels: Any
 ) -> ParentChildRelationshipPayload:
     """Derive typed parent-child lineage for object-label transforms.
 
@@ -4908,25 +4506,22 @@ def object_label_lineage_payload(
     """
     geometry = object_label_lineage_geometry(parent_labels, child_labels)
     return ObjectLabelLineageStrategy.for_enum_member(geometry).payload(
-        parent_labels,
-        child_labels,
+        parent_labels, child_labels
     )
 
 
 def object_label_lineage_geometry(
-    parent_labels: Any,
-    child_labels: Any,
+    parent_labels: Any, child_labels: Any
 ) -> ObjectLabelLineageGeometry:
     """Classify the geometry contract for object-label lineage derivation."""
     alignment = SourceSpatialAlignmentPair.from_values(
-        parent_labels,
-        child_labels,
+        parent_labels, child_labels
     ).aligned()
     parent_stack = DenseObjectLabelStack.from_labels(
-        alignment.first,
+        alignment.first
     ).collapse_singleton_plane()
     child_stack = DenseObjectLabelStack.from_labels(
-        alignment.second,
+        alignment.second
     ).collapse_singleton_plane()
     if parent_stack.shape == child_stack.shape:
         return ObjectLabelLineageGeometry.SHARED_GEOMETRY
@@ -4942,19 +4537,14 @@ class RelationshipSemantics:
     relationship_type: str = "related"
 
     def __post_init__(self) -> None:
-        _require_name(
-            self.relationship_type,
-            "RelationshipSemantics.relationship_type",
-        )
+        _require_name(self.relationship_type, "RelationshipSemantics.relationship_type")
         if not isinstance(self.source, RelationshipEndpoint):
             raise TypeError(
-                "RelationshipSemantics.source must be RelationshipEndpoint, "
-                f"got {type(self.source).__name__}."
+                f"RelationshipSemantics.source must be RelationshipEndpoint, got {type(self.source).__name__}."
             )
         if not isinstance(self.target, RelationshipEndpoint):
             raise TypeError(
-                "RelationshipSemantics.target must be RelationshipEndpoint, "
-                f"got {type(self.target).__name__}."
+                f"RelationshipSemantics.target must be RelationshipEndpoint, got {type(self.target).__name__}."
             )
 
     @classmethod
@@ -4963,8 +4553,8 @@ class RelationshipSemantics:
         parent_name: str,
         child_name: str,
         *,
-        parent_kind: ArtifactKind = ArtifactKind.OBJECT_LABELS,
-        child_kind: ArtifactKind = ArtifactKind.OBJECT_LABELS,
+        parent_kind: ArtifactType = ObjectLabelsArtifactType,
+        child_kind: ArtifactType = ObjectLabelsArtifactType,
     ) -> "RelationshipSemantics":
         """Return standard parent-child semantics between two runtime entities."""
         return cls(
@@ -4990,8 +4580,7 @@ def coerce_enum(enum_type: type[Enum], value: Any, field_name: str) -> Any:
         return value if isinstance(value, enum_type) else enum_type(value)
     except ValueError as exc:
         raise ValueError(
-            f"{field_name} must be one of "
-            f"{', '.join(member.value for member in enum_type)}; got {value!r}."
+            f"{field_name} must be one of {', '.join((member.value for member in enum_type))}; got {value!r}."
         ) from exc
 
 

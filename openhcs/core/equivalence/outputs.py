@@ -1,6 +1,7 @@
 """Runtime output snapshot construction for equivalence checks."""
 
 from __future__ import annotations
+from openhcs.core.runtime_semantics import MeasurementRowAxisField
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -13,7 +14,6 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.policy import normalize_runtime_identifier
 from openhcs.core.equivalence.tables import RuntimeTableSnapshot
-from openhcs.core.measurement_row_materialization import MEASUREMENT_OBJECT_ID_FIELDS
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionObservation,
 )
@@ -191,7 +191,7 @@ def _table_has_object_identity(table: RuntimeTableSnapshot) -> bool:
         _normalize_table_header_field(field)
         for field in table.header
     }
-    return bool(normalized_header & set(MEASUREMENT_OBJECT_ID_FIELDS))
+    return bool(normalized_header & set(MeasurementRowAxisField.object_id_field_names()))
 
 
 def _normalize_table_header_field(field: str) -> str:

@@ -18,7 +18,13 @@ from uuid import uuid4
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactPlan
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ArtifactPlan,
+    ArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.function_patterns import CompiledFunctionInvocation
 from openhcs.core.progress import (
     ProgressEvent,
@@ -415,7 +421,7 @@ class DebugJsonCodec:
 class DebugArtifactRef:
     """Reference to a debug artifact or preview payload."""
 
-    kind: ArtifactKind
+    kind: ArtifactType
     name: str
     cursor: DebugCursor
     storage_ref: str
@@ -427,11 +433,7 @@ class DebugArtifactRef:
     content_digest: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.kind, ArtifactKind):
-            raise TypeError(
-                "DebugArtifactRef.kind must be ArtifactKind, "
-                f"got {type(self.kind).__name__}."
-            )
+        object.__setattr__(self, "kind", ArtifactType.coerce(self.kind))
         if not self.name:
             raise ValueError("DebugArtifactRef.name cannot be empty.")
         if not self.storage_ref:
@@ -447,7 +449,7 @@ class DebugArtifactRef:
         """Build a metadata-only debug reference from a compiled artifact plan."""
 
         return cls(
-            kind=plan.kind,
+            kind=plan.artifact_type,
             name=plan.name,
             cursor=cursor,
             storage_ref=plan.path,
@@ -473,7 +475,7 @@ class DebugArtifactRef:
     def from_json_dict(cls, data: Mapping[str, Any]) -> "DebugArtifactRef":
         shape = data.get("shape")
         return cls(
-            kind=ArtifactKind(data["kind"]),
+            kind=ArtifactType.coerce(data["kind"]),
             name=str(data["name"]),
             cursor=DebugJsonCodec.cursor_from_record(data["cursor"]),
             storage_ref=str(data["storage_ref"]),
@@ -509,7 +511,7 @@ class DebugArtifactIdentity:
     """Stable logical identity for matching debug artifacts across replay runs."""
 
     name: str
-    kind: ArtifactKind
+    kind: ArtifactType
     group_keys: tuple[str | None, ...] = (None,)
     producer_step_index: str | None = None
     producer_step_scope_id: str | None = None
@@ -521,7 +523,7 @@ class DebugArtifactIdentity:
         output_plan = plan if isinstance(plan, ArtifactOutputPlan) else None
         return cls(
             name=plan.name,
-            kind=plan.kind,
+            kind=plan.artifact_type,
             group_keys=tuple(plan.group_keys or (None,)),
             producer_step_index=(
                 None
@@ -578,7 +580,7 @@ class DebugArtifactIdentity:
     def from_json_dict(cls, data: Mapping[str, Any]) -> "DebugArtifactIdentity":
         return cls(
             name=str(data["name"]),
-            kind=ArtifactKind(data["kind"]),
+            kind=ArtifactType.coerce(data["kind"]),
             group_keys=tuple(data.get("group_keys", (None,))),
             producer_step_index=data.get("producer_step_index"),
             producer_step_scope_id=data.get("producer_step_scope_id"),
@@ -607,17 +609,20 @@ class DebugArtifactRefProjection:
             )
         )
 
-    def of_kind(self, kind: ArtifactKind) -> tuple[DebugArtifactRef, ...]:
-        resolved_kind = kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
-        return tuple(ref for ref in self.refs if ref.kind is resolved_kind)
+    def of_artifact_type(
+        self,
+        artifact_type: type[ArtifactType],
+    ) -> tuple[DebugArtifactRef, ...]:
+        resolved_artifact_type = ArtifactType.coerce(artifact_type)
+        return tuple(ref for ref in self.refs if ref.kind is resolved_artifact_type)
 
     @property
     def measurement_refs(self) -> tuple[DebugArtifactRef, ...]:
-        return self.of_kind(ArtifactKind.MEASUREMENTS)
+        return self.of_artifact_type(MeasurementsArtifactType)
 
     @property
     def relationship_refs(self) -> tuple[DebugArtifactRef, ...]:
-        return self.of_kind(ArtifactKind.RELATIONSHIPS)
+        return self.of_artifact_type(RelationshipsArtifactType)
 
 
 @dataclass(frozen=True, slots=True)

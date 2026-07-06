@@ -58,6 +58,7 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     project_image_mask_to_data_domain,
 )
+from openhcs.core.source_image_semantics import source_image_payload_role
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +302,51 @@ class ImagePayloadSliceProjector:
     mask: RuntimeArrayData | None
     metadata: ImagePayloadMetadata
 
+    def payloads_for_slices(
+        self,
+        slices: Sequence[RuntimeArrayData],
+    ) -> list[ImagePayloadMetadataInput]:
+        """Return payloads for every child slice using one projection pass."""
+        if self.mask is None:
+            if not self.metadata.has_plane_specific_values:
+                return [self.metadata.payload_with(slice_data) for slice_data in slices]
+            return [
+                self.metadata.for_source_plane(index).payload_with(slice_data)
+                for index, slice_data in enumerate(slices)
+            ]
+        direct_payloads = self._direct_grayscale_plane_payloads(slices)
+        if direct_payloads is not None:
+            return direct_payloads
+        return [
+            self.payload_for_slice(slice_data, index)
+            for index, slice_data in enumerate(slices)
+        ]
+
+    def _direct_grayscale_plane_payloads(
+        self,
+        slices: Sequence[RuntimeArrayData],
+    ) -> list[ImagePayloadMetadataInput] | None:
+        """Return direct per-plane masked payloads for ordinary 2D stack slices."""
+        if self.mask is None:
+            return None
+        mask_array = np.asarray(self.mask, dtype=bool)
+        if mask_array.ndim < 3 or mask_array.shape[0] < len(slices):
+            return None
+        payloads: list[ImagePayloadMetadataInput] = []
+        for index, slice_data in enumerate(slices):
+            if not is_grayscale_image_slice(slice_data):
+                return None
+            mask_slice = mask_array[index]
+            if tuple(mask_slice.shape) != tuple(np.shape(slice_data)):
+                return None
+            payloads.append(
+                self.metadata.for_source_plane(index).payload_with(
+                    slice_data,
+                    mask_slice,
+                )
+            )
+        return payloads
+
     def payload_for_slice(
         self,
         data_slice: RuntimeArrayData,
@@ -504,10 +550,7 @@ def unstack_image_payload_context(
     if mask is None and not metadata.has_values:
         return list(slices)
     projector = ImagePayloadSliceProjector(mask=mask, metadata=metadata)
-    return [
-        projector.payload_for_slice(slice_data, index)
-        for index, slice_data in enumerate(slices)
-    ]
+    return projector.payloads_for_slices(slices)
 
 
 class SingletonStackImageDomainStrategy(
@@ -1107,6 +1150,28 @@ class AlignedImageStack:
         )
 
 
+class AlignedImageStackSingletonStackImageDomainStrategy(
+    SingletonStackImageDomainStrategy
+):
+    """Project an aligned slice carrier into the stack payload it represents."""
+
+    value_type = AlignedImageStack
+
+    def project_value(self, value: Any) -> Any:
+        if not isinstance(value, AlignedImageStack):
+            raise TypeError(
+                "Aligned-image stack projector requires AlignedImageStack."
+            )
+        slice_data = tuple(image_payload_data(payload) for payload in value.slices)
+        memory_type = detect_memory_type(slice_data[0])
+        stack = ImageBundleLayout.for_slices(slice_data).stack(
+            slices=slice_data,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+        return stack_image_payload_context(value.slices, stack)
+
+
 class NestedAlignedImageStackKwargResolutionStrategy(
     AlwaysMatchingAlignedKwargResolutionMixin,
     AlignedImageStackKwargResolutionStrategy
@@ -1159,6 +1224,45 @@ class ImageBundleLayout(ABC, metaclass=AutoRegisterMeta):
         gpu_id: int,
     ) -> Any:
         """Stack same-slice runtime images into one callable input bundle."""
+
+
+class HomogeneousImageBundleLayout(ImageBundleLayout):
+    """Stack same-kind grayscale or color image slices without promotion."""
+
+    layout_key = "homogeneous"
+
+    @classmethod
+    def matches(cls, slices: Sequence[Any]) -> bool:
+        if not all(_is_bundle_image_slice(slice_data) for slice_data in slices):
+            return False
+        shape_set = {tuple(np.shape(slice_data)) for slice_data in slices}
+        if len(shape_set) != 1:
+            return False
+        return (
+            all(is_grayscale_image_slice(slice_data) for slice_data in slices)
+            or all(is_color_image_slice(slice_data) for slice_data in slices)
+        )
+
+    def stack(
+        self,
+        *,
+        slices: Sequence[Any],
+        memory_type: str,
+        gpu_id: int,
+    ) -> Any:
+        numpy_slices = tuple(
+            NumpySliceConversion(slice_data, gpu_id).array()
+            for slice_data in slices
+        )
+        stacked = np.stack(numpy_slices)
+        if memory_type == MEMORY_TYPE_NUMPY:
+            return stacked
+        return convert_memory(
+            data=stacked,
+            source_type=MEMORY_TYPE_NUMPY,
+            target_type=memory_type,
+            gpu_id=gpu_id,
+        )
 
 
 class MixedColorImageBundleLayout(ImageBundleLayout):
@@ -1229,9 +1333,18 @@ class SingleSourceVolumePayload:
     def should_preserve(self) -> bool:
         return (
             is_grayscale_volume_slice(self.data)
-            and self.metadata.source_path is not None
-            and not self.metadata.source_image_provenance_planes.has_values
+            and self.metadata.source_image_provenance_planes.has_values
+            and self.has_single_source_identity
         )
+
+    @property
+    def has_single_source_identity(self) -> bool:
+        paths = tuple(
+            path
+            for path in self.metadata.source_image_provenance_planes.paths
+            if path is not None
+        )
+        return bool(paths) and len(set(paths)) == 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -1344,12 +1457,34 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
         ):
             mask = ImageArrayShapeSemantics(mask).collapse_pairwise_slice_grid()
         payload = metadata.payload_with(data, mask)
+    source_role = source_image_payload_role(payload)
     if ImageArrayShapeSemantics(data).ndim == 2:
         return (payload,)
-    if is_color_image_slice(data):
+    if (
+        is_color_image_slice(data)
+        or (
+            source_role is not None
+            and source_role.is_channel_last_source_plane(data)
+        )
+    ):
         return (payload,)
-    if SingleSourceVolumePayload(data, metadata).should_preserve:
+    if (
+        source_role is None
+        and SingleSourceVolumePayload(data, metadata).should_preserve
+    ):
         return (payload,)
+    if (
+        source_role is not None
+        and source_role.is_channel_last_source_stack(data)
+    ):
+        memory_type = detect_memory_type(data)
+        slice_projector = ImagePayloadSliceProjector(mask=mask, metadata=metadata)
+        return tuple(
+            slice_projector.payload_for_slice(data_slice, index)
+            for index, data_slice in enumerate(
+                ImageStackLayoutUnstackRequest(data, memory_type, 0).slices()
+            )
+        )
     if is_image_stack(data):
         memory_type = detect_memory_type(data)
         slice_projector = ImagePayloadSliceProjector(mask=mask, metadata=metadata)

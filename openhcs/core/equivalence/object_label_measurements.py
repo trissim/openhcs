@@ -29,7 +29,7 @@ from openhcs.core.equivalence.measurement_requirements import (
     RequiredRuntimeMeasurementProjection,
 )
 from openhcs.core.equivalence.measurement_features import (
-    object_measurement_subjects_with_role,
+    object_measurement_subjects_matching_marker,
 )
 from openhcs.core.equivalence.measurement_rows import (
     RuntimeObjectMeasurementRowIdentity,
@@ -42,7 +42,9 @@ from openhcs.core.runtime_semantics import (
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
-    ObjectMeasurementFeatureRole,
+    ObjectCountFeatureMarker,
+    ObjectIdentifierFeatureMarker,
+    ObjectLocationFeatureMarker,
     ObjectInstanceKey,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
@@ -369,10 +371,10 @@ class RuntimeObjectLabelMeasurementAuthority:
         policy: RuntimeEquivalencePolicy,
     ) -> frozenset[RuntimeMeasurementSubjectKey]:
         """Return object-count subjects unavailable to primary-row fallback."""
-        explicit_subjects = object_measurement_subjects_with_role(
+        explicit_subjects = object_measurement_subjects_matching_marker(
             measurement_fact_counts,
-            ObjectMeasurementFeatureRole.COUNT,
-            policy.measurement_dialect,
+            ObjectCountFeatureMarker,
+            policy,
         )
         return self.primary_row_reserved_count_subjects(explicit_subjects)
 
@@ -382,10 +384,10 @@ class RuntimeObjectLabelMeasurementAuthority:
         policy: RuntimeEquivalencePolicy,
     ) -> frozenset[RuntimeMeasurementSubjectKey]:
         """Return ObjectNumber subjects unavailable to primary-row fallback."""
-        explicit_subjects = object_measurement_subjects_with_role(
+        explicit_subjects = object_measurement_subjects_matching_marker(
             measurement_fact_counts,
-            ObjectMeasurementFeatureRole.IDENTIFIER,
-            policy.measurement_dialect,
+            ObjectIdentifierFeatureMarker,
+            policy,
         )
         return explicit_subjects | self.identifier_subjects
 
@@ -479,19 +481,19 @@ class ObjectLabelMeasurementCompletion(ObjectLabelMeasurementState):
         ] = frozenset(),
     ) -> "ObjectLabelMeasurementCompletion":
         """Build object-label completion from explicit measurement facts."""
-        explicit_object_location_subjects = object_measurement_subjects_with_role(
+        explicit_object_location_subjects = object_measurement_subjects_matching_marker(
             measurement_fact_counts,
-            ObjectMeasurementFeatureRole.LOCATION,
-            policy.measurement_dialect,
+            ObjectLocationFeatureMarker,
+            policy,
         )
         return cls(
             policy=policy,
             measurement_fact_counts=measurement_fact_counts,
             object_identifier_subjects=(
-                object_measurement_subjects_with_role(
+                object_measurement_subjects_matching_marker(
                     measurement_fact_counts,
-                    ObjectMeasurementFeatureRole.IDENTIFIER,
-                    policy.measurement_dialect,
+                    ObjectIdentifierFeatureMarker,
+                    policy,
                 )
                 if object_identifier_subjects is None
                 else object_identifier_subjects
@@ -501,10 +503,10 @@ class ObjectLabelMeasurementCompletion(ObjectLabelMeasurementState):
                 if object_location_subjects is None
                 else object_location_subjects
             ),
-            object_count_subjects=object_measurement_subjects_with_role(
+            object_count_subjects=object_measurement_subjects_matching_marker(
                 measurement_fact_counts,
-                ObjectMeasurementFeatureRole.COUNT,
-                policy.measurement_dialect,
+                ObjectCountFeatureMarker,
+                policy,
             ),
             required_keys=required_keys,
             object_location_aggregate_subjects=object_location_aggregate_subjects,

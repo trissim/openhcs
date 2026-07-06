@@ -5,13 +5,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import ClassVar, Mapping
+from typing import Any, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.component_set import ComponentSet
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactType, ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataExtractionRule,
@@ -24,6 +24,7 @@ from openhcs.core.source_bindings import (
     SourceSelector,
     normalize_source_binding_values,
 )
+from openhcs.core.source_metadata import SourceVoxelSpacing
 
 
 SOURCE_IMAGE_TYPE_METADATA_FIELD = "OpenHCSImageType"
@@ -79,8 +80,8 @@ class ImageAssignment(SourceAssignmentBase):
         object.__setattr__(self, "image_type", self.image_type.strip())
 
     @property
-    def artifact_kind(self) -> ArtifactKind:
-        return ArtifactKind.IMAGE
+    def artifact_kind(self) -> ArtifactType:
+        return ImageArtifactType
 
     @property
     def participates_in_image_stack(self) -> bool:
@@ -102,16 +103,16 @@ class SourceArtifactAssignment(SourceAssignmentBase):
     """One pipeline-start or step-input source artifact declaration."""
 
     assignment_kind = "source_artifact"
-    artifact_kind: ArtifactKind
+    artifact_kind: ArtifactType
     payload_type: str = ""
 
     def __post_init__(self) -> None:
         SourceAssignmentBase.__post_init__(self)
-        if not isinstance(self.artifact_kind, ArtifactKind):
-            raise TypeError(
-                "SourceArtifactAssignment.artifact_kind must be ArtifactKind, "
-                f"got {type(self.artifact_kind).__name__}."
-            )
+        object.__setattr__(
+            self,
+            "artifact_kind",
+            ArtifactType.coerce(self.artifact_kind),
+        )
         object.__setattr__(self, "payload_type", self.payload_type.strip())
 
     @classmethod
@@ -121,7 +122,7 @@ class SourceArtifactAssignment(SourceAssignmentBase):
     ) -> "SourceArtifactAssignment":
         return cls(
             alias=assignment.alias,
-            artifact_kind=ArtifactKind.IMAGE,
+            artifact_kind=ImageArtifactType,
             selector=assignment.selector,
             origin=assignment.origin,
             payload_type=assignment.image_type,
@@ -145,9 +146,10 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
     __skip_if_no_key__ = True
     image_type_key: ClassVar[str | None] = None
     PARTICIPATES_IN_IMAGE_STACK: ClassVar[bool]
-    ARTIFACT_KIND: ClassVar[ArtifactKind] = ArtifactKind.IMAGE
+    ARTIFACT_KIND: ClassVar[ArtifactType] = ImageArtifactType
     LOAD_AS_MONOCHROME: ClassVar[bool] = False
     MATERIALIZE_SOURCE_MASK: ClassVar[bool] = False
+    CHANNEL_LAST_SOURCE_PLANES: ClassVar[bool] = False
 
     @classmethod
     def for_image_type(cls, image_type: str) -> "ImageTypeSourceRole":
@@ -175,7 +177,7 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
         return type(self).PARTICIPATES_IN_IMAGE_STACK
 
     @property
-    def artifact_kind(self) -> ArtifactKind:
+    def artifact_kind(self) -> ArtifactType:
         """Artifact kind represented by this source image type."""
 
         return type(self).ARTIFACT_KIND
@@ -192,6 +194,24 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
 
         return type(self).MATERIALIZE_SOURCE_MASK
 
+    def is_channel_last_source_plane(self, value: Any) -> bool:
+        """Return whether the declared source type owns one channel-last image plane."""
+
+        if not type(self).CHANNEL_LAST_SOURCE_PLANES:
+            return False
+        from openhcs.core.image_shapes import is_color_image_slice
+
+        return is_color_image_slice(value)
+
+    def is_channel_last_source_stack(self, value: Any) -> bool:
+        """Return whether the declared source type owns channel-last image planes."""
+
+        if not type(self).CHANNEL_LAST_SOURCE_PLANES:
+            return False
+        from openhcs.core.image_shapes import is_color_image_stack
+
+        return is_color_image_stack(value)
+
     @property
     def source_bindings_config_representable(self) -> bool:
         """Whether this role can be lowered to SourceBindingsConfig losslessly."""
@@ -206,7 +226,7 @@ class ImageTypeSourceRoleClassSpec:
     class_name: str
     base_type: type[ImageTypeSourceRole]
     participates_in_image_stack: bool
-    artifact_kind: ArtifactKind = ArtifactKind.IMAGE
+    artifact_kind: ArtifactType = ImageArtifactType
     load_as_monochrome: bool = False
     materialize_source_mask: bool = False
 
@@ -253,7 +273,7 @@ ObjectLabelsImageTypeSourceRole = ImageTypeSourceRoleClassSpec(
     "ObjectLabelsImageTypeSourceRole",
     SourceArtifactImageTypeSourceRole,
     participates_in_image_stack=False,
-    artifact_kind=ArtifactKind.OBJECT_LABELS,
+    artifact_kind=ObjectLabelsArtifactType,
 ).declare()
 
 
@@ -264,6 +284,7 @@ class ImageTypeSourceRoleSpec:
     class_name: str
     image_type_key: str
     base_type: type[ImageTypeSourceRole]
+    channel_last_source_planes: bool = False
 
     def declare(self) -> type[ImageTypeSourceRole]:
         return type(
@@ -272,6 +293,7 @@ class ImageTypeSourceRoleSpec:
             {
                 "__module__": __name__,
                 "image_type_key": self.image_type_key,
+                "CHANNEL_LAST_SOURCE_PLANES": self.channel_last_source_planes,
             },
         )
 
@@ -286,6 +308,7 @@ for _image_type_role_spec in (
         "ColorImageTypeSourceRole",
         "color image",
         ImageStackSourceRole,
+        channel_last_source_planes=True,
     ),
     ImageTypeSourceRoleSpec(
         "BinaryImageTypeSourceRole",
@@ -322,7 +345,7 @@ def image_type_participates_in_image_stack(image_type: str) -> bool:
     return ImageTypeSourceRole.for_image_type(image_type).participates_in_image_stack
 
 
-def image_type_artifact_kind(image_type: str) -> ArtifactKind:
+def image_type_artifact_kind(image_type: str) -> ArtifactType:
     """Return the artifact kind represented by a source image type."""
 
     return ImageTypeSourceRole.for_image_type(image_type).artifact_kind
@@ -449,6 +472,9 @@ class PipelineImageSchema:
     )
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
+    source_voxel_spacing: SourceVoxelSpacing = field(
+        default_factory=SourceVoxelSpacing
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -465,6 +491,12 @@ class PipelineImageSchema:
                 "PipelineImageSchema.source_image_stack must be "
                 "SourceImageStackPlan, got "
                 f"{type(self.source_image_stack).__name__}."
+            )
+        if not isinstance(self.source_voxel_spacing, SourceVoxelSpacing):
+            object.__setattr__(
+                self,
+                "source_voxel_spacing",
+                SourceVoxelSpacing(tuple(self.source_voxel_spacing)),
             )
         object.__setattr__(
             self,
@@ -487,7 +519,11 @@ class PipelineImageSchema:
         object.__setattr__(
             self,
             "assignments_by_alias",
-            MappingProxyType(dict(self.assignments_by_alias)),
+            MappingProxyType(
+                source_stack_component_identity_assignments(
+                    self.assignments_by_alias
+                )
+            ),
         )
         object.__setattr__(
             self,
@@ -558,7 +594,7 @@ class PipelineImageSchema:
     def source_assignment_for_alias(
         self,
         alias: str,
-        kind: ArtifactKind,
+        kind: ArtifactType,
     ) -> SourceAssignmentBase | None:
         artifact_assignment = self.source_artifact_for_alias(alias)
         if artifact_assignment is not None:
@@ -568,7 +604,7 @@ class PipelineImageSchema:
                     f"{artifact_assignment.artifact_kind.value}, not {kind.value}."
                 )
             return artifact_assignment
-        if kind is ArtifactKind.IMAGE:
+        if kind is ImageArtifactType:
             return self.resolved_assignment_for_alias(alias)
         return None
 
@@ -599,7 +635,7 @@ class PipelineImageSchema:
     def resolved_source_artifact_for_alias(
         self,
         alias: str,
-        kind: ArtifactKind,
+        kind: ArtifactType,
     ) -> SourceArtifactAssignment | None:
         artifact_assignment = self.source_artifact_for_alias(alias)
         if artifact_assignment is None:
@@ -620,6 +656,25 @@ class PipelineImageSchema:
         """Project source-binding fields needed for runtime step inheritance."""
 
         return PipelineImageSchemaSourceBindingsProjection(self).runtime_config()
+
+
+def source_stack_component_identity_assignments(
+    assignments_by_alias: Mapping[str, ImageAssignment],
+) -> dict[str, ImageAssignment]:
+    """Return image assignments with OpenHCS stack component identity declared."""
+
+    normalized: dict[str, ImageAssignment] = {}
+    channel_index = 1
+    for alias, assignment in assignments_by_alias.items():
+        if not assignment.participates_in_image_stack:
+            normalized[alias] = assignment
+            continue
+        channel_value = str(channel_index)
+        normalized[alias] = assignment.with_component_identity(
+            ComponentSelector(AllComponents.CHANNEL, channel_value)
+        )
+        channel_index += 1
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -809,6 +864,7 @@ class PipelineImageSchemaBuilder:
         self.source_image_types_by_alias = dict(source_image_types_by_alias or {})
         self.match_plan: SourceBindingMatchPlan | None = None
         self.grouping: GroupingPlan | None = None
+        self.source_voxel_spacing = SourceVoxelSpacing()
 
     def build(self) -> PipelineImageSchema:
         return PipelineImageSchema(
@@ -823,6 +879,7 @@ class PipelineImageSchemaBuilder:
             ),
             match_plan=self.match_plan,
             grouping=self.grouping,
+            source_voxel_spacing=self.source_voxel_spacing,
         )
 
     def add_metadata_rule(self, rule: MetadataExtractionRule) -> None:
@@ -843,6 +900,22 @@ class PipelineImageSchemaBuilder:
         stack_plan: SourceImageStackPlan,
     ) -> None:
         self.source_image_stack = self.source_image_stack.merge(stack_plan)
+
+    def declare_source_voxel_spacing(
+        self,
+        source_voxel_spacing: SourceVoxelSpacing,
+    ) -> None:
+        if not source_voxel_spacing.has_values:
+            return
+        if (
+            self.source_voxel_spacing.has_values
+            and self.source_voxel_spacing != source_voxel_spacing
+        ):
+            raise ValueError(
+                "Pipeline image schema already declared a different source "
+                "voxel spacing."
+            )
+        self.source_voxel_spacing = source_voxel_spacing
 
     def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
         self.imported_metadata_tables.append(table)

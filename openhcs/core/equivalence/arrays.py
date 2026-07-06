@@ -63,3 +63,11 @@ def semantic_array_payload(value: object) -> tuple[str, str, tuple[int, ...], st
         tuple(int(axis) for axis in array.shape),
         digest.hexdigest(),
     )
+
+
+def semantic_array_shape(value: object) -> tuple[int, ...] | None:
+    """Return backend-independent array shape without hashing content."""
+    array = canonical_numpy_array(value)
+    if array is None:
+        return None
+    return tuple(int(axis) for axis in array.shape)

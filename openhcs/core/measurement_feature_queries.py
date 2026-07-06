@@ -18,18 +18,6 @@ from openhcs.core.measurement_lookup_dialect import (
     resolve_runtime_measurement_lookup_dialect,
 )
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_FEATURE_NAME_FIELD,
-    MEASUREMENT_FEATURE_NAME_FIELDS,
-    MEASUREMENT_MEAN_VALUE_FIELD,
-    MEASUREMENT_MEASUREMENT_NAME_FIELD,
-    MEASUREMENT_MEASUREMENT_VALUE_FIELD,
-    MEASUREMENT_OBJECT_ID_FIELDS,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_OUTPUT_NAME_FIELD,
-    MEASUREMENT_RESULT_VALUE_FIELD,
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
-    MEASUREMENT_VALUE_FIELD,
-    MEASUREMENT_VALUE_FIELDS,
     MeasurementObjectLabelResolution,
     columnar_row_values,
     is_structural_missing_measurement_cell as _is_structural_missing_measurement_cell,
@@ -50,6 +38,7 @@ from openhcs.core.process_local_cache import (
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.runtime_semantics import (
+    MeasurementRowValueField,
     FieldSpec,
     MeasurementRowAxisField,
     MeasurementScalarLiteral,
@@ -196,14 +185,14 @@ class ColumnarMeasurementTableSchema:
         }
         table_object_name = measurement_table_object_name(table)
         object_name_values = (
-            columnar_row_values(rows, MEASUREMENT_OBJECT_NAME_FIELD)
+            columnar_row_values(rows, MeasurementRowAxisField.OBJECT_NAME.value)
             if table_object_name is None
-            and MEASUREMENT_OBJECT_NAME_FIELD in columns
+            and MeasurementRowAxisField.OBJECT_NAME.value in columns
             else None
         )
         source_image_name_values = (
-            columnar_row_values(rows, MEASUREMENT_SOURCE_IMAGE_NAME_FIELD)
-            if MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in columns
+            columnar_row_values(rows, MeasurementRowAxisField.SOURCE_IMAGE_NAME.value)
+            if MeasurementRowAxisField.SOURCE_IMAGE_NAME.value in columns
             else None
         )
         feature_name_values = cls._feature_name_values(rows, columns)
@@ -249,7 +238,7 @@ class ColumnarMeasurementTableSchema:
         rows: ColumnarRows,
         columns: tuple[str, ...],
     ) -> Sequence[object] | None:
-        for field_name in MEASUREMENT_FEATURE_NAME_FIELDS:
+        for field_name in MeasurementRowAxisField.feature_name_field_names():
             if field_name in columns:
                 return columnar_row_values(rows, field_name)
         return None
@@ -322,7 +311,7 @@ class ColumnarMeasurementTableSchema:
             return next(
                 (
                     value_field
-                    for value_field in MEASUREMENT_VALUE_FIELDS
+                    for value_field in MeasurementRowValueField.field_names()
                     if value_field in self.columns
                 ),
                 None,
@@ -523,6 +512,12 @@ class MeasurementFeatureQuery:
 
     def table_source_matches_feature(self, table: MeasurementTable) -> bool:
         """Return whether table-level source ownership matches this feature query."""
+        if (
+            isinstance(table.rows, ColumnarRows)
+            and ColumnarMeasurementTableSchema.from_table(table).source_image_name_values
+            is not None
+        ):
+            return True
         source_image_name = table.source_image_name
         if source_image_name is None:
             return True
@@ -1418,11 +1413,7 @@ class MeasurementFeatureValueIndex:
             ],
             dtype=bool,
         )
-        source_mask = (
-            None
-            if table.source_image_name is not None
-            else schema.source_mask(query.source_candidates)
-        )
+        source_mask = schema.source_mask(query.source_candidates)
         feature_mask = schema.feature_mask(query.field_candidates)
         source_feature_mask = (
             value_mask
@@ -1499,7 +1490,7 @@ class MeasurementFeatureValueIndex:
             row_mapping = measurement_row_mapping(row)
             if (
                 query.query_object_name is not None
-                and MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in row_mapping
+                and MeasurementRowAxisField.SOURCE_IMAGE_NAME.value in row_mapping
                 and not measurement_row_has_object_identity(row_mapping)
             ):
                 continue
@@ -1636,7 +1627,7 @@ class MeasurementRowSequenceFeatureValueIndex:
         ):
             return declared_object_id_field
         for field_name in field_names:
-            if field_name in MEASUREMENT_OBJECT_ID_FIELDS:
+            if field_name in MeasurementRowAxisField.object_id_field_names():
                 return field_name
         return None
 
@@ -1709,7 +1700,7 @@ class MeasurementRowSequenceLayout:
                     field_names.append(normalized_name)
                 declares_feature_names = (
                     declares_feature_names
-                    or normalized_name in MEASUREMENT_FEATURE_NAME_FIELDS
+                    or normalized_name in MeasurementRowAxisField.feature_name_field_names()
                 )
                 normalized_token = normalize_measurement_token(normalized_name)
                 if normalized_token in candidate_rank:
@@ -1719,7 +1710,7 @@ class MeasurementRowSequenceLayout:
                         if found_feature_rank is None
                         else min(found_feature_rank, rank)
                     )
-                if normalized_name in MEASUREMENT_OBJECT_ID_FIELDS:
+                if normalized_name in MeasurementRowAxisField.object_id_field_names():
                     found_object_id = True
             if declares_feature_names:
                 found_feature_rank = 0
@@ -1904,7 +1895,7 @@ class MeasurementTableObjectFeatureSemantics:
         if not table.fields:
             return None
         field_names = tuple(field.name for field in table.fields)
-        if any(field_name in MEASUREMENT_FEATURE_NAME_FIELDS for field_name in field_names):
+        if any(field_name in MeasurementRowAxisField.feature_name_field_names() for field_name in field_names):
             return None
         return cls(
             object_names=(object_name,),
@@ -1938,7 +1929,7 @@ class MeasurementTableObjectFeatureSemantics:
         feature_names: set[str] = set()
         for row in rows:
             row_mapping = measurement_row_mapping(row)
-            for field_name in MEASUREMENT_FEATURE_NAME_FIELDS:
+            for field_name in MeasurementRowAxisField.feature_name_field_names():
                 value = row_mapping.get(field_name)
                 if value not in (None, ""):
                     feature_names.add(str(value))
@@ -1973,10 +1964,10 @@ class MeasurementTableObjectFeatureSemantics:
     ) -> frozenset[str]:
         """Return wide-form feature names declared by measurement field names."""
         non_feature_fields = {
-            MEASUREMENT_OBJECT_NAME_FIELD,
-            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
-            *(str(field_name) for field_name in MEASUREMENT_OBJECT_ID_FIELDS),
-            *(field_name for field_name in MEASUREMENT_FEATURE_NAME_FIELDS),
+            MeasurementRowAxisField.OBJECT_NAME.value,
+            MeasurementRowAxisField.SOURCE_IMAGE_NAME.value,
+            *(str(field_name) for field_name in MeasurementRowAxisField.object_id_field_names()),
+            *(field_name for field_name in MeasurementRowAxisField.feature_name_field_names()),
         }
         if table.object_id_field is not None:
             non_feature_fields.add(table.object_id_field)
@@ -2184,7 +2175,7 @@ def measurement_row_feature_matches(
     candidates: Sequence[str],
 ) -> bool:
     """Return whether the row explicitly names one matching feature."""
-    for field_name in MEASUREMENT_FEATURE_NAME_FIELDS:
+    for field_name in MeasurementRowAxisField.feature_name_field_names_ordered():
         value = row.get(field_name)
         if value is None:
             continue
@@ -2195,7 +2186,7 @@ def measurement_row_feature_matches(
 
 def measurement_row_first_value(row: Mapping[str, object]) -> object | None:
     """Return the first recognized scalar value field on a measurement row."""
-    for value_field in MEASUREMENT_VALUE_FIELDS:
+    for value_field in MeasurementRowValueField.field_names_ordered():
         if value_field in row:
             return row[value_field]
     return None

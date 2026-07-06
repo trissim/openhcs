@@ -19,7 +19,6 @@ from openhcs.core.registry_strategies import (
     NominalTypeKeyedStrategyMixin,
 )
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_NAME_FIELD,
     MeasurementRowsAxisProjection,
     measurement_table_axis_values,
     measurement_table_object_name,
@@ -46,6 +45,7 @@ from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MeasurementTable,
+    NativeRuntimeValue,
     ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
@@ -76,6 +76,7 @@ MeasurementTableSchemaRow: TypeAlias = Mapping[str, "RuntimeProjectionData"]
 RuntimeProjectionData: TypeAlias = (
     RuntimeArrayData
     | MeasurementTable
+    | NativeRuntimeValue
     | ParentChildRelationshipPayload
     | ObjectRelationship
     | SparseIJVLabelRows
@@ -630,6 +631,40 @@ class RuntimeSliceIdentityProjectableValueProjectionStrategy(
     """Projection strategy for identity-stamping values without slice projection."""
 
     value_type = RuntimeSliceIdentityProjectableValue
+
+
+class NativeRuntimeValueSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
+    """Projection strategy for native wrappers that store a runtime payload."""
+
+    value_type = NativeRuntimeValue
+
+    def value_for_slice(
+        self,
+        value: RuntimeProjectionData,
+        context: RuntimeProjectionAxis,
+    ) -> RuntimeProjectionData:
+        return RuntimeSliceProjection.value_for_slice(
+            cast(NativeRuntimeValue, value).runtime_payload(),
+            context,
+        )
+
+    def slice_count_for_value(
+        self,
+        value: RuntimeProjectionData,
+    ) -> int | None:
+        return RuntimeSliceProjection.slice_count_from_values(
+            (cast(NativeRuntimeValue, value).runtime_payload(),)
+        )
+
+    def stack_views(
+        self,
+        value: RuntimeProjectionData,
+    ) -> tuple[np.ndarray, ...]:
+        payload = cast(NativeRuntimeValue, value).runtime_payload()
+        return RuntimeSliceProjectionStrategy.strategy_for_value(
+            payload
+        ).stack_views(payload)
+
 
 class RuntimeSliceAlignedValueProjectionStrategy(
     RuntimeSliceNoStackViewsMixin,
@@ -1228,8 +1263,7 @@ class RuntimeSliceProjection:
         if not isinstance(array, np.ndarray) or array.ndim < 3:
             return None
         if array.ndim > 3 and context.axis_matches(int(array.shape[0])):
-            planes_per_slice = int(np.prod(array.shape[1:-2]))
-            return context.contiguous_plane_indices(planes_per_slice)
+            return (context.slice_index,)
         stack = cls.grayscale_plane_stack_view(
             array,
             slice_count=context.extent,
@@ -1293,7 +1327,7 @@ class RuntimeSliceProjection:
             return RuntimeImagePayloadContext(
                 data,
                 project_image_mask_to_data_domain(mask, data),
-                metadata.for_runtime_plane_projection(
+                metadata.for_grouped_source_plane_projection(
                     source_plane_indices=source_plane_indices,
                     runtime_plane_index=context.slice_index,
                     runtime_plane_count=context.extent,
@@ -1459,7 +1493,7 @@ class RuntimeSliceProjection:
         if table_object_name is not None:
             return table_object_name == object_name
         return any(
-            measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
+            measurement_row_mapping(row).get(MeasurementRowAxisField.OBJECT_NAME.value) == object_name
             for row in measurement_rows((table,))
         )
 

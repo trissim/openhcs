@@ -13,16 +13,13 @@ from weakref import WeakKeyDictionary
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import (
+    ArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_ID_FIELD,
-    MEASUREMENT_OBJECT_ID_FIELDS,
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_OBJECT_NUMBER_FIELD,
-    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
-    MEASUREMENT_LABEL_FIELD,
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     ConcatenatedColumnarRows,
     DataclassMeasurementColumnarRows,
     MEASUREMENT_SPARSE_CELL,
@@ -49,8 +46,6 @@ from openhcs.core.measurement_row_materialization import (
     measurement_table_object_name,
 )
 from openhcs.core.measurement_feature_queries import (
-    MEASUREMENT_FEATURE_NAME_FIELDS,
-    MEASUREMENT_VALUE_FIELDS,
     ColumnarMeasurementTableSchema,
     IndexedObjectMeasurementLabelPlaneBinding,
     MeasurementAxisValueProjection,
@@ -75,6 +70,7 @@ from openhcs.core.process_local_cache import (
 )
 from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
 from openhcs.core.runtime_semantics import (
+    MeasurementRowValueField,
     FieldSpec,
     MeasurementRowAxisField,
     MeasurementSubject,
@@ -292,13 +288,13 @@ class RuntimeArtifactQueryContext:
     def find(
         self,
         *,
-        kind: ArtifactKind | None = None,
+        artifact_type: ArtifactType | None = None,
         name: str | None = None,
     ) -> tuple[StoredRuntimeValue, ...]:
         """Find runtime records in this execution scope."""
         return self.store.find(
             name=name,
-            kind=kind,
+            artifact_type=artifact_type,
             axis_id=self.axis_id,
             group_key=self.group_key,
             match_group=self.match_group,
@@ -308,19 +304,19 @@ class RuntimeArtifactQueryContext:
         self,
         *,
         name: str,
-        kind: ArtifactKind,
+        artifact_type: ArtifactType,
         purpose: str = "runtime artifact",
     ) -> StoredRuntimeValue:
         """Resolve exactly one runtime record in this execution scope."""
-        records = self.find(name=name, kind=kind)
+        records = self.find(name=name, artifact_type=artifact_type)
         if not records:
             raise RuntimeError(
-                f"Missing {purpose} '{name}' ({kind.value}) on axis "
+                f"Missing {purpose} '{name}' ({artifact_type.value}) on axis "
                 f"'{self.axis_id}'."
             )
         if len(records) > 1:
             raise RuntimeError(
-                f"Ambiguous {purpose} '{name}' ({kind.value}) on axis "
+                f"Ambiguous {purpose} '{name}' ({artifact_type.value}) on axis "
                 f"'{self.axis_id}': {runtime_record_locations(records)}."
             )
         return records[0]
@@ -389,7 +385,7 @@ def runtime_measurement_tables(
         return cached
     tables = tuple(
         MeasurementTable.from_runtime_value(record.value)
-        for record in context.find(kind=ArtifactKind.MEASUREMENTS)
+        for record in context.find(artifact_type=MeasurementsArtifactType)
     )
     for key in tuple(store_cache):
         if key[0] != context.store.revision:
@@ -432,7 +428,7 @@ def runtime_relationship(
     """Return one relationship artifact as native OpenHCS relationship value."""
     record = context.resolve(
         name=name,
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         purpose="relationship artifact",
     )
     return ObjectRelationship.from_runtime_value(record.value)
@@ -445,7 +441,7 @@ def runtime_spatial_grid(
     """Return one spatial-grid artifact as a native OpenHCS value."""
     record = context.resolve(
         name=name,
-        kind=ArtifactKind.SPATIAL_GRID,
+        artifact_type=SpatialGridArtifactType,
         purpose="spatial grid artifact",
     )
     return SpatialGrid.from_runtime_value(record.value)
@@ -455,17 +451,17 @@ def _measurement_table_may_declare_object_name(table: MeasurementTable) -> bool:
     """Return whether row-level fallback object-name scans can match."""
     if table.object_name is not None:
         return True
-    if any(field.name == MEASUREMENT_OBJECT_NAME_FIELD for field in table.fields):
+    if any(field.name == MeasurementRowAxisField.OBJECT_NAME.value for field in table.fields):
         return True
 
     column_names = table.column_names()
     if column_names is not None:
-        return MEASUREMENT_OBJECT_NAME_FIELD in column_names
+        return MeasurementRowAxisField.OBJECT_NAME.value in column_names
     rows = table.row_sequence_payloads()
     if rows is None:
         return False
     return any(
-        MEASUREMENT_OBJECT_NAME_FIELD in measurement_row_mapping(row)
+        MeasurementRowAxisField.OBJECT_NAME.value in measurement_row_mapping(row)
         for row in rows
     )
 

@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 from dataclasses import replace as dataclass_replace
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Any, ClassVar, TypeAlias, cast
 
@@ -18,6 +19,7 @@ from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
+    MeasurementRowValueField,
     MeasurementScalarLiteral,
     MeasurementScope,
     measurement_axis_integer_domain,
@@ -26,37 +28,22 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_values import ColumnarRows, MeasurementTable
 
-MEASUREMENT_OBJECT_NAME_FIELD = "object_name"
-MEASUREMENT_SOURCE_IMAGE_NAME_FIELD = "source_image_name"
-MEASUREMENT_OBJECT_LABEL_FIELD = "object_label"
-MEASUREMENT_OBJECT_NUMBER_FIELD = "object_number"
-MEASUREMENT_OBJECT_ID_FIELD = "object_id"
-MEASUREMENT_LABEL_FIELD = "label"
-MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD = "openhcs_object_row_identity"
-MEASUREMENT_OBJECT_ID_FIELDS = (
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NUMBER_FIELD,
-    MEASUREMENT_OBJECT_ID_FIELD,
-    MEASUREMENT_LABEL_FIELD,
-)
-MEASUREMENT_FEATURE_NAME_FIELD = "feature_name"
-MEASUREMENT_MEASUREMENT_NAME_FIELD = "measurement_name"
-MEASUREMENT_OUTPUT_NAME_FIELD = "output_name"
-MEASUREMENT_FEATURE_NAME_FIELDS = (
-    MEASUREMENT_FEATURE_NAME_FIELD,
-    MEASUREMENT_MEASUREMENT_NAME_FIELD,
-    MEASUREMENT_OUTPUT_NAME_FIELD,
-)
-MEASUREMENT_RESULT_VALUE_FIELD = "result_value"
-MEASUREMENT_MEASUREMENT_VALUE_FIELD = "measurement_value"
-MEASUREMENT_VALUE_FIELD = "value"
-MEASUREMENT_MEAN_VALUE_FIELD = "mean_value"
-MEASUREMENT_VALUE_FIELDS = (
-    MEASUREMENT_RESULT_VALUE_FIELD,
-    MEASUREMENT_MEASUREMENT_VALUE_FIELD,
-    MEASUREMENT_VALUE_FIELD,
-    MEASUREMENT_MEAN_VALUE_FIELD,
-)
+
+@lru_cache(maxsize=32768)
+def normalized_measurement_row_fields(
+    fields: tuple[str, ...],
+) -> Mapping[str, str]:
+    """Return normalized field-name lookup for one measurement row shape."""
+    return MappingProxyType(
+        {normalize_runtime_identifier(field): field for field in fields}
+    )
+
+
+def normalized_measurement_row_fields_for_row(
+    row: Mapping[str, object],
+) -> Mapping[str, str]:
+    """Return cached normalized field names for one row mapping."""
+    return normalized_measurement_row_fields(tuple(str(field) for field in row))
 
 
 def is_structural_missing_measurement_cell(value: object) -> bool:
@@ -121,6 +108,149 @@ def measurement_table_axis_values(
 ProjectedMeasurementRows: TypeAlias = Sequence[Mapping[str, Any]] | ColumnarRows
 
 
+class MeasurementRowDeclaredValue(ABC, metaclass=AutoRegisterMeta):
+    """Nominal declaration for values projected from a measurement row."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
+    declares_row_value: ClassVar[bool] = False
+
+    @classmethod
+    def declared_value_types(cls) -> tuple[type["MeasurementRowDeclaredValue"], ...]:
+        """Return registered concrete row-value declarations."""
+        return tuple(
+            dict.fromkeys(
+                declaration_type
+                for declaration_type in cls.__registry__.values()
+                if declaration_type.declares_row_value
+                and not declaration_type.__abstractmethods__
+            )
+        )
+
+    @classmethod
+    def values_for_row(
+        cls,
+        row: Mapping[str, object],
+        *,
+        normalized_fields: Mapping[str, str] | None = None,
+    ) -> Mapping[type["MeasurementRowDeclaredValue"], object | None]:
+        """Return every declared row value keyed by its declaration type."""
+        return MappingProxyType(
+            {
+                declaration_type: declaration_type.value_from_row(
+                    row,
+                    normalized_fields=normalized_fields,
+                )
+                for declaration_type in cls.declared_value_types()
+            }
+        )
+
+    @classmethod
+    @abstractmethod
+    def value_from_row(
+        cls,
+        row: Mapping[str, object],
+        *,
+        normalized_fields: Mapping[str, str] | None = None,
+        object_id_field: str | None = None,
+    ) -> object | None:
+        """Return this declared value from one measurement row."""
+
+
+class MeasurementRowTextValue(MeasurementRowDeclaredValue):
+    """Shared declaration for normalized text values stored in row fields."""
+
+    field_names: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def value_from_row(
+        cls,
+        row: Mapping[str, object],
+        *,
+        normalized_fields: Mapping[str, str] | None = None,
+        object_id_field: str | None = None,
+    ) -> str | None:
+        del object_id_field
+        for field_name in cls.field_names:
+            value = measurement_row_declared_field_value(
+                row,
+                field_name,
+                normalized_fields,
+            )
+            if value is None:
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+        return None
+
+
+class MeasurementRowObjectName(MeasurementRowTextValue):
+    """Object owner encoded on a measurement row."""
+
+    declares_row_value = True
+    field_names = (MeasurementRowAxisField.OBJECT_NAME.value,)
+
+
+class MeasurementRowSourceImageName(MeasurementRowTextValue):
+    """Source-image owner encoded on a measurement row."""
+
+    declares_row_value = True
+    field_names = (MeasurementRowAxisField.SOURCE_IMAGE_NAME.value,)
+
+
+class MeasurementRowObjectLabel(MeasurementRowDeclaredValue):
+    """Resolved object label encoded on a measurement row."""
+
+    declares_row_value = True
+
+    @classmethod
+    def value_from_row(
+        cls,
+        row: Mapping[str, object],
+        *,
+        normalized_fields: Mapping[str, str] | None = None,
+        object_id_field: str | None = None,
+    ) -> int | None:
+        if object_id_field is not None:
+            value = measurement_row_declared_field_value(
+                row,
+                object_id_field,
+                normalized_fields,
+            )
+            if value is not None:
+                return measurement_object_label_value(value)
+        for key in MeasurementRowAxisField.object_id_field_names():
+            value = measurement_row_declared_field_value(row, key, normalized_fields)
+            if value is not None:
+                return measurement_object_label_value(value)
+        return None
+
+
+class MeasurementRowObjectIdentityRole(MeasurementRowDeclaredValue):
+    """Explicit OpenHCS object-row identity role encoded on a row."""
+
+    declares_row_value = True
+
+    @classmethod
+    def value_from_row(
+        cls,
+        row: Mapping[str, object],
+        *,
+        normalized_fields: Mapping[str, str] | None = None,
+        object_id_field: str | None = None,
+    ) -> MeasurementObjectRowIdentity | None:
+        del object_id_field
+        value = measurement_row_declared_field_value(
+            row,
+            MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value,
+            normalized_fields,
+        )
+        if value not in MeasurementObjectRowIdentity._value2member_map_:
+            return None
+        return MeasurementObjectRowIdentity(value)
+
+
 @dataclass(frozen=True, slots=True)
 class MeasurementProjectedColumnarRows(ColumnarRows):
     """Columnar measurement rows with projected row-axis values."""
@@ -137,17 +267,20 @@ class MeasurementProjectedColumnarRows(ColumnarRows):
         return column_mapping_row_count(self.columns)
 
     def __iter__(self):
-        yield from self.row_mappings()
+        yield from self.iter_row_mappings()
+
+    def iter_row_mappings(self):
+        columns = tuple(str(column) for column in self.columns)
+        column_values = tuple(self.column_values(column) for column in columns)
+        for row_index in range(len(self)):
+            yield {
+                field_name: values[row_index]
+                for field_name, values in zip(columns, column_values, strict=True)
+                if not is_structural_missing_measurement_cell(values[row_index])
+            }
 
     def row_mappings(self) -> tuple[Mapping[str, object], ...]:
-        return tuple(
-            {
-                field_name: value
-                for field_name, value in row.items()
-                if not is_structural_missing_measurement_cell(value)
-            }
-            for row in ColumnarRows.row_mappings(self)
-        )
+        return tuple(self.iter_row_mappings())
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,11 +331,91 @@ class MeasurementSparseColumnarRows(ColumnarRows):
 
     columns: Mapping[str, Sequence[Any]]
     missing_cell: object = MEASUREMENT_SPARSE_CELL
+    declared_object_measurement_domain_covered: bool = False
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: Sequence[object],
+        *,
+        declared_object_measurement_domain_covered: bool = False,
+        missing_cell: object = MEASUREMENT_SPARSE_CELL,
+    ) -> "MeasurementSparseColumnarRows":
+        """Return a sparse columnar view over heterogeneous measurement rows."""
+        row_mappings = coalesced_sparse_measurement_row_mappings(
+            tuple(measurement_row_mapping(row) for row in rows),
+            missing_cell=missing_cell,
+        )
+        if not row_mappings:
+            return cls(
+                MappingProxyType({}),
+                missing_cell=missing_cell,
+                declared_object_measurement_domain_covered=(
+                    declared_object_measurement_domain_covered
+                ),
+            )
+        field_names = tuple(
+            dict.fromkeys(
+                field_name
+                for row_mapping in row_mappings
+                for field_name in row_mapping
+            )
+        )
+        return cls(
+            MappingProxyType(
+                {
+                    field_name: tuple(
+                        row_mapping.get(field_name, missing_cell)
+                        for row_mapping in row_mappings
+                    )
+                    for field_name in field_names
+                }
+            ),
+            missing_cell=missing_cell,
+            declared_object_measurement_domain_covered=(
+                declared_object_measurement_domain_covered
+            ),
+        )
+
+    @classmethod
+    def from_columnar_batches(
+        cls,
+        batches: Sequence[ColumnarRows],
+        *,
+        declared_object_measurement_domain_covered: bool = False,
+        missing_cell: object = MEASUREMENT_SPARSE_CELL,
+    ) -> "MeasurementSparseColumnarRows":
+        """Return sparse rows coalesced across columnar batches."""
+        return cls.from_rows(
+            tuple(row for batch in batches for row in batch.iter_row_mappings()),
+            declared_object_measurement_domain_covered=(
+                declared_object_measurement_domain_covered
+            ),
+            missing_cell=missing_cell,
+        )
+
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        """Return whether these sparse rows were completed over object domain."""
+        return bool(self.declared_object_measurement_domain_covered)
 
     def __len__(self) -> int:
         return column_mapping_row_count(self.columns)
 
     def __iter__(self):
+        yield from self.iter_row_mappings()
+
+    def __getitem__(
+        self, row_index: int | slice
+    ) -> Mapping[str, object] | tuple[Mapping[str, object], ...]:
+        if not isinstance(row_index, (int, slice)):
+            raise TypeError(
+                f"{type(self).__name__} indices must be integers or slices, got "
+                f"{type(row_index).__name__}."
+            )
+        return self.row_mappings()[row_index]
+
+    def iter_row_mappings(self):
         columns = self.columns
         for row_index in range(len(self)):
             yield {
@@ -214,6 +427,78 @@ class MeasurementSparseColumnarRows(ColumnarRows):
 
     def row_mappings(self) -> tuple[Mapping[str, object], ...]:
         return tuple(self)
+
+
+def coalesced_sparse_measurement_row_mappings(
+    row_mappings: Sequence[Mapping[str, object]],
+    *,
+    missing_cell: object = MEASUREMENT_SPARSE_CELL,
+) -> tuple[Mapping[str, object], ...]:
+    """Merge sparse feature fragments that share the same row-axis identity."""
+    if not row_mappings:
+        return ()
+    identity_fields = tuple(
+        field.value
+        for field in MeasurementRowAxisField
+        if any(field.value in row for row in row_mappings)
+    )
+    if not identity_fields:
+        return tuple(row_mappings)
+
+    coalesced: dict[tuple[tuple[str, object], ...], dict[str, object]] = {}
+    order: list[tuple[tuple[str, object], ...]] = []
+    passthrough_index = 0
+    for row in row_mappings:
+        identity = tuple(
+            (field_name, row[field_name])
+            for field_name in identity_fields
+            if field_name in row
+            and not is_structural_missing_measurement_cell(row[field_name])
+        )
+        if not identity:
+            identity = (("__row_index__", passthrough_index),)
+            passthrough_index += 1
+        merged = coalesced.get(identity)
+        if merged is None:
+            merged = {}
+            coalesced[identity] = merged
+            order.append(identity)
+        for field_name, value in row.items():
+            if value is missing_cell or is_structural_missing_measurement_cell(value):
+                continue
+            existing = merged.get(field_name, missing_cell)
+            if (
+                existing is not missing_cell
+                and not is_structural_missing_measurement_cell(existing)
+                and not _measurement_sparse_cell_values_equal(existing, value)
+            ):
+                raise ValueError(
+                    "Conflicting sparse measurement values for row identity "
+                    f"{identity!r}, field {field_name!r}: {existing!r} vs {value!r}."
+                )
+            merged[field_name] = value
+    return tuple(MappingProxyType(coalesced[identity]) for identity in order)
+
+
+def _measurement_sparse_cell_values_equal(left: object, right: object) -> bool:
+    """Return scalar truth for equality without treating arrays as ambiguous."""
+    if left is right:
+        return True
+    try:
+        equality = left == right
+    except Exception:
+        return False
+    if isinstance(equality, bool):
+        return equality
+    if hasattr(equality, "all"):
+        try:
+            return bool(equality.all())
+        except Exception:
+            return False
+    try:
+        return bool(equality)
+    except Exception:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +513,40 @@ class MeasurementSliceIndexImageNumberProjection:
         if mapped is not None:
             return mapped
         return slice_index + self.start
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementSourceImageNumberProjection:
+    """Map measurement-row source names onto external image-number row values."""
+
+    image_numbers_by_source_name: Mapping[str, int]
+
+    @property
+    def has_single_source(self) -> bool:
+        return len(self.image_numbers_by_source_name) == 1
+
+    @property
+    def single_source_image_number(self) -> int:
+        if self.has_single_source:
+            return int(next(iter(self.image_numbers_by_source_name.values())))
+        known_sources = tuple(self.image_numbers_by_source_name)
+        raise ValueError(
+            "Cannot project unqualified source measurement row with multiple "
+            f"source provenance names {known_sources!r}."
+        )
+
+    def image_number_for_source_name(self, source_image_name: object) -> int:
+        if source_image_name in (None, "", "None"):
+            return self.single_source_image_number
+        source_name = str(source_image_name)
+        if source_name in self.image_numbers_by_source_name:
+            return int(self.image_numbers_by_source_name[source_name])
+        known_sources = tuple(self.image_numbers_by_source_name)
+        raise KeyError(
+            "Cannot project source-qualified measurement row to ImageNumber: "
+            f"source_image_name={source_name!r} is not present in source "
+            f"provenance names {known_sources!r}."
+        )
 
 
 class MeasurementRowsAxisProjection(
@@ -312,25 +631,34 @@ class MeasurementRowsAxisProjection(
     ) -> Sequence[Mapping[str, object]] | ColumnarRows:
         """Return rows with a current ImageNumber added where absent."""
 
+    @abstractmethod
+    def project_source_image_numbers(
+        self,
+        source_image_numbers: MeasurementSourceImageNumberProjection,
+    ) -> Sequence[Mapping[str, object]] | ColumnarRows:
+        """Return source-qualified rows with ImageNumber resolved by source name."""
+
     def apply(
         self,
         image_numbers: MeasurementSliceIndexImageNumberProjection,
         *,
-        image_number_start_for_source_qualified_image_rows: int | None = None,
+        source_image_numbers: MeasurementSourceImageNumberProjection | None = None,
     ) -> Sequence[Any] | ColumnarRows | None:
-        if (
-            image_number_start_for_source_qualified_image_rows is not None
-            and self.has_source_qualified_image_rows
-        ):
-            return self.project_current_image_number(
-                image_number_start_for_source_qualified_image_rows
-            )
-        if not self.has_rows or not self.has_axis:
+        if not self.has_rows:
             return None
-        if self.has_slice_index:
-            return self.project_slice_index(image_numbers)
         if self.has_image_number:
             return self.project_image_number(image_numbers.start)
+        if self.has_source_qualified_image_rows:
+            if source_image_numbers is None:
+                raise ValueError(
+                    "Cannot project source-qualified measurement rows without "
+                    "source-image ImageNumber provenance."
+                )
+            return self.project_source_image_numbers(source_image_numbers)
+        if self.has_slice_index:
+            return self.project_slice_index(image_numbers)
+        if not self.has_axis:
+            return None
         return None
 
     @abstractmethod
@@ -388,7 +716,7 @@ class SequenceMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
     @property
     def has_source_qualified_image_rows(self) -> bool:
         return any(
-            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in row_mapping
+            MeasurementRowAxisField.SOURCE_IMAGE_NAME.value in row_mapping
             and not measurement_row_has_object_identity(row_mapping)
             for row_mapping in (measurement_row_mapping(row) for row in self.rows)
         )
@@ -402,6 +730,26 @@ class SequenceMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
         for row in projected_rows:
             if image_number_field not in row:
                 row[image_number_field] = start
+        return projected_rows
+
+    def project_source_image_numbers(
+        self,
+        source_image_numbers: MeasurementSourceImageNumberProjection,
+    ) -> Sequence[Mapping[str, object]]:
+        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
+        source_image_name_field = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
+        projected_rows = [dict(measurement_row_mapping(row)) for row in self.rows]
+        for row in projected_rows:
+            if image_number_field in row:
+                continue
+            if source_image_name_field not in row:
+                raise ValueError(
+                    "Cannot project source-qualified measurement row without "
+                    f"{source_image_name_field!r}."
+                )
+            row[image_number_field] = source_image_numbers.image_number_for_source_name(
+                row[source_image_name_field]
+            )
         return projected_rows
 
     def project_runtime_slice_index(
@@ -566,8 +914,11 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
     def has_source_qualified_image_rows(self) -> bool:
         columns = self.columns
         return (
-            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in columns
-            and not any(field in columns for field in MEASUREMENT_OBJECT_ID_FIELDS)
+            MeasurementRowAxisField.SOURCE_IMAGE_NAME.value in columns
+            and not any(
+                field in columns
+                for field in MeasurementRowAxisField.object_id_field_names()
+            )
         )
 
     def present_axis_values(self, field_name: str) -> tuple[int, ...]:
@@ -614,6 +965,40 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
             )
         return MeasurementProjectedColumnarRows(
             ColumnarRowColumnOverlay(self.columns, overlay_columns),
+            declared_object_measurement_domain_covered=(
+                self.rows.covers_declared_object_measurement_domain
+            ),
+        )
+
+    def project_source_image_numbers(
+        self,
+        source_image_numbers: MeasurementSourceImageNumberProjection,
+    ) -> ColumnarRows:
+        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
+        source_image_name_field = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
+        if image_number_field in self.columns:
+            return self.rows
+        if source_image_name_field not in self.columns:
+            raise ValueError(
+                "Cannot project source-qualified measurement rows without "
+                f"{source_image_name_field!r}."
+            )
+        return MeasurementProjectedColumnarRows(
+            ColumnarRowColumnOverlay(
+                self.columns,
+                MappingProxyType(
+                    {
+                        image_number_field: tuple(
+                            source_image_numbers.image_number_for_source_name(
+                                source_image_name
+                            )
+                            for source_image_name in self.columns[
+                                source_image_name_field
+                            ]
+                        )
+                    }
+                ),
+            ),
             declared_object_measurement_domain_covered=(
                 self.rows.covers_declared_object_measurement_domain
             ),
@@ -709,20 +1094,12 @@ class ColumnarMeasurementRowsAxisProjection(MeasurementRowsAxisProjection):
 
 def measurement_row_object_name(row: Mapping[str, object]) -> str | None:
     """Return the object owner encoded on one measurement row."""
-    value = row.get(MEASUREMENT_OBJECT_NAME_FIELD)
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
+    return cast(str | None, MeasurementRowObjectName.value_from_row(row))
 
 
 def measurement_row_source_image_name(row: Mapping[str, object]) -> str | None:
     """Return the source-image owner encoded on one measurement row."""
-    value = row.get(MEASUREMENT_SOURCE_IMAGE_NAME_FIELD)
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
+    return cast(str | None, MeasurementRowSourceImageName.value_from_row(row))
 
 
 @dataclass(frozen=True, slots=True)
@@ -733,7 +1110,30 @@ class MeasurementObjectLabelResolution:
 
     @property
     def object_label(self) -> int | None:
-        return MeasurementScalarLiteral(self.value).integer_value
+        return measurement_object_label_value(self.value)
+
+
+def measurement_object_label_value(value: object) -> int | None:
+    """Return the integer object label represented by one scalar value."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        if not np.isfinite(value):
+            return None
+        integer = int(value)
+        return integer if float(integer) == float(value) else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        signless = stripped[1:] if stripped[:1] in ("+", "-") else stripped
+        if signless.isdecimal():
+            return int(stripped)
+    return MeasurementScalarLiteral(value).integer_value
 
 
 def measurement_object_label(
@@ -742,15 +1142,13 @@ def measurement_object_label(
     object_id_field: str | None = None,
 ) -> int | None:
     """Return the resolved object label encoded on a measurement row."""
-    if object_id_field is not None:
-        value = measurement_row_field_value(row, object_id_field)
-        if value is not None:
-            return MeasurementObjectLabelResolution(value).object_label
-    for key in MEASUREMENT_OBJECT_ID_FIELDS:
-        value = measurement_row_field_value(row, key)
-        if value is not None:
-            return MeasurementObjectLabelResolution(value).object_label
-    return None
+    return cast(
+        int | None,
+        MeasurementRowObjectLabel.value_from_row(
+            row,
+            object_id_field=object_id_field,
+        ),
+    )
 
 
 def measurement_row_has_object_identity(
@@ -766,23 +1164,28 @@ def measurement_row_has_long_form_measurement_fields(
     row: Mapping[str, object],
 ) -> bool:
     """Return whether a row carries long-form measurement feature/value fields."""
-    return any(
-        measurement_row_field_value(row, field) is not None
-        for field in MEASUREMENT_FEATURE_NAME_FIELDS
-    ) and any(
-        measurement_row_field_value(row, field) is not None
-        for field in MEASUREMENT_VALUE_FIELDS
+    if (
+        any(field in row for field in MeasurementRowAxisField.feature_name_field_names())
+        and any(field in row for field in MeasurementRowValueField.field_names())
+    ):
+        return True
+    normalized_fields = frozenset(
+        normalize_runtime_identifier(str(field))
+        for field in row
     )
+    return bool(
+        normalized_fields & MeasurementRowAxisField.normalized_feature_name_field_names()
+    ) and bool(normalized_fields & MeasurementRowValueField.normalized_field_names())
 
 
 def measurement_row_identity_role(
     row: Mapping[str, object],
 ) -> MeasurementObjectRowIdentity | None:
     """Return the explicit OpenHCS row-identity role encoded on a measurement row."""
-    value = measurement_row_field_value(row, MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD)
-    if value not in MeasurementObjectRowIdentity._value2member_map_:
-        return None
-    return MeasurementObjectRowIdentity(value)
+    return cast(
+        MeasurementObjectRowIdentity | None,
+        MeasurementRowObjectIdentityRole.value_from_row(row),
+    )
 
 
 def measurement_row_field_value(
@@ -793,10 +1196,24 @@ def measurement_row_field_value(
     if field_name in row:
         return row[field_name]
     normalized_target = normalize_runtime_identifier(field_name)
-    for candidate_field, value in row.items():
-        if normalize_runtime_identifier(str(candidate_field)) == normalized_target:
-            return value
-    return None
+    field = normalized_measurement_row_fields_for_row(row).get(normalized_target)
+    return None if field is None else row[field]
+
+
+def measurement_row_declared_field_value(
+    row: Mapping[str, object],
+    field_name: str,
+    normalized_fields: Mapping[str, str] | None,
+) -> object | None:
+    """Return a declared row value using cached normalized fields when available."""
+    if field_name in row:
+        return row[field_name]
+    if normalized_fields is None:
+        normalized_fields = normalized_measurement_row_fields_for_row(row)
+    field = normalized_fields.get(normalize_runtime_identifier(field_name))
+    if field is None:
+        return None
+    return row[field]
 
 
 def measurement_table_object_id_field(table: MeasurementTable) -> str | None:
@@ -855,11 +1272,11 @@ class MeasurementRowOwnership:
             qualifier
             for qualifier in (
                 MeasurementRowQualifier.optional(
-                    field_name=MEASUREMENT_OBJECT_NAME_FIELD,
+                    field_name=MeasurementRowAxisField.OBJECT_NAME.value,
                     value=self.object_name,
                 ),
                 MeasurementRowQualifier.optional(
-                    field_name=MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+                    field_name=MeasurementRowAxisField.SOURCE_IMAGE_NAME.value,
                     value=self.source_image_name,
                 ),
             )
@@ -931,6 +1348,12 @@ class ConcatenatedColumnarRowColumns(Mapping[str, Sequence[object]]):
 
     row_batches: tuple[ColumnarRows, ...]
     column_names: tuple[str, ...]
+    _column_cache: dict[str, Sequence[object]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def from_row_batches(
@@ -951,12 +1374,17 @@ class ConcatenatedColumnarRowColumns(Mapping[str, Sequence[object]]):
     def __getitem__(self, column_name: str) -> Sequence[object]:
         if column_name not in self.column_names:
             raise KeyError(column_name)
-        return np.concatenate(
+        cached = self._column_cache.get(column_name)
+        if cached is not None:
+            return cached
+        values = np.concatenate(
             tuple(
                 self._batch_column_values(row_batch, column_name)
                 for row_batch in self.row_batches
             )
         )
+        self._column_cache[column_name] = values
+        return values
 
     def _batch_column_values(
         self,
@@ -998,11 +1426,11 @@ class ConcatenatedColumnarRows(MeasurementColumnarRowsView):
         )
 
     def row_mappings(self) -> tuple[Mapping[str, object], ...]:
-        return tuple(
-            row
-            for row_batch in self.row_batches
-            for row in row_batch.row_mappings()
-        )
+        return tuple(self.iter_row_mappings())
+
+    def iter_row_mappings(self):
+        for row_batch in self.row_batches:
+            yield from row_batch.iter_row_mappings()
 
 
 @dataclass(slots=True)
@@ -1044,6 +1472,9 @@ class DataclassMeasurementColumnarRows(ColumnarRows):
         return len(self.rows)
 
     def __iter__(self):
+        yield from self.iter_row_mappings()
+
+    def iter_row_mappings(self):
         columns = self._columns
         for row_index in range(len(self)):
             yield {
@@ -1066,7 +1497,15 @@ class QualifiedMeasurementColumnarRows(MeasurementColumnarRowsView):
             columns[qualifier.field_name] = (qualifier.value,) * row_count
         self._columns = columns
 
+    @property
+    def covers_declared_object_measurement_domain(self) -> bool:
+        """Return whether the owned row carrier still covers its object domain."""
+        return self.rows.covers_declared_object_measurement_domain
+
     def __iter__(self):
+        yield from self.iter_row_mappings()
+
+    def iter_row_mappings(self):
         columns = self._columns
         for row_index in range(len(self)):
             yield {

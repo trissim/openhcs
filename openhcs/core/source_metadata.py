@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import TypeAlias
 
@@ -11,6 +12,7 @@ ORIGINAL_SOURCE_METADATA_FIELD = "OpenHCSOriginalSourceMetadata"
 SOURCE_FILTER_PATHS_METADATA_FIELD = "OpenHCSSourceFilterPaths"
 SOURCE_PLANE_INDEX_FIELD = "source_plane_index"
 SOURCE_PLANE_COUNT_FIELD = "source_plane_count"
+SOURCE_VOXEL_SPACING_FIELD = "OpenHCSSourceVoxelSpacingZYX"
 
 SourceMetadataScalar: TypeAlias = str | int | float | bool | None
 SourceMetadataValue: TypeAlias = SourceMetadataScalar | Mapping[str, SourceMetadataScalar]
@@ -35,6 +37,13 @@ def source_metadata_scalar(value: SourceMetadataScalar) -> SourceMetadataScalar:
 def canonical_path_metadata_value(value: str) -> str:
     """Normalize absolute path values while leaving ordinary labels unchanged."""
 
+    return _cached_canonical_path_metadata_value(value)
+
+
+@lru_cache(maxsize=65536)
+def _cached_canonical_path_metadata_value(value: str) -> str:
+    """Return the canonical absolute path spelling for path-like metadata."""
+
     path = Path(value)
     if path.is_absolute():
         return str(path.resolve(strict=False))
@@ -43,6 +52,13 @@ def canonical_path_metadata_value(value: str) -> str:
 
 def path_metadata_values_equivalent(left: str, right: str) -> bool:
     """Return whether two absolute path-like metadata values identify one path."""
+
+    return _cached_path_metadata_values_equivalent(left, right)
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_metadata_values_equivalent(left: str, right: str) -> bool:
+    """Return cached absolute-path equivalence for source metadata values."""
 
     left_path = Path(left)
     right_path = Path(right)
@@ -169,6 +185,120 @@ class SourceFilterPathMetadata:
         target[SOURCE_FILTER_PATHS_METADATA_FIELD] = SourceFilterPathMetadata.from_paths(
             (*merged, *self.paths)
         ).as_dict()
+
+
+@dataclass(frozen=True, slots=True)
+class SourceVoxelSpacing:
+    """Relative physical spacing for source pixels, ordered like arrays."""
+
+    values_zyx: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        normalized = tuple(float(value) for value in self.values_zyx)
+        if any(value <= 0 for value in normalized):
+            raise ValueError("SourceVoxelSpacing values must be positive.")
+        if len(normalized) not in (0, 2, 3):
+            raise ValueError(
+                "SourceVoxelSpacing requires 2-D or 3-D spacing, got "
+                f"{len(normalized)} values."
+            )
+        object.__setattr__(self, "values_zyx", normalized)
+
+    @property
+    def has_values(self) -> bool:
+        return bool(self.values_zyx)
+
+    @classmethod
+    def from_cellprofiler_xyz(
+        cls,
+        *,
+        x: float,
+        y: float,
+        z: float,
+    ) -> "SourceVoxelSpacing":
+        """Return CellProfiler Image.spacing semantics from NamesAndTypes values."""
+        raw_y = float(y)
+        if raw_y <= 0:
+            raise ValueError("CellProfiler relative pixel spacing in Y must be positive.")
+        return cls((float(z) / raw_y, 1.0, float(x) / raw_y))
+
+    @classmethod
+    def from_source_metadata(
+        cls,
+        metadata: SourceMetadataMapping | None,
+    ) -> "SourceVoxelSpacing":
+        if metadata is None:
+            return cls()
+        value = metadata.get(SOURCE_VOXEL_SPACING_FIELD)
+        if value is None:
+            return cls()
+        if isinstance(value, Mapping):
+            values = tuple(
+                float(value[axis])
+                for axis in ("z", "y", "x")
+                if axis in value and value[axis] is not None
+            )
+        else:
+            values = tuple(
+                float(part)
+                for part in str(value).split(",")
+                if part.strip()
+            )
+        return cls(values)
+
+    def as_source_metadata_value(self) -> str:
+        return ",".join(f"{value:.17g}" for value in self.values_zyx)
+
+    def merge_into(
+        self,
+        target: dict[str, SourceMetadataValue],
+        *,
+        path: str,
+    ) -> None:
+        if not self.has_values:
+            return
+        existing = SourceVoxelSpacing.from_source_metadata(target)
+        if existing.has_values and existing != self:
+            raise RuntimeError(
+                f"Conflicting source voxel spacing while parsing source candidate "
+                f"{path!r}: {existing.values_zyx!r} != {self.values_zyx!r}."
+            )
+        target[SOURCE_VOXEL_SPACING_FIELD] = self.as_source_metadata_value()
+
+    def with_missing_from(
+        self,
+        fallback: "SourceVoxelSpacing",
+    ) -> "SourceVoxelSpacing":
+        if self.has_values:
+            return self
+        return fallback
+
+    def spacing_for_ndim(self, ndim: int) -> tuple[float, ...]:
+        if ndim <= 0:
+            raise ValueError("SourceVoxelSpacing ndim must be positive.")
+        if not self.has_values:
+            return (1.0,) * ndim
+        if ndim > len(self.values_zyx):
+            raise ValueError(
+                f"Cannot project {len(self.values_zyx)}-D source voxel spacing "
+                f"onto {ndim}-D data."
+            )
+        return self.values_zyx[-ndim:]
+
+
+@dataclass(kw_only=True)
+class SourceVoxelSpacingFields:
+    """Source-image voxel spacing carried by runtime payload metadata."""
+
+    source_voxel_spacing: SourceVoxelSpacing = field(
+        default_factory=SourceVoxelSpacing
+    )
+
+    def normalize_source_voxel_spacing_fields(self) -> None:
+        if not isinstance(self.source_voxel_spacing, SourceVoxelSpacing):
+            self.source_voxel_spacing = SourceVoxelSpacing(
+                tuple(self.source_voxel_spacing)
+            )
 
 
 @dataclass(frozen=True, slots=True)

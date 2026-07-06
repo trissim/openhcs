@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+)
 
 
-class RuntimeOutputRole(str, Enum):
-    """Generic roles used to match returned values to artifact specs."""
-
-    MAIN_FLOW = "main_flow"
-    SIDECAR = "sidecar"
-
-    @classmethod
-    def for_spec(cls, spec: ArtifactSpec) -> "RuntimeOutputRole":
-        if spec.kind.participates_in_main_flow_output and spec.sidecar_role is None:
-            return cls.MAIN_FLOW
-        return cls.SIDECAR
+def artifact_spec_participates_in_main_flow(spec: ArtifactSpec) -> bool:
+    """Return whether a returned artifact spec is the main runtime-flow value."""
+    return (
+        spec.artifact_type.participates_in_main_flow_output
+        and spec.sidecar_role is None
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +34,12 @@ class RuntimeReturnedOutputMatcher:
     def resolve(self) -> dict[str, Any] | None:
         if not self.retained_specs:
             return {}
+        if (
+            len(self.retained_specs) == 1
+            and self.retained_specs[0].artifact_type is ImageArtifactType
+            and self.retained_specs[0].sidecar_role is None
+        ):
+            return {self.retained_specs[0].name: self.main_output}
         declared_resolution = self.resolve_from_declared_outputs()
         if declared_resolution is not None:
             return declared_resolution
@@ -49,15 +54,15 @@ class RuntimeReturnedOutputMatcher:
         return self.resolve_from_returned_specs()
 
     def single_output_value(self, spec: ArtifactSpec) -> Any:
-        if spec.kind is ArtifactKind.IMAGE:
+        if spec.artifact_type is ImageArtifactType:
             return self.main_output
         if not self.artifact_values:
             raise ValueError(
                 f"Runtime callable did not return a value for output '{spec.name}'."
             )
-        if spec.kind is ArtifactKind.OBJECT_LABELS:
+        if spec.artifact_type is ObjectLabelsArtifactType:
             return self.artifact_values[-1]
-        if spec.kind is ArtifactKind.MEASUREMENTS:
+        if spec.artifact_type is MeasurementsArtifactType:
             return self.artifact_values[-1]
         return self.artifact_values[0]
 
@@ -71,19 +76,6 @@ class RuntimeReturnedOutputMatcher:
 
     def declared_return_candidates(self) -> tuple[tuple[ArtifactSpec, Any], ...]:
         main_index = self.declared_main_output_index()
-        first_main_index = self.first_declared_main_output_index()
-        if first_main_index is not None and first_main_index == 0:
-            tail_specs = self.declared_specs[1:]
-            if len(tail_specs) < len(self.artifact_values):
-                return ()
-            return (
-                (self.declared_specs[first_main_index], self.main_output),
-                *zip(
-                    tail_specs[: len(self.artifact_values)],
-                    self.artifact_values,
-                    strict=True,
-                ),
-            )
         if main_index is None:
             if len(self.declared_specs) < len(self.artifact_values):
                 return ()
@@ -94,12 +86,17 @@ class RuntimeReturnedOutputMatcher:
                     strict=True,
                 )
             )
-        tail_specs = self.declared_specs[main_index + 1 :]
-        if len(tail_specs) < len(self.artifact_values):
-            return ()
+        artifact_specs = (
+            *self.declared_specs[:main_index],
+            *self.declared_specs[main_index + 1 :],
+        )
+        artifact_candidates = tuple(
+            zip(artifact_specs, self.artifact_values, strict=True)
+        )
         return (
+            *artifact_candidates[:main_index],
             (self.declared_specs[main_index], self.main_output),
-            *zip(tail_specs[: len(self.artifact_values)], self.artifact_values, strict=True),
+            *artifact_candidates[main_index:],
         )
 
     def declared_main_output_index(self) -> int | None:
@@ -109,13 +106,13 @@ class RuntimeReturnedOutputMatcher:
 
     def first_declared_main_output_index(self) -> int | None:
         for index, spec in enumerate(self.declared_specs):
-            if RuntimeOutputRole.for_spec(spec) is RuntimeOutputRole.MAIN_FLOW:
+            if artifact_spec_participates_in_main_flow(spec):
                 return index
         return None
 
     def resolve_positional_outputs(self) -> dict[str, Any] | None:
         if (
-            self.retained_specs[0].kind is ArtifactKind.IMAGE
+            self.retained_specs[0].artifact_type is ImageArtifactType
             and len(self.retained_specs) == len(self.artifact_values) + 1
         ):
             return {
@@ -145,7 +142,7 @@ class RuntimeReturnedOutputMatcher:
         )
         return self.resolve_from_candidates(
             (
-                (ArtifactSpec("<main>", ArtifactKind.IMAGE), self.main_output),
+                (ArtifactSpec.output("<main>", ImageArtifactType), self.main_output),
                 *zip(candidate_specs, self.artifact_values, strict=False),
             ),
             require_exact_names=False,
@@ -196,13 +193,13 @@ class RuntimeReturnedOutputMatcher:
     def same_artifact_identity(left: ArtifactSpec, right: ArtifactSpec) -> bool:
         return (
             left.name == right.name
-            and left.kind is right.kind
+            and left.artifact_type is right.artifact_type
             and left.sidecar_role is right.sidecar_role
         )
 
     @staticmethod
     def same_artifact_semantics(left: ArtifactSpec, right: ArtifactSpec) -> bool:
-        return left.kind is right.kind and left.sidecar_role is right.sidecar_role
+        return left.artifact_type is right.artifact_type and left.sidecar_role is right.sidecar_role
 
     def returned_specs_with_retained_tail(
         self,
@@ -211,12 +208,12 @@ class RuntimeReturnedOutputMatcher:
     ) -> tuple[ArtifactSpec, ...]:
         if len(candidate_specs) >= artifact_value_count:
             return candidate_specs
-        remaining_counts: dict[tuple[ArtifactKind, Any], int] = {}
+        remaining_counts: dict[tuple[type[ArtifactType], Any], int] = {}
         for spec in self.retained_specs:
-            key = (spec.kind, spec.sidecar_role)
+            key = (spec.artifact_type, spec.sidecar_role)
             remaining_counts[key] = remaining_counts.get(key, 0) + 1
         for spec in candidate_specs:
-            key = (spec.kind, spec.sidecar_role)
+            key = (spec.artifact_type, spec.sidecar_role)
             if key not in remaining_counts:
                 continue
             remaining_counts[key] -= 1
@@ -224,7 +221,7 @@ class RuntimeReturnedOutputMatcher:
                 remaining_counts.pop(key)
         tail: list[ArtifactSpec] = []
         for spec in self.retained_specs:
-            key = (spec.kind, spec.sidecar_role)
+            key = (spec.artifact_type, spec.sidecar_role)
             count = remaining_counts.get(key, 0)
             if count <= 0:
                 continue

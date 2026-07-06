@@ -261,6 +261,7 @@ class WorkerExecutorFactory:
             runtime_environment.multiprocessing_start_method.value
         )
         if actual_max_workers == 1:
+            _configure_worker_native_threads()
             return InlineWorkerExecutorResources(
                 multiprocessing_context=multiprocessing_context,
                 use_multiprocessing=not runtime_environment.use_threading,
@@ -364,9 +365,7 @@ def _configure_worker_with_gpu(
     logging.getLogger().setLevel(worker_log_level)
     logging.getLogger("openhcs").setLevel(worker_log_level)
 
-    import cv2
-
-    cv2.setNumThreads(1)
+    _configure_worker_native_threads()
 
     if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
         gpu_registry_plan.setup_global_registry()
@@ -375,6 +374,28 @@ def _configure_worker_with_gpu(
         from openhcs.core.progress import set_progress_queue
 
         set_progress_queue(progress_queue)
+
+
+def _configure_worker_native_threads() -> None:
+    """Clamp native library thread pools inside one OpenHCS worker lane."""
+
+    import os
+
+    for variable in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+        "OPENCV_FOR_THREADS_NUM",
+        "NUMBA_NUM_THREADS",
+    ):
+        os.environ.setdefault(variable, "1")
+
+    import cv2
+
+    cv2.setNumThreads(1)
 
 
 def _execute_fork_inherited_worker_lane_process(

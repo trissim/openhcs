@@ -12,6 +12,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import Enum, IntEnum
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, ClassVar, TypeAlias
@@ -47,6 +48,7 @@ from openhcs.core.source_metadata import (
     SourceMetadataRoleView,
     SourceMetadataScalar,
     SourceMetadataValue,
+    SourceVoxelSpacing,
 )
 from openhcs.core.source_matching import (
     is_image_path,
@@ -92,6 +94,57 @@ _Z_INDEX_METADATA_KEYS = (
     "slice",
 )
 _SOURCE_PLANE_GROUP_KEY = "source_plane_group_key"
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_is_absolute(path: str) -> bool:
+    """Return whether a source-schema path string is absolute."""
+
+    return Path(path).is_absolute()
+
+
+@lru_cache(maxsize=65536)
+def _cached_resolved_path(path: str) -> str:
+    """Return a non-strict resolved spelling for an absolute path string."""
+
+    return str(Path(path).resolve())
+
+
+@lru_cache(maxsize=65536)
+def _cached_relative_posix_path(path: str, root: str) -> str:
+    """Return path relative to root using source-schema POSIX spelling."""
+
+    return Path(path).relative_to(Path(root)).as_posix()
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_suffix(path: str) -> str:
+    """Return suffix for a source-schema path."""
+
+    return Path(path).suffix
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_parent(path: str) -> str:
+    """Return parent directory for a source-schema path."""
+
+    return str(Path(path).parent)
+
+
+@lru_cache(maxsize=65536)
+def _cached_source_root_join(source_root: str, source_ref: str) -> str:
+    """Return the local path for a workspace source reference."""
+
+    return str(Path(source_root) / source_ref)
+
+
+@lru_cache(maxsize=65536)
+def _cached_image_plane_source_basename(uri: str) -> str:
+    """Return basename for a source-plane URI or local path."""
+
+    parsed = urlparse(uri)
+    path = unquote(parsed.path if parsed.scheme else uri)
+    return Path(path).name
 
 WorkspaceComponentValues: TypeAlias = Mapping[
     AllComponents,
@@ -154,7 +207,11 @@ def clear_source_schema_auxiliary_payload_cache() -> None:
 
 def _auxiliary_payload_cache_keys(path: str | Path) -> tuple[str, ...]:
     raw_key = str(path)
-    resolved_key = str(Path(path).resolve()) if Path(path).is_absolute() else raw_key
+    resolved_key = (
+        _cached_resolved_path(raw_key)
+        if _cached_path_is_absolute(raw_key)
+        else raw_key
+    )
     if resolved_key == raw_key:
         return (raw_key,)
     return (raw_key, resolved_key)
@@ -424,6 +481,21 @@ class SourceSchemaCandidate:
         if self.source_filter_paths:
             return self.source_filter_paths
         return (self.relative_path,)
+
+    def image_set_selection_identity(self) -> tuple[object, ...]:
+        """Return the logical source identity counted by image-set selection."""
+        if self.source_plane_count is not None and self.source_plane_count > 1:
+            return (
+                "source_plane_group",
+                str(self.path),
+                self.relative_path,
+                self.source_plane_count,
+                self.source_filter_paths,
+            )
+        return (
+            "source_candidate",
+            SourceSchemaCandidateIdentity.from_candidate(self),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -854,7 +926,7 @@ class OpenHCSWorkspaceSourceSchemaCandidateProvider(SourceSchemaCandidateProvide
             workspace_mapping.require_source_ref(virtual_path)
         )
         return SourceSchemaCandidate(
-            path=request.source_root / source_ref,
+            path=Path(_cached_source_root_join(str(request.source_root), source_ref)),
             relative_path=virtual_path,
             metadata=enriched,
             source_filter_paths=(source_ref,),
@@ -880,7 +952,10 @@ class LocalFileSourceSchemaCandidateProvider(SourceSchemaCandidateProvider):
         )
         candidates: list[SourceSchemaCandidate] = []
         for path in request.source_files:
-            relative_path = path.relative_to(request.source_root).as_posix()
+            relative_path = _cached_relative_posix_path(
+                str(path),
+                str(request.source_root),
+            )
             if not self._schema_admits_path(request.schema, relative_path):
                 continue
             candidate = SourceSchemaCandidate(
@@ -1181,7 +1256,7 @@ class RemoteMaterializedImagePlaneSourceResolver(ImagePlaneSourceResolver):
             / f"{source_index:03d}"
         )
         target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / Path(unquote(parsed.path)).name
+        target_path = target_dir / _cached_image_plane_source_basename(source.uri)
         with urllib.request.urlopen(source.uri) as response, target_path.open("wb") as handle:
             shutil.copyfileobj(response, handle)
         return SourceSchemaCandidate(
@@ -1238,6 +1313,16 @@ class ImageSetRecord:
             MappingProxyType(dict(self.candidates_by_alias)),
         )
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+    def selection_identity(self) -> tuple[tuple[str, tuple[object, ...]], ...]:
+        """Return logical source identities for image-set selection."""
+        return tuple(
+            (
+                alias,
+                self.candidates_by_alias[alias].image_set_selection_identity(),
+            )
+            for alias in sorted(self.candidates_by_alias)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1357,6 +1442,9 @@ class SourceVirtualPathMetadata:
     virtual_path: str | None = None
     assignment: SourceAssignmentBase | None = None
     source_filter_paths: tuple[str, ...] = ()
+    source_voxel_spacing: SourceVoxelSpacing = field(
+        default_factory=SourceVoxelSpacing
+    )
 
     def metadata(self) -> SourceMetadataMapping:
         metadata = dict(self.image_set_metadata)
@@ -1373,6 +1461,10 @@ class SourceVirtualPathMetadata:
                 metadata,
                 path=self.virtual_path or "source_metadata",
             )
+        self.source_voxel_spacing.merge_into(
+            metadata,
+            path=self.virtual_path or "source_metadata",
+        )
         image_type = SourceAssignmentImageTypeProjection(self.assignment).image_type()
         if image_type is not None:
             merge_source_metadata(
@@ -1527,7 +1619,7 @@ class SharedCandidateMetadataProjection:
 
 @dataclass(frozen=True, slots=True)
 class SourceSchemaImageSetSelection:
-    """Nominal source-schema sample selection before workspace materialization."""
+    """Nominal source-schema image-set selection before workspace materialization."""
 
     well_filter: tuple[str, ...] = ()
     max_image_set_count: int | None = None
@@ -1541,12 +1633,16 @@ class SourceSchemaImageSetSelection:
         if self.max_image_set_count is not None and self.max_image_set_count <= 0:
             raise ValueError("max_image_set_count must be positive.")
 
+    def constrains_image_sets(self) -> bool:
+        """Return whether this selection narrows the source image-set universe."""
+        return bool(self.well_filter) or self.max_image_set_count is not None
+
     def apply(
         self,
         schema: PipelineImageSchema,
         image_sets: tuple[ImageSetRecord, ...],
     ) -> tuple[ImageSetRecord, ...]:
-        """Return image sets selected by source-schema well identity."""
+        """Return image sets selected by source-schema identity constraints."""
         selected = image_sets
         if self.well_filter:
             requested = set(self.well_filter)
@@ -1568,8 +1664,7 @@ class SourceSchemaImageSetSelection:
                     + ", ".join(missing)
                 )
         if self.max_image_set_count is not None:
-            selected = self._limit_by_sample_count(
-                schema,
+            selected = self._select_logical_image_sets(
                 selected,
                 self.max_image_set_count,
             )
@@ -1577,24 +1672,22 @@ class SourceSchemaImageSetSelection:
             raise ValueError("Source-schema image-set selection resolved to no images.")
         return selected
 
-    def _limit_by_sample_count(
-        self,
-        schema: PipelineImageSchema,
+    @staticmethod
+    def _select_logical_image_sets(
         image_sets: tuple[ImageSetRecord, ...],
-        max_sample_count: int,
+        max_image_set_count: int,
     ) -> tuple[ImageSetRecord, ...]:
-        """Keep all image sets belonging to the first selected sample identities."""
-        selected_wells: dict[str, None] = {}
+        """Select logical image sets without truncating source-plane stacks."""
+        selected: list[ImageSetRecord] = []
+        selected_identities: list[tuple[tuple[str, tuple[object, ...]], ...]] = []
         for image_set in image_sets:
-            well = SourceSchemaImageSetIdentity(schema, image_set).well
-            selected_wells.setdefault(well, None)
-            if len(selected_wells) >= max_sample_count:
-                break
-        return tuple(
-            image_set
-            for image_set in image_sets
-            if SourceSchemaImageSetIdentity(schema, image_set).well in selected_wells
-        )
+            identity = image_set.selection_identity()
+            if identity not in selected_identities:
+                if len(selected_identities) >= max_image_set_count:
+                    continue
+                selected_identities.append(identity)
+            selected.append(image_set)
+        return tuple(selected)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2165,6 +2258,7 @@ def materialize_source_schema_workspace(
         primary_mappings, primary_source_metadata, component_values = (
             _source_artifact_anchor_workspace_mappings(
                 workspace_root,
+                schema,
                 auxiliary_candidates,
                 {assignment.alias: assignment for assignment in auxiliary_assignments},
             )
@@ -2360,7 +2454,7 @@ def _vfs_save_json(
     if filemanager is None:
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return
-    filemanager.ensure_directory(str(path.parent), backend)
+    filemanager.ensure_directory(_cached_path_parent(str(path)), backend)
     filemanager.save(dict(payload), str(path), backend)
 
 
@@ -2472,9 +2566,7 @@ def _image_plane_source_candidates(
 
 
 def _image_plane_source_basename(source: ImagePlaneSource) -> str:
-    parsed = urlparse(source.uri)
-    path = unquote(parsed.path if parsed.scheme else source.uri)
-    return Path(path).name
+    return _cached_image_plane_source_basename(source.uri)
 
 
 def _source_metadata_matches(
@@ -2861,6 +2953,7 @@ def _primary_workspace_mappings(
         timepoints[str(timepoint_component)] = None
         for channel_index, assignment in enumerate(stack_assignments, start=1):
             candidate = image_set.candidates_by_alias[assignment.alias]
+            candidate_extension = _cached_path_suffix(str(candidate.path))
             site_component = _collision_free_site_component(
                 filename_projection,
                 well=well,
@@ -2869,7 +2962,7 @@ def _primary_workspace_mappings(
                 channel_index=channel_index,
                 z_index=z_component,
                 timepoint=timepoint_component,
-                extension=candidate.path.suffix,
+                extension=candidate_extension,
                 used_paths=used_paths_by_well_channel_z_timepoint.setdefault(
                     (well, channel_index, z_component, timepoint_component),
                     set(),
@@ -2883,7 +2976,7 @@ def _primary_workspace_mappings(
                     channel_index,
                     z_component,
                     timepoint_component,
-                    candidate.path.suffix,
+                    candidate_extension,
                 )
             )
             primary_mapping_sink.add(
@@ -2896,6 +2989,7 @@ def _primary_workspace_mappings(
                 virtual_path=virtual_path,
                 assignment=assignment,
                 source_filter_paths=candidate.source_filter_path_identities(),
+                source_voxel_spacing=schema.source_voxel_spacing,
             ).metadata()
     component_values: WorkspaceComponentValues = MappingProxyType(
         {
@@ -2915,6 +3009,7 @@ def _primary_workspace_mappings(
 
 def _source_artifact_anchor_workspace_mappings(
     workspace_root: Path,
+    schema: PipelineImageSchema,
     auxiliary_candidates: SourceSchemaCandidatesByAlias,
     assignments_by_alias: Mapping[str, SourceAssignmentBase],
 ) -> WorkspaceMappingResult:
@@ -2928,7 +3023,7 @@ def _source_artifact_anchor_workspace_mappings(
             1,
             1,
             1,
-            anchor_candidate.path.suffix,
+            _cached_path_suffix(str(anchor_candidate.path)),
         )
     )
     mappings = MappingProxyType(
@@ -2946,6 +3041,7 @@ def _source_artifact_anchor_workspace_mappings(
                 anchor_candidate.metadata,
                 assignment=assignments_by_alias.get(anchor_alias),
                 source_filter_paths=anchor_candidate.source_filter_path_identities(),
+                source_voxel_spacing=schema.source_voxel_spacing,
             ).metadata()
         }
     )

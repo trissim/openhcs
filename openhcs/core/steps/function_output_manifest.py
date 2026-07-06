@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 from weakref import WeakKeyDictionary
 
 from polystore.streaming.identity import StreamProducerIdentity
 
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactType, ImageArtifactType
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.path_pattern_matching import PathPatternTemplateMatcher
@@ -19,6 +20,28 @@ from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 from openhcs.core.steps.function_output_identity import FunctionOutputPathAuthority
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.microscopes.microscope_interfaces import FilenameParser
+
+
+@lru_cache(maxsize=65536)
+def _cached_relative_output_path(output_path: str, output_dir: str) -> str:
+    """Return output path relative to a step output directory."""
+
+    return str(Path(output_path).relative_to(Path(output_dir)))
+
+
+@lru_cache(maxsize=65536)
+def _cached_posix_path(path: str) -> str:
+    """Return normalized POSIX spelling for manifest path matching."""
+
+    return Path(path).as_posix()
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_name(path: str) -> str:
+    """Return filename component for manifest path matching."""
+
+    return Path(path).name
+
 
 @dataclass(frozen=True, slots=True)
 class StepOutputManifestKey:
@@ -69,7 +92,7 @@ class ProducedOutputSemantics(FunctionOutputIdentity):
         artifact_kind = self.producer_identity.artifact_kind
         if artifact_kind is None:
             return True
-        return ArtifactKind(artifact_kind) is ArtifactKind.IMAGE
+        return ArtifactType.coerce(artifact_kind) is ImageArtifactType
 
     @classmethod
     def from_output(
@@ -103,6 +126,43 @@ class ProducedOutputSemantics(FunctionOutputIdentity):
             ),
         )
 
+    @classmethod
+    def from_existing_main_flow_path(
+        cls,
+        plan: FunctionStepExecutionPlan,
+        path: str | Path,
+        parser: FilenameParser,
+    ) -> "ProducedOutputSemantics":
+        """Return producer lineage for an existing image path passed through a step."""
+        path = Path(path)
+        parsed = parser.parse_filename(path.name) or {}
+        extension = parsed.pop("extension", path.suffix) or None
+        identity = FunctionOutputIdentity(
+            component_values={
+                str(key): value
+                for key, value in parsed.items()
+                if isinstance(value, (str, int))
+            },
+            extension=extension,
+            source="existing main-flow path",
+        )
+        return cls(
+            producer_identity=FunctionStepOutputProducerIdentityAuthority.build(
+                FunctionStepOutputProducerIdentityRequest(
+                    plan=plan,
+                    output_kind=AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
+                    output_key=AlignedImageSliceContext.ANONYMOUS_MAIN_FLOW_OUTPUT_KEY,
+                )
+            ),
+            component_values=identity.component_values,
+            extension=identity.extension,
+            source=identity.source,
+            filename_component_values=identity.filename_component_values,
+            filename_qualifier=identity.filename_qualifier,
+            output_path=_cached_posix_path(str(path)),
+            relative_output_path=_cached_path_name(str(path)),
+        )
+
 @dataclass(slots=True)
 class StepOutputManifestStore:
     """Execution-local main-flow output lineage for shared VFS directories."""
@@ -110,12 +170,26 @@ class StepOutputManifestStore:
     records_by_key: dict[StepOutputManifestKey, tuple[ProducedOutputSemantics, ...]] = field(
         default_factory=dict
     )
+    records_revision: int = 0
+    selected_records_by_plan: dict[
+        tuple[int, int],
+        tuple[ProducedOutputSemantics, ...] | None,
+    ] = field(default_factory=dict)
+    producer_paths_by_pattern: dict[
+        tuple[int, int, str, int],
+        tuple[str, ...],
+    ] = field(default_factory=dict)
+    filtered_paths_by_plan: dict[
+        tuple[int, int, tuple[str, ...], int],
+        tuple[str, ...],
+    ] = field(default_factory=dict)
 
     def begin_step(self, plan: FunctionStepExecutionPlan) -> None:
         key = self.key_for_producer(plan)
         if key is None:
             return
         self.records_by_key[key] = ()
+        self._invalidate_record_selection_caches()
 
     def record_outputs(
         self,
@@ -131,6 +205,13 @@ class StepOutputManifestStore:
             for record in (*existing, *tuple(output_records))
         }
         self.records_by_key[key] = tuple(records_by_path.values())
+        self._invalidate_record_selection_caches()
+
+    def _invalidate_record_selection_caches(self) -> None:
+        self.records_revision += 1
+        self.selected_records_by_plan.clear()
+        self.producer_paths_by_pattern.clear()
+        self.filtered_paths_by_plan.clear()
 
     def producer_records_for(
         self,
@@ -218,14 +299,19 @@ class StepOutputManifestStore:
         paths: Sequence[str],
         parser: FilenameParser,
     ) -> list[str]:
-        producer_records = self.producer_records_for(plan)
+        cache_key = (
+            self.records_revision,
+            id(plan),
+            tuple(str(path) for path in paths),
+            id(parser),
+        )
+        cached = self.filtered_paths_by_plan.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
+        producer_records = self._selected_unique_producer_records_for(plan)
         if producer_records is None:
             return list(paths)
-        producer_records = self._select_requested_producer_records(
-            plan,
-            producer_records,
-        )
-        producer_records = self._unique_output_path_records(producer_records)
         allowed = ProducedPathSet.from_records(producer_records, parser)
         selected = [
             path
@@ -233,9 +319,11 @@ class StepOutputManifestStore:
             if allowed.contains(path)
         ]
         if selected:
+            self.filtered_paths_by_plan[cache_key] = tuple(selected)
             return selected
         if paths:
             raise NoStepOutputManifestMatch
+        self.filtered_paths_by_plan[cache_key] = ()
         return []
 
     def producer_paths_matching_pattern(
@@ -245,20 +333,39 @@ class StepOutputManifestStore:
         parser: FilenameParser,
     ) -> list[str]:
         """Return requested producer paths addressed by a detected pattern."""
-        producer_records = self.producer_records_for(plan)
+        cache_key = (self.records_revision, id(plan), str(pattern), id(parser))
+        cached = self.producer_paths_by_pattern.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
+        producer_records = self._selected_unique_producer_records_for(plan)
         if producer_records is None:
             return []
-        producer_records = self._select_requested_producer_records(
-            plan,
-            producer_records,
-        )
-        producer_records = self._unique_output_path_records(producer_records)
         selector = ProducedPathPatternSelector.from_pattern(pattern)
-        return [
+        selected = tuple(
             record.output_path
             for record in producer_records
             if selector.matches(ProducedPathSet.from_records((record,), parser))
-        ]
+        )
+        self.producer_paths_by_pattern[cache_key] = selected
+        return list(selected)
+
+    def _selected_unique_producer_records_for(
+        self,
+        plan: FunctionStepExecutionPlan,
+    ) -> tuple[ProducedOutputSemantics, ...] | None:
+        cache_key = (self.records_revision, id(plan))
+        if cache_key in self.selected_records_by_plan:
+            return self.selected_records_by_plan[cache_key]
+
+        producer_records = self.producer_records_for(plan)
+        if producer_records is None:
+            self.selected_records_by_plan[cache_key] = None
+            return None
+        selected = self._select_requested_producer_records(plan, producer_records)
+        selected = self._unique_output_path_records(selected)
+        self.selected_records_by_plan[cache_key] = selected
+        return selected
 
     @staticmethod
     def _unique_output_path_records(
@@ -309,7 +416,7 @@ class StepOutputManifestStore:
             (
                 AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
                 artifact_input.name,
-                artifact_input.kind.value,
+                artifact_input.artifact_type.value,
             )
             for artifact_input in plan.artifact_inputs.values()
             if (
@@ -340,7 +447,7 @@ class StepOutputManifestStore:
     @staticmethod
     def _is_main_flow_artifact_input(artifact_input: ArtifactInputPlan) -> bool:
         return (
-            artifact_input.kind.participates_in_main_flow_output
+            artifact_input.artifact_type.participates_in_main_flow_output
             and artifact_input.sidecar_role is None
         )
 
@@ -369,7 +476,7 @@ class StepOutputManifestStore:
 
     @staticmethod
     def relative_output_path(output_path: str, output_dir: Path) -> str:
-        return str(Path(output_path).relative_to(output_dir))
+        return _cached_relative_output_path(output_path, str(output_dir))
 
 _STEP_OUTPUT_MANIFESTS: WeakKeyDictionary[
     ProcessingContext,
@@ -399,9 +506,8 @@ class ProducedPathSet:
         tokens: set[str] = set()
         for record in records:
             for value in (record.relative_output_path, record.output_path):
-                path = Path(value)
-                tokens.add(path.as_posix())
-                tokens.add(path.name)
+                tokens.add(_cached_posix_path(value))
+                tokens.add(_cached_path_name(value))
             if record.filename_qualifier is not None:
                 tokens.add(
                     FunctionOutputPathAuthority.filename_for_identity(
@@ -424,7 +530,7 @@ class ProducedPathPatternSelector:
 
     @classmethod
     def from_pattern(cls, path: str) -> "ProducedPathPatternSelector":
-        path_text = Path(path).as_posix()
+        path_text = _cached_posix_path(path)
         return cls(path_text, PathPatternTemplateMatcher.from_pattern(path_text))
 
     def matches(self, path_set: ProducedPathSet) -> bool:

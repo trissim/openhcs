@@ -17,7 +17,11 @@ from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.core.equivalence.arrays import canonical_scalar, semantic_array_payload
+from openhcs.core.equivalence.arrays import (
+    canonical_scalar,
+    semantic_array_payload,
+    semantic_array_shape,
+)
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
 
 
@@ -75,8 +79,7 @@ class RuntimeCellMissingStrategy(ABC, metaclass=AutoRegisterMeta):
         cls,
         kind: RuntimeCellValueKind,
     ) -> "RuntimeCellMissingStrategy":
-        strategy_type = _RUNTIME_CELL_MISSING_STRATEGY_BY_KIND[kind]
-        return strategy_type()
+        return _RUNTIME_CELL_MISSING_STRATEGY_BY_KIND[kind]
 
     @abstractmethod
     def is_missing(self, value: RuntimeCellSignature) -> bool:
@@ -108,7 +111,10 @@ class TextRuntimeCellMissingStrategy(RuntimeCellMissingStrategy):
 
 
 _RUNTIME_CELL_MISSING_STRATEGY_BY_KIND = MappingProxyType(
-    dict(RuntimeCellMissingStrategy.__registry__)
+    {
+        kind: strategy_type()
+        for kind, strategy_type in RuntimeCellMissingStrategy.__registry__.items()
+    }
 )
 if set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) != set(RuntimeCellValueKind):
     missing_kinds = sorted(
@@ -328,6 +334,91 @@ def _cached_runtime_cell_signature(
     return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, canonical)
 
 
+def _runtime_numeric_cell_signature(
+    numeric: float,
+    numeric_decimal_places: int,
+) -> RuntimeCellSignature:
+    if math.isnan(numeric):
+        return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "nan")
+    if math.isinf(numeric):
+        return RuntimeCellSignature(
+            RuntimeCellValueKind.NUMBER,
+            "inf" if numeric > 0 else "-inf",
+        )
+    rounded = round(numeric, numeric_decimal_places)
+    return RuntimeCellSignature(
+        RuntimeCellValueKind.NUMBER,
+        repr(0.0 if rounded == 0 else rounded),
+    )
+
+
+def runtime_measurement_cell_signature(
+    value: object,
+    policy: RuntimeEquivalencePolicy,
+) -> RuntimeCellSignature:
+    """Project one runtime measurement payload into a cell signature directly."""
+    value = canonical_scalar(value)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        text = str(value).strip()
+        numeric = runtime_numeric_text_value(text)
+        if numeric is None:
+            return RuntimeCellSignature(
+                RuntimeCellValueKind.EMPTY if not text else RuntimeCellValueKind.TEXT,
+                text,
+            )
+        return _runtime_numeric_cell_signature(
+            numeric,
+            policy.numeric_decimal_places,
+        )
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        dtype, shape, digest = array_payload[1:]
+        return RuntimeCellSignature(
+            RuntimeCellValueKind.TEXT,
+            f"array:{dtype}:{'x'.join(str(axis) for axis in shape)}:{digest}",
+        )
+    if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+        value_digest = hashlib.blake2b(digest_size=32)
+        update_measurement_table_cell_hash(value_digest, value)
+        return RuntimeCellSignature(
+            RuntimeCellValueKind.TEXT,
+            f"{type(value).__name__}:{value_digest.hexdigest()}",
+        )
+    return runtime_cell_signature(str(value), policy)
+
+
+def runtime_measurement_cell_signature_if_present(
+    value: object,
+    policy: RuntimeEquivalencePolicy,
+) -> RuntimeCellSignature | None:
+    """Return a direct cell signature, or None for runtime-missing values."""
+    value = canonical_scalar(value)
+    if value is None:
+        return None
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        dtype, shape, digest = array_payload[1:]
+        if not any(axis > 0 for axis in shape):
+            return None
+        return RuntimeCellSignature(
+            RuntimeCellValueKind.TEXT,
+            f"array:{dtype}:{'x'.join(str(axis) for axis in shape)}:{digest}",
+        )
+    if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+        if not value:
+            return None
+        return runtime_measurement_cell_signature(value, policy)
+    text = str(value).strip()
+    if not text:
+        return None
+    numeric = runtime_numeric_text_value(text)
+    if numeric is None:
+        return RuntimeCellSignature(RuntimeCellValueKind.TEXT, text)
+    if math.isnan(numeric):
+        return None
+    return _runtime_numeric_cell_signature(numeric, policy.numeric_decimal_places)
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementCellSignatureProjection:
     """Project runtime measurement payloads into comparison cell signatures."""
@@ -336,27 +427,33 @@ class RuntimeMeasurementCellSignatureProjection:
     policy: RuntimeEquivalencePolicy
 
     def signature(self) -> RuntimeCellSignature:
-        value = canonical_scalar(self.value)
-        if value is None or isinstance(value, (str, bool, int, float)):
-            return _cached_runtime_cell_signature(
-                str(value),
-                self.policy.numeric_decimal_places,
-            )
-        array_payload = semantic_array_payload(value)
-        if array_payload is not None:
-            dtype, shape, digest = array_payload[1:]
-            return RuntimeCellSignature(
-                RuntimeCellValueKind.TEXT,
-                f"array:{dtype}:{'x'.join(str(axis) for axis in shape)}:{digest}",
-            )
-        if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
-            value_digest = hashlib.blake2b(digest_size=32)
-            update_measurement_table_cell_hash(value_digest, value)
-            return RuntimeCellSignature(
-                RuntimeCellValueKind.TEXT,
-                f"{type(value).__name__}:{value_digest.hexdigest()}",
-            )
-        return runtime_cell_signature(str(value), self.policy)
+        return runtime_measurement_cell_signature(self.value, self.policy)
+
+
+def runtime_measurement_cell_is_present(value: object) -> bool:
+    """Return presence semantics for one runtime measurement cell payload."""
+    value = canonical_scalar(value)
+    if value is None:
+        return False
+    array_shape = semantic_array_shape(value)
+    if array_shape is not None:
+        return any(axis > 0 for axis in array_shape)
+    if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+        return bool(value)
+    text = str(value).strip()
+    if not text:
+        return False
+    numeric = runtime_numeric_text_value(text)
+    if numeric is None:
+        return True
+    return not math.isnan(numeric)
+
+
+def runtime_measurement_value_is_present(value: object) -> bool:
+    """Return presence semantics for scalar or nested runtime measurement values."""
+    if runtime_value_is_mapping(value):
+        return any(runtime_measurement_value_is_present(nested) for nested in value.values())
+    return runtime_measurement_cell_is_present(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,21 +463,7 @@ class RuntimeMeasurementCellPresence:
     value: object
 
     def is_present(self) -> bool:
-        value = canonical_scalar(self.value)
-        if value is None:
-            return False
-        array_payload = semantic_array_payload(value)
-        if array_payload is not None:
-            return any(axis > 0 for axis in array_payload[2])
-        if runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
-            return bool(value)
-        text = str(value).strip()
-        if not text:
-            return False
-        numeric = runtime_numeric_text_value(text)
-        if numeric is None:
-            return True
-        return not math.isnan(numeric)
+        return runtime_measurement_cell_is_present(self.value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,12 +473,7 @@ class RuntimeMeasurementValuePresence:
     value: object
 
     def is_present(self) -> bool:
-        if runtime_value_is_mapping(self.value):
-            return any(
-                RuntimeMeasurementValuePresence(nested).is_present()
-                for nested in self.value.values()
-            )
-        return RuntimeMeasurementCellPresence(self.value).is_present()
+        return runtime_measurement_value_is_present(self.value)
 
 
 def measurement_numeric_runtime_value(

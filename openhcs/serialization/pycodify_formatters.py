@@ -12,28 +12,6 @@ from openhcs.config_framework.lazy_factory import LazyDataclass
 from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
 
 
-def _module_contract_imports(contract) -> set[tuple[str, str]]:
-    from openhcs.core.artifact_materialization_policy import (
-        NO_ARTIFACT_MATERIALIZATION,
-    )
-
-    imports: set[tuple[str, str]] = set()
-    specs = (
-        *contract.inputs,
-        *contract.runtime_artifact_inputs,
-        *contract.outputs,
-        *contract.declared_outputs,
-    )
-    if any(spec.materialization is NO_ARTIFACT_MATERIALIZATION for spec in specs):
-        imports.add(
-            (
-                "openhcs.core.artifact_materialization_policy",
-                "NO_ARTIFACT_MATERIALIZATION",
-            )
-        )
-    return imports
-
-
 @dataclass(frozen=True)
 class CallableExportIdentity:
     module: str | None
@@ -42,6 +20,12 @@ class CallableExportIdentity:
 
     @classmethod
     def from_callable(cls, func) -> "CallableExportIdentity":
+        if isinstance(func, type):
+            return cls(
+                module=func.__module__,
+                name=func.__name__,
+                has_openhcs_contract=False,
+            )
         if not (inspect.isfunction(func) or inspect.isbuiltin(func)):
             return cls(
                 module=None,
@@ -65,14 +49,14 @@ class CallableExportIdentity:
     def is_external_registered(self) -> bool:
         if self.module is None:
             return False
-        return (
-            not self.has_openhcs_contract and not self.module.startswith("openhcs.")
-        )
+        return not self.has_openhcs_contract and not self.module.startswith("openhcs.")
 
     @property
     def import_module(self) -> str:
         if self.module is None:
             raise ValueError("Callable identity has no importable module.")
+        if self.module == "builtins":
+            return self.module
         if self.is_external_registered:
             return f"openhcs.{self.module}"
         return self.module
@@ -100,7 +84,7 @@ class OpenHCSCallableFormatter(SourceFormatter):
     priority = 75
 
     def can_format(self, value) -> bool:
-        return callable(value) and not isinstance(value, type)
+        return callable(value)
 
     def format(self, value, context: FormatContext) -> SourceFragment:
         if inspect.ismethod(value):
@@ -112,7 +96,12 @@ class OpenHCSCallableFormatter(SourceFormatter):
 
         import_pair = (identity.import_module, identity.import_name)
         mapped = NameMappingLookup.resolve(context, import_pair, identity.import_name)
-        return SourceFragment(mapped, frozenset([import_pair]))
+        imports = (
+            frozenset()
+            if identity.import_module == "builtins"
+            else frozenset([import_pair])
+        )
+        return SourceFragment(mapped, imports)
 
 
 class CellProfilerRuntimeCallableFormatter(SourceFormatter):
@@ -136,7 +125,6 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
             context, import_pair, "cellprofiler_module_callable"
         )
         imports = set(raw_func_frag.imports | contract_frag.imports)
-        imports |= _module_contract_imports(value.contract)
         imports.add(import_pair)
         args = [
             raw_func_frag.code,
@@ -157,6 +145,25 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
             f"{factory_name}(\n{field_ctx.indent_str}{inner}\n{context.indent_str})",
             frozenset(imports),
         )
+
+
+class PythonSourceLiteralFormatter(SourceFormatter):
+    priority = 120
+
+    def can_format(self, value) -> bool:
+        from openhcs.core.python_source_literal import PythonSourceLiteral
+
+        return isinstance(value, PythonSourceLiteral)
+
+    def format(self, value, context: FormatContext) -> SourceFragment:
+        from openhcs.core.python_source_literal import PythonSourceLiteral
+
+        if not isinstance(value, PythonSourceLiteral):
+            raise TypeError(
+                "PythonSourceLiteralFormatter requires PythonSourceLiteral, "
+                f"got {type(value).__name__}."
+            )
+        return SourceFragment(value.source_literal(), value.source_literal_imports())
 
 
 class MaterializationSpecFormatter(SourceFormatter):
@@ -247,9 +254,7 @@ class FunctionPatternTupleFormatter(SourceFormatter):
                 defaults = {}
 
             final_args = {
-                k: v
-                for k, v in args.items()
-                if k not in defaults or v != defaults[k]
+                k: v for k, v in args.items() if k not in defaults or v != defaults[k]
             }
         else:
             final_args = args
@@ -268,7 +273,11 @@ class FunctionPatternListFormatter(SourceFormatter):
     priority = 84
 
     def can_format(self, value) -> bool:
-        return isinstance(value, list) and value and all(_is_pattern_item(item) for item in value)
+        return (
+            isinstance(value, list)
+            and value
+            and all(_is_pattern_item(item) for item in value)
+        )
 
     def format(self, value: list, context: FormatContext) -> SourceFragment:
         if context.clean_mode and len(value) == 1:
@@ -280,20 +289,6 @@ class FunctionPatternListFormatter(SourceFormatter):
         inner = f",\n{item_ctx.indent_str}".join(frag.code for frag in item_frags)
         code = f"[\n{item_ctx.indent_str}{inner}\n{context.indent_str}]"
         return SourceFragment(code, imports)
-
-
-class OpenHCSDtypeConversionFormatter(SourceFormatter):
-    priority = 95
-
-    def can_format(self, value) -> bool:
-        from openhcs.core.memory import DtypeConversion
-
-        return isinstance(value, DtypeConversion)
-
-    def format(self, value, context: FormatContext) -> SourceFragment:
-        import_pair = ("openhcs.core.memory", "DtypeConversion")
-        enum_name = NameMappingLookup.resolve(context, import_pair, "DtypeConversion")
-        return SourceFragment(f"{enum_name}.{value.name}", frozenset([import_pair]))
 
 
 @dataclass(frozen=True)
@@ -426,12 +421,11 @@ class FunctionStepCleanModeFieldPolicy:
             )
             if not emission_state.requires_serialization:
                 return False
-            if (
-                isinstance(default_value, LazyDataclass)
-                and LazyDataclassFieldEmissionState.raw_field_values_match(
-                    current_value,
-                    default_value,
-                )
+            if isinstance(
+                default_value, LazyDataclass
+            ) and LazyDataclassFieldEmissionState.raw_field_values_match(
+                current_value,
+                default_value,
             ):
                 return False
             return True
@@ -478,13 +472,17 @@ class FunctionStepFormatter(SourceFormatter):
 
         signatures = [
             (name, param)
-            for name, param in inspect.signature(FunctionStep.__init__).parameters.items()
+            for name, param in inspect.signature(
+                FunctionStep.__init__
+            ).parameters.items()
             if name != "self" and param.kind != inspect.Parameter.VAR_KEYWORD
         ]
         seen = {name for name, _param in signatures}
         signatures.extend(
             (name, param)
-            for name, param in inspect.signature(AbstractStep.__init__).parameters.items()
+            for name, param in inspect.signature(
+                AbstractStep.__init__
+            ).parameters.items()
             if name != "self" and name not in seen
         )
 

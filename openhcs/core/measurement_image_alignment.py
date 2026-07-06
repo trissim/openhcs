@@ -39,6 +39,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelDenseDataStrategy,
     ObjectLabelReplacementRequest,
     ObjectLabelRuntimeSliceStackContract,
+    ObjectLabelSourcePlaneProjectionRequest,
     ObjectLabelSet,
     ObjectLabelValueConstructionContext,
     ObjectLabelValue,
@@ -49,9 +50,18 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     object_label_dense_array,
 )
+from openhcs.core.source_matching import SourceImageSetIdentityPolicy
+from openhcs.core.source_plane_alignment import (
+    SourcePayloadPlaneIdentity,
+    SourcePayloadPlaneIdentitySequence,
+    SourcePlaneIdentitySequenceAlignment,
+)
 
 
 logger = logging.getLogger(__name__)
+MEASUREMENT_SOURCE_PLANE_IDENTITY_POLICY = SourceImageSetIdentityPolicy(
+    plane_member_components=frozenset()
+)
 
 
 class MeasurementImageAlignmentContractNotDeclared(ValueError):
@@ -307,8 +317,112 @@ class MeasurementImageLabelAlignmentRequest:
             self.source_aliases,
         )
         if projection is None:
+            return self.with_image_source_projected_labels()
+        projected_labels = projection.project(self.labels)
+        projected_payload = self.label_payload
+        if self.label_payload is not None:
+            payload_projection = projection.project(self.label_payload)
+            if isinstance(payload_projection, ObjectLabelValue):
+                projected_payload = payload_projection
+                projected_labels = (
+                    payload_projection
+                    if isinstance(self.labels, ObjectLabelValue)
+                    else object_label_dense_array(payload_projection)
+                )
+            elif projected_labels is not self.labels:
+                projected_payload = (
+                    ObjectLabelMeasurementPayloadStrategy.for_source(self.label_payload)
+                    .materialize(
+                        self.label_payload,
+                        ObjectLabelReplacementRequest(projected_labels),
+                    )
+                )
+        if projected_payload is not None:
+            image_projected_payload = MeasurementImageSourcePlaneLabelProjection(
+                image=self.image,
+                label_payload=projected_payload,
+            ).payload()
+            if image_projected_payload is not projected_payload:
+                projected_payload = image_projected_payload
+                projected_labels = (
+                    projected_payload
+                    if isinstance(self.labels, ObjectLabelValue)
+                    else object_label_dense_array(projected_payload)
+                )
+        return replace(
+            self,
+            labels=projected_labels,
+            label_payload=projected_payload,
+        )
+
+    def with_image_source_projected_labels(self) -> "MeasurementImageLabelAlignmentRequest":
+        """Return this request with labels projected to a planar image source plane."""
+        if self.label_payload is None:
             return self
-        return replace(self, labels=projection.project(self.labels))
+        projected_payload = MeasurementImageSourcePlaneLabelProjection(
+            image=self.image,
+            label_payload=self.label_payload,
+        ).payload()
+        if projected_payload is self.label_payload:
+            return self
+        return replace(
+            self,
+            labels=(
+                projected_payload
+                if isinstance(self.labels, ObjectLabelValue)
+                else object_label_dense_array(projected_payload)
+            ),
+            label_payload=projected_payload,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementImageSourcePlaneLabelProjection:
+    """Project label planes by matching their source identity to a planar image."""
+
+    image: RuntimeArrayData | AlignedImageStack
+    label_payload: ObjectLabelValue
+
+    def payload(self) -> ObjectLabelValue:
+        plane_index = self.label_plane_index()
+        if plane_index is None:
+            return self.label_payload
+        labels = object_label_dense_array(self.label_payload)
+        if not isinstance(labels, np.ndarray) or labels.ndim < 3:
+            return self.label_payload
+        return ObjectLabelMeasurementPayloadStrategy.for_source(
+            self.label_payload
+        ).materialize(
+            self.label_payload,
+            ObjectLabelSourcePlaneProjectionRequest(
+                labels[plane_index],
+                plane_index,
+            ),
+        )
+
+    def label_plane_index(self) -> int | None:
+        image_data = image_payload_data(self.image)
+        if not isinstance(image_data, np.ndarray) or is_image_stack(image_data):
+            return None
+        image_identities = SourcePayloadPlaneIdentity.from_payload(
+            self.image,
+            MEASUREMENT_SOURCE_PLANE_IDENTITY_POLICY,
+        ).identities()
+        if not image_identities:
+            return None
+        label_identities = SourcePayloadPlaneIdentitySequence(
+            self.label_payload,
+            MEASUREMENT_SOURCE_PLANE_IDENTITY_POLICY,
+        ).identities()
+        if not label_identities:
+            return None
+        plane_indices = SourcePlaneIdentitySequenceAlignment(
+            image_identities=(image_identities,),
+            target_identities=label_identities,
+        ).target_indexes_for_image_planes()
+        if plane_indices is None or len(plane_indices) != 1:
+            return None
+        return plane_indices[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,6 +470,11 @@ class PreparedMeasurementObjectLabels:
         source_projection_timer = RuntimeProfileTimer.start()
         source_projected_request = request.with_source_projected_labels()
         source_projected_labels = source_projected_request.labels
+        source_projection_payload = source_projected_request.label_payload
+        if source_projection_payload is None:
+            raise TypeError(
+                "Measurement object-label source projection lost label_payload."
+            )
         if profile_enabled:
             RuntimeProfileLogger.log(
                 logger,
@@ -369,7 +488,7 @@ class PreparedMeasurementObjectLabels:
         source_context_timer = RuntimeProfileTimer.start()
         source_projected_payload = cls.source_context_payload(
             source_projected_request,
-            source_payload,
+            source_projection_payload,
             source_projected_labels,
         )
         if profile_enabled:

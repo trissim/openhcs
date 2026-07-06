@@ -39,7 +39,12 @@ class RegisteredStrategyTypesMixin(Generic[_StrategyT]):
         cls: type[_StrategyT],
     ) -> tuple[type[_StrategyT], ...]:
         """Return registered concrete strategy classes."""
-        return tuple(cast(type[_StrategyT], item) for item in cls.__registry__.values())
+        return tuple(
+            dict.fromkeys(
+                cast(type[_StrategyT], item)
+                for item in cls.__registry__.values()
+            )
+        )
 
 
 def enum_key_from_class(name: str, cls: type[object]) -> str | None:
@@ -219,6 +224,16 @@ class MostDerivedContextStrategyMeta(AutoRegisterMeta):
         )
         if starts_context_family:
             registry_key = attrs.get("__registry_key__", mcs.REGISTRY_KEY)
+            key_extractor = attrs.get("__key_extractor__")
+            if key_extractor is None:
+                key_extractor = next(
+                    (
+                        getattr(base, "__key_extractor__", None)
+                        for base in bases
+                        if getattr(base, "__key_extractor__", None) is not None
+                    ),
+                    None,
+                )
             registry = LazyDiscoveryDict()
             attrs["__registry__"] = registry
             attrs["__registry_key__"] = registry_key
@@ -233,6 +248,7 @@ class MostDerivedContextStrategyMeta(AutoRegisterMeta):
                 registry_config=RegistryConfig(
                     registry_dict=registry,
                     key_attribute=registry_key,
+                    key_extractor=key_extractor,
                     skip_if_no_key=True,
                     registry_name=f"{name} most-derived context strategy",
                 ),

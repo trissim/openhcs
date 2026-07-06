@@ -9,7 +9,10 @@ from typing import Any
 
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import MeasurementsArtifactType
+from openhcs.core.measurement_row_materialization import (
+    is_structural_missing_measurement_cell,
+)
 from openhcs.core.runtime_stores import RuntimeArtifactAddress, StoredRuntimeValue
 from openhcs.core.runtime_values import (
     ColumnarRows,
@@ -26,6 +29,14 @@ MAX_CELL_TEXT_LENGTH = 200
 
 class LiveMeasurementPayloadError(ValueError):
     """Raised when a live-measurement progress context is malformed."""
+
+
+@dataclass(frozen=True, slots=True)
+class LiveMeasurementRowPreview:
+    """Bounded row preview plus full row count for one measurement table."""
+
+    rows: tuple[Mapping[str, Any], ...]
+    row_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,23 +60,23 @@ class LiveMeasurementTablePreview:
         row_limit: int = DEFAULT_LIVE_MEASUREMENT_ROW_LIMIT,
         column_limit: int = DEFAULT_LIVE_MEASUREMENT_COLUMN_LIMIT,
     ) -> "LiveMeasurementTablePreview | None":
-        if record.key.kind is not ArtifactKind.MEASUREMENTS:
+        if record.key.artifact_type is not MeasurementsArtifactType:
             return None
 
         table = MeasurementTable.from_runtime_value(record.value)
-        row_mappings = _measurement_row_mappings(table.rows)
-        all_columns = _ordered_columns(table=table, rows=row_mappings)
+        row_preview = _measurement_row_preview(table.rows, row_limit)
+        all_columns = _ordered_columns(table=table, rows=row_preview.rows)
         columns = all_columns[:column_limit]
         preview_rows = tuple(
             {column: _json_safe_cell(row.get(column)) for column in columns}
-            for row in row_mappings[:row_limit]
+            for row in row_preview.rows
         )
         return cls(
             address=RuntimeArtifactAddress.from_record(record),
             columns=columns,
             rows=preview_rows,
-            row_count=len(row_mappings),
-            truncated_rows=len(row_mappings) > row_limit,
+            row_count=row_preview.row_count,
+            truncated_rows=row_preview.row_count > row_limit,
             truncated_columns=len(all_columns) > len(columns),
             object_name=table.object_name,
             source_image_name=table.source_image_name,
@@ -196,32 +207,77 @@ def live_measurement_context_for_records(
     return None if payload is None else payload.to_context()
 
 
-def _measurement_row_mappings(rows: Any) -> tuple[Mapping[str, Any], ...]:
+def _measurement_row_preview(
+    rows: Any,
+    row_limit: int,
+) -> LiveMeasurementRowPreview:
+    row_limit = max(0, row_limit)
     if isinstance(rows, ColumnarRows):
-        return tuple(dict(row) for row in rows.row_mappings())
+        return _columnar_row_preview(rows, row_limit)
     if isinstance(rows, Mapping):
-        return _mapping_columns_to_rows(rows)
+        return _mapping_columns_to_row_preview(rows, row_limit)
     if not _is_row_sequence(rows):
-        return ({"value": rows},)
-    return tuple(_row_mapping(row) for row in rows)
+        return LiveMeasurementRowPreview(
+            rows=({"value": rows},) if row_limit else (),
+            row_count=1,
+        )
+    row_count = len(rows)
+    return LiveMeasurementRowPreview(
+        rows=tuple(_row_mapping(row) for row in rows[:row_limit]),
+        row_count=row_count,
+    )
 
 
-def _mapping_columns_to_rows(rows: Mapping[Any, Any]) -> tuple[Mapping[str, Any], ...]:
+def _columnar_row_preview(
+    rows: ColumnarRows,
+    row_limit: int,
+) -> LiveMeasurementRowPreview:
+    columns = tuple(str(column) for column in rows.columns)
+    column_values = tuple((column, rows.column_values(column)) for column in columns)
+    row_count = rows.row_count()
+    return LiveMeasurementRowPreview(
+        rows=tuple(
+            {
+                column: value
+                for column, values in column_values
+                for value in (
+                    values[row_index]
+                    if row_index < len(values)
+                    else None,
+                )
+                if not is_structural_missing_measurement_cell(value)
+            }
+            for row_index in range(min(row_limit, row_count))
+        ),
+        row_count=row_count,
+    )
+
+
+def _mapping_columns_to_row_preview(
+    rows: Mapping[Any, Any],
+    row_limit: int,
+) -> LiveMeasurementRowPreview:
     columns = {str(column): value for column, value in rows.items()}
     lengths = tuple(len(value) for value in columns.values() if _is_vector(value))
     if not lengths:
-        return (columns,)
+        return LiveMeasurementRowPreview(
+            rows=(columns,) if row_limit else (),
+            row_count=1,
+        )
     row_count = max(lengths)
-    return tuple(
-        {
-            column: (
-                value[row_index]
-                if _is_vector(value) and row_index < len(value)
-                else value
-            )
-            for column, value in columns.items()
-        }
-        for row_index in range(row_count)
+    return LiveMeasurementRowPreview(
+        rows=tuple(
+            {
+                column: (
+                    value[row_index]
+                    if _is_vector(value) and row_index < len(value)
+                    else value
+                )
+                for column, value in columns.items()
+            }
+            for row_index in range(min(row_limit, row_count))
+        ),
+        row_count=row_count,
     )
 
 
@@ -239,15 +295,26 @@ def _ordered_columns(
     rows: Sequence[Mapping[str, Any]],
 ) -> tuple[str, ...]:
     ordered: list[str] = []
-    for field in table.fields:
-        name = str(field.name)
-        if name not in ordered:
+    seen: set[str] = set()
+
+    def add_column(column: Any) -> None:
+        name = str(column)
+        if name not in seen:
+            seen.add(name)
             ordered.append(name)
+
+    for field in table.fields:
+        add_column(field.name)
+    column_names = table.column_names()
+    if column_names is not None:
+        for column in column_names:
+            add_column(column)
+    elif isinstance(table.rows, Mapping):
+        for column in table.rows:
+            add_column(column)
     for row in rows:
         for column in row:
-            name = str(column)
-            if name not in ordered:
-                ordered.append(name)
+            add_column(column)
     return tuple(ordered)
 
 

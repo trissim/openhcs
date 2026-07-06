@@ -5,13 +5,22 @@ invocations. They cover current side-channel I/O and provide the extension point
 objects, measurements, relationships, and other richer runtime state.
 """
 
+from __future__ import annotations
+
 from abc import ABC
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import astuple, asdict, dataclass, fields, is_dataclass, replace
 from enum import Enum
-from typing import ClassVar, Self, cast
+from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta
+
+from openhcs.constants.constants import AllComponents
+from openhcs.core.component_set import ComponentSet
+
+if TYPE_CHECKING:
+    from openhcs.core.runtime_values import RuntimeValueSchema
+    from openhcs.processing.materialization import MaterializationSpec
 
 
 class ArtifactPayloadShape(str, Enum):
@@ -23,128 +32,261 @@ class ArtifactPayloadShape(str, Enum):
     MAPPING = "mapping"
 
 
-@dataclass(frozen=True, slots=True)
-class ArtifactKindOptions:
-    """Optional semantic flags attached to one artifact kind."""
+class ArtifactType(ABC, metaclass=AutoRegisterMeta):
+    """Registered runtime artifact payload category."""
 
-    uses_label_representation_payload_shape: bool = False
-    materialization_uses_source_identity_filename: bool = False
-    participates_in_measurement_source_names: bool = False
-    participates_in_main_flow_output: bool = False
-    participates_in_axis_plane_identity: bool = False
-    participates_in_object_domain_scope: bool = False
-    participates_in_pairwise_object_domain_input: bool = False
-    payload_description: str | None = None
+    __registry_key__ = "value"
+    __skip_if_no_key__ = True
 
-    def description_for(
-        self,
-        *,
-        value: str,
-        payload_shape: ArtifactPayloadShape,
-    ) -> str:
-        if self.payload_description is not None:
-            return self.payload_description
-        return f"{payload_shape} {value} payload"
+    value: ClassVar[str | None] = None
+    payload_shape: ClassVar[ArtifactPayloadShape] = ArtifactPayloadShape.ANY
+    uses_label_representation_payload_shape: ClassVar[bool] = False
+    materialization_uses_source_identity_filename: ClassVar[bool] = False
+    participates_in_measurement_source_names: ClassVar[bool] = False
+    participates_in_main_flow_output: ClassVar[bool] = False
+    participates_in_axis_plane_identity: ClassVar[bool] = False
+    participates_in_object_domain_scope: ClassVar[bool] = False
+    participates_in_pairwise_object_domain_input: ClassVar[bool] = False
+    supports_inputless_artifact_only_execution: ClassVar[bool] = False
+    runtime_record_uses_payload_slice_count: ClassVar[bool] = True
+    payload_description: ClassVar[str | None] = None
 
+    @classmethod
+    def coerce(cls, artifact_type: "ArtifactTypeValue") -> type["ArtifactType"]:
+        """Return the registered artifact type for a class or wire value."""
+        if isinstance(artifact_type, str):
+            try:
+                return cls.__registry__[artifact_type]
+            except KeyError as exc:
+                raise ValueError(f"Unknown artifact type {artifact_type!r}.") from exc
+        if isinstance(artifact_type, type) and issubclass(artifact_type, cls):
+            return artifact_type
+        raise TypeError(
+            "Artifact type must be an ArtifactType class or registered value, "
+            f"got {type(artifact_type).__name__}."
+        )
 
-DEFAULT_ARTIFACT_KIND_OPTIONS = ArtifactKindOptions()
+    @classmethod
+    def require_value(cls) -> str:
+        if cls.value is None:
+            raise TypeError(f"{cls.__name__} does not declare an artifact type value.")
+        return cls.value
 
+    @classmethod
+    def description(cls) -> str:
+        if cls.payload_description is not None:
+            return cls.payload_description
+        return f"{cls.payload_shape} {cls.require_value()} payload"
 
-class ArtifactKind(str, Enum):
-    """Closed family of runtime artifact categories."""
+    @classmethod
+    def diagnostic_label(cls) -> str:
+        """Return the stable artifact type label used in diagnostics."""
+        return f"<{cls.__name__}: {cls.require_value()!r}>"
 
-    def __new__(
+    @classmethod
+    def default_materialization_spec(
         cls,
-        value: str,
-        payload_shape: "ArtifactPayloadShape",
-        options: ArtifactKindOptions = DEFAULT_ARTIFACT_KIND_OPTIONS,
-    ):
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        obj._payload_shape = payload_shape
-        obj.uses_label_representation_payload_shape = (
-            options.uses_label_representation_payload_shape
-        )
-        obj.materialization_uses_source_identity_filename = (
-            options.materialization_uses_source_identity_filename
-        )
-        obj.participates_in_measurement_source_names = (
-            options.participates_in_measurement_source_names
-        )
-        obj.participates_in_main_flow_output = options.participates_in_main_flow_output
-        obj.participates_in_axis_plane_identity = (
-            options.participates_in_axis_plane_identity
-        )
-        obj.participates_in_object_domain_scope = (
-            options.participates_in_object_domain_scope
-        )
-        obj.participates_in_pairwise_object_domain_input = (
-            options.participates_in_pairwise_object_domain_input
-        )
-        obj.payload_description = options.description_for(
-            value=value,
-            payload_shape=payload_shape,
-        )
-        return obj
+        schema: "RuntimeValueSchema",
+    ) -> "MaterializationSpec | None":
+        """Return this artifact type's default materialization, if any."""
+        del schema
+        return None
 
-    SPECIAL = ("special", ArtifactPayloadShape.ANY)
-    IMAGE = (
-        "image",
-        ArtifactPayloadShape.ARRAY,
-        ArtifactKindOptions(
-            materialization_uses_source_identity_filename=True,
-            participates_in_measurement_source_names=True,
-            participates_in_main_flow_output=True,
-        ),
-    )
-    OBJECT_LABELS = (
-        "object_labels",
-        ArtifactPayloadShape.ARRAY,
-        ArtifactKindOptions(
-            materialization_uses_source_identity_filename=True,
-            participates_in_main_flow_output=True,
-            participates_in_object_domain_scope=True,
-            participates_in_pairwise_object_domain_input=True,
-            payload_description="object_labels payload",
-            uses_label_representation_payload_shape=True,
-        ),
-    )
-    MEASUREMENTS = (
-        "measurements",
-        ArtifactPayloadShape.TABLE,
-        ArtifactKindOptions(
-            materialization_uses_source_identity_filename=True,
-            participates_in_axis_plane_identity=True,
-        ),
-    )
-    RELATIONSHIPS = (
-        "relationships",
-        ArtifactPayloadShape.TABLE,
-        ArtifactKindOptions(
-            materialization_uses_source_identity_filename=True,
-            participates_in_axis_plane_identity=True,
-            participates_in_object_domain_scope=True,
-            participates_in_pairwise_object_domain_input=True,
-        ),
-    )
-    TABLE = ("table", ArtifactPayloadShape.TABLE)
-    SPATIAL_GRID = (
-        "spatial_grid",
-        ArtifactPayloadShape.MAPPING,
-        ArtifactKindOptions(
-            payload_description="spatial grid mapping",
-            participates_in_pairwise_object_domain_input=True,
-        ),
-    )
-    METADATA = (
-        "metadata",
-        ArtifactPayloadShape.MAPPING,
-        ArtifactKindOptions(payload_description="metadata mapping"),
+    @classmethod
+    def has_default_materialization(cls) -> bool:
+        """Return whether this artifact type declares default materialization."""
+        return any(
+            base is not ArtifactType and "default_materialization_spec" in vars(base)
+            for base in cls.__mro__
+        )
+
+    @classmethod
+    def exports_as_table(cls) -> bool:
+        """Return whether this artifact type materializes as a table export."""
+        return cls.payload_shape is ArtifactPayloadShape.TABLE
+
+
+ArtifactTypeValue = type[ArtifactType] | str
+
+
+def artifact_type_strategy_key_from_class(name: str, cls: type[object]) -> str | None:
+    """Return the nominal strategy key for a class declaring an ArtifactType member."""
+    del name
+    member = cls.__dict__.get("artifact_type")
+    if isinstance(member, type) and issubclass(member, ArtifactType):
+        return artifact_type_strategy_key(member)
+    return None
+
+
+def artifact_type_strategy_key(artifact_type: type[ArtifactType]) -> str:
+    """Return the JSON-safe nominal key for an artifact-type strategy."""
+    return f"{artifact_type.__module__}.{artifact_type.__qualname__}"
+
+
+class ArtifactTypeStrategyMatchMixin:
+    """MRO match hook for strategy roots selected by ArtifactType inheritance."""
+
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
+    __key_extractor__ = staticmethod(artifact_type_strategy_key_from_class)
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        member = cls.__dict__.get("artifact_type")
+        if (
+            isinstance(member, type)
+            and issubclass(member, ArtifactType)
+            and cls.__dict__.get("strategy_key") is None
+        ):
+            cls.strategy_key = artifact_type_strategy_key(member)
+
+    @classmethod
+    def for_artifact_type(cls, artifact_type: ArtifactTypeValue):
+        return cls.for_context(ArtifactType.coerce(artifact_type))
+
+    def matches(self, context: type[ArtifactType]) -> bool:
+        artifact_type = type(self).artifact_type
+        return artifact_type is not None and issubclass(
+            ArtifactType.coerce(context), artifact_type
+        )
+
+
+class CsvMaterializedArtifactType(ArtifactType):
+    """Artifact type with CSV table materialization."""
+
+    runtime_record_uses_payload_slice_count = False
+
+    @classmethod
+    def default_materialization_spec(
+        cls,
+        schema: "RuntimeValueSchema",
+    ) -> "MaterializationSpec":
+        from openhcs.processing.materialization import csv_only
+
+        field_names = [field.name for field in schema.fields]
+        fields: list[str] | None = field_names or None
+        return csv_only(suffix=".csv", fields=fields)
+
+
+class JsonMaterializedArtifactType(ArtifactType):
+    """Artifact type with JSON materialization."""
+
+    @classmethod
+    def default_materialization_spec(
+        cls,
+        schema: "RuntimeValueSchema",
+    ) -> "MaterializationSpec":
+        del schema
+        from openhcs.processing.materialization import json_only
+
+        return json_only(suffix=".json")
+
+
+class ObjectLabelMaterializedArtifactType(ArtifactType):
+    """Artifact type with object-label ROI materialization."""
+
+    @classmethod
+    def default_materialization_spec(
+        cls,
+        schema: "RuntimeValueSchema",
+    ) -> "MaterializationSpec":
+        del schema
+        from openhcs.processing.materialization import segmentation_mask_rois
+
+        return segmentation_mask_rois()
+
+
+class SpecialArtifactType(ArtifactType):
+    """Generic artifact type for explicit side-channel payloads."""
+
+    value = "special"
+
+
+class ImageArtifactType(ArtifactType):
+    """Image array artifact type."""
+
+    value = "image"
+    payload_shape = ArtifactPayloadShape.ARRAY
+    materialization_uses_source_identity_filename = True
+    participates_in_measurement_source_names = True
+    participates_in_main_flow_output = True
+
+
+class ObjectLabelsArtifactType(ObjectLabelMaterializedArtifactType):
+    """Object-label array artifact type."""
+
+    value = "object_labels"
+    payload_shape = ArtifactPayloadShape.ARRAY
+    materialization_uses_source_identity_filename = True
+    participates_in_main_flow_output = True
+    participates_in_object_domain_scope = True
+    participates_in_pairwise_object_domain_input = True
+    payload_description = "object_labels payload"
+    uses_label_representation_payload_shape = True
+
+
+class MeasurementsArtifactType(CsvMaterializedArtifactType):
+    """Measurement-table artifact type."""
+
+    value = "measurements"
+    payload_shape = ArtifactPayloadShape.TABLE
+    participates_in_axis_plane_identity = True
+    supports_inputless_artifact_only_execution = True
+
+
+class RelationshipsArtifactType(CsvMaterializedArtifactType):
+    """Relationship-table artifact type."""
+
+    value = "relationships"
+    payload_shape = ArtifactPayloadShape.TABLE
+    participates_in_axis_plane_identity = True
+    participates_in_object_domain_scope = True
+    participates_in_pairwise_object_domain_input = True
+    supports_inputless_artifact_only_execution = True
+    materialized_fields: ClassVar[tuple[str, ...]] = (
+        "relationship_type",
+        "source_role",
+        "target_role",
+        "source_object",
+        "target_object",
+        "parent_id",
+        "child_id",
+        "slice_index",
+        "slice_count",
     )
 
-    @property
-    def payload_shape(self) -> "ArtifactPayloadShape":
-        return ArtifactPayloadShape(self._payload_shape)
+    @classmethod
+    def default_materialization_spec(
+        cls,
+        schema: "RuntimeValueSchema",
+    ) -> "MaterializationSpec":
+        del schema
+        from openhcs.processing.materialization import csv_only
+
+        return csv_only(suffix=".csv", fields=list(cls.materialized_fields))
+
+
+class TableArtifactType(CsvMaterializedArtifactType):
+    """Generic table artifact type."""
+
+    value = "table"
+    payload_shape = ArtifactPayloadShape.TABLE
+
+
+class SpatialGridArtifactType(JsonMaterializedArtifactType):
+    """Spatial-grid mapping artifact type."""
+
+    value = "spatial_grid"
+    payload_shape = ArtifactPayloadShape.MAPPING
+    payload_description = "spatial grid mapping"
+    participates_in_pairwise_object_domain_input = True
+
+
+class MetadataArtifactType(JsonMaterializedArtifactType):
+    """Metadata mapping artifact type."""
+
+    value = "metadata"
+    payload_shape = ArtifactPayloadShape.MAPPING
+    payload_description = "metadata mapping"
 
 
 class ArtifactSidecarRole(str, Enum):
@@ -183,41 +325,323 @@ CROP_MASK_ARTIFACT_SIDECAR = ArtifactSidecarSpec(ArtifactSidecarRole.CROP_MASK)
 class ArtifactMaterializationPayload(ABC):
     """Nominal marker for rich artifact materialization metadata."""
 
-    def uses_source_identity_filename_for_artifact_kind(
+    def uses_source_identity_filename_for_artifact_type(
         self,
-        artifact_kind: ArtifactKind,
+        artifact_type: type[ArtifactType],
     ) -> bool:
         """Return whether this materialization names files by source identity."""
-        return artifact_kind.materialization_uses_source_identity_filename
+        return artifact_type.materialization_uses_source_identity_filename
+
+
+def _coerce_artifact_plan_type(
+    plan_type: type["ArtifactPlan"],
+) -> type["ArtifactPlan"]:
+    if isinstance(plan_type, type) and issubclass(plan_type, ArtifactPlan):
+        return plan_type
+    raise TypeError(
+        "Artifact plan type must be an ArtifactPlan class, "
+        f"got {type(plan_type).__name__}."
+    )
+
+
+def _require_registered_artifact_plan_type(
+    plan_type: type["ArtifactPlan"],
+    field_name: str,
+) -> type["ArtifactPlan"]:
+    resolved_plan_type = _coerce_artifact_plan_type(plan_type)
+    if resolved_plan_type not in ArtifactPlan.__registry__.values():
+        raise ValueError(
+            f"{field_name} is not a registered ArtifactPlan type: "
+            f"{resolved_plan_type.__name__}."
+        )
+    return resolved_plan_type
+
+
+def _require_registered_artifact_type(
+    artifact_type: ArtifactTypeValue,
+    field_name: str,
+) -> type[ArtifactType]:
+    resolved_artifact_type = ArtifactType.coerce(artifact_type)
+    if resolved_artifact_type not in ArtifactType.__registry__.values():
+        raise ValueError(
+            f"{field_name} is not a registered ArtifactType: "
+            f"{resolved_artifact_type.__name__}."
+        )
+    return resolved_artifact_type
+
+
+@dataclass(frozen=True)
+class ArtifactSpecRef:
+    """Scope-free identity for one declared artifact spec."""
+
+    plan_type: type["ArtifactPlan"]
+    artifact_type: type[ArtifactType]
+    name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "plan_type",
+            _require_registered_artifact_plan_type(
+                self.plan_type,
+                "ArtifactSpecRef.plan_type",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "artifact_type",
+            _require_registered_artifact_type(
+                self.artifact_type,
+                "ArtifactSpecRef.artifact_type",
+            ),
+        )
+        if not self.name:
+            raise ValueError("ArtifactSpecRef.name cannot be empty.")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "plan_role": self.plan_type.plan_role,
+            "artifact_type": self.artifact_type.value,
+            "name": self.name,
+        }
+
+    @classmethod
+    def input(
+        cls,
+        name: str,
+        artifact_type: ArtifactTypeValue,
+    ) -> "ArtifactSpecRef":
+        return cls(
+            plan_type=ArtifactInputPlan,
+            artifact_type=ArtifactType.coerce(artifact_type),
+            name=name,
+        )
+
+    @classmethod
+    def output(
+        cls,
+        name: str,
+        artifact_type: ArtifactTypeValue,
+    ) -> "ArtifactSpecRef":
+        return cls(
+            plan_type=ArtifactOutputPlan,
+            artifact_type=ArtifactType.coerce(artifact_type),
+            name=name,
+        )
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, object]) -> "ArtifactSpecRef":
+        return cls(
+            plan_type=ArtifactPlan.__registry__[str(payload["plan_role"])],
+            artifact_type=ArtifactType.coerce(str(payload["artifact_type"])),
+            name=str(payload["name"]),
+        )
+
+
+@dataclass(frozen=True)
+class ArtifactSpecRelation(ABC, metaclass=AutoRegisterMeta):
+    """Nominal relation tag attached to one declared artifact spec."""
+
+    __registry_key__ = "relation_key"
+    __skip_if_no_key__ = True
+
+    relation_key: ClassVar[str | None] = None
+    target_plan_type: ClassVar[type["ArtifactPlan"] | None] = None
+    target_artifact_type: ClassVar[type[ArtifactType] | None] = None
+
+    source: ArtifactSpecRef
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, ArtifactSpecRef):
+            raise TypeError(
+                "ArtifactSpecRelation.source must be an ArtifactSpecRef, "
+                f"got {type(self.source).__name__}."
+            )
+        if self.target_plan_type is not None:
+            _require_registered_artifact_plan_type(
+                self.target_plan_type,
+                f"{type(self).__name__}.target_plan_type",
+            )
+        if self.target_artifact_type is not None:
+            _require_registered_artifact_type(
+                self.target_artifact_type,
+                f"{type(self).__name__}.target_artifact_type",
+            )
+
+    def require_target_spec(self, spec: "ArtifactSpec") -> None:
+        if self.target_plan_type is not None:
+            target_plan_type = _coerce_artifact_plan_type(self.target_plan_type)
+            if spec.plan_type is not target_plan_type:
+                raise ValueError(
+                    f"{type(self).__name__} requires target plan role "
+                    f"{target_plan_type.plan_role}, got {spec.plan_type.plan_role}."
+                )
+        if self.target_artifact_type is None:
+            return
+        target_artifact_type = ArtifactType.coerce(self.target_artifact_type)
+        if spec.artifact_type is not target_artifact_type:
+            raise ValueError(
+                f"{type(self).__name__} requires target artifact type "
+                f"{target_artifact_type.value}, got {spec.artifact_type.value}."
+            )
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "relation_key": type(self).relation_key,
+            "source": self.source.payload(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, object]) -> "ArtifactSpecRelation":
+        source_payload = payload["source"]
+        if not isinstance(source_payload, Mapping):
+            raise TypeError("Artifact relation source payload must be a mapping.")
+        return cls(source=ArtifactSpecRef.from_payload(source_payload))
+
+
+class ArtifactGroupScopeSourceRelation(ArtifactSpecRelation, ABC):
+    """Target artifact inherits group scope from a declared source artifact."""
+
+
+class GroupLineageSourceRelation(ArtifactGroupScopeSourceRelation):
+    """Target artifact inherits grouping from a declared source artifact."""
+
+    relation_key: ClassVar[str] = "group_lineage_source"
 
 
 @dataclass(frozen=True)
 class ArtifactSpec:
-    """Declared input or output artifact contract for a function invocation."""
+    """Declared artifact contract for one plan role and one artifact type."""
 
     name: str
-    kind: ArtifactKind = ArtifactKind.SPECIAL
+    plan_type: type["ArtifactPlan"]
+    artifact_type: type[ArtifactType]
     materialization: ArtifactMaterializationPayload | None = None
     required: bool = True
     sidecar_role: ArtifactSidecarRole | None = None
+    relations: tuple[ArtifactSpecRelation, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "plan_type",
+            _require_registered_artifact_plan_type(
+                self.plan_type,
+                "ArtifactSpec.plan_type",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "artifact_type",
+            _require_registered_artifact_type(
+                self.artifact_type,
+                "ArtifactSpec.artifact_type",
+            ),
+        )
+        object.__setattr__(self, "relations", tuple(self.relations))
+        for relation in self.relations:
+            if not isinstance(relation, ArtifactSpecRelation):
+                raise TypeError(
+                    "ArtifactSpec.relations must contain ArtifactSpecRelation "
+                    f"values, got {type(relation).__name__}."
+                )
+            relation.require_target_spec(self)
 
     def __hash__(self) -> int:
         return hash(
             (
                 self.name,
-                self.kind,
+                self.plan_type,
+                self.artifact_type,
                 _artifact_spec_hash_value(self.materialization),
                 self.required,
                 self.sidecar_role,
+                self.relations,
             )
+        )
+
+    def ref(self) -> ArtifactSpecRef:
+        """Return the scope-free identity for this declaration."""
+        return ArtifactSpecRef(
+            plan_type=self.plan_type,
+            artifact_type=self.artifact_type,
+            name=self.name,
+        )
+
+    @classmethod
+    def input(
+        cls,
+        name: str,
+        artifact_type: ArtifactTypeValue,
+        **kwargs,
+    ) -> "ArtifactSpec":
+        return cls(
+            name=name,
+            plan_type=ArtifactInputPlan,
+            artifact_type=ArtifactType.coerce(artifact_type),
+            **kwargs,
+        )
+
+    @classmethod
+    def output(
+        cls,
+        name: str,
+        artifact_type: ArtifactTypeValue,
+        **kwargs,
+    ) -> "ArtifactSpec":
+        return cls(
+            name=name,
+            plan_type=ArtifactOutputPlan,
+            artifact_type=ArtifactType.coerce(artifact_type),
+            **kwargs,
+        )
+
+    def for_plan_type(self, plan_type: type["ArtifactPlan"]) -> "ArtifactSpec":
+        """Return this declaration with the same payload term under another role."""
+        target_plan_type = _coerce_artifact_plan_type(plan_type)
+        return replace(
+            self,
+            plan_type=target_plan_type,
+            relations=tuple(
+                relation
+                for relation in self.relations
+                if relation.target_plan_type is None
+                or relation.target_plan_type is target_plan_type
+            ),
+        )
+
+    @classmethod
+    def output_inheriting_group_scope(
+        cls,
+        name: str,
+        artifact_type: ArtifactTypeValue,
+        source: ArtifactSpecRef | ArtifactSpec,
+        **kwargs,
+    ) -> ArtifactSpec:
+        """Declare an output artifact whose group scope follows a source artifact."""
+        source_ref = source.ref() if isinstance(source, ArtifactSpec) else source
+        if not isinstance(source_ref, ArtifactSpecRef):
+            raise TypeError(
+                "ArtifactSpec.output_inheriting_group_scope source must be an "
+                f"ArtifactSpec or ArtifactSpecRef, got {type(source).__name__}."
+            )
+        relations = tuple(kwargs.pop("relations", ()))
+        return cls.output(
+            name,
+            artifact_type,
+            relations=(
+                *relations,
+                GroupLineageSourceRelation(source=source_ref),
+            ),
+            **kwargs,
         )
 
     def materialization_uses_source_identity_filename(self) -> bool:
         """Return whether this spec's materialized files require source identity."""
         if self.materialization is None:
-            return self.kind.materialization_uses_source_identity_filename
-        return self.materialization.uses_source_identity_filename_for_artifact_kind(
-            self.kind
+            return self.artifact_type.materialization_uses_source_identity_filename
+        return self.materialization.uses_source_identity_filename_for_artifact_type(
+            self.artifact_type
         )
 
 
@@ -266,10 +690,39 @@ class ArtifactSpecCollection:
                 )
         self.specs = normalized
 
-    def of_kind(self, kind: ArtifactKind) -> tuple[ArtifactSpec, ...]:
-        """Return specs with the requested artifact kind, preserving order."""
-        resolved_kind = kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
-        return tuple(spec for spec in self.specs if spec.kind is resolved_kind)
+    def of_artifact_type(
+        self,
+        artifact_type: ArtifactTypeValue,
+    ) -> tuple[ArtifactSpec, ...]:
+        """Return specs with the requested artifact type, preserving order."""
+        resolved_artifact_type = ArtifactType.coerce(artifact_type)
+        return tuple(
+            spec for spec in self.specs if spec.artifact_type is resolved_artifact_type
+        )
+
+    def for_plan_type(
+        self,
+        plan_type: type["ArtifactPlan"],
+    ) -> "ArtifactSpecCollection":
+        """Return specs with the requested artifact plan role."""
+        resolved_plan_type = _coerce_artifact_plan_type(plan_type)
+        return ArtifactSpecCollection(
+            spec for spec in self.specs if spec.plan_type is resolved_plan_type
+        )
+
+    def names_for_plan_type(
+        self,
+        plan_type: type["ArtifactPlan"],
+    ) -> tuple[str, ...]:
+        """Return names for specs with the requested artifact plan role."""
+        return self.for_plan_type(plan_type).names()
+
+    def for_artifact_type(
+        self,
+        artifact_type: ArtifactTypeValue,
+    ) -> "ArtifactSpecCollection":
+        """Return specs with the requested artifact type."""
+        return ArtifactSpecCollection(self.of_artifact_type(artifact_type))
 
     def names(self) -> tuple[str, ...]:
         """Return artifact names in collection order."""
@@ -279,13 +732,19 @@ class ArtifactSpecCollection:
         """Return artifact names as a set."""
         return frozenset(self.names())
 
-    def names_of_kind(self, kind: ArtifactKind) -> tuple[str, ...]:
-        """Return names for specs with the requested kind, preserving order."""
-        return ArtifactSpecCollection(self.of_kind(kind)).names()
+    def names_of_artifact_type(
+        self,
+        artifact_type: ArtifactTypeValue,
+    ) -> tuple[str, ...]:
+        """Return names for specs with the requested artifact type."""
+        return ArtifactSpecCollection(self.of_artifact_type(artifact_type)).names()
 
-    def name_set_of_kind(self, kind: ArtifactKind) -> frozenset[str]:
-        """Return names for specs with the requested kind as a set."""
-        return frozenset(self.names_of_kind(kind))
+    def name_set_of_artifact_type(
+        self,
+        artifact_type: ArtifactTypeValue,
+    ) -> frozenset[str]:
+        """Return names for specs with the requested artifact type as a set."""
+        return frozenset(self.names_of_artifact_type(artifact_type))
 
     def by_name(self, name: str) -> ArtifactSpec | None:
         """Return the first spec with a matching artifact name."""
@@ -294,28 +753,77 @@ class ArtifactSpecCollection:
                 return spec
         return None
 
-    def by_name_and_kind(
+    def by_name_and_artifact_type(
         self,
         name: str,
-        kind: ArtifactKind,
+        artifact_type: ArtifactTypeValue,
     ) -> ArtifactSpec | None:
-        """Return the first spec matching both artifact name and kind."""
-        resolved_kind = kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
+        """Return the first spec matching artifact name and type."""
+        resolved_artifact_type = ArtifactType.coerce(artifact_type)
         for spec in self.specs:
-            if spec.name == name and spec.kind is resolved_kind:
+            if spec.name == name and spec.artifact_type is resolved_artifact_type:
                 return spec
         return None
 
-    def unique(self, *, conflict_context: str = "artifact spec") -> tuple[ArtifactSpec, ...]:
+    def ref_set(self) -> frozenset[ArtifactSpecRef]:
+        """Return full declared artifact references."""
+        return frozenset(spec.ref() for spec in self.specs)
+
+    def by_ref(self, ref: ArtifactSpecRef) -> ArtifactSpec | None:
+        """Return one spec by full artifact reference."""
+        matches = tuple(spec for spec in self.specs if spec.ref() == ref)
+        if len(matches) > 1:
+            raise ValueError(f"Duplicate artifact spec ref {ref!r}.")
+        if not matches:
+            return None
+        return matches[0]
+
+    def relation_refs(
+        self,
+        relation_type: type[ArtifactSpecRelation],
+    ) -> tuple[tuple[ArtifactSpec, ArtifactSpecRelation], ...]:
+        """Return specs and relation tags of the requested relation family."""
+        if not isinstance(relation_type, type) or not issubclass(
+            relation_type,
+            ArtifactSpecRelation,
+        ):
+            raise TypeError(
+                "relation_type must be an ArtifactSpecRelation type, "
+                f"got {type(relation_type).__name__}."
+            )
+        return tuple(
+            (spec, relation)
+            for spec in self.specs
+            for relation in spec.relations
+            if isinstance(relation, relation_type)
+        )
+
+    def validate_registered_relation_refs(self, *, owner_name: str) -> None:
+        """Validate that registered relation sources target declared specs."""
+        refs = self.ref_set()
+        for relation_type in ArtifactSpecRelation.__registry__.values():
+            unknown = tuple(
+                relation.source
+                for _spec, relation in self.relation_refs(relation_type)
+                if relation.source not in refs
+            )
+            if unknown:
+                raise ValueError(
+                    f"{owner_name} declares {relation_type.__name__} references "
+                    f"to unknown artifact specs: {unknown!r}."
+                )
+
+    def unique(
+        self, *, conflict_context: str = "artifact spec"
+    ) -> tuple[ArtifactSpec, ...]:
         """Return specs de-duplicated by artifact identity, failing on conflicts."""
-        unique_specs: dict[tuple[str, ArtifactKind], ArtifactSpec] = {}
+        unique_specs: dict[ArtifactSpecRef, ArtifactSpec] = {}
         for spec in self.specs:
-            key = (spec.name, spec.kind)
-            existing = unique_specs.get(key)
-            if existing is not None and existing != spec:
+            key = spec.ref()
+            if key in unique_specs and unique_specs[key] != spec:
                 raise ValueError(
                     f"Conflicting {conflict_context} declarations for "
-                    f"{spec.kind.value}:{spec.name}."
+                    f"{spec.plan_type.plan_role}:{spec.artifact_type.value}:{spec.name}."
                 )
             unique_specs[key] = spec
         return tuple(unique_specs.values())
@@ -352,14 +860,21 @@ class ArtifactKey:
     """Stable identity for one artifact instance in an execution scope."""
 
     name: str
-    kind: ArtifactKind
+    artifact_type: type[ArtifactType]
     scope: ArtifactScope
     semantic_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "artifact_type",
+            ArtifactType.coerce(self.artifact_type),
+        )
 
     def to_json_dict(self) -> dict[str, object]:
         """Return the transport representation for this artifact identity."""
         record = asdict(self)
-        record["kind"] = self.kind.value
+        record["artifact_type"] = self.artifact_type.value
         return record
 
     @classmethod
@@ -370,7 +885,7 @@ class ArtifactKey:
         semantic_id = data.get("semantic_id")
         return cls(
             name=str(data["name"]),
-            kind=ArtifactKind(data["kind"]),
+            artifact_type=ArtifactType.coerce(str(data["artifact_type"])),
             scope=ArtifactScope.from_json_dict(scope),
             semantic_id=None if semantic_id is None else str(semantic_id),
         )
@@ -387,17 +902,26 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
 
     name: str
     path: str
-    kind: ArtifactKind = ArtifactKind.SPECIAL
+    artifact_type: type[ArtifactType] = SpecialArtifactType
     group_keys: tuple[str | None, ...] = (None,)
+    group_component: AllComponents | None = None
     paths_by_group: Mapping[str | None, str] | None = None
     sidecar_role: ArtifactSidecarRole | None = None
 
     _missing_group_uses_default_path: ClassVar[bool] = False
 
-    @classmethod
-    def registered_plan_types(cls) -> tuple[type["ArtifactPlan"], ...]:
-        """Return registered concrete artifact plan classes."""
-        return tuple(cls.__registry__.values())
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "artifact_type",
+            ArtifactType.coerce(self.artifact_type),
+        )
+        if self.group_component is not None:
+            object.__setattr__(
+                self,
+                "group_component",
+                ComponentSet.coerce_component(self.group_component),
+            )
 
     @property
     def single_group_key(self) -> str | None:
@@ -419,7 +943,7 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
     def artifact_key(self, *, axis_id: str) -> ArtifactKey:
         return ArtifactKey(
             name=self.name,
-            kind=self.kind,
+            artifact_type=self.artifact_type,
             scope=ArtifactScope(
                 axis_id=axis_id,
                 group_key=self.single_group_key,
@@ -467,9 +991,9 @@ class ArtifactOutputPlan(ArtifactPlan):
     def materialization_uses_source_identity_filename(self) -> bool:
         """Return whether this output's materialized files require source identity."""
         if self.materialization is None:
-            return self.kind.materialization_uses_source_identity_filename
-        return self.materialization.uses_source_identity_filename_for_artifact_kind(
-            self.kind
+            return self.artifact_type.materialization_uses_source_identity_filename
+        return self.materialization.uses_source_identity_filename_for_artifact_type(
+            self.artifact_type
         )
 
     def for_group(self, group_key: str | None) -> "ArtifactOutputPlan":
@@ -479,25 +1003,47 @@ class ArtifactOutputPlan(ArtifactPlan):
             raise RuntimeError("ArtifactOutputPlan group resolution must be total.")
         return plan
 
-    def runtime_slice_group_keys(
+    def runtime_record_group_keys(
         self,
         *,
         requested_group_key: str | None,
+        scoped_group_key: str | None = None,
         slice_count: int | None,
     ) -> tuple[str | None, ...]:
-        """Return output groups that should receive projected runtime slices."""
-        if requested_group_key not in (None, "default"):
-            return (requested_group_key,)
+        """Return compiler-planned groups that should receive runtime records."""
         group_keys = tuple(self.group_keys or (None,))
-        if (
-            slice_count is not None
-            and len(group_keys) == slice_count
-            and all(group_key is not None for group_key in group_keys)
-            and self.paths_by_group is not None
-            and all(group_key in self.paths_by_group for group_key in group_keys)
-        ):
-            return group_keys
-        return (requested_group_key,)
+        concrete_group_keys = tuple(
+            group_key for group_key in group_keys if group_key is not None
+        )
+        if requested_group_key is not None:
+            if requested_group_key in group_keys:
+                return (requested_group_key,)
+            if scoped_group_key is not None and scoped_group_key in group_keys:
+                return (scoped_group_key,)
+            if len(group_keys) == 1 and group_keys[0] is not None:
+                return group_keys
+            if not concrete_group_keys:
+                return (requested_group_key,)
+            return ()
+        if scoped_group_key is not None:
+            if scoped_group_key in group_keys:
+                return (scoped_group_key,)
+            if len(group_keys) == 1:
+                return group_keys
+            return ()
+        if not concrete_group_keys:
+            return (requested_group_key,)
+        if not self.artifact_type.runtime_record_uses_payload_slice_count:
+            return concrete_group_keys
+        if slice_count is None:
+            if len(concrete_group_keys) == 1:
+                return concrete_group_keys
+            return ()
+        if len(concrete_group_keys) != slice_count:
+            if len(concrete_group_keys) == 1:
+                return concrete_group_keys
+            return (requested_group_key,)
+        return concrete_group_keys
 
 
 @dataclass(frozen=True)
@@ -508,24 +1054,6 @@ class ArtifactInputPlan(ArtifactPlan):
 
     source_step_id: int | str | None = None
     source_step_scope_id: str | None = None
-
-    def group_key_for_axis(
-        self,
-        *,
-        axis_id: str,
-        requested_group_key: str | None,
-    ) -> str | None:
-        """Return the input group key selected for one execution axis."""
-        if requested_group_key not in (None, "default"):
-            return requested_group_key
-        axis_group_key = str(axis_id)
-        if axis_group_key in self.group_keys and (
-            self.paths_by_group is None
-            or len(self.paths_by_group) == 0
-            or axis_group_key in self.paths_by_group
-        ):
-            return axis_group_key
-        return requested_group_key
 
     def for_group(self, group_key: str | None) -> "ArtifactInputPlan | None":
         """Return a group-specific input plan, or None if not available."""
@@ -539,12 +1067,20 @@ class ArtifactInputPlan(ArtifactPlan):
         return self.path
 
 
+GroupLineageSourceRelation.target_plan_type = ArtifactOutputPlan
+
+
 @dataclass(frozen=True)
 class StepResult:
     """Function return envelope for image output plus named artifacts."""
 
     image: "StepResultImagePayload"
     artifacts: Mapping[str, "StepResultArtifactPayload"]
+
+
+@dataclass(frozen=True)
+class NoMainFlowOutput:
+    """Nominal return value for invocations that record artifacts only."""
 
 
 class StepResultImagePayload(ABC):

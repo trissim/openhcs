@@ -13,7 +13,7 @@ from typing import ClassVar
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactScope
+from openhcs.core.artifacts import ArtifactScope, ArtifactType
 from openhcs.core.equivalence.cells import runtime_cell_signature
 from openhcs.core.equivalence.keys import (
     RuntimeAggregateFeatureIdentity,
@@ -21,6 +21,7 @@ from openhcs.core.equivalence.keys import (
     RuntimeMeasurementSubjectKey,
 )
 from openhcs.core.equivalence.measurement_facts import (
+    RuntimeDirectionalPairMeasurementDerivationContract,
     RuntimeMeasurementFactList,
     RuntimeMeasurementFacts,
     RuntimeMeasurementKeySet as _RuntimeMeasurementKeySet,
@@ -31,15 +32,19 @@ from openhcs.core.equivalence.measurement_requirements import (
 )
 from openhcs.core.equivalence.measurement_rows import (
     RuntimeIndexedRowValues,
+    RuntimeCollapsedNumericQualifierCache,
     RuntimeImageNumberOffset,
     RuntimeMeasurementFeatureKeyCache,
     RuntimeMeasurementLongFormKeyCache,
     RuntimeMeasurementPaddingGroupCache,
     RuntimeMeasurementQualifierRenderCache,
+    RuntimeMeasurementRequiredKeyIndex,
     RuntimeMeasurementRowMapping,
     RuntimeMeasurementRowSchemaCache,
     RuntimeMeasurementRowSubjectProjection,
     RuntimeMeasurementRowSubjectSchemaCache,
+    RuntimeMeasurementWideFeatureIndexCache,
+    RuntimeMeasurementWideFeaturePlanCache,
     RuntimeRowProjectionContext,
     runtime_measurement_row_subject_schema,
 )
@@ -52,14 +57,20 @@ from openhcs.core.equivalence.policy import (
     RuntimeMeasurementDialect,
     normalize_runtime_identifier,
 )
-from openhcs.core.equivalence.tables import measurement_table_padding_group
+from openhcs.core.equivalence.tables import (
+    measurement_table_padding_group,
+    measurement_table_spans_multiple_transport_identities,
+)
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.core.measurement_row_materialization import (
+    columnar_row_values,
     iter_measurement_rows,
     measurement_object_label,
     measurement_table_object_id_field,
+    measurement_table_object_name,
 )
 from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
@@ -68,7 +79,7 @@ from openhcs.core.runtime_semantics import (
     measurement_row_mapping,
 )
 from openhcs.core.runtime_stores import StoredRuntimeValue
-from openhcs.core.runtime_values import MeasurementTable, ObjectRelationship
+from openhcs.core.runtime_values import ColumnarRows, MeasurementTable, ObjectRelationship
 
 _ObjectInstanceChildrenByParent = Mapping[
     ObjectInstanceKey,
@@ -110,6 +121,12 @@ class RuntimeRecordPlaneIdentity:
         relationship: ObjectRelationship,
     ) -> ObjectRelationship:
         if (
+            object_relationship_spans_multiple_row_planes(relationship)
+            and self.authority
+            is RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY
+        ):
+            return relationship
+        if (
             relationship.slice_indices
             and self.authority
             is RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY
@@ -137,6 +154,13 @@ class RuntimeRecordPlaneIdentity:
         )
 
 
+def object_relationship_spans_multiple_row_planes(
+    relationship: ObjectRelationship,
+) -> bool:
+    """Return whether a relationship already carries multiple row-plane identities."""
+    return len(frozenset(int(value) for value in relationship.slice_indices)) > 1
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeScopedMeasurementTable:
     """Measurement table plus runtime record-plane identity used for joins."""
@@ -144,6 +168,7 @@ class RuntimeScopedMeasurementTable:
     table: MeasurementTable
     plane_identity: RuntimeRecordPlaneIdentity | None = None
     record_identity: str | None = None
+    spans_multiple_transport_identities: bool = False
 
     def object_instance_key(
         self,
@@ -152,7 +177,14 @@ class RuntimeScopedMeasurementTable:
         *,
         image_number_offset: RuntimeImageNumberOffset,
     ) -> ObjectInstanceKey:
-        if self.plane_identity is None:
+        if (
+            self.plane_identity is None
+            or (
+                self.plane_identity.authority
+                is RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY
+                and self.spans_multiple_transport_identities
+            )
+        ):
             return ObjectInstanceKey.from_measurement_row(
                 row.row,
                 object_id,
@@ -191,14 +223,14 @@ class RuntimeAxisGroupPlaneIndex:
 class RuntimeAxisRepeatedArtifactPlaneIndex:
     """Assign plane identity to repeated records without distinct runtime scope."""
 
-    next_index_by_artifact_key: dict[tuple[ArtifactKind, str], int] = field(
+    next_index_by_artifact_key: dict[tuple[type[ArtifactType], str], int] = field(
         default_factory=dict
     )
 
     def plane_identity_for_record(
         self,
         *,
-        kind: ArtifactKind,
+        kind: type[ArtifactType],
         name: str,
     ) -> RuntimeRecordPlaneIdentity:
         key = (kind, name)
@@ -214,7 +246,7 @@ class RuntimeAxisRepeatedArtifactPlaneIndex:
 class RuntimeAxisRecordPlaneIdentityResolver:
     """Resolve runtime record plane identity from scope and repeated artifacts."""
 
-    repeated_artifact_counts: Counter[tuple[ArtifactKind, str]]
+    repeated_artifact_counts: Counter[tuple[ArtifactType, str]]
     group_plane_index: RuntimeAxisGroupPlaneIndex = field(
         default_factory=RuntimeAxisGroupPlaneIndex
     )
@@ -229,32 +261,32 @@ class RuntimeAxisRecordPlaneIdentityResolver:
     ) -> "RuntimeAxisRecordPlaneIdentityResolver":
         return cls(
             Counter(
-                (record.key.kind, record.key.name)
+                (record.key.artifact_type, record.key.name)
                 for record in records
-                if record.key.kind.participates_in_axis_plane_identity
+                if record.key.artifact_type.participates_in_axis_plane_identity
             )
         )
 
     def plane_identity_for_record(
         self,
         *,
-        kind: ArtifactKind,
+        kind: ArtifactType,
         name: str,
         scope: ArtifactScope,
     ) -> RuntimeRecordPlaneIdentity | None:
+        slice_index = self.group_plane_index.slice_index_for_scope(scope)
+        if slice_index is not None:
+            return RuntimeRecordPlaneIdentity(
+                slice_index,
+                RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY,
+            )
         artifact_key = (kind, name)
         if self.repeated_artifact_counts[artifact_key] > 1:
             return self.repeated_artifact_plane_index.plane_identity_for_record(
                 kind=kind,
                 name=name,
             )
-        slice_index = self.group_plane_index.slice_index_for_scope(scope)
-        if slice_index is None:
-            return None
-        return RuntimeRecordPlaneIdentity(
-            slice_index,
-            RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY,
-        )
+        return None
 
     def plane_identity_for_runtime_record(
         self,
@@ -262,7 +294,7 @@ class RuntimeAxisRecordPlaneIdentityResolver:
     ) -> RuntimeRecordPlaneIdentity | None:
         """Resolve plane identity directly from a runtime artifact record."""
         return self.plane_identity_for_record(
-            kind=record.key.kind,
+            kind=record.key.artifact_type,
             name=record.key.name,
             scope=record.key.scope,
         )
@@ -279,6 +311,43 @@ class RuntimeScopedObjectRelationship:
         if self.plane_identity is None:
             return self.relationship
         return self.plane_identity.relationship_for_projection(self.relationship)
+
+    def identity_for_projection(self) -> "RuntimeObjectRelationshipIdentity":
+        """Return exact semantic identity after plane projection."""
+        return RuntimeObjectRelationshipIdentity.from_relationship(
+            self.relationship_for_projection()
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeObjectRelationshipIdentity:
+    """Exact relationship identity used to collapse duplicate runtime artifacts."""
+
+    name: str
+    source_name: str
+    target_name: str
+    relationship_type: str
+    instance_relationship: ObjectInstanceRelationship
+
+    @classmethod
+    def from_relationship(
+        cls,
+        relationship: ObjectRelationship,
+    ) -> "RuntimeObjectRelationshipIdentity":
+        return cls(
+            name=relationship.name,
+            source_name=normalize_runtime_identifier(relationship.source.name),
+            target_name=normalize_runtime_identifier(relationship.target.name),
+            relationship_type=normalize_runtime_identifier(
+                relationship.relationship_type
+            ),
+            instance_relationship=ObjectInstanceRelationship.from_id_columns(
+                tuple(int(value) for value in np.asarray(relationship.source_ids).ravel()),
+                tuple(int(value) for value in np.asarray(relationship.target_ids).ravel()),
+                slice_indices=relationship.slice_indices,
+                slice_count=relationship.slice_count,
+            ),
+        )
 
 
 def object_measurement_values_by_label(
@@ -299,17 +368,31 @@ def object_measurement_values_by_label(
     schema_cache: RuntimeMeasurementRowSchemaCache = {}
     key_cache: RuntimeMeasurementFeatureKeyCache = {}
     long_form_key_cache: RuntimeMeasurementLongFormKeyCache = {}
+    wide_feature_index_cache: RuntimeMeasurementWideFeatureIndexCache = {}
+    wide_feature_plan_cache: RuntimeMeasurementWideFeaturePlanCache = {}
     qualifier_render_cache: RuntimeMeasurementQualifierRenderCache = {}
     padding_group_cache: RuntimeMeasurementPaddingGroupCache = {}
+    collapsed_numeric_qualifier_cache: RuntimeCollapsedNumericQualifierCache = {}
     subject_schema_cache: RuntimeMeasurementRowSubjectSchemaCache = {}
+    required_key_index = RuntimeMeasurementRequiredKeyIndex.from_required_keys(
+        row_required_keys
+    )
+    derive_directional_pair_facts = RuntimeDirectionalPairMeasurementDerivationContract(
+        policy,
+        known_source_names,
+    ).required_keys_need_derivation(row_required_keys)
+    normalized_object_name = normalize_runtime_identifier(object_name)
     for scoped_table in measurement_tables:
         table = scoped_table.table
+        if not measurement_table_may_contain_object_name(
+            table,
+            normalized_object_name,
+        ):
+            continue
         table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
         object_id_field = measurement_table_object_id_field(table)
         table_padding_group = measurement_table_padding_group(table.name)
-        image_number_offset = RuntimeImageNumberOffset.from_runtime_rows(
-            iter_measurement_rows((table,))
-        )
+        image_number_offset = RuntimeImageNumberOffset.from_measurement_table(table)
         for row in iter_measurement_rows((table,)):
             row_mapping = measurement_row_mapping(row)
             runtime_row = RuntimeMeasurementRowMapping(row_mapping)
@@ -322,7 +405,7 @@ def object_measurement_values_by_label(
                 continue
             if object_label is None:
                 continue
-            row_values = RuntimeIndexedRowValues(runtime_row.values)
+            row_values = RuntimeIndexedRowValues.from_row(runtime_row)
             row_subject_projection = RuntimeMeasurementRowSubjectProjection(
                 table_subject,
                 table.source_image_name,
@@ -347,11 +430,16 @@ def object_measurement_values_by_label(
                 required_keys=row_required_keys,
                 table_padding_group=table_padding_group,
                 image_number_offset=image_number_offset,
+                derive_directional_pair_facts=derive_directional_pair_facts,
                 schema_cache=schema_cache,
                 key_cache=key_cache,
                 long_form_key_cache=long_form_key_cache,
+                wide_feature_index_cache=wide_feature_index_cache,
+                wide_feature_plan_cache=wide_feature_plan_cache,
                 qualifier_render_cache=qualifier_render_cache,
                 padding_group_cache=padding_group_cache,
+                collapsed_numeric_qualifier_cache=collapsed_numeric_qualifier_cache,
+                required_key_index=required_key_index,
             )
             for key, value in row_context.numeric_values():
                 if row_required_keys is not None and key not in row_required_keys:
@@ -367,6 +455,27 @@ def object_measurement_values_by_label(
                 )
                 values_by_feature[key][object_instance_key] = value
     return values_by_feature
+
+
+def measurement_table_may_contain_object_name(
+    table: MeasurementTable,
+    normalized_object_name: str,
+) -> bool:
+    """Return whether table ownership can match a normalized object target."""
+    declared_object_name = measurement_table_object_name(table)
+    if declared_object_name is not None:
+        return normalize_runtime_identifier(declared_object_name) == normalized_object_name
+    rows = table.rows
+    if not isinstance(rows, ColumnarRows):
+        return True
+    column_names = frozenset(str(column) for column in rows.columns)
+    if MeasurementRowAxisField.OBJECT_NAME.value not in column_names:
+        return True
+    return any(
+        normalize_runtime_identifier(str(value)) == normalized_object_name
+        for value in columnar_row_values(rows, MeasurementRowAxisField.OBJECT_NAME.value)
+        if value is not None
+    )
 
 
 @dataclass(frozen=True, slots=True)

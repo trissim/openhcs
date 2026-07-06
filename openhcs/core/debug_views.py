@@ -10,6 +10,7 @@ from typing import ClassVar, Mapping, cast
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.artifacts import ArtifactType
 from openhcs.core.debug import DebugArtifactRef, DebugInvocationParameter, DebugSnapshot
 from openhcs.core.runtime_stores import (
     RuntimeArtifactAddress,
@@ -485,14 +486,40 @@ def _debug_table_cell_text(value: object) -> str:
         return ""
     if isinstance(value, Enum):
         return str(value.value)
+    if isinstance(value, type) and issubclass(value, ArtifactType):
+        return value.require_value()
     if isinstance(value, (str, int, float, bool)):
         return str(value)
     if isinstance(value, tuple):
         return ", ".join(_debug_table_cell_text(item) for item in value)
     if is_dataclass(value):
-        return json.dumps(asdict(value), default=str, sort_keys=True)
+        return json.dumps(_debug_table_jsonable(value), sort_keys=True)
     if isinstance(value, Mapping):
-        return json.dumps(dict(value), default=str, sort_keys=True)
+        return json.dumps(_debug_table_jsonable(value), sort_keys=True)
+    return str(value)
+
+
+def _debug_table_jsonable(value: object) -> object:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, type) and issubclass(value, ArtifactType):
+        return value.require_value()
+    if isinstance(value, tuple):
+        return [_debug_table_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_debug_table_jsonable(item) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _debug_table_jsonable(item)
+            for key, item in value.items()
+        }
+    if is_dataclass(value):
+        return {
+            field.name: _debug_table_jsonable(getattr(value, field.name))
+            for field in fields(value)
+        }
     return str(value)
 
 

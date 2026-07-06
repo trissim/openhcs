@@ -13,14 +13,15 @@ from openhcs.core.equivalence.measurement_facts import (
     RuntimeRequiredMeasurementKeys,
 )
 from openhcs.core.equivalence.measurement_features import (
-    object_measurement_feature_has_role,
+    object_measurement_feature_matches_marker,
 )
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
-    ObjectMeasurementFeatureRole,
+    ObjectIdentifierFeatureMarker,
+    ObjectLocationFeatureMarker,
 )
 
 
@@ -91,10 +92,10 @@ class RequiredRuntimeMeasurementProjection:
             key
             for key in sorted(self.required_keys, key=lambda item: item.sort_key)
             if key.subject == subject
-            and object_measurement_feature_has_role(
+            and object_measurement_feature_matches_marker(
                 key,
-                ObjectMeasurementFeatureRole.IDENTIFIER,
-                self.policy.measurement_dialect,
+                ObjectIdentifierFeatureMarker,
+                self.policy,
             )
         )
 
@@ -112,14 +113,14 @@ class RequiredRuntimeMeasurementProjection:
             if key.subject == subject
             and key.statistic == statistic.value
             and key.source_name is None
-            and object_measurement_feature_has_role(
+            and object_measurement_feature_matches_marker(
                 RuntimeMeasurementFeatureKey(
                     key.subject,
                     key.feature_name,
                     MeasurementStatistic.VALUE.value,
                     source_name=key.source_name,
                 ),
-                ObjectMeasurementFeatureRole.LOCATION,
-                self.policy.measurement_dialect,
+                ObjectLocationFeatureMarker,
+                self.policy,
             )
         )

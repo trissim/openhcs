@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from openhcs.constants.constants import SequentialComponents, VariableComponents
+from openhcs.constants.constants import (
+    AllComponents,
+    SequentialComponents,
+    VariableComponents,
+)
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.source_bindings import (
@@ -150,6 +154,7 @@ class CompiledStepPlan:
         Any, OrderedDict[str, ArtifactOutputPlan]
     ] = field(default_factory=dict)
     execution_groups: list[str | None] = field(default_factory=lambda: [None])
+    execution_group_component: AllComponents | None = None
     compiled_function_pattern: CompiledFunctionPattern | None = None
     input_conversion: InputConversionPlan | None = None
     input_conversion_config: Any = None

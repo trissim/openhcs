@@ -204,3 +204,20 @@ class CompiledExecutionBundle:
         return {
             "execution_bundle": self,
         }
+
+    def for_transport_serialization(self) -> "CompiledExecutionBundle":
+        """Return this bundle in the worker-transport pickle-safe shape."""
+
+        from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+
+        transport_contexts = FunctionStepTransportAuthority.normalize_contexts(
+            dict(self.transport_contexts)
+        )
+        return replace(
+            self,
+            pipeline_definition=FunctionStepTransportAuthority.normalize_pipeline(
+                list(self.pipeline_definition)
+            ),
+            runtime_contexts=transport_contexts,
+            transport_contexts=transport_contexts,
+        )

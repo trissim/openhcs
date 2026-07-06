@@ -103,6 +103,15 @@ class FunctionStepArtifactContractScope:
             axes.add(str(self.group_by.value))
         return frozenset(axes)
 
+    def projected_group_axes(self) -> frozenset[str]:
+        """Return grouped axes that also project runtime stack planes."""
+        if self.group_by is None or self.group_by.value is None:
+            return frozenset()
+        group_axis = str(self.group_by.value)
+        if group_axis not in self.variable_component_axes():
+            return frozenset()
+        return frozenset((group_axis,))
+
     def artifact_managed_invocation_names(self) -> tuple[str, ...]:
         """Return runtime-adapter invocation names that consume and produce artifacts."""
         names: list[str] = []
@@ -129,11 +138,12 @@ class ArtifactManagedRuntimeScopePolicy:
         if not invocation_names:
             return
 
-        forbidden_axes = (
-            self.forbidden_expansion_axes
-            & scope.expansion_axes()
-            - scope.variable_component_axes()
-        )
+        # group_by is a batch partition, not by itself a runtime-artifact fanout.
+        # Runtime-plane projection only happens when the grouped axis is also a
+        # variable component; that conflict is normalized before compiled
+        # execution.  Keep this policy as a guard for genuinely projected axes,
+        # but do not reject ordinary batch grouping by source identity.
+        forbidden_axes = self.forbidden_expansion_axes & scope.projected_group_axes()
         if not forbidden_axes:
             return
 
@@ -577,18 +587,22 @@ class FuncStepContractValidator:
         variable_components,
         step_name: str,
     ):
-        """Return compiled grouping semantics after conflict normalization."""
+        """Return compiled grouping semantics after rejecting invalid overlap."""
         variable_components = () if variable_components is None else variable_components
         if group_by and group_by.value in [vc.value for vc in variable_components]:
-            from openhcs.constants import GroupBy
-
-            logger.warning(
-                f"Step '{step_name}': Auto-resolved group_by conflict. "
-                f"Set group_by to GroupBy.NONE due to conflict with "
-                f"variable_components {[vc.value for vc in variable_components]}. "
-                f"Original group_by was {group_by.value}."
+            variable_component_names = tuple(
+                getattr(component, "name", str(component))
+                for component in variable_components
             )
-            return GroupBy.NONE
+            raise ValueError(
+                f"Step '{step_name}' has invalid processing_config: "
+                f"group_by={group_by.name} cannot also appear in "
+                f"variable_components={variable_component_names}. "
+                "variable_components declares the 3D stack axis; group_by "
+                "declares grouping for the remaining stacks. Move one of these "
+                "semantics to the owning module/callable declaration instead of "
+                "overlapping them."
+            )
         return group_by
 
     @staticmethod

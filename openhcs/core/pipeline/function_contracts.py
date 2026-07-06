@@ -7,7 +7,7 @@ import inspect
 from typing import Callable, TypeVar
 
 from openhcs.constants.constants import GroupBy, VariableComponents
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, SpecialArtifactType
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.runtime_invocation import RuntimeParameterDeclaration
 from openhcs.core.runtime_batch_contracts import (
@@ -56,7 +56,7 @@ def _artifact_spec_from_output_declaration(
         return spec
 
     if isinstance(spec, str):
-        return ArtifactSpec(spec, ArtifactKind.SPECIAL)
+        return ArtifactSpec.output(spec, SpecialArtifactType)
 
     if isinstance(spec, tuple) and len(spec) == 2:
         key, mat_spec = spec
@@ -67,9 +67,9 @@ def _artifact_spec_from_output_declaration(
                 "Materialization spec must be a MaterializationSpec. "
                 f"Got {type(mat_spec)} for key '{key}'."
             )
-        return ArtifactSpec(
+        return ArtifactSpec.output(
             key,
-            ArtifactKind.SPECIAL,
+            SpecialArtifactType,
             materialization=mat_spec,
         )
 
@@ -84,7 +84,7 @@ def _artifact_spec_from_input_declaration(spec: str | ArtifactSpec) -> ArtifactS
     if isinstance(spec, ArtifactSpec):
         return spec
     if isinstance(spec, str):
-        return ArtifactSpec(spec, ArtifactKind.SPECIAL)
+        return ArtifactSpec.input(spec, SpecialArtifactType)
     raise ValueError(
         f"Invalid artifact input spec: {spec}. Must be string or ArtifactSpec."
     )

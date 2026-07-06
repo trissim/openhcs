@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar, Mapping, Sequence, TYPE_CHECKING
@@ -51,6 +52,28 @@ if TYPE_CHECKING:
 
 
 SourceCandidatePath = str
+
+
+@lru_cache(maxsize=65536)
+def _cached_source_candidate_pattern_keys(pattern_path: str) -> tuple[str, ...]:
+    """Return candidate source path spellings used for selector matching."""
+
+    path = Path(pattern_path)
+    return tuple(dict.fromkeys((pattern_path, path.as_posix(), path.name)))
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_is_absolute(path: str) -> bool:
+    """Return whether a candidate virtual path is absolute."""
+
+    return Path(path).is_absolute()
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_name(path: str) -> str:
+    """Return the filename component for candidate matching."""
+
+    return Path(path).name
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,9 +212,7 @@ class SourcePatternResolutionContext:
         self,
         pattern: SourceCandidatePath,
     ) -> SourceCandidatePathResolution:
-        pattern_path = pattern
-        path = Path(pattern_path)
-        keys = tuple(dict.fromkeys((pattern_path, path.as_posix(), path.name)))
+        keys = _cached_source_candidate_pattern_keys(pattern)
         virtual_matches = tuple(
             virtual_path
             for key in keys
@@ -217,8 +238,8 @@ class SourcePatternResolutionContext:
         return tuple(
             virtual_path
             for virtual_path in self.source_paths_by_virtual_path
-            if not Path(virtual_path).is_absolute()
-            and matcher.matches(Path(virtual_path).name)
+            if not _cached_path_is_absolute(virtual_path)
+            and matcher.matches(_cached_path_name(virtual_path))
         )
 
     def candidate_metadata(
@@ -590,6 +611,17 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
                     "anchor boundary"
                 ),
             )
+        if self._file_selector_paths_are_unavailable(
+            bindings=anchor_bindings,
+            source_context=source_context,
+        ):
+            return SourceAnchorPatternSelection.deferred_to_runtime(
+                pattern_list,
+                reason=(
+                    "selector file paths are unavailable at the execution "
+                    "anchor boundary"
+                ),
+            )
         return SourceAnchorPatternSelection.selected(
             (),
             reason="source selectors resolved no compatible anchor patterns",
@@ -610,6 +642,17 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         return bool(metadata_fields) and not any(
             source_context.has_metadata_field(pattern_list, field)
             for field in metadata_fields
+        )
+
+    @staticmethod
+    def _file_selector_paths_are_unavailable(
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        source_context: SourcePatternResolutionContext,
+    ) -> bool:
+        return (
+            not source_context.has_virtual_source_workspace
+            and any(binding.selector.filters for binding in bindings)
         )
 
     @staticmethod
@@ -1685,15 +1728,49 @@ class SourceBindingRuntimeContextRequest:
         )
 
     def runtime_context(self) -> SourceBindingRuntimeContext:
-        universe_state = SourceUniverseRequest.runtime_state(self)
+        cache = self.context.runtime_source_binding_context_cache
+        cached = cache.runtime_context(
+            plan=self.plan,
+            matching_files=self.matching_files,
+            source_backend=self.source_backend,
+            source_projection=self.source_projection,
+        )
+        if cached is not None:
+            return cached
+        universe_state = self.runtime_universe_state()
         source_metadata_by_path = (
-            self.context.runtime_source_binding_context_cache.normalized_source_metadata(
+            cache.normalized_source_metadata(
                 universe_state.source_metadata_by_path
             )
         )
-        return universe_state.runtime_context(
-            self,
-            source_metadata_by_path,
+        return cache.store_runtime_context(
+            universe_state.runtime_context(
+                self,
+                source_metadata_by_path,
+            ),
+            plan=self.plan,
+            matching_files=self.matching_files,
+            source_backend=self.source_backend,
+            source_projection=self.source_projection,
+        )
+
+    def runtime_universe_state(self) -> SourceUniverseRuntimeState:
+        """Return cached source-universe state for this request."""
+        cache = self.context.runtime_source_binding_context_cache
+        cached = cache.runtime_universe_state(
+            plan=self.plan,
+            matching_files=self.matching_files,
+            source_backend=self.source_backend,
+            source_projection=self.source_projection,
+        )
+        if cached is not None:
+            return cached
+        return cache.store_runtime_universe_state(
+            SourceUniverseRequest.runtime_state(self),
+            plan=self.plan,
+            matching_files=self.matching_files,
+            source_backend=self.source_backend,
+            source_projection=self.source_projection,
         )
 
     def current_step_input_files(

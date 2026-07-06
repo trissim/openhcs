@@ -18,14 +18,14 @@ from threading import Lock
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_type_hints
 
-from openhcs.core.alias_property import AliasProperty
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec, ArtifactSpecCollection
 from openhcs.core.module_artifact_contract import (
     MODULE_ARTIFACT_CONTRACT_ATTR,
     ModuleArtifactContract,
+    RecordedArtifactOutputPartition,
     module_artifact_contract_from_namespace,
 )
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
@@ -320,6 +320,18 @@ class CallableContract(ArtifactPlanKeySelector):
         """Declared runtime adapter."""
         return self.metadata.runtime_adapter
 
+    def adapter_records_artifact_outputs(
+        self,
+        artifact_output_keys: Iterable[str],
+    ) -> bool:
+        """Return whether this callable's adapter records selected outputs."""
+        if self.runtime_adapter is None or self.module_artifact_contract is None:
+            return False
+        return self.module_artifact_contract.has_keys_for_partition(
+            RecordedArtifactOutputPartition,
+            artifact_output_keys,
+        )
+
     @property
     def runtime_context_parameter(self) -> str | None:
         """Compiled ABI name for runtime context injection."""
@@ -412,14 +424,21 @@ class CallableContract(ArtifactPlanKeySelector):
         """Declared callable request binding."""
         return self.metadata.request_binding
 
-    artifact_input_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
-        AliasProperty("input_names")
-    )
+    @property
+    def artifact_specs(self) -> ArtifactSpecCollection:
+        """All artifact specs declared by this callable."""
+        return ArtifactSpecCollection(
+            spec
+            for _name, spec in (
+                *self.artifact_inputs,
+                *self.artifact_outputs,
+            )
+        )
 
     @property
-    def input_names(self) -> tuple[str, ...]:
+    def artifact_input_names(self) -> tuple[str, ...]:
         """Declared artifact input names in declaration order."""
-        return tuple(name for name, _ in self.artifact_inputs)
+        return self.artifact_names_for(ArtifactInputPlan)
 
     @property
     def primary_input_parameter_name(self) -> str | None:
@@ -433,14 +452,10 @@ class CallableContract(ArtifactPlanKeySelector):
                 return parameter.name
         return None
 
-    artifact_output_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
-        AliasProperty("output_names")
-    )
-
     @property
-    def output_names(self) -> tuple[str, ...]:
+    def artifact_output_names(self) -> tuple[str, ...]:
         """Declared artifact output names in declaration order."""
-        return tuple(name for name, _ in self.artifact_outputs)
+        return self.artifact_names_for(ArtifactOutputPlan)
 
     @property
     def artifact_inputs_dict(self) -> dict[str, ArtifactSpec]:

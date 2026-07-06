@@ -24,9 +24,16 @@ except ImportError:  # pragma: no cover - optional PolyStore backend
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.artifacts import (
     ArtifactKey,
-    ArtifactKind,
     ArtifactOutputPlan,
     ArtifactPayloadShape,
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    SpecialArtifactType,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
 )
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
@@ -46,12 +53,18 @@ from openhcs.core.source_matching import (
     SourceImageSetIdentityPolicy,
     source_component_metadata_value,
 )
-from openhcs.core.source_metadata import SourceMetadataValue
+from openhcs.core.source_metadata import (
+    SourceMetadataValue,
+    SourceVoxelSpacing,
+    SourceVoxelSpacingFields,
+)
 from openhcs.core.source_spatial_domain import (
     SourceSpatialDomain,
     SourceSpatialDomainFields,
 )
 from openhcs.core.image_shapes import (
+    ArrayShape,
+    ColorImageShapeRole,
     image_spatial_shape_yx,
     is_color_image_slice,
     is_color_image_stack,
@@ -90,6 +103,7 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
+    MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
     StrategyLabelRegistryMixin,
 )
@@ -101,7 +115,7 @@ PhysicalBorderEdgesYX = tuple[bool, bool, bool, bool] | None
 OBJECT_LABEL_VALUE_TYPE_LABEL = "object_label_value"
 OBJECT_LABEL_SOURCE_SPATIAL_VALUE_NAME = "Object-label"
 EMPTY_RUNTIME_FIELD_NAME = ""
-ARTIFACT_KIND_ENUM_MEMBER_ATTR = "kind"
+ARTIFACT_TYPE_REGISTRY_MEMBER_ATTR = "artifact_type"
 SINGLETON_AXIS_LENGTH = 1
 SPATIAL_GRID_DEFAULT_SLICE_INDEX = 0
 DENSE_LABEL_PLANE_STACK_RANK = 3
@@ -256,7 +270,11 @@ ImagePayloadMetadataInput = RuntimeArrayData
 
 
 @dataclass(slots=True)
-class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainFields):
+class ImagePayloadMetadata(
+    SourceImageProvenanceFields,
+    SourceSpatialDomainFields,
+    SourceVoxelSpacingFields,
+):
     """Generic source-image metadata that should travel with runtime pixels."""
 
     intensity_scale: float | None = None
@@ -311,8 +329,12 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
         self.absorb_explicit_source_provenance(
             SourceImageProvenance.from_init_values(source_provenance_values)
         )
+        self.source_voxel_spacing = self.source_voxel_spacing.with_missing_from(
+            SourceVoxelSpacing.from_source_metadata(self.source_component_metadata)
+        )
         self.normalize_source_provenance_fields()
         self.normalize_source_spatial_domain_fields()
+        self.normalize_source_voxel_spacing_fields()
 
     @property
     def has_values(self) -> bool:
@@ -329,6 +351,7 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
                 self.source_image_provenance_planes.has_values,
                 bool(self.source_plane_unit_interval_intensity_scales),
                 self.source_spatial_domain.has_values,
+                self.source_voxel_spacing.has_values,
                 self.physical_border_edges_yx is not None,
                 self.mask_defines_border is not None,
                 bool(self.source_image_names),
@@ -439,6 +462,7 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
                 self.unit_interval_intensity_scale_for_source_plane(plane_index)
             ),
             source_spatial_domain=self.source_spatial_domain,
+            source_voxel_spacing=self.source_voxel_spacing,
             physical_border_edges_yx=self.physical_border_edges_yx,
             mask_defines_border=self.mask_defines_border,
             source_image_names=source_provenance.source_image_names,
@@ -520,6 +544,7 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
         return replace(
             self,
             source_spatial_domain=SourceSpatialDomain(),
+            source_voxel_spacing=self.source_voxel_spacing,
             physical_border_edges_yx=None,
             mask_defines_border=None,
         )
@@ -545,6 +570,9 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
         return replace(
             self,
             source_spatial_domain=spatial_domain,
+            source_voxel_spacing=self.source_voxel_spacing.with_missing_from(
+                source.source_voxel_spacing
+            ),
             physical_border_edges_yx=(
                 self.physical_border_edges_yx
                 if self.physical_border_edges_yx is not None
@@ -604,6 +632,7 @@ class ImagePayloadMetadata(SourceImageProvenanceFields, SourceSpatialDomainField
                 self.source_plane_unit_interval_intensity_scales
             ),
             source_spatial_domain=self.source_spatial_domain,
+            source_voxel_spacing=self.source_voxel_spacing,
             physical_border_edges_yx=self.physical_border_edges_yx,
             mask_defines_border=self.mask_defines_border,
             source_image_names=self.source_image_names,
@@ -1315,7 +1344,7 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
                 metadata.source_path for metadata in source_metadata_by_payload
             ),
             source_component_metadata=self.common_source_component_metadata(
-                source_metadata_by_payload
+                metadata_by_payload
             ),
             source_plane_intensity_scales=tuple(
                 metadata.intensity_scale
@@ -1342,6 +1371,9 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
                     metadata.source_spatial_shape_yx
                     for metadata in metadata_by_payload
                 ),
+            ),
+            source_voxel_spacing=self.common_source_voxel_spacing(
+                metadata.source_voxel_spacing for metadata in metadata_by_payload
             ),
             physical_border_edges_yx=self.common_metadata_value(
                 metadata.physical_border_edges_yx for metadata in metadata_by_payload
@@ -1425,7 +1457,7 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
                 if common_value is not None:
                     common_metadata[key] = common_value
         extension = self.common_metadata_value(
-            "".join(Path(metadata.source_path).suffixes)
+            _cached_path_suffixes(metadata.source_path)
             for metadata in metadata_values
             if metadata.source_path is not None
         )
@@ -1477,6 +1509,23 @@ class ImagePayloadMetadataCompositionRequest(ImagePayloadSequence):
         if all(value == first for value in present):
             return first
         return None
+
+    @classmethod
+    def common_source_voxel_spacing(
+        cls,
+        values: Iterable[SourceVoxelSpacing],
+    ) -> SourceVoxelSpacing:
+        common = cls.common_metadata_value(
+            value for value in values if value.has_values
+        )
+        return common if common is not None else SourceVoxelSpacing()
+
+
+@lru_cache(maxsize=65536)
+def _cached_path_suffixes(path: str) -> str:
+    """Return all suffixes for a source path as one extension string."""
+
+    return "".join(Path(path).suffixes)
 
 
 def image_intensity_scale_for_dtype(dtype: Any) -> float | None:
@@ -1571,6 +1620,9 @@ class ImagePayloadSourceMetadataRequest:
         ).resolve()
         source_metadata = image_file_source_metadata(resolved_source_path)
         source_dtype = source_metadata.source_dtype
+        source_voxel_spacing = SourceVoxelSpacing.from_source_metadata(
+            self.source_context.source_identity.component_metadata
+        )
         source_spatial_shape_yx = image_spatial_shape_yx(
             image_payload_data(self.image)
         )
@@ -1603,6 +1655,7 @@ class ImagePayloadSourceMetadataRequest:
                     origin_yx=spatial_origin_yx,
                     source_shape_yx=source_spatial_shape_yx,
                 ),
+                source_voxel_spacing=source_voxel_spacing,
             )
         return ImagePayloadMetadata(
             intensity_scale=source_metadata.intensity_scale,
@@ -1614,6 +1667,7 @@ class ImagePayloadSourceMetadataRequest:
                 origin_yx=spatial_origin_yx,
                 source_shape_yx=source_spatial_shape_yx,
             ),
+            source_voxel_spacing=source_voxel_spacing,
         )
 
 
@@ -1845,15 +1899,18 @@ class ImageMaskDomain:
 
     def valid_shapes(self) -> frozenset[tuple[int, ...]]:
         valid: set[tuple[int, ...]] = {self.data_shape}
+        data_shape = ArrayShape(len(self.data_shape), self.data_shape)
         if len(self.data_shape) == 2:
             valid.add(self.data_shape)
         if len(self.data_shape) == 3:
-            if self.data_shape[-1] in (3, 4):
+            if ColorImageShapeRole.matches_slice_shape(data_shape):
                 valid.add(self.data_shape[:2])
+                if self.data_shape[0] == SINGLETON_AXIS_LENGTH:
+                    valid.add(self.data_shape[1:])
             else:
                 valid.add(self.data_shape[1:])
         if len(self.data_shape) == 4:
-            if self.data_shape[-1] in (3, 4):
+            if ColorImageShapeRole.matches_stack_shape(data_shape):
                 valid.add(self.data_shape[:3])
                 valid.add(self.data_shape[1:3])
             else:
@@ -2132,6 +2189,7 @@ class ObjectLabelValue(
 
     representation: ObjectLabelRepresentation
     plane_axis: RuntimePlaneAxis
+    parent_image_source_voxel_spacing: SourceVoxelSpacing
 
     @property
     def source_image_name(self) -> str | None:
@@ -2454,6 +2512,22 @@ class ObjectLabelValue(
     def with_source_image_context(self, image: RuntimeArrayData) -> "ObjectLabelValue":
         """Return this object-label value with missing provenance filled from image."""
 
+    def with_parent_image_context(
+        self,
+        image: RuntimeArrayData,
+    ) -> "ObjectLabelValue":
+        """Return this value with missing CellProfiler parent-image spacing filled."""
+        parent_spacing = self.parent_image_source_voxel_spacing.with_missing_from(
+            image_payload_metadata(image).source_voxel_spacing
+        )
+        return ObjectLabelValueConstructionContext.from_value(
+            self,
+            parent_image_source_voxel_spacing=parent_spacing,
+        ).value_from_variants(
+            self,
+            ObjectLabelVariantData.from_value(self),
+        )
+
 
 class ImagePayloadMetadataStrategy(
     NominalTypeKeyedStrategyMixin,
@@ -2548,6 +2622,9 @@ class ObjectLabelValueConstructionContext:
     source_spatial_domain: SourceSpatialDomain = field(
         default_factory=SourceSpatialDomain
     )
+    parent_image_source_voxel_spacing: SourceVoxelSpacing = field(
+        default_factory=SourceVoxelSpacing
+    )
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
 
     @classmethod
@@ -2559,6 +2636,7 @@ class ObjectLabelValueConstructionContext:
         plane_axis: RuntimePlaneAxis | None = None,
         source_provenance: SourceImageProvenance | None = None,
         source_spatial_domain: SourceSpatialDomain | None = None,
+        parent_image_source_voxel_spacing: SourceVoxelSpacing | None = None,
     ) -> "ObjectLabelValueConstructionContext":
         return cls(
             domain=value.object_label_domain() if domain is None else domain,
@@ -2571,6 +2649,11 @@ class ObjectLabelValueConstructionContext:
                 value.object_label_source_spatial_domain()
                 if source_spatial_domain is None
                 else source_spatial_domain
+            ),
+            parent_image_source_voxel_spacing=(
+                value.parent_image_source_voxel_spacing
+                if parent_image_source_voxel_spacing is None
+                else parent_image_source_voxel_spacing
             ),
             plane_axis=value.plane_axis if plane_axis is None else plane_axis,
         )
@@ -2614,6 +2697,7 @@ class ObjectLabelValueConstructionContext:
             domain=self.domain,
             plane_axis=self.plane_axis,
             source_spatial_domain=self.source_spatial_domain,
+            parent_image_source_voxel_spacing=self.parent_image_source_voxel_spacing,
             source_provenance=self.source_provenance,
         )
 
@@ -2661,6 +2745,7 @@ class ObjectLabelValueConstructionContext:
             domain=self.domain,
             plane_axis=self.plane_axis,
             source_spatial_domain=self.source_spatial_domain,
+            parent_image_source_voxel_spacing=self.parent_image_source_voxel_spacing,
             source_provenance=self.source_provenance,
             dimensions=dimensions,
             source_image_name=source_image_name,
@@ -2702,6 +2787,9 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelValue):
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
     domain: ObjectLabelDomain = field(default_factory=ObjectLabelDomain)
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
+    parent_image_source_voxel_spacing: SourceVoxelSpacing = field(
+        default_factory=SourceVoxelSpacing
+    )
 
     def __post_init__(self, *init_values: object) -> None:
         source_provenance_values, variant_values = object_label_init_values(
@@ -2876,12 +2964,14 @@ class ColumnarRows(ABC, metaclass=AutoRegisterMeta):
 
     def row_mappings(self) -> tuple[Mapping[str, object], ...]:
         """Return row-wise mappings for this columnar payload."""
+        return tuple(self.iter_row_mappings())
+
+    def iter_row_mappings(self) -> Iterable[Mapping[str, object]]:
+        """Yield row-wise mappings for this columnar payload."""
         columns = tuple(str(column) for column in self.columns)
         column_values = tuple(self.column_values(column) for column in columns)
-        return tuple(
-            dict(zip(columns, values, strict=True))
-            for values in zip(*column_values, strict=True)
-        )
+        for values in zip(*column_values, strict=True):
+            yield dict(zip(columns, values, strict=True))
 
 
 ObjectLabelData = RuntimeArrayData | ColumnarRows
@@ -3224,7 +3314,7 @@ class SourceImageContext(metaclass=AutoRegisterMeta):
 class RuntimeValueSchema(SourceImageContext, SourceImageProvenanceFields):
     """Semantic schema attached to a runtime artifact value."""
 
-    kind: ArtifactKind
+    artifact_type: type[ArtifactType]
     slice_aligned: bool = False
     fields: tuple[FieldSpec, ...] = ()
     label_representation: ObjectLabelRepresentation | None = None
@@ -3242,7 +3332,7 @@ class RuntimeValueSchema(SourceImageContext, SourceImageProvenanceFields):
         )
         self.normalize_source_provenance_fields()
         self._validate_source_image_context("RuntimeValueSchema")
-        self.kind = coerce_enum(ArtifactKind, self.kind, "RuntimeValueSchema.kind")
+        self.artifact_type = ArtifactType.coerce(self.artifact_type)
         if self.label_representation is not None:
             self.label_representation = coerce_enum(
                     ObjectLabelRepresentation,
@@ -3269,41 +3359,41 @@ class RuntimeValueSchema(SourceImageContext, SourceImageProvenanceFields):
             )
         if (
             self.label_representation is not None
-            and self.kind is not ArtifactKind.OBJECT_LABELS
+            and self.artifact_type is not ObjectLabelsArtifactType
         ):
             raise ValueError(
                 "RuntimeValueSchema.label_representation requires "
-                "OBJECT_LABELS kind."
+                "OBJECT_LABELS artifact type."
             )
-        if self.label_variants and self.kind is not ArtifactKind.OBJECT_LABELS:
+        if self.label_variants and self.artifact_type is not ObjectLabelsArtifactType:
             raise ValueError(
-                "RuntimeValueSchema.label_variants requires OBJECT_LABELS kind."
+                "RuntimeValueSchema.label_variants requires OBJECT_LABELS artifact type."
             )
         if (
             self.measurement_subject is not None
-            and self.kind is not ArtifactKind.MEASUREMENTS
+            and self.artifact_type is not MeasurementsArtifactType
         ):
             raise ValueError(
                 "RuntimeValueSchema.measurement_subject requires "
-                "MEASUREMENTS kind."
+                "MEASUREMENTS artifact type."
             )
         if (
             (
                 self.measurement_schema_validated
                 or self.measurement_schema_loss_reasons
             )
-            and self.kind is not ArtifactKind.MEASUREMENTS
+            and self.artifact_type is not MeasurementsArtifactType
         ):
             raise ValueError(
                 "RuntimeValueSchema measurement schema state requires "
-                "MEASUREMENTS kind."
+                "MEASUREMENTS artifact type."
             )
         if (
             self.relationship is not None
-            and self.kind is not ArtifactKind.RELATIONSHIPS
+            and self.artifact_type is not RelationshipsArtifactType
         ):
             raise ValueError(
-                "RuntimeValueSchema.relationship requires RELATIONSHIPS kind."
+                "RuntimeValueSchema.relationship requires RELATIONSHIPS artifact type."
             )
 
 
@@ -3366,16 +3456,16 @@ class RuntimeMeasurementSubjectIdentity:
 
 
 class RuntimeValueKeyDiscriminator(
-    EnumKeyedStrategyMixin[ArtifactKind],
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
     """Registered semantic key extension for runtime values with subidentity."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_key__ = "strategy_key"
 
-    strategy_key: ClassVar[ArtifactKind | None] = None
+    strategy_key: ClassVar[str | None] = None
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
 
     @classmethod
     def artifact_key(
@@ -3386,10 +3476,10 @@ class RuntimeValueKeyDiscriminator(
         schema: RuntimeValueSchema,
     ) -> ArtifactKey:
         base_key = output_plan.artifact_key(axis_id=axis_id)
-        strategy_type = cls.__registry__.get(schema.kind.value)
-        if strategy_type is None:
+        strategy = cls.for_context(schema.artifact_type, required=False)
+        if strategy is None:
             return base_key
-        semantic_id = strategy_type().semantic_id(schema)
+        semantic_id = strategy.semantic_id(schema)
         return replace(base_key, semantic_id=semantic_id)
 
     @abstractmethod
@@ -3400,7 +3490,8 @@ class RuntimeValueKeyDiscriminator(
 class MeasurementRuntimeValueKeyDiscriminator(RuntimeValueKeyDiscriminator):
     """Keep same-named measurement tables distinct by measurement subject."""
 
-    strategy_key = ArtifactKind.MEASUREMENTS
+    strategy_key = "measurements"
+    artifact_type = MeasurementsArtifactType
 
     def semantic_id(self, schema: RuntimeValueSchema) -> str | None:
         subject = schema.measurement_subject
@@ -3439,10 +3530,10 @@ class RuntimeValue:
         )
 
     def __post_init__(self) -> None:
-        if self.key.kind is not self.schema.kind:
+        if self.key.artifact_type is not self.schema.artifact_type:
             raise ValueError(
-                f"RuntimeValue key kind {self.key.kind.value} does not match "
-                f"schema kind {self.schema.kind.value}."
+                f"RuntimeValue key artifact type {self.key.artifact_type.value} "
+                f"does not match schema artifact type {self.schema.artifact_type.value}."
             )
 
     @property
@@ -3450,12 +3541,12 @@ class RuntimeValue:
         return self.key.name
 
     @property
-    def kind(self) -> ArtifactKind:
-        return self.key.kind
+    def artifact_type(self) -> type[ArtifactType]:
+        return self.key.artifact_type
 
     def materialization_payload(self):
         """Return the payload that materializers should receive for this value."""
-        if self.kind is not ArtifactKind.IMAGE:
+        if self.artifact_type is not ImageArtifactType:
             return self.data
         payload_metadata = image_payload_metadata(self.data)
         metadata = payload_metadata.with_source_provenance(
@@ -3524,7 +3615,7 @@ class NamedImage(SourceImageContext, NativeRuntimeValue):
 
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         return RuntimeValueSchema(
-            kind=ArtifactKind.IMAGE,
+            artifact_type=ImageArtifactType,
             dimensions=self.dimensions,
             source_image_name=self.source_image_name,
         )
@@ -3541,14 +3632,17 @@ class ObjectLabelSet(
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
     domain: ObjectLabelDomain = field(default_factory=ObjectLabelDomain)
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
+    parent_image_source_voxel_spacing: SourceVoxelSpacing = field(
+        default_factory=SourceVoxelSpacing
+    )
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
         """Reconstruct the native object-label view from a stored runtime value."""
-        if value.kind is not ArtifactKind.OBJECT_LABELS:
+        if value.artifact_type is not ObjectLabelsArtifactType:
             raise TypeError(
                 "ObjectLabelSet.from_runtime_value requires an OBJECT_LABELS "
-                f"runtime value, got {value.kind.value}."
+                f"runtime value, got {value.artifact_type.value}."
             )
         payload = value.data
         schema = value.schema
@@ -3614,6 +3708,9 @@ class ObjectLabelSet(
             self.domain = payload_context.domain
             self.plane_axis = payload_context.plane_axis
             self.source_spatial_domain = payload_context.source_spatial_domain
+            self.parent_image_source_voxel_spacing = (
+                payload_context.parent_image_source_voxel_spacing
+            )
             self.source_provenance = payload_context.source_provenance
         representation = self.normalize_object_label_metadata("ObjectLabelSet")
         self.validate_object_label_payload(
@@ -3628,6 +3725,7 @@ class ObjectLabelSet(
             or self.domain != ObjectLabelDomain()
             or self.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE
             or self.source_spatial_domain.has_values
+            or self.parent_image_source_voxel_spacing.has_values
             or self.source_path is not None
             or self.source_component_metadata is not None
             or self.source_image_provenance_planes.has_values
@@ -3670,7 +3768,7 @@ class ObjectLabelSet(
             else (ObjectLabelVariant.FINAL,)
         )
         return RuntimeValueSchema(
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             dimensions=self.dimensions,
             label_representation=self.representation,
             label_variants=label_variants,
@@ -5217,6 +5315,7 @@ class SourceImageObjectLabelBuildRequest:
     declared_object_ids: tuple[int, ...] = ()
     unedited_labels: object | None = None
     small_removed_labels: object | None = None
+    parent_image_source_voxel_spacing: SourceVoxelSpacing | None = None
 
     @property
     def variants(self) -> ObjectLabelVariantData:
@@ -5267,6 +5366,11 @@ class SourceImageObjectLabelBuildRequest:
             domain=label_domain,
             source_provenance=metadata.source_provenance,
             source_spatial_domain=source_spatial_domain,
+            parent_image_source_voxel_spacing=(
+                metadata.source_voxel_spacing
+                if self.parent_image_source_voxel_spacing is None
+                else self.parent_image_source_voxel_spacing
+            ),
             plane_axis=plane_axis,
         )
 
@@ -6287,6 +6391,33 @@ class DenseObjectLabelPlaneDomainStack:
     payload: object
     object_id_domains: tuple[tuple[int, ...], ...]
 
+    @classmethod
+    def from_payload_labels(
+        cls,
+        payload: ObjectLabelValue,
+        labels: np.ndarray,
+        *,
+        allow_single_plane: bool = False,
+        collapse_repeated: bool = False,
+    ) -> "DenseObjectLabelPlaneDomainStack | None":
+        """Return the plane-domain stack declared by an object-label payload."""
+        if payload.domain.scope is not ObjectLabelDomainScope.PLANE:
+            return None
+        stack_labels, object_id_domains = cls._project_measurement_stack(
+            payload,
+            labels,
+            collapse_repeated=collapse_repeated,
+        )
+        if stack_labels is None or (
+            len(object_id_domains) <= 1 and not allow_single_plane
+        ):
+            return None
+        return cls(
+            labels=np.ascontiguousarray(stack_labels),
+            payload=payload,
+            object_id_domains=object_id_domains,
+        )
+
     @staticmethod
     def _project_measurement_stack(
         payload: ObjectLabelValue,
@@ -6428,61 +6559,46 @@ class DenseObjectLabelPlaneDomainStackRequest(DenseObjectLabelStackRequest):
     def stack(self) -> DenseObjectLabelPlaneDomainStack | None:
         if not isinstance(self.payload, ObjectLabelValue):
             return None
-        if self.payload.domain.scope is not ObjectLabelDomainScope.PLANE:
-            return None
         labels = object_label_dense_array(self.payload, dtype=self.dtype)
         if not isinstance(labels, np.ndarray):
             return None
-        stack_labels, object_id_domains = (
-            DenseObjectLabelPlaneDomainStack._project_measurement_stack(
-                self.payload,
-                labels,
-                collapse_repeated=self.collapse_repeated,
-            )
-        )
-        if stack_labels is None or (
-            len(object_id_domains) <= 1 and not self.allow_single_plane
-        ):
-            return None
-        return DenseObjectLabelPlaneDomainStack(
-            labels=np.ascontiguousarray(stack_labels),
-            payload=self.payload,
-            object_id_domains=object_id_domains,
+        return DenseObjectLabelPlaneDomainStack.from_payload_labels(
+            self.payload,
+            labels,
+            allow_single_plane=self.allow_single_plane,
+            collapse_repeated=self.collapse_repeated,
         )
 
 
 class RuntimeSliceAlignedPayloadNormalizationStrategy(
     StrategyLabelRegistryMixin,
     Generic[SliceAlignedValueT, SliceAlignedPayloadT],
-    EnumKeyedStrategyMixin[ArtifactKind],
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
     """Normalize nominal slice-aligned payloads before runtime storage."""
 
-    __registry_key__ = ARTIFACT_KIND_ENUM_MEMBER_ATTR
-    __enum_member_attr__ = ARTIFACT_KIND_ENUM_MEMBER_ATTR
+    __registry_key__ = "strategy_key"
     stable_key_axis: ClassVar[str] = __registry_key__
 
-    kind: ClassVar[ArtifactKind]
+    strategy_key: ClassVar[str | None] = None
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
-    def for_kind(
+    def for_artifact_type(
         cls,
-        kind: ArtifactKind,
+        artifact_type: ArtifactType,
     ) -> "RuntimeSliceAlignedPayloadNormalizationStrategy | None":
-        strategy_type = cls.__registry__.get(kind.value)
-        if strategy_type is None:
-            return None
-        return strategy_type()
+        return cls.for_context(ArtifactType.coerce(artifact_type), required=False)
 
     @classmethod
     def for_output_plan(
         cls,
         output_plan: ArtifactOutputPlan,
     ) -> "RuntimeSliceAlignedPayloadNormalizationStrategy | None":
-        return cls.for_kind(output_plan.kind)
+        return cls.for_artifact_type(output_plan.artifact_type)
 
     @abstractmethod
     def normalize(
@@ -6498,7 +6614,7 @@ class RuntimeSliceAlignedPayloadNormalizationStrategy(
         *,
         axis_id: str,
     ) -> RuntimeValue | None:
-        """Return the aggregate runtime value with kind-owned schema metadata."""
+        """Return the aggregate runtime value with artifact-type-owned schema metadata."""
         payload = self.normalize(value)
         if payload is None:
             return None
@@ -6512,7 +6628,7 @@ class RuntimeSliceAlignedPayloadNormalizationStrategy(
     def runtime_schema(self, payload: SliceAlignedPayloadT) -> RuntimeValueSchema:
         """Return schema for an aggregate payload produced by this strategy."""
         del payload
-        return RuntimeValueSchema(kind=self.kind)
+        return RuntimeValueSchema(artifact_type=self.artifact_type)
 
 
 class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
@@ -6520,7 +6636,7 @@ class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
 ):
     """Aggregate object-label slice payloads into one plane-scoped label domain."""
 
-    kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def normalize(
         self,
@@ -6543,7 +6659,7 @@ class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
     def runtime_schema(self, payload: ObjectLabelValue) -> RuntimeValueSchema:
         """Preserve aggregate object-label provenance in the stored schema."""
         return RuntimeValueSchema(
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             label_representation=payload.representation,
             label_variants=ObjectLabelVariantData.from_value(payload).present_variants,
             object_name=None,
@@ -6567,10 +6683,10 @@ class MeasurementTable(SourceImageProvenanceFields, NativeRuntimeValue):
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
         """Reconstruct the native measurement view from a stored runtime value."""
-        if value.kind is not ArtifactKind.MEASUREMENTS:
+        if value.artifact_type is not MeasurementsArtifactType:
             raise TypeError(
                 "MeasurementTable.from_runtime_value requires a MEASUREMENTS "
-                f"runtime value, got {value.kind.value}."
+                f"runtime value, got {value.artifact_type.value}."
             )
         return cls(
             name=value.name,
@@ -6633,7 +6749,7 @@ class MeasurementTable(SourceImageProvenanceFields, NativeRuntimeValue):
         """Yield row payloads using this table's row representation."""
         rows = self.rows
         if isinstance(rows, ColumnarRows):
-            yield from rows.row_mappings()
+            yield from rows.iter_row_mappings()
             return
         if isinstance(rows, list | tuple):
             yield from rows
@@ -6666,7 +6782,7 @@ class MeasurementTable(SourceImageProvenanceFields, NativeRuntimeValue):
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         subject_resolver = MeasurementTableSubjectResolver(self)
         return RuntimeValueSchema(
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             fields=self.fields or runtime_payload_fields(payload),
             measurement_subject=self.subject,
             object_name=subject_resolver.object_name,
@@ -6998,10 +7114,10 @@ class SpatialGrid(NativeRuntimeValue):
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
         """Reconstruct a spatial grid from a stored runtime value."""
-        if value.kind is not ArtifactKind.SPATIAL_GRID:
+        if value.artifact_type is not SpatialGridArtifactType:
             raise TypeError(
                 "SpatialGrid.from_runtime_value requires a SPATIAL_GRID "
-                f"runtime value, got {value.kind.value}."
+                f"runtime value, got {value.artifact_type.value}."
             )
         if not isinstance(value.data, Mapping):
             raise TypeError(
@@ -7164,7 +7280,7 @@ class SpatialGrid(NativeRuntimeValue):
         return self.as_mapping()
 
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
-        return RuntimeValueSchema(kind=ArtifactKind.SPATIAL_GRID)
+        return RuntimeValueSchema(artifact_type=SpatialGridArtifactType)
 
     def spot_table_array(self) -> np.ndarray:
         """Return the nominal grid object-number topology as a dense table."""
@@ -7198,10 +7314,10 @@ class ObjectRelationship(
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
         """Reconstruct the native relationship view from a runtime value."""
-        if value.kind is not ArtifactKind.RELATIONSHIPS:
+        if value.artifact_type is not RelationshipsArtifactType:
             raise TypeError(
                 "ObjectRelationship.from_runtime_value requires a RELATIONSHIPS "
-                f"runtime value, got {value.kind.value}."
+                f"runtime value, got {value.artifact_type.value}."
             )
         if not isinstance(value.data, Mapping):
             raise TypeError(
@@ -7362,7 +7478,7 @@ class ObjectRelationship(
 
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         return RuntimeValueSchema(
-            kind=ArtifactKind.RELATIONSHIPS,
+            artifact_type=RelationshipsArtifactType,
             fields=runtime_payload_fields(payload),
             relationship=self.semantics,
             source_provenance=self.source_provenance,
@@ -7391,7 +7507,7 @@ def normalize_artifact_value(
         output_plan,
         value,
         axis_id=axis_id,
-        schema=RuntimeValueSchema(kind=output_plan.kind),
+        schema=RuntimeValueSchema(artifact_type=output_plan.artifact_type),
     )
     return validate_runtime_value(runtime_value, output_plan, axis_id=axis_id)
 
@@ -7533,7 +7649,10 @@ def _normalize_slice_aligned_value(
     schema = (
         _merge_slice_aligned_schemas(output_plan, slice_schemas)
         if slice_schemas
-        else RuntimeValueSchema(kind=output_plan.kind, slice_aligned=True)
+        else RuntimeValueSchema(
+            artifact_type=output_plan.artifact_type,
+            slice_aligned=True,
+        )
     )
     return RuntimeValue.from_output_plan(
         output_plan,
@@ -7553,10 +7672,10 @@ def _merge_slice_aligned_schemas(
 ) -> RuntimeValueSchema:
     first = schemas[0]
     for schema in schemas:
-        if schema.kind is not output_plan.kind:
+        if schema.artifact_type is not output_plan.artifact_type:
             raise ValueError(
                 f"Slice-aligned artifact '{output_plan.name}' expected "
-                f"{output_plan.kind.value}, got {schema.kind.value}."
+                f"{output_plan.artifact_type.value}, got {schema.artifact_type.value}."
             )
         if replace(schema, slice_aligned=False) != replace(first, slice_aligned=False):
             raise ValueError(
@@ -7578,15 +7697,16 @@ def validate_runtime_value(
             f"RuntimeValue name '{value.key.name}' does not match planned "
             f"artifact '{output_plan.name}'."
         )
-    if value.kind is not output_plan.kind:
+    if value.artifact_type is not output_plan.artifact_type:
         raise ValueError(
-            f"Artifact '{output_plan.name}' expected {output_plan.kind.value}, "
-            f"got {value.kind.value}."
+            f"Artifact '{output_plan.name}' expected "
+            f"{output_plan.artifact_type.value}, got {value.artifact_type.value}."
         )
-    if value.schema.kind is not output_plan.kind:
+    if value.schema.artifact_type is not output_plan.artifact_type:
         raise ValueError(
-            f"Artifact '{output_plan.name}' schema kind {value.schema.kind.value} "
-            f"does not match planned kind {output_plan.kind.value}."
+            f"Artifact '{output_plan.name}' schema artifact type "
+            f"{value.schema.artifact_type.value} does not match planned "
+            f"artifact type {output_plan.artifact_type.value}."
         )
     if value.key.scope.axis_id != axis_id:
         raise ValueError(
@@ -7594,7 +7714,7 @@ def validate_runtime_value(
             f"'{value.key.scope.axis_id}', not '{axis_id}'."
         )
 
-    ArtifactPayloadValidationStrategy.for_kind(value.kind).validate(
+    ArtifactPayloadValidationStrategy.for_artifact_type(value.artifact_type).validate(
         output_plan.name,
         value.data,
         value.schema,
@@ -7603,43 +7723,43 @@ def validate_runtime_value(
 
 
 class ArtifactPayloadValidationStrategy(
-    EnumKeyedStrategyMixin[ArtifactKind],
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
     """Registered validation contract for artifact runtime payloads."""
 
-    __registry_key__ = "kind_label"
+    __registry_key__ = "strategy_key"
     __skip_if_no_key__ = True
-    __enum_member_attr__ = ARTIFACT_KIND_ENUM_MEMBER_ATTR
-    __enum_label_attr__ = "kind_label"
 
-    kind: ClassVar[ArtifactKind | None] = None
-    kind_label: ClassVar[str | None] = None
+    strategy_key: ClassVar[str | None] = None
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
 
-    def __init__(self, kind: ArtifactKind | None = None) -> None:
-        self._kind = kind
+    def __init__(self, artifact_type: ArtifactType | None = None) -> None:
+        self._artifact_type = artifact_type
 
     @classmethod
     @lru_cache(maxsize=None)
-    def for_kind(cls, kind: ArtifactKind) -> "ArtifactPayloadValidationStrategy":
-        strategy_type = cls.__registry__.get(kind.value)
-        strategy = strategy_type() if strategy_type is not None else None
+    def for_artifact_type(
+        cls,
+        artifact_type: ArtifactType,
+    ) -> "ArtifactPayloadValidationStrategy":
+        strategy = cls.for_context(ArtifactType.coerce(artifact_type), required=False)
         return (
             strategy
             if strategy is not None
-            else GenericArtifactPayloadValidationStrategy(kind)
+            else GenericArtifactPayloadValidationStrategy(artifact_type)
         )
 
     @property
-    def artifact_kind(self) -> ArtifactKind:
-        kind = self._kind or self.kind
-        if kind is None:
+    def resolved_artifact_type(self) -> type[ArtifactType]:
+        artifact_type = self._artifact_type or self.artifact_type
+        if artifact_type is None:
             raise TypeError(
-                f"{type(self).__name__} must declare an artifact kind or be "
+                f"{type(self).__name__} must declare an artifact type or be "
                 "constructed with one."
             )
-        return kind
+        return ArtifactType.coerce(artifact_type)
 
     def validate(
         self,
@@ -7655,12 +7775,12 @@ class ArtifactPayloadValidationStrategy(
                 return
             raise TypeError(
                 f"Artifact '{name}' expected slice-aligned "
-                f"{self.artifact_kind.payload_description}, got {type(data).__name__}."
+                f"{self.resolved_artifact_type.payload_description}, got {type(data).__name__}."
             )
         if validator(data):
             return
         raise TypeError(
-            f"Artifact '{name}' expected {self.artifact_kind.payload_description}, "
+            f"Artifact '{name}' expected {self.resolved_artifact_type.payload_description}, "
             f"got {type(data).__name__}."
         )
 
@@ -7668,19 +7788,19 @@ class ArtifactPayloadValidationStrategy(
         self,
         schema: RuntimeValueSchema,
     ) -> Callable[[Any], bool] | None:
-        return _PAYLOAD_VALIDATORS[_payload_shape_for(self.artifact_kind, schema)]
+        return _PAYLOAD_VALIDATORS[_payload_shape_for(self.resolved_artifact_type, schema)]
 
 
 class GenericArtifactPayloadValidationStrategy(ArtifactPayloadValidationStrategy):
     """Validate artifacts by their declared payload shape."""
 
-    kind = ArtifactKind.SPECIAL
+    artifact_type = SpecialArtifactType
 
 
 class ObjectLabelsArtifactPayloadValidationStrategy(ArtifactPayloadValidationStrategy):
     """Validate object-label artifacts by nominal label payload semantics."""
 
-    kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def validate(
         self,
@@ -7694,15 +7814,15 @@ class ObjectLabelsArtifactPayloadValidationStrategy(ArtifactPayloadValidationStr
 
 
 def _payload_shape_for(
-    kind: ArtifactKind,
+    artifact_type: type[ArtifactType],
     schema: RuntimeValueSchema,
 ) -> ArtifactPayloadShape:
-    if kind.uses_label_representation_payload_shape:
+    if artifact_type.uses_label_representation_payload_shape:
         representation = (
             schema.label_representation or ObjectLabelRepresentation.DENSE_LABELS
         )
         return representation.payload_shape
-    return kind.payload_shape
+    return artifact_type.payload_shape
 
 
 def _is_table_like(data: Any) -> bool:

@@ -341,6 +341,21 @@ class GlobalPipelineConfig:
     # plugin_settings: Dict[str, Any] = field(default_factory=dict) # For plugin-specific settings
 
 
+@abbreviation("compile_dbg")
+@global_pipeline_config(always_viewable_fields=["enabled"])
+@dataclass(frozen=True)
+class CompilationDebugConfig(Enableable):
+    """Compiler diagnostics inherited by PipelineConfig."""
+
+    enabled: Annotated[bool, abbreviation("enabled")] = False
+    """Enable compile-time diagnostic serialization."""
+
+    compiled_execution_bundle_path: Annotated[
+        Optional[Path], abbreviation("bundle")
+    ] = None
+    """Optional pickle path for the compiled execution bundle."""
+
+
 # PipelineConfig will be created automatically by the injection system
 # (GlobalPipelineConfig → PipelineConfig by removing "Global" prefix)
 

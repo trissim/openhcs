@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ArtifactType
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.runtime_exports import (
     RuntimeExportExpectation,
@@ -22,7 +22,7 @@ from openhcs.core.runtime_stores import StoredRuntimeValue
 class RuntimeArtifactExecutionExpectation:
     """Runtime artifacts and file exports expected from one execution."""
 
-    artifact_kinds: frozenset[ArtifactKind]
+    artifact_kinds: frozenset[type[ArtifactType]]
     exports: RuntimeExportExpectation
 
     @classmethod
@@ -33,13 +33,13 @@ class RuntimeArtifactExecutionExpectation:
         exports: RuntimeExportExpectation,
     ) -> "RuntimeArtifactExecutionExpectation":
         return cls(
-            artifact_kinds=frozenset(spec.kind for spec in output_specs),
+            artifact_kinds=frozenset(spec.artifact_type for spec in output_specs),
             exports=exports,
         )
 
     def __post_init__(self) -> None:
         self.artifact_kinds = frozenset(
-            kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
+            ArtifactType.coerce(kind)
             for kind in self.artifact_kinds
         )
         if not isinstance(self.exports, RuntimeExportExpectation):
@@ -83,10 +83,10 @@ class RuntimeArtifactExecutionObservation:
             )
 
     @property
-    def record_counts_by_axis(self) -> Mapping[str, Mapping[ArtifactKind, int]]:
+    def record_counts_by_axis(self) -> Mapping[str, Mapping[type[ArtifactType], int]]:
         return MappingProxyType(
             {
-                axis: MappingProxyType(Counter(record.key.kind for record in records))
+                axis: MappingProxyType(Counter(record.key.artifact_type for record in records))
                 for axis, records in self.records_by_axis.items()
             }
         )

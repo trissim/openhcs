@@ -31,8 +31,6 @@ from pyqt_reactive.pattern_metadata import PatternScopeToken
 from python_introspect import Enableable
 
 
-DEFAULT_GROUP_KEY = "default"
-
 FunctionPatternCallable: TypeAlias = Callable | FunctionReference
 FunctionPatternSyntax: TypeAlias = Callable | tuple | list | dict
 FunctionGroupKey: TypeAlias = Hashable
@@ -41,6 +39,7 @@ RuntimeKwargItems: TypeAlias = tuple[tuple, ...]
 GroupedPatternMap: TypeAlias = dict[FunctionGroupKey, Sequence]
 JsonScalar: TypeAlias = str | int | float | bool | None
 RuntimeComponentValue: TypeAlias = JsonScalar
+DEFAULT_GROUP_KEY = "default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +303,13 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
     def runtime_domain(self) -> RuntimeInvocationDomain:
         """Return the compiled runtime invocation domain."""
         return RuntimeInvocationDomain.from_invocation(self)
+
+    @property
+    def adapter_records_artifact_outputs(self) -> bool:
+        """Return whether this invocation's adapter records selected outputs."""
+        return self.contract.adapter_records_artifact_outputs(
+            self.artifact_output_keys,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -732,8 +738,14 @@ def _compile_invocation(
         contract=item.contract,
         kwargs=user_kwargs,
         invocation_options=item.invocation_options,
-        artifact_input_keys=declarations.select_input_plan_keys(input_plans),
-        artifact_output_keys=declarations.select_output_plan_keys(output_plans),
+        artifact_input_keys=declarations.select_plan_keys(
+            ArtifactInputPlan,
+            input_plans,
+        ),
+        artifact_output_keys=declarations.select_plan_keys(
+            ArtifactOutputPlan,
+            output_plans,
+        ),
         runtime_parameter_bindings=compiled_runtime_bindings,
     )
 

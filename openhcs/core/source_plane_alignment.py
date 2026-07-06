@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -10,6 +11,7 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     image_payload_metadata,
 )
+from openhcs.core.source_image_provenance import SourceImageProvenanceIdentity
 from openhcs.core.source_matching import (
     SourceImageSetIdentity,
     SourceImageSetIdentityCompatibility,
@@ -19,6 +21,47 @@ from openhcs.core.source_matching import (
 
 
 SourcePlaneIdentitySequence = tuple[frozenset[SourceImageSetIdentity], ...]
+SourcePayloadPlaneIdentitySequenceCacheValue = SourcePlaneIdentitySequence
+_source_payload_plane_identity_sequence_cache_size = 65536
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePayloadPlaneIdentitySequenceCacheKey:
+    """Stable identity key for cached per-plane source identity projection."""
+
+    source_provenance_identity: SourceImageProvenanceIdentity
+    policy: SourceImageSetIdentityPolicy
+
+
+_source_payload_plane_identity_sequence_cache: OrderedDict[
+    SourcePayloadPlaneIdentitySequenceCacheKey,
+    SourcePayloadPlaneIdentitySequenceCacheValue,
+] = OrderedDict()
+
+
+def _cached_source_payload_plane_identity_sequence(
+    key: SourcePayloadPlaneIdentitySequenceCacheKey,
+) -> SourcePayloadPlaneIdentitySequenceCacheValue | None:
+    try:
+        value = _source_payload_plane_identity_sequence_cache[key]
+    except KeyError:
+        return None
+    _source_payload_plane_identity_sequence_cache.move_to_end(key)
+    return value
+
+
+def _store_source_payload_plane_identity_sequence(
+    key: SourcePayloadPlaneIdentitySequenceCacheKey,
+    value: SourcePayloadPlaneIdentitySequenceCacheValue,
+) -> SourcePayloadPlaneIdentitySequenceCacheValue:
+    _source_payload_plane_identity_sequence_cache[key] = value
+    _source_payload_plane_identity_sequence_cache.move_to_end(key)
+    if (
+        len(_source_payload_plane_identity_sequence_cache)
+        > _source_payload_plane_identity_sequence_cache_size
+    ):
+        _source_payload_plane_identity_sequence_cache.popitem(last=False)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +109,22 @@ class SourcePayloadPlaneIdentitySequence:
         metadata = image_payload_metadata(self.payload)
         if metadata.source_image_provenance_planes.count == 0:
             return ()
-        return tuple(
-            SourcePayloadPlaneIdentity(
-                metadata.for_source_plane(index),
-                self.policy,
-            ).identities()
-            for index in range(metadata.source_image_provenance_planes.count)
+        cache_key = SourcePayloadPlaneIdentitySequenceCacheKey(
+            metadata.source_provenance.equality_identity,
+            self.policy,
+        )
+        cached = _cached_source_payload_plane_identity_sequence(cache_key)
+        if cached is not None:
+            return cached
+        return _store_source_payload_plane_identity_sequence(
+            cache_key,
+            tuple(
+                SourcePayloadPlaneIdentity(
+                    metadata.for_source_plane(index),
+                    self.policy,
+                ).identities()
+                for index in range(metadata.source_image_provenance_planes.count)
+            ),
         )
 
     @property

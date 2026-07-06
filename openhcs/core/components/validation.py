@@ -99,10 +99,18 @@ class GenericValidator(Generic[T]):
             self.config.validate_combination(variable_components, group_by)
 
             # 2. Validate dict pattern requirements
-            if isinstance(func_pattern, dict) and not group_by:
+            if (
+                isinstance(func_pattern, dict)
+                and (group_by is None or group_by.value is None)
+            ):
                 return ValidationResult(
                     is_valid=False,
-                    error_message=f"Dict pattern requires group_by in step '{step_name}'",
+                    error_message=(
+                        f"Dict pattern requires a concrete group_by component in "
+                        f"step '{step_name}'. variable_components declares the "
+                        "3D stack axis; dict keys declare dispatch groups and "
+                        "cannot use GroupBy.NONE."
+                    ),
                 )
 
             # 3. Validate components are in remaining components (not multiprocessing axis)
