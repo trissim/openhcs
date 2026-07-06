@@ -23,6 +23,11 @@ from openhcs.interop.cellprofiler.module_declarations import (
     ObjectArtifactInputModule,
     PriorMeasurementArtifactInputModule,
 )
+from openhcs.interop.cellprofiler.display_data_on_image import display_data_on_image
+from openhcs.interop.cellprofiler.display_density_plot import display_density_plot
+from openhcs.interop.cellprofiler.display_histogram import display_histogram
+from openhcs.interop.cellprofiler.display_plate_map import display_platemap
+from openhcs.interop.cellprofiler.display_scatter_plot import display_scatter_plot
 
 
 class DisplayModule(CellProfilerModule):

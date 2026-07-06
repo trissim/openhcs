@@ -1,7 +1,6 @@
 """Product-owned registry for absorbed CellProfiler functions."""
 
 from __future__ import annotations
-import ast
 import inspect
 import importlib
 from collections.abc import Callable, Mapping
@@ -15,30 +14,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
-_LIBRARY_ROOT = Path(__file__).parent
-_FUNCTIONS_PACKAGE = "benchmark.cellprofiler_library.functions"
-_BACKEND_FUNCTIONS_PACKAGE = "openhcs.processing.backends.cellprofiler"
-_INTEROP_FUNCTIONS_PACKAGE = "openhcs.interop.cellprofiler"
-
-
-def _functions_root() -> Path:
-    repo_functions_root = (
-        Path(__file__).resolve().parents[4]
-        / "benchmark"
-        / "cellprofiler_library"
-        / "functions"
-    )
-    if repo_functions_root.exists():
-        return repo_functions_root
-    spec = importlib.util.find_spec(_FUNCTIONS_PACKAGE)
-    if spec is None or not spec.submodule_search_locations:
-        raise ImportError(
-            f"Absorbed CellProfiler functions package {_FUNCTIONS_PACKAGE!r} is not importable."
-        )
-    return Path(next(iter(spec.submodule_search_locations)))
-
-
-_FUNCTIONS_ROOT = _functions_root()
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,19 +80,16 @@ class AbsorbedFunctionMetadata:
 class AbsorbedFunctionLocation:
     """Import location for one top-level absorbed function."""
 
-    package: str
-    root: Path
-    module_stem: str
+    module_name: str
     function_name: str
 
     @property
-    def module_name(self) -> str:
-        return f"{self.package}.{self.module_stem}"
-
-    @property
-    def source_path(self) -> Path:
+    def source_path(self) -> Path | None:
         """Return the source file that declares this absorbed function."""
-        return self.root / f"{self.module_stem}.py"
+        spec = importlib.util.find_spec(self.module_name)
+        if spec is None or spec.origin is None:
+            return None
+        return Path(spec.origin)
 
     def callable_source_path(self) -> Path | None:
         """Return the implementation source for this function, following facades."""
@@ -127,37 +99,6 @@ class AbsorbedFunctionLocation:
             return None
         source_file = inspect.getsourcefile(inspect.unwrap(function))
         return Path(source_file) if source_file is not None else None
-
-
-@dataclass(frozen=True, slots=True)
-class AbsorbedFunctionModuleExports:
-    """AST-derived executable exports for one absorbed function module."""
-
-    parsed_module: ast.Module
-    declared_function_names: set[str]
-    declared_only: bool
-
-    def public_function_names(self) -> tuple[str, ...]:
-        exports: list[str] = []
-        for node in self.parsed_module.body:
-            if isinstance(node, ast.FunctionDef) and (not node.name.startswith("_")):
-                exports.append(node.name)
-            elif isinstance(node, ast.ImportFrom):
-                exports.extend(self.imported_declared_function_names(node))
-        if self.declared_only:
-            exports = [name for name in exports if name in self.declared_function_names]
-        return tuple(dict.fromkeys(exports))
-
-    def imported_declared_function_names(self, node: ast.ImportFrom) -> tuple[str, ...]:
-        names: list[str] = []
-        for alias in node.names:
-            exported_name = alias.asname or alias.name
-            if (
-                not exported_name.startswith("_")
-                and exported_name in self.declared_function_names
-            ):
-                names.append(exported_name)
-        return tuple(names)
 
 
 _function_cache: dict[tuple[str, str], Callable[..., Any]] = {}
@@ -246,6 +187,11 @@ def function_inventory() -> Mapping[str, AbsorbedFunctionLocation]:
     return _absorbed_function_locations()
 
 
+def function_name_candidates() -> frozenset[str]:
+    """Return declared CellProfiler function names without locating source files."""
+    return _declared_function_name_candidates_for(_absorbed_contract_signature())
+
+
 def function_source_path(function_name: str) -> Path | None:
     """Return the source file for an absorbed function, if registered."""
     location = _absorbed_function_locations().get(function_name)
@@ -331,6 +277,19 @@ def _absorbed_function_locations_for(
     return _discover_function_locations(_absorbed_contracts())
 
 
+@lru_cache(maxsize=16)
+def _declared_function_name_candidates_for(
+    contract_signature: tuple[tuple[str, str, tuple[str, ...], str | None], ...],
+) -> frozenset[str]:
+    """Return cached function names declared by registered module classes."""
+    del contract_signature
+    return frozenset(
+        function_name
+        for module_type in _cellprofiler_module_root().__registry__.values()
+        for function_name in module_type.declared_function_names()
+    )
+
+
 def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
     contracts = {}
     for module_type in _cellprofiler_module_root().__registry__.values():
@@ -382,76 +341,21 @@ def _load_default_function_contracts(
 def _discover_function_locations(
     contracts: Mapping[str, AbsorbedFunctionMetadata],
 ) -> Mapping[str, AbsorbedFunctionLocation]:
+    del contracts
     locations: dict[str, AbsorbedFunctionLocation] = {}
-    declared_function_names = {
-        function_name
-        for metadata in contracts.values()
-        for function_name in metadata.declared_function_names
-    }
-    _register_function_locations(
-        locations,
-        package=_BACKEND_FUNCTIONS_PACKAGE,
-        root=_LIBRARY_ROOT,
-        replace_existing=False,
-        declared_only=True,
-        declared_function_names=declared_function_names,
-    )
-    interop_spec = importlib.util.find_spec(_INTEROP_FUNCTIONS_PACKAGE)
-    if interop_spec is not None and interop_spec.submodule_search_locations:
-        _register_function_locations(
-            locations,
-            package=_INTEROP_FUNCTIONS_PACKAGE,
-            root=Path(next(iter(interop_spec.submodule_search_locations))),
-            replace_existing=False,
-            declared_only=True,
-            declared_function_names=declared_function_names,
-        )
-    _register_function_locations(
-        locations,
-        package=_FUNCTIONS_PACKAGE,
-        root=_FUNCTIONS_ROOT,
-        replace_existing=False,
-        declared_only=False,
-        declared_function_names=declared_function_names,
-    )
-    return MappingProxyType(locations)
-
-
-def _register_function_locations(
-    locations: dict[str, AbsorbedFunctionLocation],
-    *,
-    package: str,
-    root: Path,
-    replace_existing: bool,
-    declared_only: bool,
-    declared_function_names: set[str],
-) -> None:
-    for file_path in sorted(root.glob("*.py")):
-        if file_path.name == "__init__.py":
-            continue
-        module_stem = file_path.stem
-        parsed_module = ast.parse(
-            file_path.read_text(encoding="utf-8"), filename=str(file_path)
-        )
-        module_exports = AbsorbedFunctionModuleExports(
-            declared_function_names=declared_function_names,
-            declared_only=declared_only,
-            parsed_module=parsed_module,
-        )
-        for function_name in module_exports.public_function_names():
-            if function_name in locations and (not replace_existing):
-                existing = locations[function_name]
-                if existing.package != package:
-                    continue
+    for module_type in _cellprofiler_module_root().__registry__.values():
+        module_name = module_type.__module__
+        for function_name in module_type.declared_function_names():
+            existing = locations.get(function_name)
+            if existing is not None and existing.module_name != module_name:
                 raise ValueError(
-                    f"CellProfiler function {function_name!r} is declared in both {existing.module_name!r} and {package}.{module_stem!r}."
+                    f"CellProfiler function {function_name!r} is declared in both {existing.module_name!r} and {module_name!r}."
                 )
             locations[function_name] = AbsorbedFunctionLocation(
-                package=package,
-                root=root,
-                module_stem=module_stem,
+                module_name=module_name,
                 function_name=function_name,
             )
+    return MappingProxyType(locations)
 
 
 def _required_string(payload: Mapping[str, Any], key: str, module_name: str) -> str:

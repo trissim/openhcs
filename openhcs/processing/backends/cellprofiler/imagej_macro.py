@@ -5,6 +5,7 @@ from openhcs.interop.cellprofiler.module_declarations import (
     ProcessingContract,
     CellProfilerModule,
 )
+from openhcs.interop.cellprofiler.imagej_macro import run_imagej_macro
 
 
 class RunImagejMacroModule(CellProfilerModule):

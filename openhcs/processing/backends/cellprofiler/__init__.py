@@ -18,6 +18,7 @@ from typing import Any
 from python_introspect import parameter_exclusions, set_parameter_exclusions
 from openhcs.processing.backends.cellprofiler.library import (
     coerce_absorbed_processing_contract,
+    function_name_candidates,
     function_inventory,
     get_contract,
 )
@@ -149,7 +150,7 @@ class CellProfilerFunctionCatalog:
     @classmethod
     def has_function(cls, name: str) -> bool:
         """Return whether a function is declared by a CellProfiler module."""
-        return name in function_inventory()
+        return name in function_name_candidates()
 
     @classmethod
     def get_function(cls, name: str) -> Callable[..., Any]:

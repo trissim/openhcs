@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.edit_objects import edit_objects_manually
+from openhcs.interop.cellprofiler.manual_objects import identify_objects_manually
 
 
 class EditObjectsManuallyModule(CellProfilerModule):

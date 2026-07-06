@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.spreadsheet_export import (
+    compute_aggregate_measurements,
+)
 
 
 class ComputeAggregateMeasurementsModule(CellProfilerModule):

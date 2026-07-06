@@ -483,7 +483,7 @@ class RuntimeMeasurementDialect:
             "scale_qualified_feature_prefixes",
             tuple(
                 tuple(part for part in prefix if part)
-                for prefix in self.resolved_scale_qualified_feature_prefixes()
+                for prefix in self.scale_qualified_feature_prefixes
             ),
         )
         object.__setattr__(
