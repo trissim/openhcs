@@ -22,7 +22,7 @@ def _step(input_source: InputSource = InputSource.PREVIOUS_STEP) -> SimpleNamesp
     return SimpleNamespace(processing_config=SimpleNamespace(input_source=input_source))
 
 
-def test_final_measurement_only_step_keeps_images_in_memory() -> None:
+def test_measurement_tail_materializes_previous_image_step() -> None:
     context = SimpleNamespace(
         step_plans=[
             CompiledStepPlan(0, "image", "FunctionStep", "A01"),
@@ -49,6 +49,7 @@ def test_final_measurement_only_step_keeps_images_in_memory() -> None:
         pipeline_config=_pipeline_config(),
     )
 
+    assert context.step_plans[0].write_backend == Backend.DISK.value
     assert context.step_plans[1].write_backend == Backend.MEMORY.value
 
 

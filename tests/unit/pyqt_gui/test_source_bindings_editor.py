@@ -144,6 +144,35 @@ def table_cell_text(table, row: int, column: int) -> str:
     return item.text().strip()
 
 
+def binding_cell_position(
+    binding_index: int,
+    field: SourceBindingColumn,
+) -> tuple[int, int]:
+    return int(field), binding_index
+
+
+def set_binding_cell_text(
+    table,
+    binding_index: int,
+    field: SourceBindingColumn,
+    text: str,
+) -> None:
+    set_editable_cell_text(table, *binding_cell_position(binding_index, field), text)
+
+
+def set_binding_combo_cell_text(
+    table,
+    binding_index: int,
+    field: SourceBindingColumn,
+    text: str,
+) -> None:
+    set_combo_cell_text(table, *binding_cell_position(binding_index, field), text)
+
+
+def binding_cell_widget(table, binding_index: int, field: SourceBindingColumn):
+    return table.cellWidget(*binding_cell_position(binding_index, field))
+
+
 def test_structured_selector_cell_widget_uses_semantic_editor_kind() -> None:
     QtApplicationHarness.app()
 
@@ -2327,8 +2356,66 @@ def test_source_bindings_editor_tables_expand_without_vertical_scrollbars() -> N
     table = dialog.editor.table
 
     assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    assert table.verticalHeader().isHidden()
-    assert table.height() >= table.horizontalHeader().height() + table.rowHeight(0)
+    assert not table.verticalHeader().isHidden()
+    assert table.verticalHeaderItem(int(SourceBindingColumn.ALIAS)).text() == "Alias"
+    expected_minimum_height = table.horizontalHeader().height() + sum(
+        table.rowHeight(row)
+        for row in range(table.rowCount())
+    )
+    assert table.height() >= expected_minimum_height
+
+
+def test_source_bindings_editor_explains_binding_selector_identity_and_stack() -> None:
+    QtApplicationHarness.app()
+
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(
+            bindings=(NamedSourceBinding(alias="DNA"),),
+        )
+    )
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+
+    select_axes = table.verticalHeaderItem(int(SourceBindingColumn.COMPONENTS))
+    select_metadata = table.verticalHeaderItem(int(SourceBindingColumn.METADATA))
+    assign_axes = table.verticalHeaderItem(int(SourceBindingColumn.IDENTITY))
+    primary_stack = table.verticalHeaderItem(int(SourceBindingColumn.STACK))
+
+    assert select_axes.text() == "Select Axes"
+    assert "choose sources" in select_axes.toolTip()
+    assert "does not assign" in select_axes.toolTip()
+    assert select_metadata.text() == "Select Metadata"
+    assert "filters candidates" in select_metadata.toolTip()
+    assert "Image Set Pairing" in select_metadata.toolTip()
+    assert assign_axes.text() == "Assign Axes"
+    assert "attached after selection" in assign_axes.toolTip()
+    assert primary_stack.text() == "Primary Stack"
+    assert "creates execution anchors" in primary_stack.toolTip()
+
+
+def test_source_bindings_editor_explains_image_set_pairing_table() -> None:
+    QtApplicationHarness.app()
+
+    widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
+    assert widget.match_plan_table is not None
+
+    method_header = widget.match_plan_table.horizontalHeaderItem(
+        int(MatchPlanColumn.METHOD)
+    )
+    fields_header = widget.match_plan_table.horizontalHeaderItem(
+        int(MatchPlanColumn.FIELDS)
+    )
+    button_labels = tuple(
+        button.text() for button in widget.findChildren(QPushButton)
+    )
+    section_titles = tuple(label.text() for label in widget.findChildren(QLabel))
+
+    assert method_header.text() == "Pairing Method"
+    assert "grouped into one image set" in method_header.toolTip()
+    assert fields_header.text() == "Pairing Keys"
+    assert "DNA=Well;GFP=Well" in fields_header.toolTip()
+    assert "Add pairing key" in button_labels
+    assert "Image Set Pairing" in section_titles
 
 
 def test_source_bindings_editor_tables_use_scoped_table_abstraction() -> None:
@@ -3806,7 +3893,12 @@ def test_source_bindings_flash_masks_nested_section_titles() -> None:
     section_title_labels = [
         label
         for label in widget.findChildren(QLabel)
-        if label.text() in {"Bindings", "Source Filters", "Metadata Rules", "Match Plan"}
+        if label.text() in {
+            "Bindings",
+            "Source Filters",
+            "Metadata Rules",
+            "Image Set Pairing",
+        }
     ]
 
     title_rects = [
@@ -3932,10 +4024,7 @@ def test_source_bindings_editor_edits_step_binding_table() -> None:
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
     dialog = widget._create_step_bindings_dialog()
     table = dialog.editor.table
-    table.item(
-        0,
-        int(SourceBindingColumn.ALIAS),
-    ).setText("OrigDNA")
+    set_binding_cell_text(table, 0, SourceBindingColumn.ALIAS, "OrigDNA")
     widget._apply_step_bindings(dialog.bindings())
 
     edited = widget.get_value()
@@ -3963,7 +4052,7 @@ def test_source_bindings_editor_preserves_selector_on_basic_edits() -> None:
     )
     dialog = widget._create_step_bindings_dialog()
     table = dialog.editor.table
-    table.item(0, int(SourceBindingColumn.ALIAS)).setText("OrigDNA")
+    set_binding_cell_text(table, 0, SourceBindingColumn.ALIAS, "OrigDNA")
     widget._apply_step_bindings(dialog.bindings())
 
     edited = widget.get_value().bindings[0]
@@ -3983,7 +4072,7 @@ def test_source_bindings_editor_preserves_binding_identity_on_basic_edits() -> N
     )
     dialog = widget._create_step_bindings_dialog()
     table = dialog.editor.table
-    table.item(0, int(SourceBindingColumn.ALIAS)).setText("OrigDNA")
+    set_binding_cell_text(table, 0, SourceBindingColumn.ALIAS, "OrigDNA")
     widget._apply_step_bindings(dialog.bindings())
 
     edited = widget.get_value().bindings[0]
@@ -4003,11 +4092,10 @@ def test_source_bindings_editor_edits_binding_identity_columns() -> None:
     table = dialog.editor.table
     set_editable_cell_text(
         table,
-        0,
-        int(SourceBindingColumn.IDENTITY),
+        *binding_cell_position(0, SourceBindingColumn.IDENTITY),
         "channel=2;site=1",
     )
-    table.item(0, int(SourceBindingColumn.STACK)).setText("False")
+    set_binding_cell_text(table, 0, SourceBindingColumn.STACK, "False")
     widget._apply_step_bindings(dialog.bindings())
 
     binding = widget.get_value().bindings[0]
@@ -4027,26 +4115,20 @@ def test_source_bindings_editor_edits_selector_columns() -> None:
     table = dialog.editor.table
     set_editable_cell_text(
         table,
-        0,
-        int(SourceBindingColumn.COMPONENTS),
+        *binding_cell_position(0, SourceBindingColumn.COMPONENTS),
         "channel=DNA;site=1",
     )
     set_editable_cell_text(
         table,
-        0,
-        int(SourceBindingColumn.METADATA),
+        *binding_cell_position(0, SourceBindingColumn.METADATA),
         "Well=A01",
     )
     set_editable_cell_text(
         table,
-        0,
-        int(SourceBindingColumn.FILTERS),
+        *binding_cell_position(0, SourceBindingColumn.FILTERS),
         "file:contains:DNA",
     )
-    table.item(
-        0,
-        int(SourceBindingColumn.INHERIT),
-    ).setText("False")
+    set_binding_cell_text(table, 0, SourceBindingColumn.INHERIT, "False")
     widget._apply_step_bindings(dialog.bindings())
 
     selector = widget.get_value().bindings[0].selector
@@ -4099,14 +4181,8 @@ def test_source_bindings_editor_uses_free_form_selector_pickers(tmp_path) -> Non
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
     dialog = widget._create_step_bindings_dialog()
     table = dialog.editor.table
-    components_widget = table.cellWidget(
-        0,
-        int(SourceBindingColumn.COMPONENTS),
-    )
-    metadata_widget = table.cellWidget(
-        0,
-        int(SourceBindingColumn.METADATA),
-    )
+    components_widget = binding_cell_widget(table, 0, SourceBindingColumn.COMPONENTS)
+    metadata_widget = binding_cell_widget(table, 0, SourceBindingColumn.METADATA)
 
     assert isinstance(components_widget, StructuredSelectorCellWidget)
     assert isinstance(metadata_widget, StructuredSelectorCellWidget)
@@ -4126,7 +4202,7 @@ def test_source_bindings_editor_removes_selected_binding_row() -> None:
     )
     dialog = widget._create_step_bindings_dialog()
     table = dialog.editor.table
-    table.selectRow(0)
+    table.selectColumn(0)
 
     dialog.editor.remove_selected_binding_rows()
     widget._apply_step_bindings(dialog.bindings())
@@ -4218,14 +4294,12 @@ def test_source_bindings_editor_enum_columns_use_typed_combos() -> None:
     table = dialog.editor.table
     set_combo_cell_text(
         table,
-        0,
-        int(SourceBindingColumn.KIND),
+        *binding_cell_position(0, SourceBindingColumn.KIND),
         "object_labels",
     )
     set_combo_cell_text(
         table,
-        0,
-        int(SourceBindingColumn.ORIGIN),
+        *binding_cell_position(0, SourceBindingColumn.ORIGIN),
         "pipeline_start",
     )
     widget._apply_step_bindings(dialog.bindings())

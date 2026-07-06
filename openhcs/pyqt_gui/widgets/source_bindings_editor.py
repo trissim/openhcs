@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable, Generic, Mapping, TypeVar, cast
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -163,20 +164,28 @@ class SourceBindingColumn(EditableTableColumn):
     COMPONENTS = (
         4,
         None,
-        "Match Axes",
-        "OpenHCS component constraints used to select matching sources.",
+        "Select Axes",
+        (
+            "Input component constraints used to choose sources for this alias, "
+            "for example channel=1. This filters candidates; it does not assign "
+            "the output identity."
+        ),
     )
     METADATA = (
         5,
         None,
-        "Match Metadata",
-        "Metadata field constraints used to select matching sources.",
+        "Select Metadata",
+        (
+            "Metadata constraints used to choose sources for this alias, for "
+            "example Well=A01. This filters candidates; image-set pairing uses "
+            "the separate Image Set Pairing table."
+        ),
     )
     FILTERS = (
         6,
         None,
-        "Match Files",
-        "Path and filename filters used to select matching sources.",
+        "Select Files",
+        "Path and filename filters used to choose candidate source files.",
     )
     INHERIT = (
         7,
@@ -188,13 +197,22 @@ class SourceBindingColumn(EditableTableColumn):
         8,
         None,
         "Assign Axes",
-        "OpenHCS semantic component identity assigned after this binding matches.",
+        (
+            "Semantic component identity attached after selection, for example "
+            "channel=1. Outputs use this when they cannot inherit identity from "
+            "a concrete input path."
+        ),
     )
     STACK = (
         9,
         None,
-        "Main Stack",
-        "Whether this binding contributes to the main image stack.",
+        "Primary Stack",
+        (
+            "Whether this image binding forms the step's primary source-image "
+            "stack and creates execution anchors. Set False for auxiliary "
+            "sources that should be loaded with the anchored stack but should "
+            "not create additional image sets."
+        ),
     )
 
 
@@ -217,8 +235,24 @@ class SourceFilterColumn(EditableTableColumn):
 class MatchPlanColumn(EditableTableColumn):
     """Editable table columns for one match-plan dimension."""
 
-    METHOD = (0, SourceBindingMatchMethod)
-    FIELDS = (1, None)
+    METHOD = (
+        0,
+        SourceBindingMatchMethod,
+        "Pairing Method",
+        (
+            "How selected aliases are grouped into one image set: by source "
+            "order, or by declared metadata keys."
+        ),
+    )
+    FIELDS = (
+        1,
+        None,
+        "Pairing Keys",
+        (
+            "Alias-to-metadata-field pairs used when the method is metadata, "
+            "for example DNA=Well;GFP=Well. Each row is one shared image-set key."
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1271,7 +1305,7 @@ class EditableTableLayout:
 
 
 class StepBindingsTableEditor(QWidget):
-    """Typed table editor for step-local source bindings."""
+    """Typed transposed table editor for step-local source bindings."""
 
     changed = pyqtSignal()
 
@@ -1285,28 +1319,23 @@ class StepBindingsTableEditor(QWidget):
     ) -> None:
         super().__init__(parent)
         self._updating_ui = False
-        self.table = ScopedTableWidget(0, len(SourceBindingColumn), self)
+        self.columns = tuple(SourceBindingColumn)
+        self.free_form_cell_specs = free_form_cell_specs
+        self.table = ScopedTableWidget(len(self.columns), 0, self)
         self.table.set_scope_color_scheme(scope_color_scheme)
-        self.table.setHorizontalHeaderLabels(
-            tuple(column.table_header_label for column in SourceBindingColumn)
+        self.table.setVerticalHeaderLabels(
+            tuple(column.table_header_label for column in self.columns)
         )
-        for column in SourceBindingColumn:
-            header_item = self.table.horizontalHeaderItem(int(column))
+        for column in self.columns:
+            header_item = self.table.verticalHeaderItem(int(column))
             if header_item is not None and column.table_header_tooltip is not None:
                 header_item.setToolTip(column.table_header_tooltip)
-        self.controller = EditableTableController(
-            table=self.table,
-            columns=tuple(SourceBindingColumn),
-            free_form_cell_specs=free_form_cell_specs,
-            row_cells=EditableSourceBindingRow.cells,
-            row_from_cells=EditableSourceBindingRow.from_cells,
-            apply_changes=self._emit_changed,
-        )
         for binding in bindings:
-            self.controller.append(EditableSourceBindingRow.from_binding(binding))
-        self.table.itemChanged.connect(lambda _: self.controller.request_apply_changes())
-        EditableTableLayout.configure(self.table)
-        EditableTableLayout.fit_to_rows(self.table)
+            self._append_column(EditableSourceBindingRow.from_binding(binding))
+        self.table.itemChanged.connect(lambda _: self._request_apply_changes())
+        self._configure_table()
+        self._sync_header_labels()
+        self._fit_table()
 
         buttons = QHBoxLayout()
         add_button = QPushButton("Add binding", self)
@@ -1327,25 +1356,155 @@ class StepBindingsTableEditor(QWidget):
         )
         self._updating_ui = True
         try:
-            self.controller.append(row_model)
+            self._append_column(row_model)
         finally:
             self._updating_ui = False
-        EditableTableLayout.fit_to_rows(self.table)
+        self._sync_header_labels()
+        self._fit_table()
         self.changed.emit()
 
     def remove_selected_binding_rows(self) -> None:
-        if not self.controller.remove_selected():
+        selected_columns = {index.column() for index in self.table.selectedIndexes()}
+        if not selected_columns:
             return
-        EditableTableLayout.fit_to_rows(self.table)
+        table_signals_blocked = self.table.blockSignals(True)
+        try:
+            for column_index in sorted(selected_columns, reverse=True):
+                self.table.removeColumn(column_index)
+        finally:
+            self.table.blockSignals(table_signals_blocked)
+        self._sync_header_labels()
+        self._fit_table()
         self.changed.emit()
 
     def bindings(self) -> tuple[NamedSourceBinding, ...]:
-        return tuple(row.binding for row in self.controller.rows())
+        bindings: list[NamedSourceBinding] = []
+        for binding_index in range(self.table.columnCount()):
+            row = EditableSourceBindingRow.from_cells(
+                tuple(
+                    self._cell_text(binding_index, column)
+                    for column in self.columns
+                )
+            )
+            if row is not None:
+                bindings.append(row.binding)
+        return tuple(bindings)
+
+    def _append_column(self, row_model: EditableSourceBindingRow) -> None:
+        binding_index = self.table.columnCount()
+        self.table.insertColumn(binding_index)
+        for column, value in zip(self.columns, row_model.cells(), strict=True):
+            self._set_cell(binding_index, column, value)
 
     def _emit_changed(self) -> None:
         if self._updating_ui:
             return
+        self._sync_header_labels()
         self.changed.emit()
+
+    def _request_apply_changes(self) -> None:
+        if self._updating_ui:
+            return
+        self._emit_changed()
+
+    def _cell_text(self, binding_index: int, column: SourceBindingColumn) -> str:
+        row_index = int(column)
+        widget = self.table.cellWidget(row_index, binding_index)
+        if isinstance(widget, StructuredSelectorCellWidget):
+            return widget.text()
+        if isinstance(widget, QComboBox):
+            value = widget.currentData()
+            if value is None:
+                return widget.currentText().strip()
+            spec = column.enum_cell_spec()
+            if spec is None:
+                raise TypeError(
+                    f"Editable choice cell has no choice source for {column.name}."
+                )
+            return spec.text_for_value(value)
+        item = self.table.item(row_index, binding_index)
+        if item is None:
+            return ""
+        return EditableTableController._editable_item(item).data(
+            EditableTableController.LOGICAL_VALUE_ROLE
+        )
+
+    def _set_cell(
+        self,
+        binding_index: int,
+        column: SourceBindingColumn,
+        value: str,
+    ) -> None:
+        row_index = int(column)
+        spec = column.enum_cell_spec()
+        free_form_spec = self.free_form_cell_specs.get((type(column), column))
+        if spec is None and free_form_spec is None:
+            self.table.setItem(row_index, binding_index, EditableTableItem(value))
+            return
+        if free_form_spec is not None:
+            self.table.setCellWidget(
+                row_index,
+                binding_index,
+                StructuredSelectorCellWidget(
+                    values=free_form_spec.values,
+                    value=value,
+                    editor_kind=free_form_spec.editor_kind,
+                    apply_changes=self._request_apply_changes,
+                    parent=self.table,
+                ),
+            )
+            return
+        combo = NoScrollComboBox(self.table)
+        for enum_value in spec.values:
+            combo.addItem(spec.text_for_value(enum_value), enum_value)
+        index = combo.findText(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        combo.currentIndexChanged.connect(lambda _: self._request_apply_changes())
+        combo.activated.connect(lambda _: self._request_apply_changes())
+        self.table.setCellWidget(row_index, binding_index, combo)
+
+    def _sync_header_labels(self) -> None:
+        for binding_index in range(self.table.columnCount()):
+            label = (
+                self._cell_text(binding_index, SourceBindingColumn.ALIAS)
+                or f"Binding {binding_index + 1}"
+            )
+            item = QTableWidgetItem(label)
+            item.setToolTip(label)
+            self.table.setHorizontalHeaderItem(binding_index, item)
+
+    def _configure_table(self) -> None:
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectColumns
+        )
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.verticalHeader().setVisible(True)
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+
+    def _fit_table(self) -> None:
+        self.table.resizeRowsToContents()
+        header_height = self.table.horizontalHeader().height()
+        row_height = sum(
+            self.table.rowHeight(row)
+            for row in range(self.table.rowCount())
+        )
+        scrollbar_height = self.table.horizontalScrollBar().sizeHint().height()
+        frame = self.table.frameWidth() * 2
+        self.table.setFixedHeight(
+            header_height + row_height + scrollbar_height + frame + 4
+        )
 
 
 class StepBindingsDialog(QDialog):
@@ -1378,7 +1537,7 @@ class StepBindingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self.editor)
         layout.addWidget(buttons)
-        self.resize(1100, 520)
+        self.resize(820, 560)
 
     def bindings(self) -> tuple[NamedSourceBinding, ...]:
         return self.editor.bindings()
@@ -2260,7 +2419,7 @@ class SourceBindingsEditorWidget(
         self.layout.addWidget(self._match_plan_group())
         self.layout.addWidget(
             self._table_group(
-                "Match Plans",
+                "Resolved Image Set Pairing",
                 ("Scope", "Method", "Dimensions"),
                 tuple(
                     (
@@ -2876,11 +3035,15 @@ class SourceBindingsEditorWidget(
         return group
 
     def _match_plan_group(self) -> QGroupBox:
-        group, layout = self._section_group("Match Plan", "match_plan")
+        group, layout = self._section_group("Image Set Pairing", "match_plan")
         table = self._create_table(0, len(MatchPlanColumn))
         table.setHorizontalHeaderLabels(
-            tuple(column.name.title() for column in MatchPlanColumn)
+            tuple(column.table_header_label for column in MatchPlanColumn)
         )
+        for column in MatchPlanColumn:
+            header_item = table.horizontalHeaderItem(int(column))
+            if header_item is not None and column.table_header_tooltip is not None:
+                header_item.setToolTip(column.table_header_tooltip)
         self.match_plan_table = table
         self.match_plan_controller = self._register_editable_table_controller(
             EditableTableController(
@@ -2907,7 +3070,7 @@ class SourceBindingsEditorWidget(
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(3)
-        add_button = self._compact_button(QPushButton("Add match dimension"))
+        add_button = self._compact_button(QPushButton("Add pairing key"))
         add_button.clicked.connect(self.add_match_plan_row)
         remove_button = self._compact_button(QPushButton("Remove selected"))
         remove_button.clicked.connect(self.remove_selected_match_plan_rows)

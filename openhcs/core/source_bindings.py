@@ -195,7 +195,7 @@ class MetadataExtractionRule:
 
 
 class SourceBindingMatchMethod(Enum):
-    """How a source binding plan matches related source aliases into one image set."""
+    """How selected source aliases are paired into one logical image set."""
 
     METADATA = "metadata"
     ORDER = "order"
@@ -203,7 +203,7 @@ class SourceBindingMatchMethod(Enum):
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingMatchField:
-    """One alias-local metadata field participating in image-set matching."""
+    """Metadata field from one alias used as an image-set pairing key."""
 
     alias: str
     metadata_field: str
@@ -243,7 +243,7 @@ class SourceBindingMatchFields:
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingMatchDimension:
-    """One logical image-set matching slot shared across aliases."""
+    """One shared image-set key, expressed as alias-to-metadata-field pairs."""
 
     fields: tuple[SourceBindingMatchField, ...] = ()
 
@@ -263,7 +263,7 @@ class SourceBindingMatchDimension:
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingMatchPlan:
-    """Typed cross-alias matching plan for source image sets."""
+    """Cross-alias pairing plan for assembling selected sources into image sets."""
 
     method: SourceBindingMatchMethod
     dimensions: tuple[SourceBindingMatchDimension, ...] = ()
@@ -291,7 +291,7 @@ class SourceBindingMatchPlan:
 
 @dataclass(frozen=True, slots=True)
 class ComponentSelector:
-    """Typed component-key selector in existing OpenHCS vocabulary."""
+    """Component-axis key/value pair used either to select sources or assign identity."""
 
     component: Any
     value: str
@@ -309,7 +309,7 @@ class ComponentSelector:
 
 @dataclass(frozen=True, slots=True)
 class MetadataSelector:
-    """Typed metadata-field selector for source binding resolution."""
+    """Metadata field/value filter used to select source candidates for one alias."""
 
     field: str
     value: str
@@ -324,7 +324,7 @@ class MetadataSelector:
 
 @dataclass(frozen=True, slots=True)
 class SourceSelector:
-    """Selector describing how a named source view maps to input space."""
+    """Filters that choose candidate input sources for one named alias."""
 
     components: tuple[ComponentSelector, ...] = ()
     metadata: tuple[MetadataSelector, ...] = ()
@@ -376,7 +376,7 @@ def source_alias_measurement_names(alias: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class SourceAssignmentBase(metaclass=AutoRegisterMeta):
-    """Shared source-assignment identity and selector contract."""
+    """Shared contract for selecting an alias and assigning its semantic identity."""
 
     __registry_key__ = "assignment_kind"
     __skip_if_no_key__ = True
@@ -386,6 +386,7 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
     selector: SourceSelector = SourceSelector()
     origin: SourceBindingOrigin = SourceBindingOrigin.STEP_INPUT
     component_identity: tuple[ComponentSelector, ...] = ()
+    """Semantic component axes assigned after selector resolution."""
 
     def __post_init__(self) -> None:
         normalized_alias = str(self.alias).strip()
@@ -443,7 +444,7 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
 
     @property
     def participates_in_image_stack(self) -> bool:
-        """Whether this source assignment contributes to the main image stack."""
+        """Whether this source assignment contributes to the primary image stack."""
         return self.artifact_kind is ImageArtifactType
 
     def component_identity_with(
@@ -489,12 +490,13 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
 
 @dataclass(frozen=True, slots=True)
 class NamedSourceBinding(SourceAssignmentBase):
-    """Semantic alias mapped to a typed selector over step input space."""
+    """Function input alias mapped to selected sources and assigned identity."""
 
     assignment_kind = "named_source_binding"
     artifact_kind: ArtifactType = ImageArtifactType
     required: bool = True
     participates_in_image_stack: bool = True
+    """Whether this image binding creates primary source-image execution anchors."""
 
     def __post_init__(self) -> None:
         SourceAssignmentBase.__post_init__(self)
@@ -560,7 +562,7 @@ class _SourceBindingPlanBase(ABC, metaclass=SourceBindingPlanMeta):
     """Regex/metadata extraction rules that add semantic fields for matching sources."""
 
     match_plan: SourceBindingMatchPlan | None = None
-    """Optional matching strategy for pairing declared bindings with available sources."""
+    """Optional strategy for pairing selected aliases into logical image sets."""
 
     @classmethod
     def registered_plan_types(cls) -> tuple[type["_SourceBindingPlanBase"], ...]:
@@ -690,7 +692,7 @@ class SourceBindingsConfig(_SourceBindingPlanBase):
 
     @property
     def image_stack_bindings(self) -> tuple[NamedSourceBinding, ...]:
-        """Bindings that anchor execution to the main source-image stack."""
+        """Bindings that anchor execution to the primary source-image stack."""
 
         return tuple(
             binding
