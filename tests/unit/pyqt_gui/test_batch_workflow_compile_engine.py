@@ -414,16 +414,10 @@ def test_plate_pipeline_submission_normalizes_compile_and_run_signatures():
     assert run_payload.request_signature == compile_payload.request_signature
 
 
-def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
-    monkeypatch,
-):
+def test_plate_pipeline_request_builder_uses_steps_without_runtime_rebinding():
     from openhcs.core.steps.function_step import FunctionStep
-    from openhcs.pyqt_gui.widgets.shared.services import (
-        plate_pipeline_request_builder,
-    )
 
     raw_step = FunctionStep(func=_identity_image, name="raw")
-    rebound_step = FunctionStep(func=_identity_image, name="rebound")
     calls = []
 
     class Host:
@@ -431,37 +425,13 @@ def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
             calls.append(("definition", plate_path))
             return [raw_step]
 
-        def cellprofiler_import_result_for_plate(self, plate_path: str):
-            del plate_path
-            return None
-
-    def rebind(**kwargs):
-        calls.append(
-            (
-                "rebind",
-                kwargs["import_result_provider"],
-                kwargs["plate_path"],
-                kwargs["pipeline_steps"],
-            )
-        )
-        return [rebound_step]
-
-    monkeypatch.setattr(
-        plate_pipeline_request_builder.CellProfilerPipelineRuntimeBindingService,
-        "runtime_bound_pipeline_for_plate",
-        rebind,
-    )
-
     pipeline = PlatePipelineRequestBuilder(Host())._definition_pipeline_for_plate(
         plate_path="/tmp/plate",
         display_name="plate",
     )
 
-    assert pipeline == [rebound_step]
+    assert pipeline == [raw_step]
     assert calls[0] == ("definition", "/tmp/plate")
-    assert calls[1][0] == "rebind"
-    assert isinstance(calls[1][1], Host)
-    assert calls[1][2:] == ("/tmp/plate", [raw_step])
 
 
 def test_compile_transport_rejects_unresolved_module_objects():

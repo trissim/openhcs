@@ -103,6 +103,47 @@ def test_transport_authority_normalizes_unstripped_pipeline_steps():
     pickle.dumps(normalized)
 
 
+def test_transport_normalization_preserves_runtime_callable_contracts():
+    from openhcs.interop.cellprofiler.runtime.module_execution import (
+        CellProfilerRuntimeCallable,
+    )
+
+    contract = ModuleArtifactContract(
+        module_name="Crop",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+            ),
+        ),
+    )
+    runtime_callable = _declared_runtime_callable(
+        cellprofiler_backend.crop,
+        contract,
+    )
+
+    normalized = FunctionStepTransportAuthority.normalize_pipeline(
+        [
+            FunctionStep(
+                func=(runtime_callable, {"crop_shape": "Rectangle"}),
+                name="Crop",
+            )
+        ]
+    )
+    normalized_func = normalized[0].func[0]
+    normalized_contract = CallableContract.from_callable(normalized_func)
+
+    assert normalized_func is runtime_callable
+    assert isinstance(normalized_func, CellProfilerRuntimeCallable)
+    assert normalized_contract.module_artifact_contract == contract
+    assert normalized_contract.runtime_adapter is not None
+    pickle.dumps(normalized)
+
+
 def test_zmq_pipeline_transport_source_preserves_cellprofiler_contracts():
     import inspect
 

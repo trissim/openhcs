@@ -91,6 +91,12 @@ class FunctionStepTransportAuthority:
                 f"{func_spec.__name__}. Reload or edit the step to select a function."
             )
         if callable(func_spec):
+            contract = CallableContract.from_callable(func_spec)
+            if (
+                contract.module_artifact_contract is not None
+                or contract.runtime_adapter is not None
+            ):
+                return func_spec
             resolved = FunctionReferenceTransportStrategy.normalized_registered_callable(
                 func_spec
             )
