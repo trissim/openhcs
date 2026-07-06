@@ -63,7 +63,121 @@ class _ComparisonManifestPathResolverLike(Protocol):
 
 
 class _ComparisonManifestLike(Protocol):
+    payload: Mapping[str, JsonValue]
     path_resolver: _ComparisonManifestPathResolverLike
+
+
+@dataclass(frozen=True, slots=True)
+class _ComparisonManifestPathResolver:
+    """Product-local resolver for portable comparison-manifest paths."""
+
+    roots: Mapping[str, Path]
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, JsonValue],
+        *,
+        cellprofiler_examples_root: str | None,
+        dataset_cache_root: str | None,
+    ) -> "_ComparisonManifestPathResolver":
+        raw_roots = payload.get("path_roots")
+        if raw_roots is None:
+            raw_roots = {}
+        if not isinstance(raw_roots, Mapping):
+            raise ValueError("Comparison manifest path_roots must be an object.")
+        return cls(
+            {
+                str(name): _comparison_manifest_root_path(
+                    str(name),
+                    raw_root,
+                    cellprofiler_examples_root=cellprofiler_examples_root,
+                    dataset_cache_root=dataset_cache_root,
+                )
+                for name, raw_root in raw_roots.items()
+            }
+        )
+
+    def resolve(self, raw_case: Mapping[str, JsonValue], path_key: str) -> Path:
+        root_key = raw_case.get(f"{path_key}_root")
+        raw_path = raw_case.get(path_key)
+        if raw_path is None:
+            raise ValueError(f"Comparison manifest case missing path {path_key!r}.")
+        path = Path(os.path.expandvars(str(raw_path))).expanduser()
+        if root_key is None:
+            return path
+        return self.roots[str(root_key)] / path
+
+
+@dataclass(frozen=True, slots=True)
+class _ComparisonManifestSnapshot:
+    """Minimal comparison-manifest surface used by the knowledge base."""
+
+    payload: Mapping[str, JsonValue]
+    path_resolver: _ComparisonManifestPathResolver
+
+    @classmethod
+    def load(
+        cls,
+        path: Path,
+        *,
+        cellprofiler_examples_root: str | None,
+        dataset_cache_root: str | None,
+    ) -> "_ComparisonManifestSnapshot":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            raise ValueError("Comparison manifest must be a JSON object.")
+        return cls(
+            payload=payload,
+            path_resolver=_ComparisonManifestPathResolver.from_payload(
+                payload,
+                cellprofiler_examples_root=cellprofiler_examples_root,
+                dataset_cache_root=dataset_cache_root,
+            ),
+        )
+
+
+def _comparison_manifest_root_path(
+    name: str,
+    raw_root: JsonValue,
+    *,
+    cellprofiler_examples_root: str | None,
+    dataset_cache_root: str | None,
+) -> Path:
+    if isinstance(raw_root, str):
+        return Path(os.path.expandvars(raw_root)).expanduser()
+    if not isinstance(raw_root, Mapping):
+        raise ValueError(f"Comparison manifest path root {name!r} is invalid.")
+
+    raw_env = raw_root.get("env")
+    if isinstance(raw_env, str):
+        env_value = os.environ.get(raw_env)
+        if env_value is not None:
+            return Path(os.path.expandvars(env_value)).expanduser()
+
+    raw_path = raw_root.get("path")
+    if isinstance(raw_path, str):
+        return Path(os.path.expandvars(raw_path)).expanduser()
+
+    raw_default_kind = raw_root.get("default_kind")
+    if raw_default_kind == "cellprofiler_examples":
+        return (
+            Path(cellprofiler_examples_root).expanduser()
+            if cellprofiler_examples_root is not None
+            else Path.home() / ".cache" / "openhcs" / "cellprofiler_examples"
+        )
+    if raw_default_kind == "benchmark_dataset_cache":
+        return (
+            Path(dataset_cache_root).expanduser()
+            if dataset_cache_root is not None
+            else Path.home() / ".cache" / "openhcs" / "benchmark_datasets"
+        )
+
+    raw_default = raw_root.get("default")
+    if isinstance(raw_default, str):
+        return Path(os.path.expandvars(raw_default)).expanduser()
+
+    raise ValueError(f"Comparison manifest path root {name!r} has no path.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1102,12 +1216,15 @@ def _official30_module_inventories_cached(
     cellprofiler_examples_root: str | None,
     dataset_cache_root: str | None,
 ) -> tuple[_Official30CaseModuleInventory, ...]:
-    del manifest_mtime_ns, cellprofiler_examples_root, dataset_cache_root
+    del manifest_mtime_ns
 
-    from benchmark.contracts.comparison_manifest import ComparisonManifest
     from openhcs.interop.cellprofiler.parser import CPPipeParser
 
-    manifest = ComparisonManifest.load(Path(manifest_path), materialize_roots=False)
+    manifest = _ComparisonManifestSnapshot.load(
+        Path(manifest_path),
+        cellprofiler_examples_root=cellprofiler_examples_root,
+        dataset_cache_root=dataset_cache_root,
+    )
     raw_cases = manifest.payload.get("cases")
     if not isinstance(raw_cases, list):
         return ()

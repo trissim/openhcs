@@ -54,7 +54,7 @@ from openhcs.agent.serialization import to_jsonable
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import SpecialArtifactType
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.pipeline.path_planner import MissingArtifactInputError
@@ -1317,7 +1317,7 @@ def _bounded_step_summaries(compiled_contexts, axes: tuple[str, ...]):
 def _artifact_input_summary(plan) -> ArtifactInputPlanSummary:
     return ArtifactInputPlanSummary(
         name=str(plan.name),
-        kind=str(plan.kind.value),
+        kind=str(plan.artifact_type.value),
         path=str(plan.path),
         group_keys=tuple(plan.group_keys),
         paths_by_group=_artifact_paths_by_group(plan),
@@ -1334,7 +1334,7 @@ def _artifact_summary(
 ) -> ArtifactPlanSummary:
     return ArtifactPlanSummary(
         name=str(plan.name),
-        kind=str(plan.kind.value),
+        kind=str(plan.artifact_type.value),
         path=str(plan.path),
         group_keys=tuple(plan.group_keys),
         paths_by_group=_artifact_paths_by_group(plan),
@@ -1364,7 +1364,7 @@ def _artifact_materialization_summary(
 ) -> ArtifactMaterializationPlanSummary | None:
     if (
         output_plan.materialization is None
-        and output_plan.kind is ArtifactKind.SPECIAL
+        and output_plan.artifact_type is SpecialArtifactType
     ):
         return None
 

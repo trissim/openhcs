@@ -238,8 +238,8 @@ class CustomFunctionRuntimeSection(
     section_id = "custom_function_runtime"
     content = """=== CUSTOM FUNCTIONS AND RUNTIME OUTPUTS ===
 - Custom functions are registry functions used inside FunctionStep.func patterns: callable, (callable, kwargs), list chains, or component/group keyed patterns.
-- Dict patterns are routed by processing_config.group_by; list and single-callable patterns use the default group but still participate in grouped artifact naming.
-- processing_config.variable_components are the axes stacked into each callable input array; group_by is the partition/fanout axis for routing, execution, and output identity.
+- Dict patterns are routed by processing_config.group_by; list and single-callable patterns apply the same callable chain to each grouped 3D array.
+- processing_config.variable_components are the axes stacked into each callable input array; group_by groups the remaining 3D arrays and only selects callable branches for dict patterns.
 - Memory decorators such as @numpy define runtime memory conversion; FunctionStep processing_config defines grouping, axes, and input source.
 - Declare non-image outputs with artifact_outputs plus MaterializationSpec/CsvOptions/JsonOptions, or ROI/image presets such as segmentation_mask_rois and tiff_stack.
 - Artifact graph planning owns output names, sidecar results, materialization intent, and downstream artifact inputs; do not encode those as ad hoc files or hidden globals.

@@ -57,7 +57,7 @@ class LiveMeasurementTableEntry:
             _semantic_sort_atom(self.plate_id),
             *(_semantic_sort_atom(part) for part in astuple(address.key.scope)),
             _semantic_sort_atom(self.step_name),
-            _semantic_sort_atom(address.key.kind.value),
+            _semantic_sort_atom(address.key.artifact_type.value),
             _semantic_sort_atom(address.key.name),
             _semantic_sort_atom(self.preview.object_name),
             self.sequence_id,

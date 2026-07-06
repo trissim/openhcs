@@ -87,13 +87,12 @@ class FunctionArtifactSpec:
 class CellProfilerModuleDeclarationSummary:
     module_name: str
     declaration_class: str
-    category: str
-    contract: str
     validated: bool
     function_names: tuple[str, ...]
     aliases: tuple[str, ...] = ()
     declared_artifact_input_settings: tuple[str, ...] = ()
     declared_artifact_output_settings: tuple[str, ...] = ()
+    default_variable_components: tuple[str, ...] = ()
     required_variable_components: tuple[str, ...] = ()
 
 

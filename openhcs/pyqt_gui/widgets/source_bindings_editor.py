@@ -74,7 +74,7 @@ from openhcs.core.source_bindings import (
     SourceBindingsConfig,
     StepSourceBindingsConfig,
 )
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactType, ImageArtifactType
 from openhcs.core.source_bindings_view import (
     SourceBindingsPreview,
     SourceBindingsViewModel,
@@ -184,7 +184,7 @@ class SourceBindingColumn(EditableTableColumn):
     """Editable table columns for one named source binding."""
 
     ALIAS = (0, None)
-    KIND = (1, ArtifactKind)
+    KIND = (1, ArtifactType)
     ORIGIN = (2, SourceBindingOrigin)
     REQUIRED = (3, None)
     COMPONENTS = (4, None)
@@ -983,7 +983,7 @@ class EditableSourceBindingRow:
         return cls(
             binding=NamedSourceBinding(
                 alias=alias,
-                artifact_kind=ArtifactKind(artifact_kind or ArtifactKind.IMAGE.value),
+                artifact_kind=ArtifactType.coerce(artifact_kind or ImageArtifactType.value),
                 selector=selector,
                 origin=SourceBindingOrigin(origin or SourceBindingOrigin.STEP_INPUT.value),
                 required=required.lower() not in {"false", "0", "no", "n"},
