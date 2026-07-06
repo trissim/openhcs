@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -20,11 +21,15 @@ from openhcs.core.config import (
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.debug import DebugCommandType
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.services.plate_scope_identity import (
+    PipelineScopeIdentity,
+    PlateScopeIdentity,
+)
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
@@ -270,6 +275,41 @@ def test_pipeline_editor_code_document_apply_notifies_plate_manager() -> None:
         ObjectStateRegistry.clear()
 
 
+def test_pipeline_editor_code_apply_ignores_cellprofiler_import_result_from_other_plate() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    plate_manager = PlateManagerDefinitionChangeRecorder()
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = plate_manager
+    widget.cellprofiler_import_results_by_plate["old-cppipe-plate"] = SimpleNamespace(
+        generated_module_name="stale_generated_cellprofiler_pipeline",
+        provenance=SimpleNamespace(
+            processing_modules=(SimpleNamespace(module_num=1),),
+        ),
+        artifact_contracts=(
+            ModuleArtifactContract(module_name="ColorToGray"),
+        ),
+    )
+    driver = widget.code_document_driver()
+
+    try:
+        assert driver is not None
+        driver.apply_source(
+            "from openhcs.core.steps.function_step import FunctionStep\n"
+            "pipeline_steps = [FunctionStep(name='SyntheticTestPipeline')]\n"
+        )
+
+        assert [step.name for step in widget.pipeline_steps] == [
+            "SyntheticTestPipeline"
+        ]
+        assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
 def test_pipeline_editor_code_document_reads_function_child_object_state() -> None:
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
@@ -329,11 +369,72 @@ def test_pipeline_editor_clear_selection_does_not_require_plate_scope() -> None:
 def test_pipeline_editor_time_travel_restore_broadcasts_restored_pipeline() -> None:
     restored_steps = [FunctionStep(name="First"), FunctionStep(name="Second")]
 
+    class SuppressionAwareSignalRecorder(SignalRecorder):
+        def __init__(self, editor) -> None:
+            super().__init__()
+            self.editor = editor
+            self.suppression_values = []
+
+        def emit(self, value):
+            self.suppression_values.append(self.editor._suppress_pipeline_state_sync)
+            super().emit(value)
+
     class Editor:
         current_plate = TEST_PLATE_SCOPE
 
         def __init__(self) -> None:
             self.pipeline_steps = []
+            self._suppress_pipeline_state_sync = False
+            self.pipeline_changed = SuppressionAwareSignalRecorder(self)
+            self.event_bus = EventBusRecorder()
+            self.normalized = False
+            self.list_updated = False
+            self.buttons_updated = False
+
+        def _get_steps_from_pipeline_state(self, plate_path):
+            assert plate_path == self.current_plate
+            return restored_steps
+
+        def _normalize_step_scope_tokens(self, *, register):
+            assert register is False
+            self.normalized = True
+
+        def update_item_list(self):
+            self.list_updated = True
+
+        def update_button_states(self):
+            self.buttons_updated = True
+
+    editor = Editor()
+
+    PipelineEditorListWorkflow(editor).restore_after_time_travel(
+        dirty_states=[
+            (
+                PipelineScopeIdentity.from_plate_scope(TEST_PLATE_SCOPE).scope_id,
+                object(),
+            )
+        ],
+    )
+
+    assert editor.pipeline_steps == restored_steps
+    assert editor.normalized is True
+    assert editor.list_updated is True
+    assert editor.buttons_updated is True
+    assert editor.pipeline_changed.emissions == [restored_steps]
+    assert editor.pipeline_changed.suppression_values == [True]
+    assert editor._suppress_pipeline_state_sync is False
+    assert editor.event_bus.pipeline_emissions == [restored_steps]
+
+
+def test_pipeline_editor_time_travel_step_field_restore_stays_local() -> None:
+    restored_steps = [FunctionStep(name="First"), FunctionStep(name="Second")]
+
+    class Editor:
+        current_plate = TEST_PLATE_SCOPE
+
+        def __init__(self) -> None:
+            self.pipeline_steps = []
+            self._suppress_pipeline_state_sync = False
             self.pipeline_changed = SignalRecorder()
             self.event_bus = EventBusRecorder()
             self.normalized = False
@@ -356,14 +457,16 @@ def test_pipeline_editor_time_travel_restore_broadcasts_restored_pipeline() -> N
 
     editor = Editor()
 
-    PipelineEditorListWorkflow(editor).restore_after_time_travel()
+    PipelineEditorListWorkflow(editor).restore_after_time_travel(
+        dirty_states=[(f"{TEST_PLATE_SCOPE}::functionstep_0", object())],
+    )
 
     assert editor.pipeline_steps == restored_steps
     assert editor.normalized is True
     assert editor.list_updated is True
     assert editor.buttons_updated is True
-    assert editor.pipeline_changed.emissions == [restored_steps]
-    assert editor.event_bus.pipeline_emissions == [restored_steps]
+    assert editor.pipeline_changed.emissions == []
+    assert editor.event_bus.pipeline_emissions == []
 
 
 def test_pipeline_editor_step_display_is_numbered_without_renaming_step() -> None:

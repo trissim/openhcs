@@ -7994,6 +7994,8 @@ def test_mcp_dev_client_actions_command_renders_side_effects_and_tokens():
                                 "current_selection_count": 1,
                                 "target_scope_ids": ["/tmp/plate"],
                                 "selection_revision_token": "selection-rev",
+                                "selection_mode": "selected_plate",
+                                "related_state_surface_ids": ["plate_manager.state"],
                                 "side_effects": ["starts_compile_workflow"],
                             }
                         ],
@@ -8016,6 +8018,7 @@ def test_mcp_dev_client_actions_command_renders_side_effects_and_tokens():
         "confirm=True mode=sync selection=1 targets=/tmp/plate "
         "selection_rev=selection-rev effects=starts_compile_workflow"
     ) in rendered
+    assert "selection_mode=selected_plate surfaces=plate_manager.state" in rendered
 
 
 def test_mcp_dev_client_actions_command_can_filter_by_widget_id():
@@ -8225,6 +8228,7 @@ def test_mcp_dev_client_invoke_action_renders_receipt_and_polling():
                             {
                                 "code": "confirmation_required",
                                 "message": "UI confirmation is required.",
+                                "hint": "Call openhcs_ui_navigate_window for direct ObjectState navigation.",
                             }
                         ],
                         "warnings": [],
@@ -8247,6 +8251,7 @@ def test_mcp_dev_client_invoke_action_renders_receipt_and_polling():
     assert "Selection: targets=/tmp/plate selection_rev=selection-rev" in rendered
     assert "Polling: surfaces=plate_manager.state interval_ms=500" in rendered
     assert "- confirmation_required: UI confirmation is required." in rendered
+    assert "hint=\"Call openhcs_ui_navigate_window" in rendered
 
 
 def test_mcp_dev_client_invoke_widget_action_projects_tool_arguments():

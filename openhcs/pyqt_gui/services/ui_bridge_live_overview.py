@@ -25,7 +25,7 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeSnapshotProviderABC,
     UiStateSurfaceProviderABC,
     UiStateSurfaceProviderIdentity,
-    UiWindowProviderIdentity,
+    UiLiveOverviewContributorIdentity,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
@@ -112,24 +112,21 @@ class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
 
     def _sections(self) -> tuple[UiLiveOverviewSection, ...]:
         sections: list[UiLiveOverviewSection] = []
-        for provider in (
-            self._registry.state_surface_providers()
-            + self._registry.window_providers()
-        ):
+        for provider in self._registry.overview_contributors():
             try:
                 sections.extend(provider.overview_sections())
             except Exception as exc:
-                sections.append(self._provider_error_section(provider.identity, exc))
+                sections.append(self._provider_error_section(provider.overview_identity, exc))
         return tuple(sections)
 
     @staticmethod
     def _provider_error_section(
-        identity: UiStateSurfaceProviderIdentity | UiWindowProviderIdentity,
+        identity: UiLiveOverviewContributorIdentity,
         exc: Exception,
     ) -> UiLiveOverviewSection:
         error = AgentError.from_exception("ui_live_overview_provider_failed", exc)
         return UiLiveOverviewSection(
-            section_id=identity.revision_key,
+            section_id=identity.section_id,
             title=identity.title,
             summary="overview unavailable",
             items=(

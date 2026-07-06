@@ -62,6 +62,26 @@ class UiBridgeRegistryKeyMixin:
     registry_key: ClassVar[str | None] = None
 
 
+@dataclass(frozen=True, slots=True)
+class UiLiveOverviewContributorIdentity:
+    """Stable identity for one live-overview contribution source."""
+
+    section_id: str
+    title: str
+
+
+class UiLiveOverviewContributorABC(ABC):
+    """Nominal capability for providers that contribute to the live overview."""
+
+    @property
+    @abstractmethod
+    def overview_identity(self) -> UiLiveOverviewContributorIdentity:
+        raise NotImplementedError
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        return ()
+
+
 class UiLiveOverviewWidget:
     """Nominal widget capability for UI-owned live overview contributions."""
 
@@ -105,10 +125,17 @@ class UiCodeDocumentProviderABC(ABC):
         raise NotImplementedError
 
 
-class UiStateSurfaceProviderABC(ABC):
+class UiStateSurfaceProviderABC(UiLiveOverviewContributorABC):
     """Provider contract for one pollable UI state surface."""
 
     identity: "UiStateSurfaceProviderIdentity"
+
+    @property
+    def overview_identity(self) -> UiLiveOverviewContributorIdentity:
+        return UiLiveOverviewContributorIdentity(
+            section_id=self.identity.revision_key,
+            title=self.identity.title,
+        )
 
     @abstractmethod
     def summary(self) -> UiStateSurfaceSummary:
@@ -117,10 +144,6 @@ class UiStateSurfaceProviderABC(ABC):
     @abstractmethod
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
         raise NotImplementedError
-
-    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
-        """Return agent-facing live-overview sections owned by this provider."""
-        return ()
 
 
 class UiActionProviderABC(ABC):
@@ -141,10 +164,17 @@ class UiActionProviderABC(ABC):
         raise NotImplementedError
 
 
-class UiWindowProviderABC(ABC):
+class UiWindowProviderABC(UiLiveOverviewContributorABC):
     """Provider contract for a catalog of focusable UI windows."""
 
     identity: "UiWindowProviderIdentity"
+
+    @property
+    def overview_identity(self) -> UiLiveOverviewContributorIdentity:
+        return UiLiveOverviewContributorIdentity(
+            section_id=self.identity.revision_key,
+            title=self.identity.title,
+        )
 
     @abstractmethod
     def catalog(self) -> UiWindowCatalog:
@@ -180,10 +210,6 @@ class UiWindowProviderABC(ABC):
         request: UiWidgetActionInvokeRequest,
     ) -> UiWidgetActionInvokeResult:
         raise NotImplementedError
-
-    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
-        """Return agent-facing live-overview sections owned by this provider."""
-        return ()
 
 
 class UiObjectStateScopeProviderABC(ABC):

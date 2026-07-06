@@ -47,6 +47,9 @@ from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.services.function_navigation import is_function_field_path
 from pyqt_reactive.services.window_navigation import (
     FieldWindowNavigationDriver,
+    NavigationWaitReason,
+    RegisteredWindowNavigationReadiness,
+    RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
 )
 from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
@@ -91,6 +94,70 @@ def _function_step_form_field_names() -> frozenset[str]:
     return frozenset(
         SignatureAnalyzer.analyze(AbstractStep.__init__).keys()
     ) | frozenset(SignatureAnalyzer.analyze(FunctionStep.__init__).keys())
+
+
+class DualEditorWindowNavigationDriver(WindowNavigationDriver):
+    """Navigate through the child editor that owns the requested field target."""
+
+    def __init__(self, owner: "DualEditorWindow") -> None:
+        self.owner = owner
+        self.step_navigation_driver: WindowNavigationDriver | None = None
+        self.function_navigation_driver: WindowNavigationDriver | None = None
+
+    def readiness(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> RegisteredWindowNavigationReadiness:
+        driver = self.driver_for_field_path(request.field_path)
+        if driver is None:
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.ROOT_WIDGETS,
+            )
+        return driver.readiness(request)
+
+    def build_complete_callbacks(self):
+        step_editor = self.owner.step_editor
+        if step_editor is None:
+            return ()
+        return step_editor.window_navigation_driver().build_complete_callbacks()
+
+    def execute(self, request: RegisteredWindowNavigationRequest) -> None:
+        driver = self.driver_for_field_path(request.field_path)
+        if driver is None:
+            return
+        self.select_tab_for_field_path(request.field_path)
+        driver.execute(request)
+
+    def driver_for_field_path(
+        self,
+        field_path: str | None,
+    ) -> WindowNavigationDriver | None:
+        if field_path is None:
+            return None
+        if is_function_field_path(field_path):
+            func_editor = self.owner.func_editor
+            if func_editor is None:
+                return None
+            if self.function_navigation_driver is None:
+                self.function_navigation_driver = FieldWindowNavigationDriver(
+                    func_editor.select_and_scroll_to_field
+                )
+            return self.function_navigation_driver
+        step_editor = self.owner.step_editor
+        if step_editor is None:
+            return None
+        if self.step_navigation_driver is None:
+            self.step_navigation_driver = step_editor.window_navigation_driver()
+        return self.step_navigation_driver
+
+    def select_tab_for_field_path(self, field_path: str | None) -> None:
+        tab_widget = self.owner.tab_widget
+        if tab_widget is None or field_path is None:
+            return
+        if is_function_field_path(field_path):
+            tab_widget.setCurrentIndex(1)
+        else:
+            tab_widget.setCurrentIndex(0)
 
 
 class DualEditorWindow(BaseFormDialog):
@@ -204,6 +271,8 @@ class DualEditorWindow(BaseFormDialog):
         self._save_button_base_style = ""
         self._function_pattern_controller = None
         self._time_travel_title_refresh_callback = None
+        self._event_bus = None
+        self._orchestrator_config_signal = None
 
         # Setup UI
         self.setup_ui()
@@ -343,16 +412,7 @@ class DualEditorWindow(BaseFormDialog):
         self.save_button.setMinimumWidth(70)
         self.save_button.setEnabled(False)
         self.setup_save_button(self.save_button, self.save_edit)
-        self._save_button_base_style = (
-            button_styles["compact"]
-            + f"""
-            QPushButton:disabled {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
-                border: none;
-            }}
-        """
-        )
+        self._save_button_base_style = button_styles["compact"]
         self.save_button.setStyleSheet(self._save_button_base_style)
 
         self._title_header = FormWindowActionHeader(
@@ -514,7 +574,7 @@ class DualEditorWindow(BaseFormDialog):
         self._scope_accent_color = accent_color
         hex_color = accent_color.name()
 
-        self._style_save_button_for_scope(hex_color, accent_color)
+        self._style_save_button_for_scope(accent_color)
         self._style_header_for_scope(hex_color)
         self._style_tabs_for_scope(hex_color, accent_color)
         self._style_step_editor_for_scope(hex_color)
@@ -531,24 +591,10 @@ class DualEditorWindow(BaseFormDialog):
             )
         return accent_color
 
-    def _style_save_button_for_scope(self, hex_color: str, accent_color) -> None:
-        self._save_button_base_style = f"""
-            QPushButton {{
-                background-color: {hex_color};
-                color: white;
-                border: none;
-                border-radius: 3px;
-                padding: 8px;
-            }}
-            QPushButton:hover {{
-                background-color: {accent_color.lighter(115).name()};
-            }}
-            QPushButton:disabled {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
-                border: none;
-            }}
-        """
+    def _style_save_button_for_scope(self, accent_color) -> None:
+        self._save_button_base_style = (
+            self.style_generator.generate_scope_accent_button_style(accent_color)
+        )
         self.save_button.setStyleSheet(self._save_button_base_style)
 
     def _style_header_for_scope(self, hex_color: str) -> None:
@@ -613,7 +659,7 @@ class DualEditorWindow(BaseFormDialog):
         if self._flash_overlay is None:
             from pyqt_reactive.animation import WindowFlashOverlay
 
-            self._flash_overlay = WindowFlashOverlay(self)
+            self._flash_overlay = WindowFlashOverlay.get_for_window(self)
             self._flash_overlay_cleaned = False
 
     def _build_step_scope_id(self) -> str:
@@ -753,7 +799,38 @@ class DualEditorWindow(BaseFormDialog):
             event_bus.pipeline_changed.connect(self._on_pipeline_changed)
             event_bus.config_changed.connect(self._on_config_changed)
             event_bus.register_window(self)
+            self._event_bus = event_bus
             logger.debug("Connected to global event bus for cross-window updates")
+
+    def connect_orchestrator_config_signal(self, signal) -> None:
+        """Subscribe this editor to orchestrator config updates."""
+        signal.connect(self.on_orchestrator_config_changed)
+        self._orchestrator_config_signal = signal
+
+    def _cleanup_managed_listeners(self) -> None:
+        """Disconnect editor-owned cross-window subscriptions."""
+        event_bus = self._event_bus
+        if event_bus is not None:
+            try:
+                event_bus.pipeline_changed.disconnect(self._on_pipeline_changed)
+            except TypeError:
+                pass
+            try:
+                event_bus.config_changed.disconnect(self._on_config_changed)
+            except TypeError:
+                pass
+            event_bus.unregister_window(self)
+            self._event_bus = None
+
+        orchestrator_signal = self._orchestrator_config_signal
+        if orchestrator_signal is not None:
+            try:
+                orchestrator_signal.disconnect(self.on_orchestrator_config_changed)
+            except TypeError:
+                pass
+            self._orchestrator_config_signal = None
+
+        super()._cleanup_managed_listeners()
 
     def _schedule_function_editor_sync(self):
         """Schedule a batched sync of the function editor."""
@@ -1064,7 +1141,7 @@ class DualEditorWindow(BaseFormDialog):
 
     def window_navigation_driver(self) -> WindowNavigationDriver:
         """Return explicit field navigation behavior for WindowManager."""
-        return FieldWindowNavigationDriver(self.select_and_scroll_to_field)
+        return DualEditorWindowNavigationDriver(self)
 
     def _clone_step(self, step):
         """Clone a step object using deep copy."""

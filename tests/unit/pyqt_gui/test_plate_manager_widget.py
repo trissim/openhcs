@@ -365,17 +365,14 @@ class TestPlateManagerWidget:
             close_widget(widget)
             ObjectStateRegistry.clear()
 
-    def test_plate_selection_seeds_cellprofiler_pipeline_before_editor_signal(
+    def test_explicit_cellprofiler_import_seeds_pipeline_before_editor_signal(
         self,
         monkeypatch,
         tmp_path: Path,
     ) -> None:
         ObjectStateRegistry.clear()
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
-        service_adapter = PlateManagerServiceStub()
-        ensure_global_config_context(
-            GlobalPipelineConfig, service_adapter.global_config
-        )
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
         plate_root = tmp_path / "plate"
         plate_root.mkdir()
         plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
@@ -399,13 +396,16 @@ class TestPlateManagerWidget:
             )
         )
 
-        widget.selected_plate_path = plate_scope
-        widget.plate_selected.emit(plate_scope)
+        try:
+            widget._load_cellprofiler_pipeline_from_orchestrator(plate_scope)
+            widget.selected_plate_path = plate_scope
+            widget.plate_selected.emit(plate_scope)
 
-        assert signal_observations
-        assert [step.name for step in signal_observations[0]] == ["Second"]
-        close_widget(widget)
-        ObjectStateRegistry.clear()
+            assert signal_observations
+            assert [step.name for step in signal_observations[0]] == ["Second"]
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_code_mode_per_plate_config_refreshes_delegate_saved_baseline(
         self,
@@ -625,6 +625,60 @@ class TestPlateManagerWidget:
                 )
                 == "A01"
             )
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_plate_selection_does_not_reseed_dirty_cellprofiler_config(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        imported_config = PipelineConfig(
+            source_bindings_config=SourceBindingsConfig(
+                match_plan=SourceBindingMatchPlan(
+                    method=SourceBindingMatchMethod.ORDER,
+                ),
+            ),
+        )
+        imported_steps = [FunctionStep(func=lambda image: image, name="Imported")]
+        orchestrator = PipelineOrchestrator(plate_path=plate_root)
+        orchestrator.input_workspace_preparation_result = (
+            CellProfilerWorkspaceResultFixture.with_steps(
+                tuple(imported_steps),
+                pipeline_config=imported_config,
+            )
+        )
+        state = ObjectState(orchestrator, scope_id=plate_scope)
+        ObjectStateRegistry.register(state, _skip_snapshot=True)
+
+        try:
+            widget._load_cellprofiler_pipeline_from_workspace(
+                plate_scope,
+                orchestrator.input_workspace_preparation_result,
+            )
+            state.update_parameter(
+                "source_bindings_config.match_plan.method",
+                SourceBindingMatchMethod.METADATA,
+            )
+
+            widget.plate_selected.emit(plate_scope)
+
+            assert (
+                state.parameters["source_bindings_config.match_plan.method"]
+                is SourceBindingMatchMethod.METADATA
+            )
+            assert "source_bindings_config.match_plan.method" in state.dirty_fields
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
+            ] == ["Imported"]
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import ClassVar
 
+from objectstate import DottedFieldPath
 from pyqt_reactive.services.widget_tree_projection_config import (
     WidgetNodeIdentity,
     WidgetTreeProjectionControls,
@@ -100,6 +101,12 @@ class UiBridgeOperationStatus(str, Enum):
     FAILED = "failed"
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
+
+    @property
+    def live_overview_severity(self) -> str:
+        if self in {self.FAILED, self.NOT_FOUND, self.UNAVAILABLE}:
+            return UiLiveOverviewSeverity.ERROR.value
+        return UiLiveOverviewSeverity.INFO.value
 
 
 class UiBridgeConnectionDefault:
@@ -1420,7 +1427,7 @@ class UiObjectStateFieldPathIndex:
             field_path
             for field_path in field_paths
             if any(
-                other_path.startswith(f"{field_path}.")
+                DottedFieldPath(field_path).contains_path(other_path)
                 for other_path in field_paths
                 if other_path != field_path
             )
@@ -2016,6 +2023,16 @@ class UiSnapshotRestoreRequest(
             allow_auto_branch=allow_auto_branch,
         )
 
+    @property
+    def operation_target_id(self) -> str | None:
+        if self.snapshot_id is not None:
+            return self.snapshot_id
+        if self.branch is not None:
+            return self.branch
+        if self.index is not None:
+            return str(self.index)
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class UiTimeTravelHeadRequest(UiBridgeConfirmationPolicy):
@@ -2038,6 +2055,8 @@ class UiSnapshotRestoreResult(UiCurrentSnapshotState):
     restored: bool
     target_snapshot: UiSnapshotRef | None
     catalog: UiSnapshotCatalog | None = None
+    operation_id: str | None = None
+    receipt: UiMutationReceipt | None = None
     errors: tuple[AgentError, ...] = ()
     warnings: tuple[AgentWarning, ...] = ()
 

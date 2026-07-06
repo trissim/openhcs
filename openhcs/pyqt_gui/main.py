@@ -837,38 +837,79 @@ class OpenHCSMainWindow(QMainWindow):
             dirty_states: List of (scope_id, ObjectState) tuples with unsaved changes
             triggering_scope: Scope that triggered the snapshot (for logging only)
         """
-        from pyqt_reactive.services.scope_window_navigation import (
-            ScopeWindowNavigationService,
-        )
-        from pyqt_reactive.services.window_navigation import WindowNavigationRequest
-
         logger.debug(
             f"⏱️ TIME_TRAVEL_CALLBACK: triggering_scope={triggering_scope!r} dirty_count={len(dirty_states)}"
         )
 
-        pending = self._build_time_travel_window_requests(
-            dirty_states,
-            triggering_scope,
+        from objectstate.time_travel_profile import TimeTravelProfiler
+
+        with TimeTravelProfiler.phase(
+            "openhcs.main.build_time_travel_window_requests",
+            dirty_states=len(dirty_states),
+        ):
+            pending = self._build_time_travel_window_requests(
+                dirty_states,
+                triggering_scope,
+            )
+        if not pending:
+            return
+
+        self._defer_time_travel_navigation(
+            lambda: self._execute_time_travel_window_requests(
+                pending,
+                triggering_scope,
+            )
         )
 
-        for request in pending.values():
-            field_path = (
-                request.target.to_field_path() if request.target is not None else None
-            )
-            result = ScopeWindowNavigationService.navigate(
-                WindowNavigationRequest(
-                    scope_id=request.scope_id,
-                    object_state=request.object_state,
+    def _defer_time_travel_navigation(self, callback) -> None:
+        """Run time-travel navigation after queued restore refreshes settle."""
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, lambda: QTimer.singleShot(0, callback))
+
+    def _execute_time_travel_window_requests(
+        self,
+        pending: dict[str, TimeTravelWindowRequest],
+        triggering_scope: str | None,
+    ) -> None:
+        """Open/focus the windows targeted by a completed time-travel restore."""
+        from pyqt_reactive.services.scope_window_navigation import (
+            ScopeWindowNavigationService,
+        )
+        from pyqt_reactive.services.window_navigation import WindowNavigationRequest
+        from objectstate.time_travel_profile import TimeTravelProfiler
+
+        with TimeTravelProfiler.phase(
+            "openhcs.main.execute_time_travel_window_requests",
+            requests=len(pending),
+        ):
+            for request in pending.values():
+                field_path = (
+                    request.target.to_field_path() if request.target is not None else None
+                )
+                with TimeTravelProfiler.phase(
+                    "openhcs.main.navigate_window",
+                    scope=request.scope_id,
                     field_path=field_path,
-                    create_if_missing=True,
-                )
-            )
-            if result.created:
-                logger.info(
-                    f"⏱️ TIME_TRAVEL: Reopened window for dirty state: {request.scope_id}"
-                )
-            if result.window is not None:
-                self._select_tab_for_time_travel(request.scope_id, request.target)
+                ):
+                    result = ScopeWindowNavigationService.navigate(
+                        WindowNavigationRequest(
+                            scope_id=request.scope_id,
+                            object_state=request.object_state,
+                            field_path=field_path,
+                            create_if_missing=triggering_scope is not None,
+                        )
+                    )
+                if result.created:
+                    logger.info(
+                        f"⏱️ TIME_TRAVEL: Opened window for changed state: {request.scope_id}"
+                    )
+                if result.window is not None:
+                    with TimeTravelProfiler.phase(
+                        "openhcs.main.select_time_travel_tab",
+                        scope=request.scope_id,
+                    ):
+                        self._select_tab_for_time_travel(request.scope_id, request.target)
 
     def _build_time_travel_window_requests(
         self,

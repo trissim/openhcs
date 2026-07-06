@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
     UiAgentBridgeService,
+    UiBridgeOperationTracker,
     UiObjectStateSnapshotProvider,
 )
 from openhcs.pyqt_gui.services.ui_bridge_object_state import ObjectStateBridgeProviderSet
@@ -47,7 +48,9 @@ class OpenHCSUiBridgeCompositionRoot:
 
     def build_service(self) -> UiAgentBridgeService:
         snapshot_provider = UiObjectStateSnapshotProvider()
+        operation_tracker = UiBridgeOperationTracker()
         registry = UiBridgeSurfaceRegistry()
+        registry.register_live_overview_contributor(operation_tracker)
         self.provider_set.register(
             UiBridgeRegistrationContext(
                 registry=registry,
@@ -57,4 +60,5 @@ class OpenHCSUiBridgeCompositionRoot:
         return UiAgentBridgeService(
             registry=registry,
             snapshot_provider=snapshot_provider,
+            operation_tracker=operation_tracker,
         )

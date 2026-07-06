@@ -66,6 +66,7 @@ from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
     UiAgentBridgeService,
+    UiBridgeOperationTracker,
     UiCodeDocumentSourcePolicy,
     UiObjectStateSnapshotProvider,
 )
@@ -90,6 +91,12 @@ from openhcs.pyqt_gui.services.pycodified_window_code_document import (
 from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
 from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
     PipelineEditorBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
+    PlateManagerBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_live_overview import (
+    LiveOverviewBridgeProviderSet,
 )
 from openhcs.pyqt_gui.services.ui_bridge_windows import (
     MainWindowBridgeProviderSet,
@@ -163,7 +170,7 @@ from pyqt_reactive.widgets.shared import (
 )
 from pyqt_reactive.widgets.shared.list_item_delegate import (
     DIRTY_FIELDS_ROLE,
-    FLASH_KEY_ROLE,
+    OBJECT_STATE_PATH_ROLE,
     SIG_DIFF_FIELDS_ROLE,
 )
 
@@ -912,7 +919,7 @@ def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:
     layout = QVBoxLayout(pipeline_editor)
     steps = QListWidget(pipeline_editor)
     item = QListWidgetItem("1. Normalize")
-    item.setData(FLASH_KEY_ROLE, "plate-1::functionstep_0")
+    item.setData(OBJECT_STATE_PATH_ROLE, "plate-1::functionstep_0")
     item.setData(DIRTY_FIELDS_ROLE, {"name"})
     item.setData(SIG_DIFF_FIELDS_ROLE, {"func"})
     steps.addItem(item)
@@ -965,7 +972,7 @@ def test_embedded_manager_window_summary_carries_shared_row_semantics() -> None:
     pipeline_editor = PipelineEditorWidget(EmbeddedManagerServiceStub())
     pipeline_editor.setObjectName("pipeline_editor")
     row = QListWidgetItem("1. Normalize")
-    row.setData(FLASH_KEY_ROLE, "plate-1::functionstep_0")
+    row.setData(OBJECT_STATE_PATH_ROLE, "plate-1::functionstep_0")
     row.setData(DIRTY_FIELDS_ROLE, {"name", "napari_streaming_config.enabled"})
     row.setData(SIG_DIFF_FIELDS_ROLE, {"func"})
     assert pipeline_editor.item_list is not None
@@ -1598,6 +1605,7 @@ def test_legacy_empty_scope_window_catalogs_as_global_config(tmp_path: Path) -> 
 def test_managed_window_catalog_projects_object_state_status() -> None:
     app = QtApplicationAuthority.app()
     state = ObjectState(Dummy(), scope_id="managed-scope")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
     state.update_parameter("x", 2)
     window = FakeManagedFormWindow("managed-scope")
     window.state = state
@@ -2424,6 +2432,7 @@ def test_pipeline_editor_action_catalog_uses_declared_routes_and_scope_hooks() -
     assert code_action.selection_mode == "current_pipeline"
     assert edit_action.target_scope_ids == ("scope-from-manager-hook-1",)
     assert edit_action.selection_mode == "selected_steps"
+    assert edit_action.related_state_surface_ids == ("pipeline_editor.state",)
     assert edit_action.disabled_error is not None
     assert edit_action.disabled_error.hint is not None
     assert "selected step" in edit_action.disabled_error.hint
@@ -2854,6 +2863,11 @@ def test_pipeline_editor_action_invoke_uses_selection_token_and_confirmation() -
     assert stale_result.status == "rejected"
     assert stale_result.errors
     assert stale_result.errors[0].code == "stale_ui_action_selection"
+    assert stale_result.errors[0].hint is not None
+    assert "selection_mode=selected_steps" in stale_result.errors[0].hint
+    assert "pipeline_editor.state" in stale_result.errors[0].hint
+    assert "openhcs_ui_navigate_window" in stale_result.errors[0].hint
+    assert "window_id='wrong-target'" in stale_result.errors[0].hint
 
 
 def test_selected_workflow_rejection_includes_selection_recovery_hint() -> None:
@@ -3202,6 +3216,156 @@ def test_apply_creates_baseline_and_edit_snapshot() -> None:
         ).current_snapshot_index
         == 1
     )
+
+
+def test_apply_document_returns_running_operation_before_queued_ui_apply_runs() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    operations = FakeOperations(state)
+    dispatcher = QueuedPostDispatcher()
+    operation_tracker = UiBridgeOperationTracker()
+    bridge = UiAgentBridgeService(
+        plate_manager=FakePlateManager(operations=operations),
+        dispatcher=dispatcher,
+        operation_tracker=operation_tracker,
+    )
+    document = bridge.get_document(
+        UiCodeDocumentRequest(
+            document_id=DOCUMENT_ID,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    result = bridge.apply_document(
+        UiCodeDocumentApplyRequest(
+            document_id=DOCUMENT_ID,
+            source=VALID_SOURCE,
+            base_revision_token=document.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert result.applied is False
+    assert result.operation_id is not None
+    assert result.receipt.accepted is True
+    assert result.receipt.bridge_operation_id == result.operation_id
+    assert operations.pre_count == 0
+    assert bridge.get_operation_status(result.operation_id).status == "running"
+
+    dispatcher.run_next()
+
+    operation = bridge.get_operation_status(result.operation_id)
+    assert operations.pre_count == 1
+    assert operations.post_count == 1
+    assert operation.status == "completed"
+    assert operation.outcome == "applied"
+
+
+def test_queued_apply_document_error_updates_operation_status() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    operations = FakeOperations(state)
+    dispatcher = QueuedPostDispatcher()
+    operation_tracker = UiBridgeOperationTracker()
+    bridge = UiAgentBridgeService(
+        plate_manager=FakePlateManager(operations=operations),
+        dispatcher=dispatcher,
+        operation_tracker=operation_tracker,
+    )
+
+    result = bridge.apply_document(
+        UiCodeDocumentApplyRequest(
+            document_id=DOCUMENT_ID,
+            source=VALID_SOURCE,
+            base_revision_token="stale-token",
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert result.applied is False
+    assert result.operation_id is not None
+    assert result.receipt.accepted is True
+    assert bridge.get_operation_status(result.operation_id).status == "running"
+
+    dispatcher.run_next()
+
+    operation = bridge.get_operation_status(result.operation_id)
+    assert operation.status == "completed"
+    assert operation.outcome == "not_applied"
+    assert operation.errors
+    assert operation.errors[0].code == "stale_revision_token"
+    operation_section = operation_tracker.overview_sections()[0]
+    assert operation_section.items[0].status == "completed"
+    assert operation_section.items[0].severity == "error"
+
+
+def test_live_overview_reports_running_and_completed_bridge_operations() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    operations = FakeOperations(state)
+    dispatcher = QueuedPostDispatcher()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    operation_tracker = UiBridgeOperationTracker()
+    registry = UiBridgeSurfaceRegistry()
+    context = UiBridgeRegistrationContext(
+        registry=registry,
+        snapshot_provider=snapshot_provider,
+    )
+    registry.register_live_overview_contributor(operation_tracker)
+    PlateManagerBridgeProviderSet(
+        FakePlateManager(operations=operations)
+    ).register(context)
+    LiveOverviewBridgeProviderSet().register(context)
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=dispatcher,
+        snapshot_provider=snapshot_provider,
+        operation_tracker=operation_tracker,
+    )
+    document = bridge.get_document(
+        UiCodeDocumentRequest(
+            document_id=DOCUMENT_ID,
+            selection_mode=ALL_SELECTION_MODE,
+        )
+    )
+
+    result = bridge.apply_document(
+        UiCodeDocumentApplyRequest(
+            document_id=DOCUMENT_ID,
+            source=VALID_SOURCE,
+            base_revision_token=document.current_revision_token,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+    running_overview = bridge.get_state_surface(
+        UiStateSurfaceRequest(surface_id=UiStateSurfaceId.UI_LIVE_OVERVIEW.value)
+    )
+
+    running_section = next(
+        section
+        for section in running_overview.payload["sections"]
+        if section["section_id"] == operation_tracker.overview_identity.section_id
+    )
+    assert running_section["metrics"][0]["key"] == "running"
+    assert running_section["metrics"][0]["value"] == "1"
+    assert running_section["items"][0]["status"] == "running"
+    assert result.operation_id in running_section["items"][0]["detail"]
+
+    dispatcher.run_next()
+    completed_overview = bridge.get_state_surface(
+        UiStateSurfaceRequest(surface_id=UiStateSurfaceId.UI_LIVE_OVERVIEW.value)
+    )
+    completed_section = next(
+        section
+        for section in completed_overview.payload["sections"]
+        if section["section_id"] == operation_tracker.overview_identity.section_id
+    )
+
+    assert completed_section["metrics"][0]["key"] == "running"
+    assert completed_section["metrics"][0]["value"] == "0"
+    assert completed_section["metrics"][2]["key"] == "completed"
+    assert completed_section["metrics"][2]["value"] == "1"
+    assert completed_section["items"][0]["status"] == "completed"
 
 
 def test_bridge_lists_and_restores_snapshots() -> None:
