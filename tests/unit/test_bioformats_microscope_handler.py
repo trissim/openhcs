@@ -17,6 +17,7 @@ from openhcs.microscopes.bioformats import BioFormatsHandler, BioFormatsMetadata
 from openhcs.microscopes.bioformats_spw_projector import BioFormatsProjectionError
 from openhcs.microscopes.openhcs import (
     OpenHCSMetadataHandler,
+    OpenHCSMicroscopeHandler,
     workspace_mapping_source_path,
 )
 from tests.unit.bioformats_fixture import (
@@ -143,6 +144,56 @@ def test_bioformats_auto_detection_is_late_fallback(tmp_path: Path) -> None:
     )
 
     assert isinstance(handler, BioFormatsHandler)
+
+
+def test_openhcs_output_subdirectory_initializes_from_metadata_root(
+    tmp_path: Path,
+) -> None:
+    plate = tmp_path / "plate_openhcs"
+    images = plate / "images"
+    results = plate / "images_results"
+    images.mkdir(parents=True)
+    results.mkdir()
+    (images / "A01_s001_w1_z001_t001.tif").write_text(
+        "placeholder",
+        encoding="utf-8",
+    )
+    (plate / "openhcs_metadata.json").write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    "images": {
+                        "microscope_handler_name": "openhcsdata",
+                        "source_filename_parser_name": "SourceSchemaFilenameParser",
+                        "grid_dimensions": [1, 1],
+                        "pixel_size": 1.0,
+                        "image_files": ["images/A01_s001_w1_z001_t001.tif"],
+                        "channels": {"1": "DNA"},
+                        "wells": {"A01": "A01"},
+                        "sites": {"1": "1"},
+                        "z_indexes": {"1": "1"},
+                        "timepoints": {"1": "1"},
+                        "available_backends": {Backend.DISK.value: True},
+                        "main": True,
+                        "results_dir": "images_results",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    filemanager = bioformats_filemanager()
+
+    handler = create_microscope_handler(
+        "auto",
+        plate_folder=results,
+        filemanager=filemanager,
+    )
+    input_dir = handler.initialize_workspace(results, filemanager)
+
+    assert isinstance(handler, OpenHCSMicroscopeHandler)
+    assert handler.plate_folder == plate
+    assert input_dir == images
 
 
 def test_create_microscope_handler_supports_explicit_bioformats(tmp_path: Path) -> None:

@@ -1430,18 +1430,24 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         Returns:
             Path to the main subdirectory containing input images (e.g., plate_path/images)
         """
-        logger.info(f"OpenHCS format: Determining input subdirectory from metadata in {plate_path}")
+        logger.info(
+            "OpenHCS format: Determining input subdirectory from metadata in %s",
+            plate_path,
+        )
 
-        # Set plate_folder for this handler
-        self.plate_folder = plate_path
-        logger.debug(f"OpenHCSHandler: plate_folder set to {self.plate_folder}")
+        plate_root = self.metadata_handler._resolve_plate_root(plate_path)
+
+        # Set plate_folder to the metadata-owning root, even if the caller passed
+        # a child such as images/ or images_results/.
+        self.plate_folder = plate_root
+        logger.debug("OpenHCSHandler: plate_folder set to %s", self.plate_folder)
 
         # Determine the main subdirectory from metadata - fail-loud on errors
-        main_subdir = self.metadata_handler.determine_main_subdirectory(plate_path)
-        input_dir = plate_path / main_subdir
+        main_subdir = self.metadata_handler.determine_main_subdirectory(plate_root)
+        input_dir = plate_root / main_subdir
 
         # Check if workspace_mapping exists in metadata - if so, register virtual workspace backend
-        metadata_dict = self.metadata_handler._load_metadata_dict(plate_path)
+        metadata_dict = self.metadata_handler._load_metadata_dict(plate_root)
         subdirectories = metadata_dict.get(FIELDS.SUBDIRECTORIES)
         if not isinstance(subdirectories, Mapping):
             raise ValueError(
@@ -1455,13 +1461,13 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
 
         if subdir_metadata.get('workspace_mapping'):
             # Register virtual_workspace backend using centralized helper
-            self._register_virtual_workspace_backend(plate_path, filemanager)
+            self._register_virtual_workspace_backend(plate_root, filemanager)
 
         # Verify the subdirectory exists - fail-loud if missing
         if not filemanager.is_dir(str(input_dir), Backend.DISK.value):
             raise FileNotFoundError(
                 f"Main subdirectory '{main_subdir}' does not exist at {input_dir}. "
-                f"Expected directory structure: {plate_path}/{main_subdir}/"
+                f"Expected directory structure: {plate_root}/{main_subdir}/"
             )
 
         logger.info(

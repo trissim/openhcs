@@ -47,6 +47,13 @@ class MaterializationFlagPlanner:
         vfs_config = pipeline_config.vfs_config
         step_plans = context.step_plans
 
+        last_image_materialization_step = (
+            MaterializationFlagPlanner._last_image_materialization_step(
+                step_plans,
+                len(pipeline_definition),
+            )
+        )
+
         # === PROCESS EACH STEP ===
         for i, step in enumerate(pipeline_definition):
             step_plan = step_plans[i]  # Use step index instead of step_id
@@ -87,10 +94,7 @@ class MaterializationFlagPlanner:
                 materialization_backend = MaterializationFlagPlanner._resolve_materialization_backend(context, vfs_config)
                 step_plan.write_backend = materialization_backend
             elif (
-                i == len(pipeline_definition) - 1
-                and MaterializationFlagPlanner._final_step_materializes_images(
-                    step_plan
-                )
+                i == last_image_materialization_step
             ):  # Last image-producing step without zarr - write to materialization backend
                 materialization_backend = MaterializationFlagPlanner._resolve_materialization_backend(context, vfs_config)
                 step_plan.write_backend = materialization_backend
@@ -127,7 +131,17 @@ class MaterializationFlagPlanner:
         return MaterializationFlagPlanner._detect_backend_for_context(context, fallback_backend=MaterializationBackend.DISK.value)
 
     @staticmethod
-    def _final_step_materializes_images(step_plan) -> bool:
+    def _last_image_materialization_step(step_plans, step_count: int) -> int | None:
+        """Return the last step index whose outputs should seed the output plate."""
+        for step_index in range(step_count - 1, -1, -1):
+            if MaterializationFlagPlanner._step_materializes_images(
+                step_plans[step_index]
+            ):
+                return step_index
+        return None
+
+    @staticmethod
+    def _step_materializes_images(step_plan) -> bool:
         """Return whether automatic final materialization should flush images."""
         if not step_plan.artifact_outputs:
             return True
