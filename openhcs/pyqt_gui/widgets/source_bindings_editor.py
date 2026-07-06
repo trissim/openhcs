@@ -122,11 +122,15 @@ class EditableTableColumn(Enum):
         cls,
         index: int,
         enum_type: EditableChoiceSource | None = None,
+        header_label: str | None = None,
+        header_tooltip: str | None = None,
     ) -> "EditableTableColumn":
         member = object.__new__(cls)
         member._value_ = index
         member.index = index
         member.enum_type = enum_type
+        member.header_label = header_label
+        member.header_tooltip = header_tooltip
         return member
 
     def __int__(self) -> int:
@@ -140,18 +144,58 @@ class EditableTableColumn(Enum):
             return None
         return EnumCellSpec(self.enum_type)
 
+    @property
+    def table_header_label(self) -> str:
+        return self.header_label if self.header_label is not None else self.name.title()
+
+    @property
+    def table_header_tooltip(self) -> str | None:
+        return self.header_tooltip
+
 
 class SourceBindingColumn(EditableTableColumn):
     """Editable table columns for one named source binding."""
 
-    ALIAS = (0, None)
-    KIND = (1, ArtifactType)
-    ORIGIN = (2, SourceBindingOrigin)
-    REQUIRED = (3, None)
-    COMPONENTS = (4, None)
-    METADATA = (5, None)
-    FILTERS = (6, None)
-    INHERIT = (7, None)
+    ALIAS = (0, None, "Alias", "Name consumed by the function artifact contract.")
+    KIND = (1, ArtifactType, "Kind", "Artifact kind bound by this alias.")
+    ORIGIN = (2, SourceBindingOrigin, "Origin", "Source space used for matching.")
+    REQUIRED = (3, None, "Required", "Whether missing matches fail compilation.")
+    COMPONENTS = (
+        4,
+        None,
+        "Match Axes",
+        "OpenHCS component constraints used to select matching sources.",
+    )
+    METADATA = (
+        5,
+        None,
+        "Match Metadata",
+        "Metadata field constraints used to select matching sources.",
+    )
+    FILTERS = (
+        6,
+        None,
+        "Match Files",
+        "Path and filename filters used to select matching sources.",
+    )
+    INHERIT = (
+        7,
+        None,
+        "Inherit Scope",
+        "Whether matching also inherits the current execution scope.",
+    )
+    IDENTITY = (
+        8,
+        None,
+        "Assign Axes",
+        "OpenHCS semantic component identity assigned after this binding matches.",
+    )
+    STACK = (
+        9,
+        None,
+        "Main Stack",
+        "Whether this binding contributes to the main image stack.",
+    )
 
 
 class MetadataRuleColumn(EditableTableColumn):
@@ -1244,8 +1288,12 @@ class StepBindingsTableEditor(QWidget):
         self.table = ScopedTableWidget(0, len(SourceBindingColumn), self)
         self.table.set_scope_color_scheme(scope_color_scheme)
         self.table.setHorizontalHeaderLabels(
-            tuple(column.name.title() for column in SourceBindingColumn)
+            tuple(column.table_header_label for column in SourceBindingColumn)
         )
+        for column in SourceBindingColumn:
+            header_item = self.table.horizontalHeaderItem(int(column))
+            if header_item is not None and column.table_header_tooltip is not None:
+                header_item.setToolTip(column.table_header_tooltip)
         self.controller = EditableTableController(
             table=self.table,
             columns=tuple(SourceBindingColumn),
@@ -1345,9 +1393,16 @@ class SelectorListCodec:
 
     @classmethod
     def component_cells(cls, selector: SourceSelector) -> str:
+        return cls.component_selector_cells(selector.components)
+
+    @classmethod
+    def component_selector_cells(
+        cls,
+        selectors: tuple[ComponentSelector, ...],
+    ) -> str:
         return cls.ITEM_SEPARATOR.join(
             f"{component_selector.component.value}{cls.KEY_VALUE_SEPARATOR}{component_selector.value}"
-            for component_selector in selector.components
+            for component_selector in selectors
         )
 
     @classmethod
@@ -1468,6 +1523,8 @@ class EditableSourceBindingRow:
             metadata,
             filters,
             inherit_current_scope,
+            identity,
+            stack,
         ) = (
             value.strip() for value in values
         )
@@ -1486,7 +1543,10 @@ class EditableSourceBindingRow:
                 artifact_kind=ArtifactType.coerce(artifact_kind or ImageArtifactType.value),
                 selector=selector,
                 origin=SourceBindingOrigin(origin or SourceBindingOrigin.STEP_INPUT.value),
+                component_identity=SelectorListCodec.parse_components(identity),
                 required=required.lower() not in {"false", "0", "no", "n"},
+                participates_in_image_stack=stack.lower()
+                not in {"false", "0", "no", "n"},
             ),
         )
 
@@ -1507,6 +1567,8 @@ class EditableSourceBindingRow:
             SelectorListCodec.metadata_cells(self.binding.selector),
             SelectorListCodec.filter_cells(self.binding.selector),
             str(self.binding.selector.inherit_current_scope),
+            SelectorListCodec.component_selector_cells(self.binding.component_identity),
+            str(self.binding.participates_in_image_stack),
         )
 
 
@@ -2627,6 +2689,10 @@ class SourceBindingsEditorWidget(
         )
         return {
             (SourceBindingColumn, SourceBindingColumn.COMPONENTS): FreeFormCellSpec(
+                suggestions.component_selectors,
+                FreeFormCellEditorKind.COMPONENT_SELECTORS,
+            ),
+            (SourceBindingColumn, SourceBindingColumn.IDENTITY): FreeFormCellSpec(
                 suggestions.component_selectors,
                 FreeFormCellEditorKind.COMPONENT_SELECTORS,
             ),

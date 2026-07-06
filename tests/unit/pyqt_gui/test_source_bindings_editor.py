@@ -3971,6 +3971,53 @@ def test_source_bindings_editor_preserves_selector_on_basic_edits() -> None:
     assert edited.selector == selector
 
 
+def test_source_bindings_editor_preserves_binding_identity_on_basic_edits() -> None:
+    QtApplicationHarness.app()
+    binding = NamedSourceBinding(
+        alias="DNA",
+        component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+        participates_in_image_stack=False,
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(bindings=(binding,))
+    )
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+    table.item(0, int(SourceBindingColumn.ALIAS)).setText("OrigDNA")
+    widget._apply_step_bindings(dialog.bindings())
+
+    edited = widget.get_value().bindings[0]
+    assert edited.alias == "OrigDNA"
+    assert edited.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert edited.participates_in_image_stack is False
+
+
+def test_source_bindings_editor_edits_binding_identity_columns() -> None:
+    QtApplicationHarness.app()
+    widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
+
+    widget.add_binding_row(NamedSourceBinding(alias="DNA"))
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+    set_editable_cell_text(
+        table,
+        0,
+        int(SourceBindingColumn.IDENTITY),
+        "channel=2;site=1",
+    )
+    table.item(0, int(SourceBindingColumn.STACK)).setText("False")
+    widget._apply_step_bindings(dialog.bindings())
+
+    binding = widget.get_value().bindings[0]
+    assert binding.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "2"),
+        ComponentSelector(AllComponents.SITE, "1"),
+    )
+    assert binding.participates_in_image_stack is False
+
+
 def test_source_bindings_editor_edits_selector_columns() -> None:
     QtApplicationHarness.app()
     widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
