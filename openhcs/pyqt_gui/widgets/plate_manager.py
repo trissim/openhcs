@@ -797,7 +797,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             self._finalize_all_plates_completed_ui
         )
         self.live_measurement_available.connect(self._on_live_measurement_available)
-        self.plate_selected.connect(self._load_cellprofiler_pipeline_from_orchestrator)
 
         logger.debug("Plate manager widget initialized")
 
@@ -829,6 +828,8 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     def cleanup(self):
         """Cleanup resources before widget destruction."""
         logger.info("🧹 Cleaning up PlateManagerWidget resources...")
+        self._time_travel_binding.disconnect()
+        self._list_visual_state.dispose()
         self._batch_workflow_service.cleanup()
         self._batch_workflow_service.disconnect()
 

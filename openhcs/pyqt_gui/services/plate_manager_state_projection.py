@@ -236,18 +236,19 @@ class PlateManagerStateProjectionService:
             queue_position=queue_position,
             runtime_projection=status_runtime_projection,
         )
-        debug_phase = None
-        debug_session_id = None
         debug_context = manager.debug_session_context_for_plate(plate_key)
-        projected_debug_phase = DebugToolbarActionProjector.phase(debug_context)
-        debug_prefix = PlateStatusPresenter.build_debug_status_prefix(
-            debug_phase=projected_debug_phase,
-        )
-        if debug_prefix:
-            status_prefix = debug_prefix
-        debug_phase = projected_debug_phase.value
         debug_session = manager.debug_session_for_plate(plate_key)
         terminal_summary = manager.debug_terminal_summary_for_plate(plate_key)
+        debug_phase = None
+        debug_session_id = None
+        if debug_session is not None or terminal_summary is not None:
+            projected_debug_phase = DebugToolbarActionProjector.phase(debug_context)
+            debug_prefix = PlateStatusPresenter.build_debug_status_prefix(
+                debug_phase=projected_debug_phase,
+            )
+            if debug_prefix:
+                status_prefix = debug_prefix
+            debug_phase = projected_debug_phase.value
         if debug_session is not None:
             debug_session_id = debug_session.debug_session_id
         elif terminal_summary is not None:
