@@ -67,11 +67,14 @@ class PlatePipelineRequest(PlateExecutionIdentity):
         compile_artifact_id: str | None = None,
         config_params: dict[str, TransportValue] | None = None,
     ) -> OpenHCSExecutionSubmission:
+        transport_pipeline = FunctionStepTransportAuthority.normalize_pipeline(
+            self.definition_pipeline
+        )
         return OpenHCSExecutionSubmission(
             plate_id=self.scope_id,
             execution_plate_id=self.execution_plate_path,
             selected_pipeline_path=self.selected_pipeline_path,
-            pipeline_steps=self.definition_pipeline,
+            pipeline_steps=transport_pipeline,
             global_config=global_config,
             pipeline_config=self.pipeline_config,
             compile_artifact_id=compile_artifact_id,
@@ -181,16 +184,6 @@ class CompileWorkflowService:
     ) -> CompileRequestResult:
         if zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
-        normalized_pipeline = self.normalize_pipeline_for_transport(
-            request.definition_pipeline
-        )
-        transport_request = PlatePipelineRequest(
-            plate_scope=request.plate_scope,
-            execution_plate_path=request.execution_plate_path,
-            selected_pipeline_path=request.selected_pipeline_path,
-            definition_pipeline=normalized_pipeline,
-            pipeline_config=request.pipeline_config,
-        )
         if display_plate_path is None:
             display_plate_path = request.plate_path
 
@@ -199,14 +192,14 @@ class CompileWorkflowService:
                 "Submit compile: plate=%s execution_plate=%s steps=%d fingerprint=%s",
                 display_plate_path,
                 self._display_execution_plate_path(
-                    plate_path=transport_request.plate_path,
-                    execution_plate_path=transport_request.execution_plate_path,
+                    plate_path=request.plate_path,
+                    execution_plate_path=request.execution_plate_path,
                 ),
-                len(transport_request.definition_pipeline),
-                self.pipeline_fingerprint(transport_request.definition_pipeline),
+                len(request.definition_pipeline),
+                self.pipeline_fingerprint(request.definition_pipeline),
             )
             return zmq_client.submit_compile(
-                transport_request.submission(
+                request.submission(
                     global_config=self._context.global_config(),
                     config_params=config_params,
                 )

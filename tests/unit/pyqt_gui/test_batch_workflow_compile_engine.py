@@ -369,6 +369,51 @@ def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
     pickle.dumps(normalized)
 
 
+def test_plate_pipeline_submission_normalizes_compile_and_run_signatures():
+    import importlib
+
+    from openhcs.core.steps.function_step import FunctionStep
+
+    crop_module = importlib.import_module(
+        "openhcs.processing.backends.cellprofiler.crop"
+    )
+    pipeline = [
+        FunctionStep(
+            func=(crop_module, {"crop_shape": "Rectangle"}),
+            name="Crop",
+        )
+    ]
+    global_config = GlobalPipelineConfig()
+    pipeline_config = PipelineConfig()
+    run_spec = RunSpec(
+        plate_scope=PlateScopeIdentity.from_scope_id("/tmp/plate"),
+        execution_plate_path="/tmp/plate",
+        selected_pipeline_path="/tmp/plate/pipeline.cppipe",
+        definition_pipeline=pipeline,
+        global_config=global_config,
+        pipeline_config=pipeline_config,
+    )
+    normalized_compile_request = PlatePipelineRequest(
+        plate_scope=run_spec.plate_scope,
+        execution_plate_path=run_spec.execution_plate_path,
+        selected_pipeline_path=run_spec.selected_pipeline_path,
+        definition_pipeline=CompileWorkflowService.normalize_pipeline_for_transport(
+            pipeline
+        ),
+        pipeline_config=pipeline_config,
+    )
+
+    run_payload = ZMQExecutionRequestBuilder.from_task(
+        run_spec.submission(global_config=global_config)
+    ).request_payload
+    compile_payload = ZMQExecutionRequestBuilder.from_task(
+        normalized_compile_request.submission(global_config=global_config)
+    ).request_payload
+
+    assert run_payload.pipeline_sha == compile_payload.pipeline_sha
+    assert run_payload.request_signature == compile_payload.request_signature
+
+
 def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
     monkeypatch,
 ):
