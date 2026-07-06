@@ -5,16 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import pickle
-import hashlib
 import importlib.util
 import os
 import signal
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, fields, is_dataclass, replace
-from enum import Enum
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +26,6 @@ from benchmark.converter.runtime_pipeline import execute_pipeline_direct
 from benchmark.converter.execution_validation import (
     CPPipeExecutionValidation,
     CPPipeExecutionValidationError,
-    CPPipeInfrastructureProfile,
     validate_cppipe_execution,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
@@ -42,21 +39,15 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.contracts.metric import MetricCollector
-from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
-from openhcs.core.config import GlobalPipelineConfig, LazyWellFilterConfig
-from openhcs.core.equivalence import RuntimeEquivalencePolicy
-from openhcs.core.equivalence.outputs import (
-    RuntimeOutputSnapshot,
-    image_paths,
-    table_paths,
+from openhcs.core.config import (
+    CompilationDebugConfig,
+    GlobalPipelineConfig,
+    LazyCompilationDebugConfig,
+    LazyWellFilterConfig,
 )
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.equivalence import RuntimeEquivalencePolicy
+from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.runtime_equivalence import (
-    RuntimeEquivalenceReport,
-    RuntimeMeasurementSnapshot,
-    runtime_artifact_measurement_source_names,
-    runtime_measurement_projection_cache_identity,
-    runtime_measurement_equivalence,
     runtime_reference_artifact_equivalence,
 )
 from openhcs.core.runtime_execution_validation import runtime_output_roots
@@ -74,17 +65,27 @@ logger = logging.getLogger(__name__)
 
 _RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION = 1
 _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME = "runtime_execution_observation.pkl"
-_RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME = (
-    "runtime_execution_non_image_observation.pkl"
-)
-_RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION = 2
-_RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR = ".openhcs_measurement_snapshot_cache"
-_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX = (
-    "runtime_reference_measurement_snapshot"
-)
-_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX = (
-    "runtime_candidate_measurement_snapshot"
-)
+_DUMP_COMPILED_PLANS_ENV = "OPENHCS_BENCHMARK_DUMP_COMPILED_PLANS"
+
+
+def _strict_cellprofiler_runtime_equivalence_policy() -> RuntimeEquivalencePolicy:
+    """Return the benchmark parity policy with broad dialect relaxations disabled."""
+    return cellprofiler_runtime_equivalence_policy(
+        numeric_abs_tolerance=1e-6,
+        numeric_rel_tolerance=1e-6,
+        feature_numeric_tolerances=(),
+        allow_extra_candidate_measurements=False,
+        allow_tie_sensitive_location_mismatches=True,
+        allow_unstable_shape_descriptors=False,
+        allow_sparse_object_boundary_jitter=False,
+        allow_unstable_zernike_descriptors=False,
+        threshold_entropy_abs_tolerance=1e-6,
+        threshold_sensitive_pair_abs_tolerance=1e-6,
+        threshold_sensitive_pair_rel_tolerance=1e-6,
+        image_abs_tolerance=1e-6,
+        image_rel_tolerance=1e-6,
+        image_max_different_fraction=0.0,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,9 @@ class OpenHCSRunRequest:
     metrics: tuple[MetricCollector, ...]
     output_dir: Path
     source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "output_dir", Path(self.output_dir).resolve())
 
     @property
     def dataset_id(self) -> str:
@@ -152,12 +156,6 @@ class OpenHCSRunRequest:
         return bool(self.pipeline_params.get("raise_on_equivalence_failure", True))
 
     @property
-    def cache_candidate_measurement_snapshot(self) -> bool:
-        return bool(
-            self.pipeline_params.get("cache_candidate_measurement_snapshot", True)
-        )
-
-    @property
     def openhcs_timeout_seconds(self) -> float:
         value = self.pipeline_params.get("openhcs_timeout_seconds")
         if value is None:
@@ -167,33 +165,12 @@ class OpenHCSRunRequest:
             raise ValueError("openhcs_timeout_seconds must be positive.")
         return seconds
 
-
-@dataclass(frozen=True, slots=True)
-class OpenHCSPipelineGenerationPolicy:
-    """Compiler artifact policy for one converted CellProfiler benchmark run."""
-
-    prune_dead_unmaterialized_artifact_steps: bool
-    materialize_skipped_save_images: bool
-    materialize_terminal_images: bool
-
-    @classmethod
-    def from_request(
-        cls,
-        request: OpenHCSRunRequest,
-        infrastructure: CPPipeInfrastructureProfile,
-    ) -> "OpenHCSPipelineGenerationPolicy":
-        no_external_exports = (
-            not infrastructure.exports_tables and not infrastructure.exports_images
-        )
-        return cls(
-            prune_dead_unmaterialized_artifact_steps=(
-                not request.compare_image_outputs
-            ),
-            materialize_skipped_save_images=request.compare_image_outputs,
-            materialize_terminal_images=(
-                request.compare_image_outputs or no_external_exports
-            ),
-        )
+    @property
+    def dump_compiled_plans(self) -> bool:
+        value = self.pipeline_params.get("dump_compiled_plans")
+        if value is None:
+            value = os.environ.get(_DUMP_COMPILED_PLANS_ENV)
+        return _truthy_debug_flag(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,8 +178,6 @@ class RuntimeExecutionCacheWritePolicy:
     """Typed cache-write contract for OpenHCS runtime execution observations."""
 
     write_manifest: bool
-    include_image_records: bool
-    include_non_image_records: bool
 
     @classmethod
     def for_request(
@@ -213,78 +188,11 @@ class RuntimeExecutionCacheWritePolicy:
             or request.runtime_execution_cache_key is None
         ):
             return cls.disabled()
-        if not request.cache_candidate_measurement_snapshot:
-            return cls.disabled()
-        return cls(
-            write_manifest=True,
-            include_image_records=request.compare_image_outputs,
-            include_non_image_records=True,
-        )
+        return cls(write_manifest=True)
 
     @classmethod
     def disabled(cls) -> "RuntimeExecutionCacheWritePolicy":
-        return cls(
-            write_manifest=False,
-            include_image_records=False,
-            include_non_image_records=False,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeRecordCacheIdentity:
-    """Stable cache identity for one persisted runtime artifact record."""
-
-    name: str
-    kind: ArtifactKind
-    axis_id: str
-    group_key: str | None
-    site: str | None
-    channel: str | None
-    z_index: str | None
-    timepoint: str | None
-    path: str
-    backend: str
-    value_digest: str
-
-    @classmethod
-    def from_record(cls, record: Any) -> "RuntimeRecordCacheIdentity":
-        key = record.key
-        scope = key.scope
-        return cls(
-            name=key.name,
-            kind=key.kind,
-            axis_id=scope.axis_id,
-            group_key=scope.group_key,
-            site=scope.site,
-            channel=scope.channel,
-            z_index=scope.z_index,
-            timepoint=scope.timepoint,
-            path=record.location.path,
-            backend=record.location.backend,
-            value_digest=cls.value_digest_for(record.value),
-        )
-
-    @staticmethod
-    def value_digest_for(value: object) -> str:
-        """Return the cache identity component owned by runtime record values."""
-        try:
-            payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-        except Exception:
-            payload = repr(value).encode("utf-8", errors="replace")
-        return hashlib.sha256(payload).hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class OpenHCSTableOnlyStreamingEquivalence:
-    """Semantic parity result accumulated without retaining per-axis contexts."""
-
-    report: RuntimeEquivalenceReport
-    output_roots: tuple[Path, ...]
-    execution_output_root: Path
-    axis_count: int
-    executed_axes: tuple[str, ...]
-    table_output_count: int
-    image_output_count: int
+        return cls(write_manifest=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,12 +278,23 @@ class OpenHCSAdapter(ToolAdapter):
             request.output_dir
             / f"{request.dataset_path.name}_{cppipe_path.stem}_source_workspace"
         )
+        compilation_debug_config = _benchmark_compilation_debug_config(
+            self.global_config.compilation_debug_config,
+            request=request,
+            cppipe_path=cppipe_path,
+        )
+        compiled_bundle_dump_path = (
+            compilation_debug_config.compiled_execution_bundle_path
+        )
 
         with phase_timing.phase(BenchmarkPhase.READ_CACHE):
-            cache_hit = self._load_runtime_execution_cache(request)
+            cache_hit = (
+                None
+                if compilation_debug_config.enabled
+                else self._load_runtime_execution_cache(request)
+            )
         equivalence_report = None
         equivalence_failure_message = None
-        streaming_equivalence: OpenHCSTableOnlyStreamingEquivalence | None = None
         if cache_hit is not None:
             phase_timing.record(
                 BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True
@@ -399,10 +318,6 @@ class OpenHCSAdapter(ToolAdapter):
         else:
             try:
                 with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
-                    generation_policy = OpenHCSPipelineGenerationPolicy.from_request(
-                        request,
-                        CPPipeInfrastructureProfile.from_cppipe_path(cppipe_path),
-                    )
                     ingestion = prepare_cellprofiler_source_schema_workspace(
                         CellProfilerSourceSchemaWorkspaceRequest(
                             source_root=request.dataset_path,
@@ -412,15 +327,6 @@ class OpenHCSAdapter(ToolAdapter):
                             filemanager=self._filemanager,
                             image_set_selection=(
                                 request.source_schema_image_set_selection
-                            ),
-                            prune_dead_unmaterialized_artifact_steps=(
-                                generation_policy.prune_dead_unmaterialized_artifact_steps
-                            ),
-                            materialize_skipped_save_images=(
-                                generation_policy.materialize_skipped_save_images
-                            ),
-                            materialize_terminal_images=(
-                                generation_policy.materialize_terminal_images
                             ),
                         )
                     )
@@ -444,11 +350,14 @@ class OpenHCSAdapter(ToolAdapter):
                         well_filter=list(selection.well_filter),
                     ),
                 )
-            elif selection is not None and selection.max_image_set_count is not None:
+            if compilation_debug_config.enabled:
                 pipeline_config = replace(
                     pipeline_config,
-                    well_filter_config=LazyWellFilterConfig(
-                        well_filter=selection.max_image_set_count,
+                    compilation_debug_config=LazyCompilationDebugConfig(
+                        enabled=compilation_debug_config.enabled,
+                        compiled_execution_bundle_path=(
+                            compilation_debug_config.compiled_execution_bundle_path
+                        ),
                     ),
                 )
 
@@ -464,6 +373,7 @@ class OpenHCSAdapter(ToolAdapter):
                 vfs_config=VFSConfig(
                     materialization_backend=MaterializationBackend.DISK,
                 ),
+                compilation_debug_config=compilation_debug_config,
                 materialize_runtime_artifacts=request.materialize_runtime_artifacts,
                 materialization_results_path=output_plate_root / "results",
             )
@@ -479,68 +389,46 @@ class OpenHCSAdapter(ToolAdapter):
             )
             with phase_timing.phase(BenchmarkPhase.INITIALIZE_RUNTIME):
                 orchestrator.initialize()
-            equivalence_reference = request.equivalence_reference_output_dir
-            if equivalence_reference is not None and (
-                not request.compare_image_outputs
-                or _reference_has_no_images(equivalence_reference)
-            ):
-                streaming_equivalence = self._run_table_only_streaming_equivalence(
-                    request,
-                    orchestrator=orchestrator,
-                    prepared=prepared,
-                    output_plate_root=output_plate_root,
-                    phase_timing=phase_timing,
-                    equivalence_reference=equivalence_reference,
-                )
-                equivalence_report = streaming_equivalence.report
-                output_roots = streaming_equivalence.output_roots
-                execution_output_root = streaming_equivalence.execution_output_root
-                axis_count = streaming_equivalence.axis_count
-                executed_axes = streaming_equivalence.executed_axes
-                csv_output_count = streaming_equivalence.table_output_count
-                image_output_count = streaming_equivalence.image_output_count
-                validation = None
-            else:
-                with ExitStack() as stack:
-                    for metric in request.metrics:
-                        stack.enter_context(metric)
-                    with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
-                        execution = execute_pipeline_direct(
-                            orchestrator,
-                            prepared.pipeline,
-                            phase_timing=phase_timing,
-                        )
-                output_roots = runtime_output_roots(
-                    execution.compiled_contexts,
-                    output_plate_root,
-                )
-                execution_output_root = (
-                    output_roots[0] if len(output_roots) == 1 else request.output_dir
-                )
-                try:
-                    with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
-                        validation = validate_cppipe_execution(
-                            prepared,
-                            execution,
-                            execution_output_root,
-                            validate_table_exports=request.materialize_runtime_artifacts,
-                            validate_image_exports=request.compare_image_outputs,
-                        )
-                except CPPipeExecutionValidationError as exc:
-                    raise ToolExecutionError(str(exc)) from exc
-                axis_count = len(execution.execution_results)
-                executed_axes = tuple(validation.observation.records_by_axis)
-                csv_output_count = len(validation.observation.exports.table_outputs)
-                image_output_count = len(validation.observation.exports.image_outputs)
-                reused_runtime_execution_cache = False
-                with phase_timing.phase(BenchmarkPhase.WRITE_CACHE):
-                    self._write_runtime_execution_cache(
-                        request,
-                        validation=validation,
-                        output_roots=output_roots,
-                        execution_output_root=execution_output_root,
-                        axis_count=axis_count,
+            with ExitStack() as stack:
+                for metric in request.metrics:
+                    stack.enter_context(metric)
+                with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
+                    execution = execute_pipeline_direct(
+                        orchestrator,
+                        prepared.pipeline,
+                        phase_timing=phase_timing,
                     )
+            output_roots = runtime_output_roots(
+                execution.compiled_contexts,
+                output_plate_root,
+            )
+            execution_output_root = (
+                output_roots[0] if len(output_roots) == 1 else request.output_dir
+            )
+            try:
+                with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
+                    validation = validate_cppipe_execution(
+                        prepared,
+                        execution,
+                        execution_output_root,
+                        validate_table_exports=request.materialize_runtime_artifacts,
+                        validate_image_exports=request.compare_image_outputs,
+                    )
+            except CPPipeExecutionValidationError as exc:
+                raise ToolExecutionError(str(exc)) from exc
+            axis_count = len(execution.execution_results)
+            executed_axes = tuple(validation.observation.records_by_axis)
+            csv_output_count = len(validation.observation.exports.table_outputs)
+            image_output_count = len(validation.observation.exports.image_outputs)
+            reused_runtime_execution_cache = False
+            with phase_timing.phase(BenchmarkPhase.WRITE_CACHE):
+                self._write_runtime_execution_cache(
+                    request,
+                    validation=validation,
+                    output_roots=output_roots,
+                    execution_output_root=execution_output_root,
+                    axis_count=axis_count,
+                )
             reused_runtime_execution_cache = False
         equivalence_reference = request.equivalence_reference_output_dir
         if equivalence_reference is not None:
@@ -549,50 +437,29 @@ class OpenHCSAdapter(ToolAdapter):
                     f"Equivalence reference output directory does not exist: "
                     f"{equivalence_reference}"
                 )
-            equivalence_policy = cellprofiler_runtime_equivalence_policy(
-                numeric_abs_tolerance=1e-6,
-                numeric_rel_tolerance=1e-6,
-                allow_tie_sensitive_location_mismatches=True,
-                allow_unstable_shape_descriptors=True,
-                threshold_entropy_abs_tolerance=0.5,
-                threshold_sensitive_pair_abs_tolerance=0.025,
-                image_max_different_fraction=0.02,
-            )
-            if equivalence_report is not None:
-                pass
-            elif not request.compare_image_outputs or _reference_has_no_images(
-                equivalence_reference
-            ):
-                with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
-                    equivalence_report = (
-                        self._cached_table_only_reference_artifact_equivalence(
-                            request,
-                            equivalence_reference=equivalence_reference,
-                            validation=validation,
-                            policy=equivalence_policy,
-                        )
+            equivalence_policy = _strict_cellprofiler_runtime_equivalence_policy()
+            with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
+                reference_snapshot = RuntimeOutputSnapshot.from_output_root(
+                    equivalence_reference
+                )
+                if not request.compare_image_outputs:
+                    reference_snapshot = RuntimeOutputSnapshot(
+                        tables=reference_snapshot.tables,
                     )
-            else:
-                if validation is None:
-                    raise ToolExecutionError(
-                        "Image-output equivalence requires retained runtime "
-                        "execution validation."
-                    )
-                with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
-                    equivalence_report = runtime_reference_artifact_equivalence(
-                        RuntimeOutputSnapshot.from_output_root(equivalence_reference),
-                        validation.observation,
-                        policy=equivalence_policy,
-                        candidate_image_artifact_names=(
-                            validation.expectation.exports.image_artifact_names
-                        ),
-                        candidate_image_export_specs=(
-                            validation.expectation.exports.image_export_specs
-                        ),
-                        candidate_image_snapshots=(
-                            _candidate_image_snapshots_for_equivalence(validation)
-                        ),
-                    )
+                equivalence_report = runtime_reference_artifact_equivalence(
+                    reference_snapshot,
+                    validation.observation,
+                    policy=equivalence_policy,
+                    candidate_image_artifact_names=(
+                        validation.expectation.exports.image_artifact_names
+                    ),
+                    candidate_image_export_specs=(
+                        validation.expectation.exports.image_export_specs
+                    ),
+                    candidate_image_snapshots=(
+                        _candidate_image_snapshots_for_equivalence(validation)
+                    ),
+                )
             if not equivalence_report.is_equivalent:
                 equivalence_failure_message = (
                     "Converted CellProfiler output did not match semantic "
@@ -627,6 +494,10 @@ class OpenHCSAdapter(ToolAdapter):
             provenance["runtime_execution_cache_manifest"] = str(
                 request.runtime_execution_cache_manifest
             )
+        if compiled_bundle_dump_path is not None:
+            provenance["compiled_execution_bundle_path"] = str(
+                compiled_bundle_dump_path
+            )
         if equivalence_reference is not None:
             provenance["equivalence_reference_output_dir"] = str(equivalence_reference)
             provenance["equivalence_difference_count"] = len(
@@ -644,129 +515,6 @@ class OpenHCSAdapter(ToolAdapter):
             success=equivalence_failure_message is None,
             error_message=equivalence_failure_message,
             provenance=provenance,
-        )
-
-    def _run_table_only_streaming_equivalence(
-        self,
-        request: OpenHCSRunRequest,
-        *,
-        orchestrator: Any,
-        prepared: Any,
-        output_plate_root: Path,
-        phase_timing: PhaseTimingTrace,
-        equivalence_reference: Path,
-    ) -> OpenHCSTableOnlyStreamingEquivalence:
-        """Execute table-only parity once and compare semantic measurements."""
-
-        equivalence_policy = cellprofiler_runtime_equivalence_policy(
-            numeric_abs_tolerance=1e-6,
-            numeric_rel_tolerance=1e-6,
-            allow_tie_sensitive_location_mismatches=True,
-            allow_unstable_shape_descriptors=True,
-            threshold_entropy_abs_tolerance=0.5,
-            threshold_sensitive_pair_abs_tolerance=0.025,
-            image_max_different_fraction=0.02,
-        )
-        if not isinstance(prepared.source_schema, PipelineImageSchema):
-            raise TypeError(
-                "OpenHCS streaming equivalence requires PipelineImageSchema, got "
-                f"{type(prepared.source_schema).__name__}."
-            )
-        known_source_names = prepared.source_schema.measurement_source_names
-        measurement_snapshot_cache = MeasurementSnapshotCacheStore.for_request(request)
-        reference_key = _reference_measurement_snapshot_cache_key(
-            equivalence_reference,
-            policy=equivalence_policy,
-            known_source_names=known_source_names,
-        )
-        with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
-            reference_measurements = measurement_snapshot_cache.load_or_create(
-                prefix=_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX,
-                cache_key=reference_key,
-                create=lambda: RuntimeMeasurementSnapshot.from_output_snapshot(
-                    RuntimeOutputSnapshot.from_output_root(equivalence_reference),
-                    policy=equivalence_policy,
-                    known_source_names=known_source_names,
-                ),
-            )
-        required_measurement_keys = frozenset(
-            reference_measurements.measurement_fact_counts
-        )
-        with ExitStack() as stack:
-            for metric in request.metrics:
-                stack.enter_context(metric)
-            with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
-                execution = execute_pipeline_direct(
-                    orchestrator,
-                    prepared.pipeline,
-                    phase_timing=phase_timing,
-                )
-        output_roots = runtime_output_roots(
-            execution.compiled_contexts,
-            output_plate_root,
-        )
-        execution_output_root = (
-            output_roots[0] if len(output_roots) == 1 else request.output_dir
-        )
-        try:
-            with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
-                validation = validate_cppipe_execution(
-                    prepared,
-                    execution,
-                    execution_output_root,
-                    validate_table_exports=request.materialize_runtime_artifacts,
-                    validate_image_exports=False,
-                )
-        except CPPipeExecutionValidationError as exc:
-            raise ToolExecutionError(str(exc)) from exc
-
-        with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
-            candidate_observation_fingerprint = (
-                _runtime_measurement_observation_fingerprint(validation)
-            )
-            candidate_key = _candidate_measurement_snapshot_cache_key(
-                request,
-                policy=equivalence_policy,
-                known_source_names=known_source_names,
-                required_measurement_keys=required_measurement_keys,
-                candidate_observation_fingerprint=candidate_observation_fingerprint,
-            )
-
-            def candidate_create() -> RuntimeMeasurementSnapshot:
-                return RuntimeMeasurementSnapshot.from_artifact_execution_observation(
-                    validation.observation,
-                    policy=equivalence_policy,
-                    known_source_names=known_source_names,
-                    required_measurement_keys=required_measurement_keys,
-                )
-
-            if request.cache_candidate_measurement_snapshot:
-                candidate_snapshot = measurement_snapshot_cache.load_or_create(
-                    prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
-                    cache_key=candidate_key,
-                    create=candidate_create,
-                )
-            else:
-                candidate_snapshot = candidate_create()
-            report = runtime_measurement_equivalence(
-                reference_measurements,
-                candidate_snapshot,
-                policy=equivalence_policy,
-            )
-        unique_output_roots = tuple(dict.fromkeys(output_roots))
-        execution_output_root = (
-            unique_output_roots[0]
-            if len(unique_output_roots) == 1
-            else request.output_dir
-        )
-        return OpenHCSTableOnlyStreamingEquivalence(
-            report=report,
-            output_roots=unique_output_roots,
-            execution_output_root=execution_output_root,
-            axis_count=len(execution.execution_results),
-            executed_axes=tuple(validation.observation.records_by_axis),
-            table_output_count=len(validation.observation.exports.table_outputs),
-            image_output_count=len(validation.observation.exports.image_outputs),
         )
 
     def _load_runtime_execution_cache(
@@ -794,24 +542,9 @@ class OpenHCSAdapter(ToolAdapter):
             cache_key,
         ):
             return None
-        prefer_non_image_payload = _reference_has_no_images(
-            request.equivalence_reference_output_dir
-        )
-        non_image_validation_path = _cache_payload_path(
+        validation_path = _cache_payload_path(
             manifest_path,
-            manifest.get("non_image_validation_pickle_path"),
-        )
-        validation_path = (
-            non_image_validation_path
-            if (
-                prefer_non_image_payload
-                and non_image_validation_path is not None
-                and non_image_validation_path.exists()
-            )
-            else _cache_payload_path(
-                manifest_path,
-                manifest.get("validation_pickle_path"),
-            )
+            manifest.get("validation_pickle_path"),
         )
         if validation_path is None or not validation_path.exists():
             return None
@@ -828,14 +561,6 @@ class OpenHCSAdapter(ToolAdapter):
             with validation_path.open("rb") as handle:
                 validation_payload = pickle.load(handle)
             validation = _validation_from_cache_payload(validation_payload)
-            if prefer_non_image_payload and (
-                non_image_validation_path is None
-                or validation_path != non_image_validation_path
-            ):
-                self._write_runtime_execution_non_image_cache(
-                    manifest_path,
-                    validation=validation,
-                )
         except Exception:
             logger.exception(
                 "Failed to load OpenHCS runtime execution cache %s",
@@ -848,92 +573,6 @@ class OpenHCSAdapter(ToolAdapter):
             execution_output_root=execution_output_root,
             axis_count=int(manifest.get("axis_count", 0)),
         )
-
-    def _cached_table_only_reference_artifact_equivalence(
-        self,
-        request: OpenHCSRunRequest,
-        *,
-        equivalence_reference: Path,
-        validation: CPPipeExecutionValidation,
-        policy: RuntimeEquivalencePolicy,
-    ):
-        """Compare table-only references through cached semantic measurements."""
-        started_at = time.perf_counter()
-        known_source_names = runtime_artifact_measurement_source_names(
-            validation.observation
-        )
-        measurement_snapshot_cache = MeasurementSnapshotCacheStore.for_request(request)
-        reference_key = _reference_measurement_snapshot_cache_key(
-            equivalence_reference,
-            policy=policy,
-            known_source_names=known_source_names,
-        )
-        reference_measurements = measurement_snapshot_cache.load_or_create(
-            prefix=_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX,
-            cache_key=reference_key,
-            create=lambda: RuntimeMeasurementSnapshot.from_output_snapshot(
-                RuntimeOutputSnapshot.from_output_root(equivalence_reference),
-                policy=policy,
-                known_source_names=known_source_names,
-            ),
-        )
-        required_measurement_keys = frozenset(
-            reference_measurements.measurement_fact_counts
-        )
-        candidate_observation_fingerprint = (
-            _runtime_measurement_observation_fingerprint(validation)
-        )
-        candidate_key = _candidate_measurement_snapshot_cache_key(
-            request,
-            policy=policy,
-            known_source_names=known_source_names,
-            required_measurement_keys=required_measurement_keys,
-            candidate_observation_fingerprint=candidate_observation_fingerprint,
-        )
-
-        def candidate_create() -> RuntimeMeasurementSnapshot:
-            return RuntimeMeasurementSnapshot.from_artifact_execution_observation(
-                validation.observation,
-                policy=policy,
-                known_source_names=known_source_names,
-                required_measurement_keys=required_measurement_keys,
-            )
-
-        if request.cache_candidate_measurement_snapshot:
-            candidate_measurements = measurement_snapshot_cache.load_or_create(
-                prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
-                cache_key=candidate_key,
-                create=candidate_create,
-            )
-        else:
-            candidate_measurements = candidate_create()
-        if reference_measurements.is_empty and candidate_measurements.is_empty:
-            logger.info(
-                "Semantic measurement projection was empty; falling back to "
-                "generic table comparison."
-            )
-            return runtime_reference_artifact_equivalence(
-                _reference_snapshot_for_equivalence_fallback(
-                    equivalence_reference,
-                    compare_image_outputs=request.compare_image_outputs,
-                ),
-                validation.observation,
-                policy=policy,
-            )
-        report = runtime_measurement_equivalence(
-            reference_measurements,
-            candidate_measurements,
-            policy=policy,
-        )
-        logger.info(
-            "Semantic table equivalence completed in %.3fs "
-            "(reference_features=%d, candidate_features=%d, differences=%d).",
-            time.perf_counter() - started_at,
-            len(reference_measurements.measurement_fact_counts),
-            len(candidate_measurements.measurement_fact_counts),
-            len(report.differences),
-        )
-        return report
 
     def _write_runtime_execution_cache(
         self,
@@ -951,42 +590,21 @@ class OpenHCSAdapter(ToolAdapter):
         if not policy.write_manifest or manifest_path is None or cache_key is None:
             return
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        validation_path = None
-        if policy.include_image_records:
-            validation_path = (
-                manifest_path.parent / _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME
+        validation_path = (
+            manifest_path.parent / _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME
+        )
+        with validation_path.open("wb") as handle:
+            pickle.dump(
+                _validation_cache_payload(validation),
+                handle,
+                protocol=pickle.HIGHEST_PROTOCOL,
             )
-            with validation_path.open("wb") as handle:
-                pickle.dump(
-                    _validation_cache_payload(validation),
-                    handle,
-                    protocol=pickle.HIGHEST_PROTOCOL,
-                )
-        non_image_validation_path = None
-        if policy.include_non_image_records:
-            non_image_validation_path = (
-                manifest_path.parent
-                / _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME
-            )
-            with non_image_validation_path.open("wb") as handle:
-                pickle.dump(
-                    _validation_cache_payload(validation, include_image_records=False),
-                    handle,
-                    protocol=pickle.HIGHEST_PROTOCOL,
-                )
         manifest_path.write_text(
             json.dumps(
                 {
                     "schema_version": _RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION,
                     "cache_key": cache_key,
-                    "validation_pickle_path": (
-                        validation_path.name if validation_path is not None else None
-                    ),
-                    "non_image_validation_pickle_path": (
-                        non_image_validation_path.name
-                        if non_image_validation_path is not None
-                        else None
-                    ),
+                    "validation_pickle_path": validation_path.name,
                     "output_roots": tuple(str(root) for root in output_roots),
                     "execution_output_root": str(execution_output_root),
                     "axis_count": axis_count,
@@ -995,29 +613,6 @@ class OpenHCSAdapter(ToolAdapter):
                 sort_keys=True,
             )
         )
-
-    def _write_runtime_execution_non_image_cache(
-        self,
-        manifest_path: Path,
-        *,
-        validation: CPPipeExecutionValidation,
-    ) -> None:
-        """Backfill a compact runtime cache payload for table-only equivalence."""
-        non_image_validation_path = (
-            manifest_path.parent / _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME
-        )
-        with non_image_validation_path.open("wb") as handle:
-            pickle.dump(
-                _validation_cache_payload(validation, include_image_records=False),
-                handle,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
-        try:
-            manifest = json.loads(manifest_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-        manifest["non_image_validation_pickle_path"] = non_image_validation_path.name
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
     def _metric_results(
         self,
@@ -1113,15 +708,13 @@ def _openhcs_execution_watchdog(timeout_seconds: float):
 
 def _validation_cache_payload(
     validation: CPPipeExecutionValidation,
-    *,
-    include_image_records: bool = True,
 ) -> dict[str, Any]:
     """Return a pickle-safe payload for runtime execution validation."""
     exports = validation.observation.exports
     return {
         "expectation": validation.expectation,
         "records_by_axis": {
-            axis: tuple(_cacheable_runtime_records(records, include_image_records))
+            axis: tuple(records)
             for axis, records in validation.observation.records_by_axis.items()
         },
         "exports": {
@@ -1137,30 +730,6 @@ def _validation_cache_payload(
             },
         },
     }
-
-
-def _cacheable_runtime_records(
-    records: tuple[Any, ...],
-    include_image_records: bool,
-) -> tuple[Any, ...]:
-    """Return runtime records appropriate for the requested cache payload."""
-    if include_image_records:
-        return tuple(records)
-    return tuple(
-        record
-        for record in records
-        if record.key.kind.payload_shape is not ArtifactPayloadShape.ARRAY
-    )
-
-
-def _reference_has_no_images(reference_output_dir: Path | None) -> bool:
-    """Return whether an external reference has no image outputs to compare."""
-    if reference_output_dir is None:
-        return False
-    try:
-        return not image_paths(reference_output_dir)
-    except OSError:
-        return False
 
 
 def _candidate_image_snapshots_for_equivalence(
@@ -1179,18 +748,6 @@ def _candidate_image_snapshots_for_equivalence(
     return RuntimeOutputSnapshot.from_export_observation(
         validation.observation.exports
     ).images
-
-
-def _reference_snapshot_for_equivalence_fallback(
-    reference_output_dir: Path,
-    *,
-    compare_image_outputs: bool,
-) -> RuntimeOutputSnapshot:
-    """Build the reference snapshot for generic fallback equivalence."""
-    snapshot = RuntimeOutputSnapshot.from_output_root(reference_output_dir)
-    if compare_image_outputs:
-        return snapshot
-    return RuntimeOutputSnapshot(tables=snapshot.tables)
 
 
 def _validation_from_cache_payload(
@@ -1253,272 +810,27 @@ def _cache_payload_path(
     return manifest_path.parent / path
 
 
-@dataclass(frozen=True, slots=True)
-class MeasurementSnapshotCacheStore:
-    """Best-effort semantic measurement snapshot cache."""
-
-    root: Path
-
-    @classmethod
-    def for_request(cls, request: OpenHCSRunRequest) -> "MeasurementSnapshotCacheStore":
-        manifest_path = request.runtime_execution_cache_manifest
-        if manifest_path is not None:
-            return cls(manifest_path.parent / _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR)
-        return cls(request.output_dir / _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR)
-
-    def load_or_create(
-        self,
-        *,
-        prefix: str,
-        cache_key: object,
-        create: Callable[[], RuntimeMeasurementSnapshot],
-    ) -> RuntimeMeasurementSnapshot:
-        path = self.path(prefix=prefix, cache_key=cache_key)
-        snapshot = self.load(path=path, cache_key=cache_key)
-        if snapshot is not None:
-            logger.info("Loaded semantic measurement snapshot cache %s", path)
-            return snapshot
-
-        started_at = time.perf_counter()
-        snapshot = create()
-        if self.try_write(prefix=prefix, cache_key=cache_key, snapshot=snapshot):
-            logger.info(
-                "Wrote semantic measurement snapshot cache %s in %.3fs (features=%d).",
-                path,
-                time.perf_counter() - started_at,
-                len(snapshot.measurement_fact_counts),
-            )
-        return snapshot
-
-    def try_write(
-        self,
-        *,
-        prefix: str,
-        cache_key: object,
-        snapshot: RuntimeMeasurementSnapshot,
-    ) -> bool:
-        path = self.path(prefix=prefix, cache_key=cache_key)
-        try:
-            self.write(path=path, cache_key=cache_key, snapshot=snapshot)
-        except OSError:
-            logger.exception(
-                "Failed to write semantic measurement snapshot cache %s; "
-                "continuing with in-memory snapshot.",
-                path,
-            )
-            return False
-        return True
-
-    def load(
-        self,
-        *,
-        path: Path,
-        cache_key: object,
-    ) -> RuntimeMeasurementSnapshot | None:
-        if not path.exists():
-            return None
-        try:
-            with path.open("rb") as handle:
-                payload = pickle.load(handle)
-        except Exception:
-            logger.exception(
-                "Failed to load semantic measurement snapshot cache %s", path
-            )
-            return None
-        if not isinstance(payload, Mapping):
-            return None
-        if (
-            payload.get("schema_version")
-            != _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION
-        ):
-            return None
-        if payload.get("cache_key") != _cache_jsonable(cache_key):
-            return None
-        snapshot_payload = payload.get("snapshot")
-        if snapshot_payload is None:
-            return None
-        return RuntimeMeasurementSnapshot.from_cache_payload(snapshot_payload)
-
-    def write(
-        self,
-        *,
-        path: Path,
-        cache_key: object,
-        snapshot: RuntimeMeasurementSnapshot,
-    ) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-        try:
-            with temporary_path.open("wb") as handle:
-                pickle.dump(
-                    {
-                        "schema_version": (
-                            _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION
-                        ),
-                        "cache_key": _cache_jsonable(cache_key),
-                        "snapshot": snapshot.to_cache_payload(),
-                    },
-                    handle,
-                    protocol=pickle.HIGHEST_PROTOCOL,
-                )
-            temporary_path.replace(path)
-        except OSError:
-            temporary_path.unlink(missing_ok=True)
-            raise
-
-    def path(self, *, prefix: str, cache_key: object) -> Path:
-        digest = _cache_key_digest(cache_key)
-        return self.root / f"{prefix}_{digest}.pkl"
-
-
-def _reference_measurement_snapshot_cache_key(
-    reference_output_dir: Path,
-    *,
-    policy: RuntimeEquivalencePolicy,
-    known_source_names: tuple[str, ...],
-) -> dict[str, object]:
-    return {
-        "schema_version": _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION,
-        "kind": "reference_output_measurements",
-        "reference_tables": _table_output_fingerprint(reference_output_dir),
-        "semantic_measurement_projection": (
-            runtime_measurement_projection_cache_identity()
-        ),
-        "known_source_names": tuple(known_source_names),
-        "policy": policy,
-    }
-
-
-def _candidate_measurement_snapshot_cache_key(
-    request: OpenHCSRunRequest,
-    *,
-    policy: RuntimeEquivalencePolicy,
-    known_source_names: tuple[str, ...],
-    required_measurement_keys: frozenset[object],
-    candidate_observation_fingerprint: str,
-) -> dict[str, object]:
-    return {
-        "schema_version": _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION,
-        "kind": "artifact_execution_measurements",
-        "runtime_execution_cache_key": _runtime_execution_cache_key_for_snapshot(
-            request.runtime_execution_cache_key
-        ),
-        "runtime_measurement_observation": candidate_observation_fingerprint,
-        "semantic_measurement_projection": (
-            runtime_measurement_projection_cache_identity()
-        ),
-        "required_measurement_keys": tuple(
-            key.to_cache_payload()
-            for key in sorted(
-                required_measurement_keys,
-                key=lambda measurement_key: measurement_key.sort_key,
-            )
-        ),
-        "known_source_names": tuple(known_source_names),
-        "policy": policy,
-    }
-
-
-def _runtime_measurement_observation_fingerprint(
-    validation: CPPipeExecutionValidation,
-) -> str:
-    """Fingerprint non-image runtime observations that feed measurement parity."""
-    exports = validation.observation.exports
-    payload = {
-        "expectation": validation.expectation,
-        "records_by_axis": {
-            axis: tuple(
-                RuntimeRecordCacheIdentity.from_record(record)
-                for record in records
-                if record.key.kind.payload_shape is not ArtifactPayloadShape.ARRAY
-            )
-            for axis, records in validation.observation.records_by_axis.items()
-        },
-        "exports": {
-            "table_outputs": tuple(str(path) for path in exports.table_outputs),
-            "table_headers_by_path": {
-                str(path): tuple(headers)
-                for path, headers in exports.table_headers_by_path.items()
-            },
-            "table_row_counts_by_path": {
-                str(path): int(row_count)
-                for path, row_count in exports.table_row_counts_by_path.items()
-            },
-        },
-    }
-    return hashlib.sha256(
-        json.dumps(
-            _cache_jsonable(payload),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-
-
-def _runtime_execution_cache_key_for_snapshot(cache_key: object) -> object:
-    """Return the canonical runtime execution cache key for snapshot identity."""
-    return cache_key
-
-
-def _table_output_fingerprint(output_dir: Path) -> tuple[dict[str, object], ...]:
-    root = Path(output_dir)
-    fingerprint: list[dict[str, object]] = []
-    for path in table_paths(root):
-        stat = path.stat()
-        fingerprint.append(
-            {
-                "path": str(path.relative_to(root)),
-                "size": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-            }
-        )
-    return tuple(fingerprint)
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _cache_key_digest(cache_key: object) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            _cache_jsonable(cache_key),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()[:24]
-
-
-def _cache_jsonable(value: object) -> object:
-    """Return a deterministic JSON-compatible payload for cache identity."""
-    if value is None or isinstance(value, (str, int, float, bool)):
+def _truthy_debug_flag(value: object) -> bool:
+    """Return whether a benchmark debug flag is enabled."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
         return value
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, Path):
-        return str(value)
-    if is_dataclass(value):
-        return {
-            field.name: _cache_jsonable(getattr(value, field.name))
-            for field in fields(value)
-        }
-    if isinstance(value, Mapping):
-        return tuple(
-            (
-                _cache_jsonable(key),
-                _cache_jsonable(item_value),
-            )
-            for key, item_value in sorted(
-                value.items(),
-                key=lambda item: repr(_cache_jsonable(item[0])),
-            )
-        )
-    if isinstance(value, (tuple, list)):
-        return tuple(_cache_jsonable(item) for item in value)
-    if isinstance(value, (set, frozenset)):
-        return tuple(sorted((_cache_jsonable(item) for item in value), key=repr))
-    return repr(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _benchmark_compilation_debug_config(
+    base_config: CompilationDebugConfig,
+    *,
+    request: OpenHCSRunRequest,
+    cppipe_path: Path,
+) -> CompilationDebugConfig:
+    if not request.dump_compiled_plans:
+        return base_config
+    return replace(
+        base_config,
+        enabled=True,
+        compiled_execution_bundle_path=(
+            request.output_dir / f"{cppipe_path.stem}_compiled_execution_bundle.pkl"
+        ),
+    )

@@ -1,7 +1,6 @@
 """Benchmark-library facade for CellProfiler MeasureGranularity."""
 
 from openhcs.processing.backends.cellprofiler.granularity import (
-    GRANULARITY_FIELDS,
     GranularityMeasurement,
     ObjectGranularityMeasurement,
     measure_granularity,
@@ -9,7 +8,6 @@ from openhcs.processing.backends.cellprofiler.granularity import (
 )
 
 __all__ = [
-    "GRANULARITY_FIELDS",
     "GranularityMeasurement",
     "ObjectGranularityMeasurement",
     "measure_granularity",

@@ -29,7 +29,7 @@ from openhcs.interop.cellprofiler.thresholding import (
     normalize_cellprofiler_image,
     threshold_application_smoothed_image,
     threshold_profile_enabled,
-    unit_interval_scale_for_threshold_diagnostics,
+    unit_interval_scale_for_threshold_selection,
 )
 
 __all__ = [
@@ -61,5 +61,5 @@ __all__ = [
     "normalize_cellprofiler_image",
     "threshold_application_smoothed_image",
     "threshold_profile_enabled",
-    "unit_interval_scale_for_threshold_diagnostics",
+    "unit_interval_scale_for_threshold_selection",
 ]

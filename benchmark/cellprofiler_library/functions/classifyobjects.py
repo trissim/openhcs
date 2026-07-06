@@ -1,7 +1,6 @@
 """Converted from CellProfiler: ClassifyObjects."""
 
 from openhcs.processing.backends.cellprofiler.classification import (
-    CLASSIFICATION_RESULT_FIELDS,
     ClassificationBinChoice as BinChoice,
     ClassificationMethod,
     ClassificationResult,
@@ -18,7 +17,6 @@ from openhcs.processing.backends.cellprofiler.classification import (
 
 __all__ = [
     "BinChoice",
-    "CLASSIFICATION_RESULT_FIELDS",
     "ClassificationMethod",
     "ClassificationResult",
     "IntensityBinsClassificationRequest",

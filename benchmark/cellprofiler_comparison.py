@@ -599,7 +599,10 @@ class NativeCellProfilerReferenceScope:
 
     def resolve(self) -> NativeReferenceLocation:
         expected_reference = self.expected_reference
-        if native_cellprofiler_reference_is_complete(expected_reference):
+        if native_cellprofiler_reference_is_complete(
+            expected_reference,
+            source_schema_image_set_selection=self.source_schema_image_set_selection,
+        ):
             return NativeReferenceLocation(
                 output_dir=self.output_dir,
                 reference_output_dir=expected_reference,
@@ -619,7 +622,12 @@ class NativeCellProfilerReferenceScope:
             for path in sorted(self.output_dir.iterdir())
             if path.is_dir()
             and path.name.endswith("_native_cellprofiler")
-            and native_cellprofiler_reference_is_complete(path)
+            and native_cellprofiler_reference_is_complete(
+                path,
+                source_schema_image_set_selection=(
+                    self.source_schema_image_set_selection
+                ),
+            )
         )
         if len(candidates) > 1:
             raise RuntimeError(
@@ -1133,7 +1141,7 @@ def _source_schema_selection_payload(
     if selection is None:
         return None
     return {
-        "well_filter": selection.well_filter,
+        "well_filter": list(selection.well_filter),
         "max_image_set_count": selection.max_image_set_count,
     }
 
@@ -1184,7 +1192,6 @@ def _run_comparison_case(
         "cppipe_path": str(case.cppipe_path),
         "compare_image_outputs": not case.value_only,
         "raise_on_equivalence_failure": False,
-        "cache_candidate_measurement_snapshot": not context.discard_openhcs_outputs,
     }
     if case.value_only:
         pipeline_params.setdefault("materialize_runtime_artifacts", False)
@@ -1195,6 +1202,9 @@ def _run_comparison_case(
     source_schema_image_set_selection = (
         context.source_schema_image_set_selection
         or case.source_schema_image_set_selection
+    )
+    pipeline_params["source_schema_image_set_selection"] = (
+        _source_schema_selection_payload(source_schema_image_set_selection)
     )
     native_reference = _native_reference_location(
         case,

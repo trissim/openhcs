@@ -43,10 +43,13 @@ def resolve_visible_source_path(path: Path) -> Path:
             filemanager.is_dir(alias_path, backend)
             and not alias_is_symlink
             and _alias_matches_source(filemanager, alias_path, alias_source_path, backend)
-            and not filemanager.is_symlink(
-                alias_path / _openhcs_metadata_filename(),
+            and _alias_tree_matches_source(
+                filemanager,
+                alias_path,
+                alias_source_path,
                 backend,
             )
+            and not _contains_openhcs_metadata(filemanager, alias_path, backend)
         ):
             return alias_path / source_path.relative_to(alias_source_path)
         if alias_is_symlink:
@@ -84,6 +87,20 @@ def _openhcs_metadata_filename() -> str:
     return METADATA_CONFIG.METADATA_FILENAME
 
 
+def _contains_openhcs_metadata(
+    filemanager: FileManager,
+    alias_path: Path,
+    backend: str,
+) -> bool:
+    metadata_filename = _openhcs_metadata_filename()
+    _, files = filemanager.collect_dirs_and_files(
+        alias_path,
+        backend,
+        recursive=True,
+    )
+    return any(Path(file_path).name == metadata_filename for file_path in files)
+
+
 def _alias_matches_source(
     filemanager: FileManager,
     alias_path: Path,
@@ -94,6 +111,53 @@ def _alias_matches_source(
     if not filemanager.is_file(marker_path, backend):
         return False
     return filemanager.load(marker_path, backend) == str(source_path)
+
+
+def _alias_tree_matches_source(
+    filemanager: FileManager,
+    alias_path: Path,
+    source_path: Path,
+    backend: str,
+) -> bool:
+    metadata_filename = _openhcs_metadata_filename()
+    if source_path.is_file():
+        expected_files = () if source_path.name == metadata_filename else (Path(source_path.name),)
+    else:
+        _, source_files = filemanager.collect_dirs_and_files(
+            source_path,
+            backend,
+            recursive=True,
+        )
+        expected_files = tuple(
+            sorted(
+                Path(source_file).relative_to(source_path)
+                for source_file in source_files
+                if Path(source_file).name != metadata_filename
+            )
+        )
+
+    _, alias_files = filemanager.collect_dirs_and_files(
+        alias_path,
+        backend,
+        recursive=True,
+    )
+    actual_files = tuple(
+        sorted(
+            Path(alias_file).relative_to(alias_path)
+            for alias_file in alias_files
+            if Path(alias_file).name
+            not in {
+                metadata_filename,
+                VISIBLE_SOURCE_TARGET_MARKER,
+            }
+        )
+    )
+    if actual_files != expected_files:
+        return False
+    return all(
+        filemanager.is_symlink(alias_path / relative_path, backend)
+        for relative_path in expected_files
+    )
 
 
 def _create_visible_alias_tree(

@@ -1,7 +1,6 @@
 """Converted from CellProfiler: MeasureImageSkeleton."""
 
 from openhcs.processing.backends.cellprofiler.skeleton import (
-    SKELETON_MEASUREMENT_FIELDS,
     SkeletonMeasurement,
     SkeletonNeighborhood,
     measure_image_skeleton,
@@ -9,7 +8,6 @@ from openhcs.processing.backends.cellprofiler.skeleton import (
 )
 
 __all__ = [
-    "SKELETON_MEASUREMENT_FIELDS",
     "SkeletonMeasurement",
     "SkeletonNeighborhood",
     "measure_image_skeleton",

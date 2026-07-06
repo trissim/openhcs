@@ -381,191 +381,15 @@ Given CellProfiler source code and .cppipe settings, output **valid JSON** with 
 ```json
 {
   "code": "<complete python code as a string>",
-  "contract": "PURE_2D | PURE_3D | FLEXIBLE | VOLUMETRIC_TO_SLICE",
-  "category": "image_operation | z_projection | channel_operation",
   "confidence": 0.95,
-  "reasoning": "Brief explanation of why this contract and category"
+  "reasoning": "Brief explanation of the conversion choices",
+  "parameter_mapping": {
+    "CellProfiler Setting Name": "python_parameter_name"
+  }
 }
 ```
 
-## Contract Inference Rules
-
-Analyze the algorithm semantics to determine the correct ProcessingContract:
-
-- **PURE_2D**: Algorithm works on single 2D slices independently. Most image filters,
-  thresholding, 2D segmentation, morphology operations. The compiler iterates over dim 0.
-
-- **PURE_3D**: Algorithm requires full 3D volume context. 3D segmentation, 3D connected
-  components, algorithms that need Z-neighbors.
-
-- **FLEXIBLE**: Algorithm handles multiple images stacked in dim 0 and processes them
-  together. Multi-input operations (combine objects, colocalization), channel operations.
-
-- **VOLUMETRIC_TO_SLICE**: Algorithm reduces (D, H, W) → (H, W). Z-projections (max, mean),
-  any operation that collapses the depth dimension.
-
-## Category Inference Rules
-
-Determine what dimension this operation semantically operates on:
-
-- **image_operation**: Per-image processing. Default for most operations.
-  Maps to `variable_components=[SITE]` in pipeline.
-
-- **z_projection**: Operates across Z-slices to produce a single output.
-  Maps to `variable_components=[Z_INDEX]` in pipeline.
-
-- **channel_operation**: Operates across channels (split, combine, colocalization).
-  Maps to `variable_components=[CHANNEL]` in pipeline.
-
-## Code Format
-
-The "code" field must contain complete Python:
-
-```python
-"""
-Converted from CellProfiler: <module_name>
-Original: <original_function_name>
-"""
-
-import numpy as np
-from typing import Tuple, List, Optional
-from dataclasses import dataclass
-from openhcs.core.memory.decorators import numpy
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-# Add @special_outputs imports if needed
-
-# Add dataclass for measurements if needed
-
-@numpy(contract=ProcessingContract.<INFERRED_CONTRACT>)
-def <function_name>(
-    image: np.ndarray,
-    <parameters with baked defaults>
-) -> <return_type>:
-    """<docstring>"""
-    # Implementation
-    ...
-    return <image_first>, <optional_measurements>
-```
-
-# EXAMPLES
-'''
-
-
-EXAMPLE_THRESHOLD_CONVERSION = '''
-## Example: threshold() conversion
-
-### CellProfiler Original:
-```python
-def threshold(
-    image: ImageGrayscale,
-    threshold_method: Method = Method.OTSU,
-    ...
-) -> Tuple[float, float, float, ImageGrayscaleMask, float]:
-    # Returns: final_threshold, orig_threshold, guide_threshold, binary_image, sigma
-    return final_threshold, orig_threshold, guide_threshold, binary_image, sigma
-```
-
-### OpenHCS Converted:
-```python
-"""Converted from CellProfiler: Threshold"""
-
-import numpy as np
-from typing import Tuple
-from dataclasses import dataclass
-from enum import Enum
-from openhcs.core.memory.decorators import numpy
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_materializer
-
-class ThresholdMethod(Enum):
-    OTSU = "otsu"
-    MINIMUM_CROSS_ENTROPY = "minimum_cross_entropy"
-    LI = "li"
-
-@dataclass
-class ThresholdResult:
-    slice_index: int
-    final_threshold: float
-    original_threshold: float
-    sigma: float
-
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(("threshold_results", csv_materializer(
-    fields=["slice_index", "final_threshold", "original_threshold", "sigma"],
-    analysis_type="threshold"
-)))
-def threshold(
-    image: np.ndarray,
-    threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
-    threshold_correction_factor: float = 1.0,
-    threshold_min: float = 0.0,
-    threshold_max: float = 1.0,
-    smoothing: float = 0.0,
-) -> Tuple[np.ndarray, ThresholdResult]:
-    """Apply threshold to image. Returns binary mask and threshold metrics."""
-    from skimage.filters import threshold_otsu, threshold_li
-    from scipy.ndimage import gaussian_filter
-    
-    # Apply smoothing if specified
-    if smoothing > 0:
-        image = gaussian_filter(image, smoothing)
-    
-    # Calculate threshold
-    if threshold_method == ThresholdMethod.OTSU:
-        thresh = threshold_otsu(image)
-    elif threshold_method == ThresholdMethod.LI:
-        thresh = threshold_li(image)
-    else:
-        thresh = threshold_otsu(image)
-    
-    # Apply correction and bounds
-    final_thresh = thresh * threshold_correction_factor
-    final_thresh = max(threshold_min, min(threshold_max, final_thresh))
-    
-    # Create binary mask
-    binary_mask = (image > final_thresh).astype(np.float32)
-    
-    return binary_mask, ThresholdResult(
-        slice_index=0,
-        final_threshold=final_thresh,
-        original_threshold=thresh,
-        sigma=smoothing
-    )
-```
-'''
-
-
-def build_conversion_prompt(
-    module_name: str,
-    source_code: str,
-    settings: dict,
-) -> str:
-    """
-    Build complete prompt for LLM conversion.
-
-    Args:
-        module_name: CellProfiler module name
-        source_code: CellProfiler source code to convert
-        settings: Settings dict from .cppipe file
-
-    Returns:
-        Complete prompt string for LLM
-    """
-    settings_str = "\n".join(f"  {k}: {v}" for k, v in settings.items())
-
-    return f'''{SYSTEM_PROMPT}
-
-{EXAMPLE_THRESHOLD_CONVERSION}
-
-# YOUR TASK
-
-Convert the following CellProfiler module to OpenHCS format.
-
-## Module: {module_name}
-
-## Settings from .cppipe (bake as defaults):
-{settings_str}
+Semantic execution contracts and variable-component defaults are declared on CellProfilerModule classes. Do not infer or emit contract/category fields in this payload.
 
 ## Source Code:
 ```python
@@ -576,15 +400,15 @@ Convert the following CellProfiler module to OpenHCS format.
 Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
 {{
   "code": "<complete python code>",
-  "contract": "PURE_2D | PURE_3D | FLEXIBLE | VOLUMETRIC_TO_SLICE",
-  "category": "image_operation | z_projection | channel_operation",
   "confidence": <0.0-1.0>,
-  "reasoning": "<why this contract and category>",
+  "reasoning": "<brief explanation of conversion choices>",
   "parameter_mapping": {{
     "CellProfiler Setting Name": "python_parameter_name",
     ...
   }}
 }}
+
+Do not emit contract or category fields. OpenHCS semantic declarations own those values.
 
 The `parameter_mapping` field should map each CellProfiler setting name (from the settings above) to the corresponding Python parameter name in your converted function. This enables automatic parameter binding when converting .cppipe pipelines.
 
@@ -603,3 +427,22 @@ Notes:
 - If a parameter doesn't have a corresponding CellProfiler setting (internal parameter), omit it from the mapping
 '''
 
+
+def build_conversion_prompt(
+    *,
+    module_name: str,
+    source_code: str,
+    settings: dict[str, object] | None = None,
+) -> str:
+    """Return the strict conversion prompt for one CellProfiler module."""
+    settings_lines = "\n".join(
+        f"- {setting_name}: {value!r}"
+        for setting_name, value in sorted((settings or {}).items())
+    )
+    settings_block = settings_lines or "- No .cppipe settings supplied."
+    return (
+        SYSTEM_PROMPT.replace("{source_code}", source_code)
+        + "\n\n"
+        + f"# MODULE\n{module_name}\n\n"
+        + f"# SETTINGS\n{settings_block}\n"
+    )

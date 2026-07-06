@@ -100,6 +100,7 @@ class NativeCellProfilerProvenanceField(StrEnum):
     """Native CellProfiler provenance fields with cross-run semantics."""
 
     INPUT_DOMAIN_STRATEGY = "native_input_domain_strategy"
+    SOURCE_SCHEMA_IMAGE_SET_SELECTION = "native_source_schema_image_set_selection"
     SOURCE_WORKSPACE = "native_source_workspace"
     SOURCE_PLANE_COUNT = "native_source_plane_count"
     SELECTED_WELLS = "native_selected_wells"
@@ -579,8 +580,11 @@ class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
         self,
         source_schema: Any,
         provenance: Mapping[str, Any],
+        *,
+        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
     ) -> bool:
         """Return whether a success marker from this domain is reusable."""
+        del source_schema_image_set_selection
         return True
 
     def reference_scope_slugs(
@@ -611,9 +615,7 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
         return (
             not schema.is_empty
             and selection is not None
-            and (
-                bool(selection.well_filter) or selection.max_image_set_count is not None
-            )
+            and selection.constrains_image_sets()
         )
 
     def prepare(
@@ -676,6 +678,11 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
                     NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
                         self.strategy_key
                     ),
+                    NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION: (
+                        _source_schema_selection_payload(
+                            request.source_schema_image_set_selection
+                        )
+                    ),
                     NativeCellProfilerProvenanceField.SOURCE_WORKSPACE: str(
                         workspace.workspace_root
                     ),
@@ -710,6 +717,11 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
             provenance={
                 NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
                     self.strategy_key
+                ),
+                NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION: (
+                    _source_schema_selection_payload(
+                        request.source_schema_image_set_selection
+                    )
                 ),
                 NativeCellProfilerProvenanceField.SOURCE_WORKSPACE: str(
                     workspace.workspace_root
@@ -759,6 +771,18 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
             )
             if slug is not None
         )
+
+    def accepts_success_marker_source_schema(
+        self,
+        source_schema: Any,
+        provenance: Mapping[str, Any],
+        *,
+        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    ) -> bool:
+        del source_schema
+        return provenance.get(
+            NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION
+        ) == _source_schema_selection_payload(source_schema_image_set_selection)
 
 
 class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
@@ -1139,7 +1163,7 @@ def native_cellprofiler_sample_scope_slug(
     if selection.well_filter:
         parts.append("wells_" + "_".join(selection.well_filter))
     if selection.max_image_set_count is not None:
-        parts.append(f"first{selection.max_image_set_count}wells")
+        parts.append(f"first{selection.max_image_set_count}imagesets")
     if not parts:
         return None
     return "samples_" + "_".join(parts)
@@ -1192,9 +1216,7 @@ def _request_has_source_schema_image_set_selection(
     request: CellProfilerRunRequest,
 ) -> bool:
     selection = request.source_schema_image_set_selection
-    return selection is not None and (
-        bool(selection.well_filter) or selection.max_image_set_count is not None
-    )
+    return selection is not None and selection.constrains_image_sets()
 
 
 def _source_schema_selection_payload(
@@ -1203,22 +1225,32 @@ def _source_schema_selection_payload(
     if selection is None:
         return None
     return {
-        "well_filter": selection.well_filter,
+        "well_filter": list(selection.well_filter),
         "max_image_set_count": selection.max_image_set_count,
     }
 
 
-def native_cellprofiler_reference_is_complete(reference_output_dir: Path) -> bool:
+def native_cellprofiler_reference_is_complete(
+    reference_output_dir: Path,
+    *,
+    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+) -> bool:
     """Return whether a native reference has a registered completeness proof."""
     reference = Path(reference_output_dir)
     if (reference / NATIVE_CELLPROFILER_SUCCESS_MARKER).is_file():
         return (
             NativeCellProfilerSuccessMarkerReferenceCompletenessStrategy().is_complete(
-                reference
+                reference,
+                source_schema_image_set_selection=source_schema_image_set_selection,
             )
         )
+    if source_schema_image_set_selection is not None:
+        return False
     return any(
-        strategy_type().is_complete(reference)
+        strategy_type().is_complete(
+            reference,
+            source_schema_image_set_selection=source_schema_image_set_selection,
+        )
         for strategy_type in NativeCellProfilerReferenceCompletenessStrategy.__registry__.values()
     )
 
@@ -1234,7 +1266,12 @@ class NativeCellProfilerReferenceCompletenessStrategy(
     proof_name: ClassVar[str | None] = None
 
     @abstractmethod
-    def is_complete(self, reference_output_dir: Path) -> bool:
+    def is_complete(
+        self,
+        reference_output_dir: Path,
+        *,
+        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    ) -> bool:
         """Return whether this proof accepts the reference directory."""
 
 
@@ -1245,21 +1282,33 @@ class NativeCellProfilerSuccessMarkerReferenceCompletenessStrategy(
 
     proof_name = "success_marker"
 
-    def is_complete(self, reference_output_dir: Path) -> bool:
+    def is_complete(
+        self,
+        reference_output_dir: Path,
+        *,
+        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    ) -> bool:
         marker = reference_output_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER
         if not marker.is_file():
             return False
         provenance = native_cellprofiler_reference_provenance(reference_output_dir)
+        selection_payload = _source_schema_selection_payload(
+            source_schema_image_set_selection
+        )
+        if selection_payload is not None and provenance.get(
+            NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION
+        ) != selection_payload:
+            return False
         cppipe_path = provenance.get("cppipe_path")
         if not isinstance(cppipe_path, str):
-            return True
+            return selection_payload is None
         source_path = Path(cppipe_path)
         if not source_path.exists():
-            return True
+            return selection_payload is None
         modules = CPPipeParser().parse(source_path)
         source_schema = compile_image_schema(modules)
-        if not source_schema.image_plane_sources:
-            return True
+        if source_schema.is_empty:
+            return selection_payload is None
         strategy_key = provenance.get(
             NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY
         )
@@ -1271,6 +1320,7 @@ class NativeCellProfilerSuccessMarkerReferenceCompletenessStrategy(
         return strategy_type().accepts_success_marker_source_schema(
             source_schema,
             provenance,
+            source_schema_image_set_selection=source_schema_image_set_selection,
         )
 
 
@@ -1281,7 +1331,13 @@ class NativeCellProfilerSemanticSnapshotReferenceCompletenessStrategy(
 
     proof_name = "semantic_snapshot"
 
-    def is_complete(self, reference_output_dir: Path) -> bool:
+    def is_complete(
+        self,
+        reference_output_dir: Path,
+        *,
+        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    ) -> bool:
+        del source_schema_image_set_selection
         if not reference_output_dir.exists():
             return False
         try:
