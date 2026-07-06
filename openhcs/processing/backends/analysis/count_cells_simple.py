@@ -1,8 +1,11 @@
 """
 Simple cell counting using thresholding and connected component labeling.
 
-This module provides a straightforward cell counting function with basic
-thresholding methods and size filtering.
+This module provides a compact NumPy/scikit-image cell counter intended for
+basic bright- or dark-object workflows. The implementation deliberately keeps
+the segmentation model simple: threshold each 2D slice, label connected
+components, optionally split oversized components, then apply geometric filters
+to the final candidate objects.
 """
 
 from openhcs.core.memory import numpy
@@ -14,7 +17,10 @@ from typing import Tuple, List
 
 import numpy as np
 from scipy import ndimage as ndi
+from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu, threshold_li, threshold_yen
+from skimage.measure import regionprops
+from skimage.segmentation import relabel_sequential, watershed
 
 
 class ThresholdMethod(str, Enum):
@@ -57,26 +63,115 @@ def count_cells_simple(
     threshold_percentile: float = 99.0,
     foreground: Foreground = Foreground.BRIGHT,
     min_size: int = 20,
-    max_size: int = 100000
+    max_size: int = 100000,
+    max_eccentricity: float = 1.0,
+    watershed_large_objects: bool = False,
+    watershed_min_distance: int = 5,
+    watershed_footprint_size: int = 3
 ) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
     """
-    Count cells in a 3D image using simple thresholding and connected component labeling.
+    Count thresholded objects in a 3D image stack with optional shape cleanup.
+
+    The function processes each 2D plane of ``image`` independently. For every
+    slice it computes a threshold, builds a binary foreground mask, labels
+    connected components, optionally applies distance-transform watershed only
+    to components larger than ``max_size``, and then applies the final object
+    acceptance filters. The reported count and ROI mask therefore describe the
+    final accepted connected components after all splitting and filtering.
+
+    Filtering order is intentional:
+
+    1. ``min_size`` is used only in the final acceptance pass.
+    2. If ``watershed_large_objects`` is enabled, only raw connected components
+       whose area is greater than ``max_size`` are split.
+    3. ``min_size``, ``max_size``, and ``max_eccentricity`` are then applied to
+       the resulting candidate regions.
+
+    This means a large merged component can be split into multiple accepted
+    cells, as long as each watershed fragment lands within the size and shape
+    limits. If watershed cannot find at least two seeds for a large object, that
+    object remains a single candidate and is usually rejected by ``max_size``.
 
     Args:
-        image: Input image as 3D array (C, Y, X)
-        threshold_method: One of {"otsu", "li", "yen", "percentile", "manual"}
-        threshold: Manual threshold value (used when threshold_method="manual")
-        threshold_percentile: Percentile in [0,100] (used when threshold_method="percentile")
-        foreground: "bright" (cells brighter than background) or "dark"
-        min_size: Minimum pixel size to keep an object
-        max_size: Maximum pixel size to keep an object (filters out large artifacts)
+        image: Input 3D image stack with shape ``(Z, Y, X)``. OpenHCS also uses
+            this shape for logical single-plane data, so a single 2D image
+            should be supplied as ``image[None, :, :]``. The input image is
+            returned unchanged as the primary output.
+        threshold_method: Thresholding strategy used to create the foreground
+            mask for each slice. ``OTSU``, ``LI``, and ``YEN`` compute an
+            automatic threshold from the slice. ``PERCENTILE`` uses
+            ``threshold_percentile``. ``MANUAL`` uses ``threshold`` directly,
+            with fractional values in ``[0, 1]`` interpreted as a fraction of
+            the slice maximum when the image intensity range is larger than
+            ``[0, 1]``.
+        threshold: Manual threshold value used only when
+            ``threshold_method=ThresholdMethod.MANUAL``. Values greater than
+            ``1`` are treated as native image-intensity values. Values in
+            ``[0, 1]`` are treated as normalized fractions for scaled integer or
+            high-dynamic-range arrays.
+        threshold_percentile: Percentile in ``[0, 100]`` used only when
+            ``threshold_method=ThresholdMethod.PERCENTILE``. For bright
+            foregrounds, pixels above this percentile become foreground; for
+            dark foregrounds, pixels below it become foreground.
+        foreground: Polarity of the objects to count. ``BRIGHT`` counts pixels
+            above the computed threshold. ``DARK`` counts pixels below the
+            computed threshold.
+        min_size: Minimum accepted object area in pixels after optional
+            watershed splitting. Objects smaller than this are removed from the
+            output mask and not counted.
+        max_size: Maximum accepted object area in pixels after optional
+            watershed splitting. Objects larger than this are treated as
+            artifacts or unresolved merged objects and are removed from the
+            output mask. When ``watershed_large_objects=True``, this same value
+            also defines which raw connected components are considered large
+            enough to attempt splitting.
+        max_eccentricity: Maximum accepted object eccentricity after optional
+            watershed splitting and size filtering. Eccentricity is the
+            scikit-image region shape measure where ``0.0`` is circular and
+            ``1.0`` is nearly line-like. The default ``1.0`` preserves the
+            previous behavior and effectively disables shape filtering. Lower
+            values reject elongated debris, scratches, neurites, or merged
+            streak-like objects that otherwise satisfy the size filter.
+        watershed_large_objects: If ``True``, apply distance-transform watershed
+            only to connected components whose raw area is greater than
+            ``max_size``. This is useful when touching cells merge into one
+            oversized component that would otherwise be rejected by the size
+            filter. It is disabled by default to preserve the original simple
+            connected-component behavior.
+        watershed_min_distance: Minimum pixel spacing between local maxima used
+            as watershed seeds for oversized objects. Larger values produce
+            fewer, more conservative splits; smaller values can split dense or
+            noisy objects more aggressively.
+        watershed_footprint_size: Side length, in pixels, of the square
+            footprint used when finding local maxima for watershed seeds.
+            Larger footprints suppress nearby competing maxima and reduce
+            over-splitting; smaller footprints allow more seed points.
 
     Returns:
         Tuple:
-          - image (unchanged)
-          - list of dicts with cell count per slice
-          - list of segmentation masks (one per slice)
+          - ``image`` unchanged, preserving OpenHCS primary-output semantics.
+          - A list of per-slice dictionaries with ``slice_index`` and
+            ``cell_count`` fields. The count is the number of accepted labels
+            after optional splitting and all filters.
+          - A list of labeled ``int32`` segmentation masks, one per input
+            slice. Background is ``0``. Accepted objects are relabeled
+            sequentially from ``1`` within each slice.
+
+    Raises:
+        ValueError: If size limits, eccentricity limits, or watershed seed
+            parameters are outside their supported ranges.
     """
+    if min_size < 0:
+        raise ValueError("min_size must be >= 0")
+    if max_size < min_size:
+        raise ValueError("max_size must be >= min_size")
+    if not 0.0 <= max_eccentricity <= 1.0:
+        raise ValueError("max_eccentricity must be in [0.0, 1.0]")
+    if watershed_min_distance < 1:
+        raise ValueError("watershed_min_distance must be >= 1")
+    if watershed_footprint_size < 1:
+        raise ValueError("watershed_footprint_size must be >= 1")
+
     results = []
     masks = []
 
@@ -118,16 +213,27 @@ def count_cells_simple(
         # Label connected components
         labeled, num_objects = ndi.label(binary)
 
-        # Filter objects by size (min and max)
-        if num_objects > 0:
-            sizes = ndi.sum(binary, labeled, index=range(1, num_objects + 1))
-            keep_labels = [
-                idx + 1 for idx, size in enumerate(sizes)
-                if min_size <= size <= max_size
-            ]
+        if watershed_large_objects and num_objects > 0:
+            labeled = _watershed_large_objects(
+                labeled,
+                max_size=max_size,
+                min_distance=watershed_min_distance,
+                footprint_size=watershed_footprint_size,
+            )
 
-            filtered = np.isin(labeled, keep_labels)
-            labeled_filtered, final_count = ndi.label(filtered)
+        # Filter objects by size and eccentricity.
+        if num_objects > 0:
+            keep_labels = []
+            for region in regionprops(labeled):
+                if (
+                    min_size <= region.area <= max_size
+                    and region.eccentricity <= max_eccentricity
+                ):
+                    keep_labels.append(region.label)
+
+            labeled_filtered = np.where(np.isin(labeled, keep_labels), labeled, 0)
+            labeled_filtered, _, _ = relabel_sequential(labeled_filtered)
+            final_count = len(keep_labels)
         else:
             labeled_filtered = np.zeros_like(labeled)
             final_count = 0
@@ -141,3 +247,45 @@ def count_cells_simple(
 
     return image, results, masks
 
+
+def _watershed_large_objects(
+    labeled: np.ndarray,
+    max_size: int,
+    min_distance: int,
+    footprint_size: int,
+) -> np.ndarray:
+    """Split connected components above max_size using distance watershed."""
+    output = np.zeros_like(labeled, dtype=np.int32)
+    next_label = 1
+    footprint = np.ones((footprint_size, footprint_size), dtype=bool)
+
+    for region in regionprops(labeled):
+        component = labeled == region.label
+
+        if region.area <= max_size:
+            output[component] = next_label
+            next_label += 1
+            continue
+
+        distance = ndi.distance_transform_edt(component)
+        seeds = peak_local_max(
+            distance,
+            min_distance=min_distance,
+            footprint=footprint,
+            labels=component,
+        )
+
+        if len(seeds) <= 1:
+            output[component] = next_label
+            next_label += 1
+            continue
+
+        markers = np.zeros_like(labeled, dtype=np.int32)
+        markers[seeds[:, 0], seeds[:, 1]] = np.arange(1, len(seeds) + 1)
+        split_labels = watershed(-distance, markers, mask=component)
+
+        for split_region in regionprops(split_labels):
+            output[split_labels == split_region.label] = next_label
+            next_label += 1
+
+    return output
